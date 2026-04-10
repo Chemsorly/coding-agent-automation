@@ -2,7 +2,7 @@ using FsCheck;
 using FsCheck.Xunit;
 using FsCheck.Fluent;
 using Xunit;
-using TestResult = KiroCliPoc.Models.TestResult;
+using TestResult = KiroCliLib.Models.TestResult;
 
 namespace KiroCliPoc.Tests.Unit;
 
@@ -21,8 +21,8 @@ public class OutputParserTests
     public bool StateDetection_ShouldIdentifyCorrectState(StateMarkerTestCase testCase)
     {
         // Arrange
-        var parser = new Core.OutputParser();
-        Models.KiroState? detectedState = null;
+        var parser = new KiroCliLib.Core.OutputParser();
+        KiroCliLib.Models.KiroState? detectedState = null;
         parser.StateChanged += (sender, state) => detectedState = state;
 
         // Act
@@ -46,8 +46,8 @@ public class OutputParserTests
     public bool FileDetection_ShouldExtractFilePath(FileOperationTestCase testCase)
     {
         // Arrange
-        var parser = new Core.OutputParser();
-        Models.FileChange? detectedFile = null;
+        var parser = new KiroCliLib.Core.OutputParser();
+        KiroCliLib.Models.FileChange? detectedFile = null;
         parser.FileDetected += (sender, file) => detectedFile = file;
 
         // Act
@@ -69,7 +69,7 @@ public class OutputParserTests
     public bool TestResultDetection_ShouldExtractCounts(TestResultTestCase testCase)
     {
         // Arrange
-        var parser = new Core.OutputParser();
+        var parser = new KiroCliLib.Core.OutputParser();
         TestResult? detectedResult = null;
         parser.TestResultDetected += (sender, result) => detectedResult = result;
 
@@ -89,14 +89,14 @@ public class OutputParserTests
     public class StateMarkerTestCase
     {
         public required string Line { get; init; }
-        public required Models.KiroState ExpectedState { get; init; }
+        public required KiroCliLib.Models.KiroState ExpectedState { get; init; }
     }
 
     public class FileOperationTestCase
     {
         public required string Line { get; init; }
         public required string ExpectedPath { get; init; }
-        public required Models.FileChangeType ExpectedType { get; init; }
+        public required KiroCliLib.Models.FileChangeType ExpectedType { get; init; }
     }
 
     public class TestResultTestCase
@@ -114,40 +114,40 @@ public class OutputParserTests
         {
             var completionMarkers = new[]
             {
-                ("✓ Task completed", Models.KiroState.Completed),
-                ("Done processing all files", Models.KiroState.Completed),
-                ("Completed successfully", Models.KiroState.Completed),
-                ("Success: all checks passed", Models.KiroState.Completed),
-                ("✔ All done", Models.KiroState.Completed)
+                ("✓ Task completed", KiroCliLib.Models.KiroState.Completed),
+                ("Done processing all files", KiroCliLib.Models.KiroState.Completed),
+                ("Completed successfully", KiroCliLib.Models.KiroState.Completed),
+                ("Success: all checks passed", KiroCliLib.Models.KiroState.Completed),
+                ("✔ All done", KiroCliLib.Models.KiroState.Completed)
             };
 
             var errorMarkers = new[]
             {
-                ("Error: Something went wrong", Models.KiroState.Error),
-                ("Failed: build returned non-zero", Models.KiroState.Error),
-                ("Exception: NullReferenceException", Models.KiroState.Error),
-                ("✗ Task failed", Models.KiroState.Error),
-                ("✘ Build error detected", Models.KiroState.Error)
+                ("Error: Something went wrong", KiroCliLib.Models.KiroState.Error),
+                ("Failed: build returned non-zero", KiroCliLib.Models.KiroState.Error),
+                ("Exception: NullReferenceException", KiroCliLib.Models.KiroState.Error),
+                ("✗ Task failed", KiroCliLib.Models.KiroState.Error),
+                ("✘ Build error detected", KiroCliLib.Models.KiroState.Error)
             };
 
             var inputMarkers = new[]
             {
-                ("? Please provide input", Models.KiroState.NeedsInput),
-                ("Clarification needed for this step", Models.KiroState.NeedsInput),
-                ("Please provide more details", Models.KiroState.NeedsInput),
-                ("Waiting for input from user", Models.KiroState.NeedsInput)
+                ("? Please provide input", KiroCliLib.Models.KiroState.NeedsInput),
+                ("Clarification needed for this step", KiroCliLib.Models.KiroState.NeedsInput),
+                ("Please provide more details", KiroCliLib.Models.KiroState.NeedsInput),
+                ("Waiting for input from user", KiroCliLib.Models.KiroState.NeedsInput)
             };
 
             var phaseMarkers = new[]
             {
-                ("Starting research phase", Models.KiroState.ResearchPhase),
-                ("Researching phase begins", Models.KiroState.ResearchPhase),
-                ("Planning phase started", Models.KiroState.PlanPhase),
-                ("Creating plan for feature", Models.KiroState.PlanPhase),
-                ("Implementing feature-xyz", Models.KiroState.ImplementPhase),
-                ("Implementation phase in progress", Models.KiroState.ImplementPhase),
-                ("Running tests now", Models.KiroState.TestPhase),
-                ("Testing phase started", Models.KiroState.TestPhase)
+                ("Starting research phase", KiroCliLib.Models.KiroState.ResearchPhase),
+                ("Researching phase begins", KiroCliLib.Models.KiroState.ResearchPhase),
+                ("Planning phase started", KiroCliLib.Models.KiroState.PlanPhase),
+                ("Creating plan for feature", KiroCliLib.Models.KiroState.PlanPhase),
+                ("Implementing feature-xyz", KiroCliLib.Models.KiroState.ImplementPhase),
+                ("Implementation phase in progress", KiroCliLib.Models.KiroState.ImplementPhase),
+                ("Running tests now", KiroCliLib.Models.KiroState.TestPhase),
+                ("Testing phase started", KiroCliLib.Models.KiroState.TestPhase)
             };
 
             var allMarkers = completionMarkers
@@ -182,7 +182,7 @@ public class OutputParserTests
                 {
                     Line = $"Created: {path}",
                     ExpectedPath = path,
-                    ExpectedType = Models.FileChangeType.Created
+                    ExpectedType = KiroCliLib.Models.FileChangeType.Created
                 });
 
             var modifiedGen = Gen.Elements(paths)
@@ -190,7 +190,7 @@ public class OutputParserTests
                 {
                     Line = $"Modified: {path}",
                     ExpectedPath = path,
-                    ExpectedType = Models.FileChangeType.Modified
+                    ExpectedType = KiroCliLib.Models.FileChangeType.Modified
                 });
 
             var writingGen = Gen.Elements(paths)
@@ -198,7 +198,7 @@ public class OutputParserTests
                 {
                     Line = $"Writing to {path}",
                     ExpectedPath = path,
-                    ExpectedType = Models.FileChangeType.Modified
+                    ExpectedType = KiroCliLib.Models.FileChangeType.Modified
                 });
 
             return Gen.OneOf(createdGen, modifiedGen, writingGen).ToArbitrary();

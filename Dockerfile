@@ -10,6 +10,7 @@ WORKDIR /src
 
 # Copy solution and project files first for layer caching
 COPY KiroCliPoc.sln ./
+COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
 COPY src/KiroCliPoc/KiroCliPoc.csproj src/KiroCliPoc/
 COPY tests/KiroCliPoc.Tests/KiroCliPoc.Tests.csproj tests/KiroCliPoc.Tests/
 RUN dotnet restore

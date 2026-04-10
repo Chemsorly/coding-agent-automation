@@ -1,4 +1,4 @@
-using KiroCliPoc.Models;
+using KiroCliLib.Models;
 
 namespace KiroCliPoc.TestScenarios;
 
@@ -13,7 +13,7 @@ public static class TestScenarios
     /// <summary>
     /// A simple "Hello World" scenario with a follow-up question.
     /// </summary>
-    public static Models.ExecutionContext HelloWorld => new()
+    public static KiroCliLib.Models.ExecutionContext HelloWorld => new()
     {
         Prompts = new List<string>
         {
@@ -28,7 +28,7 @@ public static class TestScenarios
     /// <summary>
     /// A scenario that asks Kiro to analyze the current directory and provide insights.
     /// </summary>
-    public static Models.ExecutionContext AnalyzeDirectory => new()
+    public static KiroCliLib.Models.ExecutionContext AnalyzeDirectory => new()
     {
         Prompts = new List<string>
         {
@@ -43,7 +43,7 @@ public static class TestScenarios
     /// <summary>
     /// A scenario that demonstrates file creation with follow-up verification.
     /// </summary>
-    public static Models.ExecutionContext CreateFile => new()
+    public static KiroCliLib.Models.ExecutionContext CreateFile => new()
     {
         Prompts = new List<string>
         {

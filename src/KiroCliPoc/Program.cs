@@ -1,6 +1,6 @@
-﻿using KiroCliPoc.Configuration;
-using KiroCliPoc.Core;
-using KiroCliPoc.Models;
+﻿using KiroCliLib.Configuration;
+using KiroCliLib.Core;
+using KiroCliLib.Models;
 using Serilog;
 using Serilog.Events;
 
@@ -123,7 +123,7 @@ public class Program
         }
     }
 
-    private static void ConfigureSerilog(Configuration.Configuration config)
+    private static void ConfigureSerilog(KiroCliLib.Configuration.Configuration config)
     {
         var logConfig = new LoggerConfiguration()
             .MinimumLevel.Is(config.LogLevel)

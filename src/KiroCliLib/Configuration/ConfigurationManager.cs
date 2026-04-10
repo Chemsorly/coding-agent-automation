@@ -1,8 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Serilog.Events;
 
-namespace KiroCliPoc.Configuration;
+namespace KiroCliLib.Configuration;
 
 /// <summary>
 /// JSON converter for TimeSpan that handles "HH:MM:SS" format strings.
@@ -26,22 +25,12 @@ internal sealed class TimeSpanConverter : JsonConverter<TimeSpan>
 /// </summary>
 public static class ConfigurationManager
 {
-    /// <summary>
-    /// Loads configuration from a JSON file asynchronously.
-    /// If the file doesn't exist or is invalid, returns default configuration.
-    /// </summary>
-    /// <param name="configPath">Path to the configuration file. If null, uses default path.</param>
-    /// <param name="cancellationToken">Cancellation token for async operation.</param>
-    /// <returns>A Configuration object with values from the file or defaults.</returns>
     public static async Task<Configuration> LoadAsync(string? configPath = null, CancellationToken cancellationToken = default)
     {
         var path = configPath ?? "config/appsettings.json";
 
         if (!File.Exists(path))
-        {
-            // Return default configuration if file doesn't exist
             return new Configuration();
-        }
 
         try
         {
@@ -73,20 +62,12 @@ public static class ConfigurationManager
         }
     }
 
-    /// <summary>
-    /// Merges configuration from a file with command-line arguments.
-    /// Command-line arguments take precedence over file configuration.
-    /// </summary>
-    /// <param name="fileConfig">Configuration loaded from file.</param>
-    /// <param name="cliArgs">Command-line arguments.</param>
-    /// <returns>A merged Configuration object.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when fileConfig or cliArgs is null.</exception>
     public static Configuration Merge(Configuration fileConfig, CommandLineArgs cliArgs)
     {
         ArgumentNullException.ThrowIfNull(fileConfig);
         ArgumentNullException.ThrowIfNull(cliArgs);
 
-        var merged = new Configuration
+        return new Configuration
         {
             KiroCliPath = fileConfig.KiroCliPath,
             UseWsl = fileConfig.UseWsl,
@@ -96,7 +77,5 @@ public static class ConfigurationManager
             LogLevel = cliArgs.LogLevel ?? fileConfig.LogLevel,
             LogFilePath = fileConfig.LogFilePath
         };
-
-        return merged;
     }
 }
