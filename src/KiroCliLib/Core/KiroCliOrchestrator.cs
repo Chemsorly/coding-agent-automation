@@ -7,7 +7,7 @@ namespace KiroCliLib.Core;
 /// <summary>
 /// Orchestrates the complete Kiro CLI execution workflow.
 /// </summary>
-public class KiroCliOrchestrator
+public class KiroCliOrchestrator : IKiroCliOrchestrator
 {
     private readonly Configuration.Configuration _config;
     private readonly CallbackHandler _callbackHandler;
@@ -23,7 +23,7 @@ public class KiroCliOrchestrator
         _logger = logger;
     }
 
-    public async Task<int> ExecutePromptAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken)
+    public async Task<int> ExecutePromptAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken, Action<string>? onOutputLine = null)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(workspaceDirectory);
@@ -32,7 +32,7 @@ public class KiroCliOrchestrator
         var outputParser = new OutputParser();
         var fileSystemMonitor = new FileSystemMonitor();
 
-        processWrapper.OutputReceived += (_, line) => { _logger.Information("Kiro: {Line}", line); outputParser.ProcessLine(line); };
+        processWrapper.OutputReceived += (_, line) => { _logger.Information("Kiro: {Line}", line); outputParser.ProcessLine(line); onOutputLine?.Invoke(line); };
         processWrapper.ErrorReceived += (_, line) => { _logger.Debug("Kiro (stderr): {Line}", line); outputParser.ProcessLine(line); };
         outputParser.StateChanged += (_, newState) =>
         {
@@ -61,6 +61,7 @@ public class KiroCliOrchestrator
                 State = KiroState.Completed,
                 Message = fileChanges.Count > 0 ? $"{fileChanges.Count} file(s) changed" : "Execution completed successfully",
                 Files = fileChanges.Select(fc => fc.Path).ToList(),
+                FileChanges = fileChanges,
                 TestResults = outputParser.TestResults,
                 ExitCode = exitCode
             });
