@@ -48,7 +48,8 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 .message-assistant { background: var(--assistant-bg); border-left: 3px solid var(--success); }
 .message-system { background: var(--system-bg); border-left: 3px solid var(--warning); }
 
-.message-role { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; }
+.message-role { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+.message-timestamp { font-weight: 400; text-transform: none; font-size: 0.7rem; opacity: 0.7; }
 .message-content pre { white-space: pre-wrap; word-wrap: break-word; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.875rem; line-height: 1.5; color: var(--text); background: none; margin: 0; }
 
 .streaming-indicator { color: var(--accent-light); animation: blink 1s step-end infinite; }

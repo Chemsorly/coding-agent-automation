@@ -21,7 +21,7 @@ COPY . .
 RUN dotnet publish src/KiroWebUI/KiroWebUI.csproj -c Release -o /app/publish
 
 # Stage 2: Runtime (ASP.NET for Blazor Server)
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS runtime
 
 # Install dependencies for Kiro CLI (curl, unzip, ca-certificates)
 RUN apt-get update && \

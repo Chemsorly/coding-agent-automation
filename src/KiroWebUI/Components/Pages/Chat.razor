@@ -19,7 +19,10 @@
         @foreach (var message in ExecutionService.Messages)
         {
             <div class="message message-@message.Role.ToString().ToLowerInvariant()">
-                <div class="message-role">@(message.Role == KiroWebUI.Models.ChatMessageRole.User ? "You" : message.Role == KiroWebUI.Models.ChatMessageRole.Assistant ? "Kiro" : "System")</div>
+                <div class="message-role">
+                    @(message.Role == KiroWebUI.Models.ChatMessageRole.User ? "You" : message.Role == KiroWebUI.Models.ChatMessageRole.Assistant ? "Kiro" : "System")
+                    <span class="message-timestamp">@message.Timestamp.ToLocalTime().ToString("h:mm tt")</span>
+                </div>
                 <div class="message-content">
                     <pre>@message.Content</pre>
                 </div>
