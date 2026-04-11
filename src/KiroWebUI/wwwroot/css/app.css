@@ -21,9 +21,38 @@
 
 html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); }
 
-.app-container { height: 100vh; display: flex; flex-direction: column; }
+/* Layout */
+.app-layout { display: flex; height: 100vh; }
 
-.chat-container { display: flex; flex-direction: column; height: 100vh; max-width: 900px; margin: 0 auto; width: 100%; }
+.sidebar {
+    width: 200px; min-width: 200px; background: var(--surface); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; padding: 0;
+}
+.sidebar-brand {
+    padding: 16px 20px; font-size: 1.25rem; font-weight: 700; color: var(--accent-light);
+    border-bottom: 1px solid var(--border);
+}
+.sidebar-link {
+    display: flex; align-items: center; gap: 10px; padding: 12px 20px;
+    color: var(--text-muted); text-decoration: none; font-size: 0.9rem; font-weight: 500;
+    transition: background 0.15s, color 0.15s; border-left: 3px solid transparent;
+}
+.sidebar-link:hover { background: var(--surface-alt); color: var(--text); }
+.sidebar-link.active { background: var(--surface-alt); color: var(--accent-light); border-left-color: var(--accent); }
+.sidebar-icon { font-size: 1.1rem; width: 24px; text-align: center; }
+
+.main-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+
+.chat-container { display: flex; flex-direction: column; height: 100%; max-width: 900px; margin: 0 auto; width: 100%; }
+
+/* Placeholder pages */
+.placeholder-page {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; color: var(--text-muted); gap: 12px;
+}
+.placeholder-page .placeholder-icon { font-size: 3rem; }
+.placeholder-page h2 { font-size: 1.5rem; font-weight: 600; color: var(--text); }
+.placeholder-page p { font-size: 0.9rem; }
 
 .chat-header {
     display: flex; align-items: center; justify-content: space-between;
