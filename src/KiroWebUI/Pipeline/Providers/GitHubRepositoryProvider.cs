@@ -77,6 +77,7 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
             var cloneUrl = $"{cloneBaseUrl.TrimEnd('/')}/{_owner}/{_repo}.git";
             var options = new CloneOptions
             {
+                BranchName = _baseBranch,
                 FetchOptions =
                 {
                     CredentialsProvider = (_, _, _) =>
