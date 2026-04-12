@@ -42,10 +42,14 @@ public class GitHubValidationService
             var client = CreateClient(apiUrl, token);
             var repository = await client.Repository.Get(owner, repo);
             var permissions = repository.Permissions;
-            var accessLevel = permissions.Admin ? "admin" :
-                              permissions.Push ? "write" :
-                              permissions.Pull ? "read-only" : "none";
-            return (true, $"Access confirmed: {repository.FullName} ({accessLevel})");
+
+            var permList = new List<string>();
+            if (permissions.Pull) permList.Add("read");
+            if (permissions.Push) permList.Add("write");
+            if (permissions.Admin) permList.Add("admin");
+            var permSummary = permList.Count > 0 ? string.Join(", ", permList) : "none";
+
+            return (true, $"✅ {repository.FullName} — permissions: {permSummary}");
         }
         catch (NotFoundException)
         {

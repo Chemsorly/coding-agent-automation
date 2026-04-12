@@ -50,7 +50,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf \
 WORKDIR /app
 
 # Pre-create config directory with correct ownership (before volume mount)
-RUN mkdir -p /app/config/pipeline/providers/issue /app/config/pipeline/providers/repository /app/config/pipeline/providers/agent
+RUN mkdir -p /app/config/pipeline/providers/issue /app/config/pipeline/providers/repository /app/config/pipeline/providers/agent /app/config/pipeline/runs
 
 # Configure ASP.NET to listen on port 5000
 ENV ASPNETCORE_URLS=http://+:5000

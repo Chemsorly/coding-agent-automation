@@ -61,7 +61,7 @@ public partial class QualityGateValidator
 
     private async Task<GateResult> RunCompilationGateAsync(string workspacePath, CancellationToken ct)
     {
-        var (exitCode, stdout, stderr) = await RunProcessAsync("dotnet", "build --no-restore", workspacePath, ct);
+        var (exitCode, stdout, stderr) = await RunProcessAsync("dotnet", "build", workspacePath, ct);
 
         return new GateResult
         {
@@ -75,7 +75,7 @@ public partial class QualityGateValidator
 
     private async Task<GateResult> RunTestGateAsync(string workspacePath, CancellationToken ct)
     {
-        var (exitCode, stdout, stderr) = await RunProcessAsync("dotnet", "test --no-build", workspacePath, ct);
+        var (exitCode, stdout, stderr) = await RunProcessAsync("dotnet", "test", workspacePath, ct);
 
         var (passed, failed, skipped) = ParseTestCounts(stdout);
 

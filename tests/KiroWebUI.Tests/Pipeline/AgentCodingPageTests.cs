@@ -40,7 +40,8 @@ public class AgentCodingPageTests
             _mockFactory.Object,
             new IssueDescriptionParser(),
             _mockValidator.Object,
-            _mockLogger.Object);
+            _mockLogger.Object,
+            runsDirectory: Path.Combine(Path.GetTempPath(), $"test-runs-{Guid.NewGuid()}"));
     }
 
     private void SetupDefaultMocks()

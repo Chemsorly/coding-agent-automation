@@ -128,6 +128,7 @@ public class PipelineStateTransitionPropertyTests
             mockFactory.Object,
             new IssueDescriptionParser(),
             mockValidator.Object,
-            mockLogger.Object);
+            mockLogger.Object,
+            runsDirectory: Path.Combine(Path.GetTempPath(), $"test-runs-{Guid.NewGuid()}"));
     }
 }

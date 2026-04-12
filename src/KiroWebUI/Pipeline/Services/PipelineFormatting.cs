@@ -12,15 +12,17 @@ namespace KiroWebUI.Pipeline.Services;
 public static partial class PipelineFormatting
 {
     /// <summary>
-    /// Generates a branch name from issue number and title.
-    /// Pattern: feature/auto-{issueNumber}-{slug}
+    /// Generates a branch name from issue number, title, and run ID.
+    /// Pattern: feature/auto-{issueNumber}-{slug}-{shortRunId}
+    /// The short run ID suffix ensures re-runs for the same issue don't collide with existing remote branches.
     /// </summary>
-    public static string GenerateBranchName(string issueNumber, string title)
+    public static string GenerateBranchName(string issueNumber, string title, string? runId = null)
     {
         var slug = GenerateSlug(title);
+        var suffix = runId != null ? $"-{runId[..8]}" : "";
         return string.IsNullOrEmpty(slug)
-            ? $"feature/auto-{issueNumber}"
-            : $"feature/auto-{issueNumber}-{slug}";
+            ? $"feature/auto-{issueNumber}{suffix}"
+            : $"feature/auto-{issueNumber}-{slug}{suffix}";
     }
 
     /// <summary>

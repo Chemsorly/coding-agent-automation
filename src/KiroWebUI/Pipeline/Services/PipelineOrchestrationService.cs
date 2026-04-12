@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
 using Serilog.Context;
@@ -18,6 +19,12 @@ public class PipelineOrchestrationService
     private readonly Serilog.ILogger _logger;
     private readonly SemaphoreSlim _pipelineLock = new(1, 1);
     private readonly List<PipelineRunSummary> _runHistory = new();
+    private readonly string _runsDirectory;
+
+    // Matches both \x1B[...m (standard) and bare [38;5;...m (some CLI tools omit ESC byte)
+    private static readonly Regex AnsiRegex = new(
+        @"\x1B\[[0-9;]*[A-Za-z]|\x1B\].*?\x07|\[(?:\d+;)*\d*[A-Za-z]|\[K",
+        RegexOptions.Compiled);
 
     private CancellationTokenSource? _cancellationTokenSource;
     private IAgentProvider? _activeAgentProvider;
@@ -45,7 +52,8 @@ public class PipelineOrchestrationService
         IProviderFactory providerFactory,
         IssueDescriptionParser issueParser,
         QualityGateValidator qualityGateValidator,
-        Serilog.ILogger logger)
+        Serilog.ILogger logger,
+        string runsDirectory = "config/pipeline/runs")
     {
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
@@ -58,6 +66,10 @@ public class PipelineOrchestrationService
         _issueParser = issueParser;
         _qualityGateValidator = qualityGateValidator;
         _logger = logger;
+        _runsDirectory = runsDirectory;
+
+        // Load persisted run history
+        LoadRunHistory();
     }
 
     /// <summary>
@@ -199,7 +211,7 @@ public class PipelineOrchestrationService
             try
             {
                 var branchName = PipelineFormatting.GenerateBranchName(
-                    run.IssueIdentifier, issue.Title);
+                    run.IssueIdentifier, issue.Title, run.RunId);
                 var createdBranch = await _activeRepoProvider.CreateBranchAsync(
                     workspacePath, branchName, ct);
                 run.BranchName = createdBranch;
@@ -231,12 +243,13 @@ public class PipelineOrchestrationService
                 var agentResult = await _activeAgentProvider!.ExecuteAsync(
                     agentRequest, ct, line =>
                     {
-                        run.OutputLines.Enqueue(line);
-                        OnOutputLine?.Invoke(line);
+                        var clean = StripAnsi(line);
+                        run.OutputLines.Enqueue(clean);
+                        OnOutputLine?.Invoke(clean);
                     });
 
                 var outputSummary = agentResult.OutputLines.Count > 0
-                    ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
+                    ? StripAnsi(string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10)))
                     : "(no output)";
 
                 run.ChatHistory.Enqueue(new ChatEntry
@@ -316,12 +329,13 @@ public class PipelineOrchestrationService
                 message, run.WorkspacePath!, _activeConfig!.AgentTimeout, linkedCt,
                 line =>
                 {
-                    run.OutputLines.Enqueue(line);
-                    OnOutputLine?.Invoke(line);
+                    var clean = StripAnsi(line);
+                    run.OutputLines.Enqueue(clean);
+                    OnOutputLine?.Invoke(clean);
                 });
 
             var outputSummary = agentResult.OutputLines.Count > 0
-                ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
+                ? StripAnsi(string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10)))
                 : "(no output)";
 
             run.ChatHistory.Enqueue(new ChatEntry
@@ -583,7 +597,7 @@ public class PipelineOrchestrationService
 
     private void AddRunToHistory(PipelineRun run)
     {
-        _runHistory.Add(new PipelineRunSummary
+        var summary = new PipelineRunSummary
         {
             RunId = run.RunId,
             IssueIdentifier = run.IssueIdentifier,
@@ -593,8 +607,64 @@ public class PipelineOrchestrationService
             CompletedAt = run.CompletedAt,
             RetryCount = run.RetryCount,
             PullRequestUrl = run.PullRequestUrl
-        });
+        };
+        _runHistory.Add(summary);
+        PersistRunSummary(summary);
     }
+
+    private void PersistRunSummary(PipelineRunSummary summary)
+    {
+        try
+        {
+            if (!Directory.Exists(_runsDirectory))
+                Directory.CreateDirectory(_runsDirectory);
+
+            var path = Path.Combine(_runsDirectory, $"{summary.RunId}.json");
+            var json = System.Text.Json.JsonSerializer.Serialize(summary, _jsonOptions);
+            File.WriteAllText(path, json);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to persist run summary {RunId}", summary.RunId);
+        }
+    }
+
+    private void LoadRunHistory()
+    {
+        try
+        {
+            if (!Directory.Exists(_runsDirectory))
+                return;
+
+            foreach (var file in Directory.GetFiles(_runsDirectory, "*.json").OrderBy(f => f))
+            {
+                try
+                {
+                    var json = File.ReadAllText(file);
+                    var summary = System.Text.Json.JsonSerializer.Deserialize<PipelineRunSummary>(json, _jsonOptions);
+                    if (summary != null)
+                        _runHistory.Add(summary);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to load run summary from {File}", file);
+                }
+            }
+
+            _logger.Information("Loaded {Count} pipeline run(s) from history", _runHistory.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to load run history");
+        }
+    }
+
+    private static readonly System.Text.Json.JsonSerializerOptions _jsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
 
     private static string BuildQualityGateErrorSummary(QualityGateReport report)
     {
@@ -609,4 +679,6 @@ public class PipelineOrchestrationService
             errors.Add($"Security: {report.SecurityScan.Details}");
         return string.Join(Environment.NewLine, errors);
     }
+
+    private static string StripAnsi(string input) => AnsiRegex.Replace(input, string.Empty);
 }

@@ -68,6 +68,7 @@ public class GitHubIssueProvider : IIssueProvider
         var issues = await _client.Issue.GetAllForRepository(_owner, _repo, request);
 
         return issues
+            .Where(i => i.PullRequest == null) // PRs show up as issues in GitHub API — filter them out
             .Select(MapToIssueSummary)
             .ToList()
             .AsReadOnly();
