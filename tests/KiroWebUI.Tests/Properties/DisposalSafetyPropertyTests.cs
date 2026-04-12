@@ -6,7 +6,7 @@ using Moq;
 using Xunit;
 using ILogger = Serilog.ILogger;
 
-namespace KiroCliPoc.Tests.Properties;
+namespace KiroWebUI.Tests.Properties;
 
 /// <summary>
 /// Property 10: Disposal Safety

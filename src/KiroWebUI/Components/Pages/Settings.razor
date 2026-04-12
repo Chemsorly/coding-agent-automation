@@ -1,8 +1,807 @@
 @page "/settings"
 @rendermode InteractiveServer
+@using KiroWebUI.Pipeline.Interfaces
+@using KiroWebUI.Pipeline.Models
+@using KiroWebUI.Pipeline.Services
+@inject IConfigurationStore ConfigStore
+@inject GitHubValidationService GitHubValidator
 
-<div class="placeholder-page">
-    <div class="placeholder-icon">⚙️</div>
-    <h2>Settings</h2>
-    <p>Coming soon.</p>
+<div class="settings-page">
+    <header class="settings-header">
+        <h1>Settings</h1>
+    </header>
+
+    @if (!string.IsNullOrEmpty(_statusMessage))
+    {
+        <div class="settings-status @(_isError ? "status-error" : "status-success")">@_statusMessage</div>
+    }
+
+    <div class="settings-sections">
+        <!-- Issue Providers Section -->
+        <section class="settings-section">
+            <h2>Issue Providers</h2>
+            <div class="provider-list">
+                @foreach (var p in _issueProviders)
+                {
+                    <div class="provider-card">
+                        <div class="provider-info">
+                            <strong>@p.DisplayName</strong>
+                            <span class="provider-type">@p.ProviderType</span>
+                            <span class="provider-detail">@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "")</span>
+                        </div>
+                        <div class="provider-actions">
+                            <button class="btn-edit" @onclick="() => EditIssueProvider(p)">Edit</button>
+                            <button class="btn-delete" @onclick="() => DeleteProvider(p.Id, ProviderKind.Issue)">Delete</button>
+                        </div>
+                    </div>
+                }
+            </div>
+            @if (_showIssueForm)
+            {
+                <div class="provider-form-row">
+                    <div class="provider-form">
+                        <h3>@(_editingIssueProvider != null ? "Edit" : "Add") Issue Provider</h3>
+                        <div class="form-group">
+                            <label>Provider Type</label>
+                            <select @bind="_issueForm.ProviderType"><option value="GitHub">GitHub</option></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Display Name</label>
+                            <input type="text" @bind="_issueForm.DisplayName" placeholder="My GitHub Issues" />
+                        </div>
+                        <div class="form-group">
+                            <label>API URL</label>
+                            <input type="text" @bind="_issueForm.ApiUrl" placeholder="https://api.github.com" />
+                        </div>
+                        <div class="form-group">
+                            <label>Token</label>
+                            <div class="input-with-action">
+                                <input type="password" @bind="_issueForm.Token" placeholder="ghp_..." />
+                                <button class="btn-edit" @onclick="FetchIssueRepos" disabled="@_issueLoadingRepos">
+                                    @(_issueLoadingRepos ? "Loading..." : "Fetch Repos")
+                                </button>
+                            </div>
+                        </div>
+                        @if (_issueAvailableRepos.Count > 0)
+                        {
+                            <div class="form-group">
+                                <label>Repository</label>
+                                <select @bind="_issueSelectedRepo">
+                                    <option value="">-- Select Repository --</option>
+                                    @foreach (var r in _issueAvailableRepos)
+                                    {
+                                        <option value="@r.FullName">@r.FullName</option>
+                                    }
+                                </select>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="form-group">
+                                <label>Owner</label>
+                                <input type="text" @bind="_issueForm.Owner" placeholder="owner" />
+                            </div>
+                            <div class="form-group">
+                                <label>Repository</label>
+                                <input type="text" @bind="_issueForm.Repo" placeholder="repo" />
+                            </div>
+                        }
+                        @if (!string.IsNullOrEmpty(_issueValidationMessage))
+                        {
+                            <div class="settings-status @(_issueValidationSuccess ? "status-success" : "status-error")">@_issueValidationMessage</div>
+                        }
+                        <div class="form-buttons">
+                            <button class="btn-save" @onclick="SaveIssueProvider" disabled="@_issueSaving">
+                                @(_issueSaving ? "Validating..." : "Save")
+                            </button>
+                            <button class="btn-cancel" @onclick="() => { _showIssueForm = false; _issueAvailableRepos.Clear(); _issueValidationMessage = null; }">Cancel</button>
+                        </div>
+                    </div>
+                    <div class="provider-help">
+                        <h4>🔑 GitHub Token Setup</h4>
+                        <p>Create a <strong>fine-grained personal access token</strong> at
+                            <a href="https://github.com/settings/tokens?type=beta" target="_blank">github.com/settings/tokens</a>.</p>
+                        <p class="help-heading">Required permissions:</p>
+                        <ul>
+                            <li><strong>Issues: Read-only</strong> — fetch and list issues</li>
+                        </ul>
+                        <p class="help-heading">Fields:</p>
+                        <ul>
+                            <li><strong>API URL</strong> — use <code>https://api.github.com</code> for github.com, or your GitHub Enterprise URL</li>
+                            <li><strong>Owner</strong> — the GitHub user or organization (e.g. <code>myorg</code>)</li>
+                            <li><strong>Repository</strong> — the repo name (e.g. <code>my-project</code>)</li>
+                        </ul>
+                        <p class="help-tip">💡 You can reuse the same token for the Repository Provider if you add write permissions.</p>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <button class="btn-add" @onclick="ShowAddIssueProvider">+ Add Issue Provider</button>
+            }
+        </section>
+
+        <!-- Repository Providers Section -->
+        <section class="settings-section">
+            <h2>Repository Providers</h2>
+            <div class="provider-list">
+                @foreach (var p in _repoProviders)
+                {
+                    <div class="provider-card">
+                        <div class="provider-info">
+                            <strong>@p.DisplayName</strong>
+                            <span class="provider-type">@p.ProviderType</span>
+                            <span class="provider-detail">@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "") → @p.Settings.GetValueOrDefault("baseBranch", "main")</span>
+                        </div>
+                        <div class="provider-actions">
+                            <button class="btn-edit" @onclick="() => EditRepoProvider(p)">Edit</button>
+                            <button class="btn-delete" @onclick="() => DeleteProvider(p.Id, ProviderKind.Repository)">Delete</button>
+                        </div>
+                    </div>
+                }
+            </div>
+            @if (_showRepoForm)
+            {
+                <div class="provider-form-row">
+                    <div class="provider-form">
+                        <h3>@(_editingRepoProvider != null ? "Edit" : "Add") Repository Provider</h3>
+                        <div class="form-group">
+                            <label>Provider Type</label>
+                            <select @bind="_repoForm.ProviderType"><option value="GitHub">GitHub</option></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Display Name</label>
+                            <input type="text" @bind="_repoForm.DisplayName" placeholder="My GitHub Repo" />
+                        </div>
+                        <div class="form-group">
+                            <label>API URL</label>
+                            <input type="text" @bind="_repoForm.ApiUrl" placeholder="https://api.github.com" />
+                        </div>
+                        <div class="form-group">
+                            <label>Token</label>
+                            <div class="input-with-action">
+                                <input type="password" @bind="_repoForm.Token" placeholder="ghp_..." />
+                                <button class="btn-edit" @onclick="FetchRepoRepos" disabled="@_repoLoadingRepos">
+                                    @(_repoLoadingRepos ? "Loading..." : "Fetch Repos")
+                                </button>
+                            </div>
+                        </div>
+                        @if (_repoAvailableRepos.Count > 0)
+                        {
+                            <div class="form-group">
+                                <label>Repository</label>
+                                <select @bind="_repoSelectedRepo">
+                                    <option value="">-- Select Repository --</option>
+                                    @foreach (var r in _repoAvailableRepos)
+                                    {
+                                        <option value="@r.FullName">@r.FullName</option>
+                                    }
+                                </select>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="form-group">
+                                <label>Owner</label>
+                                <input type="text" @bind="_repoForm.Owner" placeholder="owner" />
+                            </div>
+                            <div class="form-group">
+                                <label>Repository</label>
+                                <input type="text" @bind="_repoForm.Repo" placeholder="repo" />
+                            </div>
+                        }
+                        <div class="form-group">
+                            <label>Base Branch</label>
+                            <input type="text" @bind="_repoForm.BaseBranch" placeholder="main" />
+                        </div>
+                        @if (!string.IsNullOrEmpty(_repoValidationMessage))
+                        {
+                            <div class="settings-status @(_repoValidationSuccess ? "status-success" : "status-error")">@_repoValidationMessage</div>
+                        }
+                        <div class="form-buttons">
+                            <button class="btn-save" @onclick="SaveRepoProvider" disabled="@_repoSaving">
+                                @(_repoSaving ? "Validating..." : "Save")
+                            </button>
+                            <button class="btn-cancel" @onclick="() => { _showRepoForm = false; _repoAvailableRepos.Clear(); _repoValidationMessage = null; }">Cancel</button>
+                        </div>
+                    </div>
+                    <div class="provider-help">
+                        <h4>🔑 GitHub Token Setup</h4>
+                        <p>Create a <strong>fine-grained personal access token</strong> at
+                            <a href="https://github.com/settings/tokens?type=beta" target="_blank">github.com/settings/tokens</a>.</p>
+                        <p class="help-heading">Required permissions:</p>
+                        <ul>
+                            <li><strong>Contents: Read and write</strong> — clone, push branches, commit</li>
+                            <li><strong>Pull requests: Read and write</strong> — create PRs</li>
+                        </ul>
+                        <p class="help-heading">Fields:</p>
+                        <ul>
+                            <li><strong>API URL</strong> — use <code>https://api.github.com</code> for github.com, or your GitHub Enterprise URL</li>
+                            <li><strong>Owner / Repository</strong> — same as the issue provider</li>
+                            <li><strong>Base Branch</strong> — the branch PRs will target (e.g. <code>main</code>, <code>develop</code>)</li>
+                        </ul>
+                        <p class="help-tip">💡 If using a classic PAT, the <code>repo</code> scope covers everything.</p>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <button class="btn-add" @onclick="ShowAddRepoProvider">+ Add Repository Provider</button>
+            }
+        </section>
+
+        <!-- Agent Providers Section -->
+        <section class="settings-section">
+            <h2>Agent Providers</h2>
+            <div class="provider-list">
+                @foreach (var p in _agentProviders)
+                {
+                    <div class="provider-card">
+                        <div class="provider-info">
+                            <strong>@p.DisplayName</strong>
+                            <span class="provider-type">@p.ProviderType</span>
+                            <span class="provider-detail">@p.Settings.GetValueOrDefault("executablePath", "") · @(p.Settings.GetValueOrDefault("timeout", "30"))min</span>
+                        </div>
+                        <div class="provider-actions">
+                            <button class="btn-edit" @onclick="() => EditAgentProvider(p)">Edit</button>
+                            <button class="btn-delete" @onclick="() => DeleteProvider(p.Id, ProviderKind.Agent)">Delete</button>
+                        </div>
+                    </div>
+                }
+            </div>
+            @if (_showAgentForm)
+            {
+                <div class="provider-form-row">
+                    <div class="provider-form">
+                        <h3>@(_editingAgentProvider != null ? "Edit" : "Add") Agent Provider</h3>
+                        <div class="form-group">
+                            <label>Provider Type</label>
+                            <select @bind="_agentForm.ProviderType"><option value="KiroCli">KiroCli</option></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Display Name</label>
+                            <input type="text" @bind="_agentForm.DisplayName" placeholder="Kiro CLI Agent" />
+                        </div>
+                        <div class="form-group">
+                            <label>Executable Path</label>
+                            <input type="text" @bind="_agentForm.ExecutablePath" placeholder="/root/.local/bin/kiro-cli" />
+                        </div>
+                        <div class="form-group">
+                            <label>Timeout (minutes)</label>
+                            <input type="number" @bind="_agentForm.TimeoutMinutes" min="1" />
+                        </div>
+                        <div class="form-group">
+                            <label>Agent Name</label>
+                            <input type="text" @bind="_agentForm.AgentName" placeholder="default" />
+                        </div>
+                        <div class="form-buttons">
+                            <button class="btn-save" @onclick="SaveAgentProvider">Save</button>
+                            <button class="btn-cancel" @onclick="() => _showAgentForm = false">Cancel</button>
+                        </div>
+                    </div>
+                    <div class="provider-help">
+                        <h4>🤖 Kiro CLI Setup</h4>
+                        <p>The agent provider runs the Kiro CLI to generate code. Kiro CLI must be installed and authenticated separately.</p>
+                        <p class="help-heading">Prerequisites:</p>
+                        <ul>
+                            <li>Install Kiro CLI — it's bundled with the Docker image, or install manually</li>
+                            <li>Run <code>kiro-cli login</code> once to authenticate (device code flow)</li>
+                        </ul>
+                        <p class="help-heading">Fields:</p>
+                        <ul>
+                            <li><strong>Executable Path</strong> — full path to the kiro-cli binary (e.g. <code>/home/ubuntu/.local/bin/kiro-cli</code>)</li>
+                            <li><strong>Timeout</strong> — max minutes per agent invocation before it's killed</li>
+                            <li><strong>Agent Name</strong> — leave as <code>default</code> unless you have a custom agent configured</li>
+                        </ul>
+                        <p class="help-tip">💡 Auth tokens are stored in <code>~/.local/share/kiro-cli/</code> and persist across runs when using a Docker volume.</p>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <button class="btn-add" @onclick="ShowAddAgentProvider">+ Add Agent Provider</button>
+            }
+        </section>
+
+        <!-- Pipeline Configuration Section -->
+        <section class="settings-section">
+            <h2>Pipeline Configuration</h2>
+            <div class="provider-form">
+                <div class="form-group">
+                    <label>Max Retries</label>
+                    <input type="number" @bind="_pipelineConfig.MaxRetries" min="0" max="10" />
+                </div>
+                <div class="form-group">
+                    <label>Agent Timeout (minutes)</label>
+                    <input type="number" @bind="_agentTimeoutMinutes" min="1" />
+                </div>
+                <div class="form-group">
+                    <label>Min Coverage Threshold (%)</label>
+                    <input type="number" @bind="_pipelineConfig.MinCoverageThreshold" min="0" max="100" step="0.1" />
+                </div>
+                <div class="form-group form-checkbox">
+                    <label>
+                        <input type="checkbox" @bind="_pipelineConfig.SecurityScanEnabled" />
+                        Security Scan Enabled
+                    </label>
+                </div>
+                <div class="form-buttons">
+                    <button class="btn-save" @onclick="SavePipelineConfig">Save Pipeline Configuration</button>
+                </div>
+            </div>
+        </section>
+    </div>
 </div>
+
+@code {
+    private List<ProviderConfig> _issueProviders = new();
+    private List<ProviderConfig> _repoProviders = new();
+    private List<ProviderConfig> _agentProviders = new();
+    private PipelineConfigForm _pipelineConfig = new();
+    private int _agentTimeoutMinutes = 30;
+
+    private string? _statusMessage;
+    private bool _isError;
+
+    // Issue provider form
+    private bool _showIssueForm;
+    private ProviderConfig? _editingIssueProvider;
+    private IssueProviderForm _issueForm = new();
+    private List<(string FullName, string Owner, string Name)> _issueAvailableRepos = new();
+    private string _issueSelectedRepo = "";
+    private bool _issueLoadingRepos;
+    private string? _issueValidationMessage;
+    private bool _issueValidationSuccess;
+    private bool _issueSaving;
+
+    // Repo provider form
+    private bool _showRepoForm;
+    private ProviderConfig? _editingRepoProvider;
+    private RepoProviderForm _repoForm = new();
+    private List<(string FullName, string Owner, string Name)> _repoAvailableRepos = new();
+    private string _repoSelectedRepo = "";
+    private bool _repoLoadingRepos;
+    private string? _repoValidationMessage;
+    private bool _repoValidationSuccess;
+    private bool _repoSaving;
+
+    // Agent provider form
+    private bool _showAgentForm;
+    private ProviderConfig? _editingAgentProvider;
+    private AgentProviderForm _agentForm = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAllData();
+    }
+
+    private async Task LoadAllData()
+    {
+        try
+        {
+            _issueProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
+            _repoProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
+            _agentProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None)).ToList();
+
+            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+            _pipelineConfig = new PipelineConfigForm
+            {
+                MaxRetries = config.MaxRetries,
+                MinCoverageThreshold = config.MinCoverageThreshold,
+                SecurityScanEnabled = config.SecurityScanEnabled
+            };
+            _agentTimeoutMinutes = (int)config.AgentTimeout.TotalMinutes;
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Failed to load settings: {ex.Message}", isError: true);
+        }
+    }
+
+    // --- Issue Provider CRUD ---
+    private void ShowAddIssueProvider()
+    {
+        _editingIssueProvider = null;
+        _issueForm = new IssueProviderForm();
+        _issueAvailableRepos.Clear();
+        _issueSelectedRepo = "";
+        _issueValidationMessage = null;
+        _showIssueForm = true;
+    }
+
+    private void EditIssueProvider(ProviderConfig p)
+    {
+        _editingIssueProvider = p;
+        _issueForm = new IssueProviderForm
+        {
+            ProviderType = p.ProviderType,
+            DisplayName = p.DisplayName,
+            ApiUrl = p.Settings.GetValueOrDefault("apiUrl", ""),
+            Token = p.Settings.GetValueOrDefault("token", ""),
+            Owner = p.Settings.GetValueOrDefault("owner", ""),
+            Repo = p.Settings.GetValueOrDefault("repo", "")
+        };
+        _showIssueForm = true;
+    }
+
+    private async Task SaveIssueProvider()
+    {
+        if (string.IsNullOrWhiteSpace(_issueForm.DisplayName))
+        {
+            _issueValidationMessage = "Display Name is required.";
+            _issueValidationSuccess = false;
+            return;
+        }
+
+        // Apply selected repo from dropdown if available
+        if (!string.IsNullOrEmpty(_issueSelectedRepo))
+        {
+            var selected = _issueAvailableRepos.FirstOrDefault(r => r.FullName == _issueSelectedRepo);
+            if (selected != default)
+            {
+                _issueForm.Owner = selected.Owner;
+                _issueForm.Repo = selected.Name;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(_issueForm.Owner) || string.IsNullOrWhiteSpace(_issueForm.Repo))
+        {
+            _issueValidationMessage = "Owner and Repository are required.";
+            _issueValidationSuccess = false;
+            return;
+        }
+
+        // Validate token and repo access
+        _issueSaving = true;
+        _issueValidationMessage = "Validating token and repository access...";
+        _issueValidationSuccess = true;
+        StateHasChanged();
+
+        var (success, message) = await GitHubValidator.ValidateRepoAccessAsync(
+            _issueForm.ApiUrl, _issueForm.Token, _issueForm.Owner, _issueForm.Repo, CancellationToken.None);
+
+        if (!success)
+        {
+            _issueValidationMessage = message;
+            _issueValidationSuccess = false;
+            _issueSaving = false;
+            return;
+        }
+
+        var config = new ProviderConfig
+        {
+            Id = _editingIssueProvider?.Id ?? Guid.NewGuid().ToString(),
+            Kind = ProviderKind.Issue,
+            ProviderType = _issueForm.ProviderType,
+            DisplayName = _issueForm.DisplayName,
+            Settings = new Dictionary<string, string>
+            {
+                ["apiUrl"] = _issueForm.ApiUrl,
+                ["token"] = _issueForm.Token,
+                ["owner"] = _issueForm.Owner,
+                ["repo"] = _issueForm.Repo
+            }
+        };
+
+        try
+        {
+            await ConfigStore.SaveProviderConfigAsync(config, CancellationToken.None);
+            _showIssueForm = false;
+            _issueAvailableRepos.Clear();
+            _issueValidationMessage = null;
+            await LoadAllData();
+            ShowStatus($"Issue provider saved. {message}");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Failed to save: {ex.Message}", isError: true);
+        }
+        finally
+        {
+            _issueSaving = false;
+        }
+    }
+
+    // --- Repo Provider CRUD ---
+    private void ShowAddRepoProvider()
+    {
+        _editingRepoProvider = null;
+        _repoForm = new RepoProviderForm();
+        _repoAvailableRepos.Clear();
+        _repoSelectedRepo = "";
+        _repoValidationMessage = null;
+        _showRepoForm = true;
+    }
+
+    private void EditRepoProvider(ProviderConfig p)
+    {
+        _editingRepoProvider = p;
+        _repoForm = new RepoProviderForm
+        {
+            ProviderType = p.ProviderType,
+            DisplayName = p.DisplayName,
+            ApiUrl = p.Settings.GetValueOrDefault("apiUrl", ""),
+            Token = p.Settings.GetValueOrDefault("token", ""),
+            Owner = p.Settings.GetValueOrDefault("owner", ""),
+            Repo = p.Settings.GetValueOrDefault("repo", ""),
+            BaseBranch = p.Settings.GetValueOrDefault("baseBranch", "main")
+        };
+        _showRepoForm = true;
+    }
+
+    private async Task SaveRepoProvider()
+    {
+        if (string.IsNullOrWhiteSpace(_repoForm.DisplayName))
+        {
+            _repoValidationMessage = "Display Name is required.";
+            _repoValidationSuccess = false;
+            return;
+        }
+
+        // Apply selected repo from dropdown if available
+        if (!string.IsNullOrEmpty(_repoSelectedRepo))
+        {
+            var selected = _repoAvailableRepos.FirstOrDefault(r => r.FullName == _repoSelectedRepo);
+            if (selected != default)
+            {
+                _repoForm.Owner = selected.Owner;
+                _repoForm.Repo = selected.Name;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(_repoForm.Owner) || string.IsNullOrWhiteSpace(_repoForm.Repo))
+        {
+            _repoValidationMessage = "Owner and Repository are required.";
+            _repoValidationSuccess = false;
+            return;
+        }
+
+        // Validate token and repo access
+        _repoSaving = true;
+        _repoValidationMessage = "Validating token and repository access...";
+        _repoValidationSuccess = true;
+        StateHasChanged();
+
+        var (success, message) = await GitHubValidator.ValidateRepoAccessAsync(
+            _repoForm.ApiUrl, _repoForm.Token, _repoForm.Owner, _repoForm.Repo, CancellationToken.None);
+
+        if (!success)
+        {
+            _repoValidationMessage = message;
+            _repoValidationSuccess = false;
+            _repoSaving = false;
+            return;
+        }
+
+        var config = new ProviderConfig
+        {
+            Id = _editingRepoProvider?.Id ?? Guid.NewGuid().ToString(),
+            Kind = ProviderKind.Repository,
+            ProviderType = _repoForm.ProviderType,
+            DisplayName = _repoForm.DisplayName,
+            Settings = new Dictionary<string, string>
+            {
+                ["apiUrl"] = _repoForm.ApiUrl,
+                ["token"] = _repoForm.Token,
+                ["owner"] = _repoForm.Owner,
+                ["repo"] = _repoForm.Repo,
+                ["baseBranch"] = _repoForm.BaseBranch
+            }
+        };
+
+        try
+        {
+            await ConfigStore.SaveProviderConfigAsync(config, CancellationToken.None);
+            _showRepoForm = false;
+            _repoAvailableRepos.Clear();
+            _repoValidationMessage = null;
+            await LoadAllData();
+            ShowStatus($"Repository provider saved. {message}");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Failed to save: {ex.Message}", isError: true);
+        }
+        finally
+        {
+            _repoSaving = false;
+        }
+    }
+
+    // --- Agent Provider CRUD ---
+    private void ShowAddAgentProvider()
+    {
+        _editingAgentProvider = null;
+        _agentForm = new AgentProviderForm();
+        _showAgentForm = true;
+    }
+
+    private void EditAgentProvider(ProviderConfig p)
+    {
+        _editingAgentProvider = p;
+        _agentForm = new AgentProviderForm
+        {
+            ProviderType = p.ProviderType,
+            DisplayName = p.DisplayName,
+            ExecutablePath = p.Settings.GetValueOrDefault("executablePath", ""),
+            TimeoutMinutes = int.TryParse(p.Settings.GetValueOrDefault("timeout", "30"), out var t) ? t : 30,
+            AgentName = p.Settings.GetValueOrDefault("agentName", "")
+        };
+        _showAgentForm = true;
+    }
+
+    private async Task SaveAgentProvider()
+    {
+        if (string.IsNullOrWhiteSpace(_agentForm.DisplayName))
+        {
+            ShowStatus("Display Name is required.", isError: true);
+            return;
+        }
+
+        var config = new ProviderConfig
+        {
+            Id = _editingAgentProvider?.Id ?? Guid.NewGuid().ToString(),
+            Kind = ProviderKind.Agent,
+            ProviderType = _agentForm.ProviderType,
+            DisplayName = _agentForm.DisplayName,
+            Settings = new Dictionary<string, string>
+            {
+                ["executablePath"] = _agentForm.ExecutablePath,
+                ["timeout"] = _agentForm.TimeoutMinutes.ToString(),
+                ["agentName"] = _agentForm.AgentName
+            }
+        };
+
+        try
+        {
+            await ConfigStore.SaveProviderConfigAsync(config, CancellationToken.None);
+            _showAgentForm = false;
+            await LoadAllData();
+            ShowStatus("Agent provider saved.");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Failed to save: {ex.Message}", isError: true);
+        }
+    }
+
+    // --- Fetch Repos ---
+    private async Task FetchIssueRepos()
+    {
+        if (string.IsNullOrWhiteSpace(_issueForm.Token))
+        {
+            _issueValidationMessage = "Enter a token first.";
+            _issueValidationSuccess = false;
+            return;
+        }
+
+        _issueLoadingRepos = true;
+        _issueValidationMessage = null;
+        StateHasChanged();
+
+        var (tokenOk, tokenMsg) = await GitHubValidator.ValidateTokenAsync(_issueForm.ApiUrl, _issueForm.Token, CancellationToken.None);
+        if (!tokenOk)
+        {
+            _issueValidationMessage = tokenMsg;
+            _issueValidationSuccess = false;
+            _issueLoadingRepos = false;
+            return;
+        }
+
+        var repos = await GitHubValidator.ListRepositoriesAsync(_issueForm.ApiUrl, _issueForm.Token, CancellationToken.None);
+        _issueAvailableRepos = repos.ToList();
+        _issueValidationMessage = $"{tokenMsg} — {repos.Count} repositories found";
+        _issueValidationSuccess = true;
+        _issueLoadingRepos = false;
+    }
+
+    private async Task FetchRepoRepos()
+    {
+        if (string.IsNullOrWhiteSpace(_repoForm.Token))
+        {
+            _repoValidationMessage = "Enter a token first.";
+            _repoValidationSuccess = false;
+            return;
+        }
+
+        _repoLoadingRepos = true;
+        _repoValidationMessage = null;
+        StateHasChanged();
+
+        var (tokenOk, tokenMsg) = await GitHubValidator.ValidateTokenAsync(_repoForm.ApiUrl, _repoForm.Token, CancellationToken.None);
+        if (!tokenOk)
+        {
+            _repoValidationMessage = tokenMsg;
+            _repoValidationSuccess = false;
+            _repoLoadingRepos = false;
+            return;
+        }
+
+        var repos = await GitHubValidator.ListRepositoriesAsync(_repoForm.ApiUrl, _repoForm.Token, CancellationToken.None);
+        _repoAvailableRepos = repos.ToList();
+        _repoValidationMessage = $"{tokenMsg} — {repos.Count} repositories found";
+        _repoValidationSuccess = true;
+        _repoLoadingRepos = false;
+    }
+
+    // --- Delete ---
+    private async Task DeleteProvider(string id, ProviderKind kind)
+    {
+        try
+        {
+            await ConfigStore.DeleteProviderConfigAsync(id, kind, CancellationToken.None);
+            await LoadAllData();
+            ShowStatus($"{kind} provider deleted.");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Failed to delete: {ex.Message}", isError: true);
+        }
+    }
+
+    // --- Pipeline Config ---
+    private async Task SavePipelineConfig()
+    {
+        var config = new PipelineConfiguration
+        {
+            MaxRetries = _pipelineConfig.MaxRetries,
+            AgentTimeout = TimeSpan.FromMinutes(_agentTimeoutMinutes),
+            MinCoverageThreshold = _pipelineConfig.MinCoverageThreshold,
+            SecurityScanEnabled = _pipelineConfig.SecurityScanEnabled
+        };
+
+        try
+        {
+            await ConfigStore.SavePipelineConfigAsync(config, CancellationToken.None);
+            ShowStatus("Pipeline configuration saved.");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Failed to save: {ex.Message}", isError: true);
+        }
+    }
+
+    private void ShowStatus(string message, bool isError = false)
+    {
+        _statusMessage = message;
+        _isError = isError;
+    }
+
+    // --- Form models ---
+    private class IssueProviderForm
+    {
+        public string ProviderType { get; set; } = "GitHub";
+        public string DisplayName { get; set; } = "";
+        public string ApiUrl { get; set; } = "https://api.github.com";
+        public string Token { get; set; } = "";
+        public string Owner { get; set; } = "";
+        public string Repo { get; set; } = "";
+    }
+
+    private class RepoProviderForm
+    {
+        public string ProviderType { get; set; } = "GitHub";
+        public string DisplayName { get; set; } = "";
+        public string ApiUrl { get; set; } = "https://api.github.com";
+        public string Token { get; set; } = "";
+        public string Owner { get; set; } = "";
+        public string Repo { get; set; } = "";
+        public string BaseBranch { get; set; } = "main";
+    }
+
+    private class AgentProviderForm
+    {
+        public string ProviderType { get; set; } = "KiroCli";
+        public string DisplayName { get; set; } = "";
+        public string ExecutablePath { get; set; } = "/home/ubuntu/.local/bin/kiro-cli";
+        public int TimeoutMinutes { get; set; } = 30;
+        public string AgentName { get; set; } = "default";
+    }
+
+    private class PipelineConfigForm
+    {
+        public int MaxRetries { get; set; } = 3;
+        public double MinCoverageThreshold { get; set; } = 80.0;
+        public bool SecurityScanEnabled { get; set; }
+    }
+}

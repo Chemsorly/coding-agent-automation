@@ -226,6 +226,43 @@ Log levels:
 - **Error**: Execution failures
 - **Debug**: Detailed output parsing information
 
+## KiroWebUI (Blazor Server)
+
+The KiroWebUI application provides a web-based interface for the automated development pipeline. It runs as a Blazor Server app inside a Docker container.
+
+### Docker Build & Run
+
+```powershell
+docker build -f webUI.Dockerfile -t kiro-webui:latest .
+
+docker run -it --rm -p 5000:5000 `
+  -v C:\Projects\coding-agent-automation:/workspace `
+  -v kiro-cli-data:/home/ubuntu/.local/share/kiro-cli `
+  -v "$env:USERPROFILE\.aws:/home/ubuntu/.aws" `
+  -v "$env:USERPROFILE\.kiro\settings:/home/ubuntu/.kiro/settings" `
+  -v kiro-pipeline-config:/app/config/pipeline `
+  kiro-webui:latest
+```
+
+### Required Volume Mounts
+
+| Mount | Container Path | Purpose |
+|-------|---------------|---------|
+| Workspace | `/workspace` | Target repo for the agent to operate on |
+| Kiro CLI auth | `/home/ubuntu/.local/share/kiro-cli` | Kiro CLI login tokens (use named volume `kiro-cli-data` to persist across runs) |
+| AWS SSO | `/home/ubuntu/.aws` | AWS SSO cache and config for Kiro CLI auth |
+| Kiro settings | `/home/ubuntu/.kiro/settings` | MCP and CLI settings |
+| Pipeline config | `/app/config/pipeline` | Provider configs and pipeline settings (use named volume `kiro-pipeline-config` to persist across restarts) |
+
+The pipeline config volume is important — without it, any providers you configure in the Settings page will be lost when the container restarts.
+
+### First-Time Setup
+
+1. Start the container with the command above
+2. Open `http://localhost:5000` in your browser
+3. Go to **Settings** and configure your providers (Issue, Repository, Agent)
+4. Go to **Agent Coding** to select an issue and start a pipeline run
+
 ## Testing
 
 ### Run Unit Tests

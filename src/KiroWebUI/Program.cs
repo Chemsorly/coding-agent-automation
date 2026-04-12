@@ -3,6 +3,9 @@ using KiroCliLib.Core;
 using KiroCliLib.Models;
 using KiroWebUI.Components;
 using KiroWebUI.Models;
+using KiroWebUI.Pipeline.Interfaces;
+using KiroWebUI.Pipeline.Providers;
+using KiroWebUI.Pipeline.Services;
 using KiroWebUI.Services;
 using Serilog;
 
@@ -15,6 +18,31 @@ var config = await KiroCliLib.Configuration.ConfigurationManager.LoadAsync("conf
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddSingleton(config);
 builder.Services.AddScoped<KiroExecutionService>();
+
+// Pipeline — Configuration Store
+builder.Services.AddSingleton<IConfigurationStore>(sp => new JsonConfigurationStore("config/pipeline"));
+
+// Pipeline — IKiroCliOrchestrator (needed by ProviderFactory for KiroCliAgentProvider)
+builder.Services.AddSingleton<IKiroCliOrchestrator>(sp =>
+{
+    var cfg = sp.GetRequiredService<Configuration>();
+    var callbackHandler = new CallbackHandler(Serilog.Log.Logger);
+    return new KiroCliOrchestrator(cfg, callbackHandler, Serilog.Log.Logger);
+});
+
+// Pipeline — Provider Factory (creates provider instances from ProviderConfig at runtime)
+builder.Services.AddSingleton<IProviderFactory, ProviderFactory>();
+
+// Pipeline — Services
+builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
+    sp.GetRequiredService<IConfigurationStore>(),
+    sp.GetRequiredService<IProviderFactory>(),
+    sp.GetRequiredService<IssueDescriptionParser>(),
+    sp.GetRequiredService<QualityGateValidator>(),
+    Serilog.Log.Logger));
+builder.Services.AddTransient(sp => new QualityGateValidator(Serilog.Log.Logger));
+builder.Services.AddTransient<IssueDescriptionParser>();
+builder.Services.AddTransient<GitHubValidationService>();
 
 // Configure Serilog
 builder.Host.UseSerilog((ctx, lc) => lc

@@ -1,8 +1,569 @@
 @page "/agent-coding"
 @rendermode InteractiveServer
+@implements IDisposable
+@using KiroWebUI.Pipeline.Interfaces
+@using KiroWebUI.Pipeline.Models
+@using KiroWebUI.Pipeline.Services
+@inject PipelineOrchestrationService PipelineService
+@inject IConfigurationStore ConfigStore
+@inject IProviderFactory ProviderFactory
+@inject IJSRuntime JS
 
-<div class="placeholder-page">
-    <div class="placeholder-icon">🤖</div>
-    <h2>Agent Coding</h2>
-    <p>Coming soon.</p>
+<div class="agent-coding-page">
+    <header class="agent-header">
+        <h1>Agent Coding</h1>
+        @if (PipelineService.ActiveRun is not null)
+        {
+            <span class="step-badge step-@PipelineService.ActiveRun.CurrentStep.ToString().ToLowerInvariant()">
+                @PipelineService.ActiveRun.CurrentStep
+            </span>
+        }
+    </header>
+
+    @if (!string.IsNullOrEmpty(_errorMessage))
+    {
+        <div class="settings-status status-error">@_errorMessage</div>
+    }
+
+    <div class="agent-content">
+        @if (!PipelineService.IsRunning && PipelineService.ActiveRun is null or { CurrentStep: PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled })
+        {
+            <!-- Completion View (if a run just finished) -->
+            @if (PipelineService.ActiveRun is { CurrentStep: PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled } completedRun)
+            {
+                <div class="completion-view">
+                    <div class="completion-icon">
+                        @(completedRun.CurrentStep == PipelineStep.Completed ? "✅" : completedRun.CurrentStep == PipelineStep.Cancelled ? "🚫" : "❌")
+                    </div>
+                    <h2>Pipeline @completedRun.CurrentStep</h2>
+                    @if (!string.IsNullOrEmpty(completedRun.PullRequestUrl))
+                    {
+                        <div class="pr-link">
+                            <span>📎</span> <a href="@completedRun.PullRequestUrl" target="_blank">View Pull Request</a>
+                        </div>
+                    }
+                    @if (!string.IsNullOrEmpty(completedRun.FailureReason))
+                    {
+                        <div class="failure-reason">@completedRun.FailureReason</div>
+                    }
+                    <button class="btn-save" @onclick="BackToIssues">Back to Issues</button>
+                </div>
+            }
+
+            <!-- Issue Selection View -->
+            @if (PipelineService.ActiveRun is null || PipelineService.ActiveRun.CurrentStep is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled)
+            {
+                @if (!_showCompletionOnly)
+                {
+                    <div class="issue-selection">
+                        <h2>Select an Issue</h2>
+                        <div class="form-group">
+                            <label>Issue Provider</label>
+                            <select @bind="_selectedIssueProviderId" @bind:after="OnIssueProviderChanged">
+                                <option value="">-- Select Provider --</option>
+                                @foreach (var p in _issueProviders)
+                                {
+                                    <option value="@p.Id">@p.DisplayName</option>
+                                }
+                            </select>
+                        </div>
+
+                        @if (_loadingIssues)
+                        {
+                            <div class="loading-text">Loading issues...</div>
+                        }
+
+                        @if (_issues.Count > 0)
+                        {
+                            <div class="issue-list">
+                                @foreach (var issue in _issues)
+                                {
+                                    <div class="issue-card @(_selectedIssueId == issue.Identifier ? "issue-selected" : "")"
+                                         @onclick="() => SelectIssue(issue.Identifier)">
+                                        <span class="issue-id">#@issue.Identifier</span>
+                                        <span class="issue-title">@issue.Title</span>
+                                        @if (issue.Labels.Count > 0)
+                                        {
+                                            <div class="issue-labels">
+                                                @foreach (var label in issue.Labels)
+                                                {
+                                                    <span class="issue-label">@label</span>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        @if (_loadingIssueDetail)
+                        {
+                            <div class="loading-text">Loading issue details...</div>
+                        }
+
+                        @if (_selectedIssueDetail != null)
+                        {
+                            <div class="issue-detail-panel">
+                                <h3>#@_selectedIssueDetail.Identifier @_selectedIssueDetail.Title</h3>
+                                <pre class="issue-description">@_selectedIssueDetail.Description</pre>
+                                @if (_selectedIssueDetail.Labels.Count > 0)
+                                {
+                                    <div class="issue-labels">
+                                        @foreach (var label in _selectedIssueDetail.Labels)
+                                        {
+                                            <span class="issue-label">@label</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        @if (!string.IsNullOrEmpty(_selectedIssueId))
+                        {
+                            <div class="form-group">
+                                <label>Repository Provider</label>
+                                <select @bind="_selectedRepoProviderId">
+                                    <option value="">-- Select Repository --</option>
+                                    @foreach (var p in _repoProviders)
+                                    {
+                                        <option value="@p.Id">@p.DisplayName (@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "") → @p.Settings.GetValueOrDefault("baseBranch", "main"))</option>
+                                    }
+                                </select>
+                            </div>
+
+                            <button class="btn-save" @onclick="StartPipeline"
+                                    disabled="@(string.IsNullOrEmpty(_selectedRepoProviderId))">
+                                🚀 Start Pipeline
+                            </button>
+                        }
+                    </div>
+                }
+            }
+        }
+        else
+        {
+            var run = PipelineService.ActiveRun!;
+
+            <!-- Pipeline Progress View (when running, not WaitingForChat) -->
+            if (run.CurrentStep is PipelineStep.CloningRepository or PipelineStep.CreatingBranch
+                or PipelineStep.GeneratingCode or PipelineStep.RunningQualityGates
+                or PipelineStep.CreatingPullRequest or PipelineStep.Created)
+            {
+                <div class="progress-view">
+                    <h2>Pipeline in Progress</h2>
+                    <div class="step-indicator">
+                        @foreach (var step in _progressSteps)
+                        {
+                            var isCurrent = run.CurrentStep.ToString() == step;
+                            var isPast = (int)run.CurrentStep > Array.IndexOf(_progressSteps, step);
+                            <span class="step-dot @(isCurrent ? "step-current" : isPast ? "step-done" : "")">
+                                @(isPast ? "✓" : isCurrent ? "●" : "○") @step
+                            </span>
+                        }
+                    </div>
+
+                    <div class="elapsed-time">⏱️ Elapsed: @GetElapsedTime(run)</div>
+
+                    <div class="output-panel" id="outputPanel">
+                        @foreach (var line in _outputLines.TakeLast(200))
+                        {
+                            <div class="output-line">@line</div>
+                        }
+                    </div>
+
+                    <button class="btn-delete" @onclick="CancelPipeline">Cancel</button>
+                </div>
+            }
+
+            <!-- Chat Panel View (WaitingForChat) -->
+            if (run.CurrentStep == PipelineStep.WaitingForChat)
+            {
+                <div class="chat-panel">
+                    <h2>Chat with Agent</h2>
+
+                    @if (run.LatestQualityReport is not null)
+                    {
+                        <div class="quality-report">
+                            <h3>Quality Gate Report @(run.LatestQualityReport.AllPassed ? "✅" : "❌")</h3>
+                            <div class="gate-results">
+                                <div class="gate-result @(run.LatestQualityReport.Compilation.Passed ? "gate-pass" : "gate-fail")">
+                                    @(run.LatestQualityReport.Compilation.Passed ? "✅" : "❌") Compilation
+                                    @if (!string.IsNullOrEmpty(run.LatestQualityReport.Compilation.Details))
+                                    {
+                                        <div class="gate-details">@run.LatestQualityReport.Compilation.Details</div>
+                                    }
+                                </div>
+                                <div class="gate-result @(run.LatestQualityReport.Tests.Passed ? "gate-pass" : "gate-fail")">
+                                    @(run.LatestQualityReport.Tests.Passed ? "✅" : "❌") Tests
+                                    (@(run.LatestQualityReport.Tests.TestsPassed)/@(run.LatestQualityReport.Tests.TestsPassed + run.LatestQualityReport.Tests.TestsFailed) passed)
+                                    @if (!string.IsNullOrEmpty(run.LatestQualityReport.Tests.Details))
+                                    {
+                                        <div class="gate-details">@run.LatestQualityReport.Tests.Details</div>
+                                    }
+                                </div>
+                                @if (run.LatestQualityReport.Coverage is not null)
+                                {
+                                    <div class="gate-result @(run.LatestQualityReport.Coverage.Passed ? "gate-pass" : "gate-fail")">
+                                        @(run.LatestQualityReport.Coverage.Passed ? "✅" : "❌") Coverage: @(run.LatestQualityReport.Coverage.CoveragePercent?.ToString("F1"))%
+                                    </div>
+                                }
+                                @if (run.LatestQualityReport.SecurityScan is not null)
+                                {
+                                    <div class="gate-result @(run.LatestQualityReport.SecurityScan.Passed ? "gate-pass" : "gate-fail")">
+                                        @(run.LatestQualityReport.SecurityScan.Passed ? "✅" : "❌") Security Scan
+                                    </div>
+                                }
+                            </div>
+                            @if (run.RetryCount > 0)
+                            {
+                                <div class="retry-count">Retry @run.RetryCount</div>
+                            }
+                        </div>
+                    }
+
+                    <div class="chat-history" id="chatHistory">
+                        @foreach (var entry in run.ChatHistory.ToArray())
+                        {
+                            <div class="chat-entry chat-@entry.Role.ToString().ToLowerInvariant()">
+                                <div class="chat-role">
+                                    @(entry.Role == ChatRole.User ? "You" : entry.Role == ChatRole.Agent ? "Agent" : "System")
+                                    <span class="chat-timestamp">@entry.Timestamp.ToLocalTime().ToString("h:mm tt")</span>
+                                </div>
+                                <pre class="chat-content">@entry.Content</pre>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="chat-input-area">
+                        <div class="input-row">
+                            <input type="text"
+                                   @bind="_chatInput"
+                                   @bind:event="oninput"
+                                   @onkeydown="HandleChatKeyDown"
+                                   placeholder="Send follow-up instructions..."
+                                   disabled="@_isSending"
+                                   class="prompt-input" />
+                            <button class="send-button" @onclick="SendChatMessage" disabled="@_isSending">
+                                @(_isSending ? "⏳" : "Send")
+                            </button>
+                        </div>
+                        <div class="chat-actions">
+                            <button class="btn-save" @onclick="ProceedToQualityGates" disabled="@_isSending">
+                                Proceed to Quality Gates
+                            </button>
+                            <button class="btn-delete" @onclick="CancelPipeline">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+
+    <!-- Run History Panel (always visible) -->
+    <div class="run-history">
+        <h2>Run History</h2>
+        @{
+            var history = PipelineService.GetRunHistory();
+        }
+        @if (history.Count == 0)
+        {
+            <p class="no-history">No pipeline runs yet.</p>
+        }
+        else
+        {
+            <div class="history-list">
+                @foreach (var h in history.Reverse())
+                {
+                    <div class="history-card">
+                        <div class="history-info">
+                            <span class="history-id">@h.RunId[..8]</span>
+                            <span class="history-title">#@h.IssueIdentifier @h.IssueTitle</span>
+                            <span class="step-badge step-@h.FinalStep.ToString().ToLowerInvariant()">@h.FinalStep</span>
+                        </div>
+                        <div class="history-meta">
+                            <span>@h.StartedAt.ToLocalTime().ToString("g")</span>
+                            @if (h.CompletedAt.HasValue)
+                            {
+                                <span>Duration: @((h.CompletedAt.Value - h.StartedAt).ToString(@"hh\:mm\:ss"))</span>
+                            }
+                            @if (!string.IsNullOrEmpty(h.PullRequestUrl))
+                            {
+                                <a href="@h.PullRequestUrl" target="_blank">PR</a>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
 </div>
+
+@code {
+    private List<ProviderConfig> _issueProviders = new();
+    private List<ProviderConfig> _repoProviders = new();
+    private List<IssueSummary> _issues = new();
+    private List<string> _outputLines = new();
+    private IssueDetail? _selectedIssueDetail;
+    private bool _loadingIssueDetail;
+
+    private string _selectedIssueProviderId = "";
+    private string _selectedIssueId = "";
+    private string _selectedRepoProviderId = "";
+    private string? _errorMessage;
+    private bool _loadingIssues;
+    private bool _showCompletionOnly;
+    private string _chatInput = "";
+    private bool _isSending;
+    private bool _disposed;
+
+    private static readonly string[] _progressSteps =
+    {
+        "Created", "CloningRepository", "CreatingBranch", "GeneratingCode",
+        "RunningQualityGates", "CreatingPullRequest"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        PipelineService.OnChange += HandleStateChanged;
+        PipelineService.OnOutputLine += HandleOutputLine;
+
+        try
+        {
+            _issueProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
+            _repoProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to load providers: {ex.Message}";
+        }
+    }
+
+    private async void HandleStateChanged()
+    {
+        if (_disposed) return;
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                if (_disposed) return;
+                StateHasChanged();
+                try
+                {
+                    await JS.InvokeVoidAsync("scrollToBottom", "outputPanel");
+                    await JS.InvokeVoidAsync("scrollToBottom", "chatHistory");
+                }
+                catch
+                {
+                    // Element may not exist in current view
+                }
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async void HandleOutputLine(string line)
+    {
+        if (_disposed) return;
+        _outputLines.Add(line);
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                if (_disposed) return;
+                StateHasChanged();
+                try
+                {
+                    await JS.InvokeVoidAsync("scrollToBottom", "outputPanel");
+                }
+                catch
+                {
+                    // Element may not exist
+                }
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task OnIssueProviderChanged()
+    {
+        _issues.Clear();
+        _selectedIssueId = "";
+        _errorMessage = null;
+
+        if (string.IsNullOrEmpty(_selectedIssueProviderId))
+            return;
+
+        _loadingIssues = true;
+        try
+        {
+            var providerConfig = _issueProviders.FirstOrDefault(p => p.Id == _selectedIssueProviderId);
+            if (providerConfig == null) return;
+
+            var issueProvider = ProviderFactory.CreateIssueProvider(providerConfig);
+            var issues = await issueProvider.ListOpenIssuesAsync(CancellationToken.None);
+            _issues = issues.ToList();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to fetch issues: {ex.Message}";
+        }
+        finally
+        {
+            _loadingIssues = false;
+        }
+    }
+
+    private async Task SelectIssue(string issueId)
+    {
+        _selectedIssueId = issueId;
+        _selectedIssueDetail = null;
+        _loadingIssueDetail = true;
+        StateHasChanged();
+
+        try
+        {
+            var providerConfig = _issueProviders.FirstOrDefault(p => p.Id == _selectedIssueProviderId);
+            if (providerConfig != null)
+            {
+                var issueProvider = ProviderFactory.CreateIssueProvider(providerConfig);
+                _selectedIssueDetail = await issueProvider.GetIssueAsync(issueId, CancellationToken.None);
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to load issue details: {ex.Message}";
+        }
+        finally
+        {
+            _loadingIssueDetail = false;
+        }
+    }
+
+    private async Task StartPipeline()
+    {
+        _errorMessage = null;
+
+        if (PipelineService.IsRunning)
+        {
+            _errorMessage = "A pipeline run is already in progress.";
+            return;
+        }
+
+        if (string.IsNullOrEmpty(_selectedIssueProviderId) || string.IsNullOrEmpty(_selectedRepoProviderId)
+            || string.IsNullOrEmpty(_selectedIssueId))
+        {
+            _errorMessage = "Please select an issue provider, issue, and repository provider.";
+            return;
+        }
+
+        _outputLines.Clear();
+        _showCompletionOnly = false;
+
+        try
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await PipelineService.StartPipelineAsync(
+                        _selectedIssueProviderId, _selectedRepoProviderId,
+                        _selectedIssueId, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    await InvokeAsync(() =>
+                    {
+                        _errorMessage = $"Pipeline failed: {ex.Message}";
+                        StateHasChanged();
+                    });
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to start pipeline: {ex.Message}";
+        }
+    }
+
+    private async Task HandleChatKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !_isSending)
+        {
+            await SendChatMessage();
+        }
+    }
+
+    private async Task SendChatMessage()
+    {
+        if (string.IsNullOrWhiteSpace(_chatInput) || _isSending)
+            return;
+
+        var message = _chatInput;
+        _chatInput = "";
+        _isSending = true;
+        _errorMessage = null;
+
+        try
+        {
+            await PipelineService.SendChatMessageAsync(message, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Chat error: {ex.Message}";
+        }
+        finally
+        {
+            _isSending = false;
+        }
+    }
+
+    private async Task ProceedToQualityGates()
+    {
+        _isSending = true;
+        _errorMessage = null;
+
+        try
+        {
+            await PipelineService.ProceedToQualityGatesAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Quality gate error: {ex.Message}";
+        }
+        finally
+        {
+            _isSending = false;
+        }
+    }
+
+    private async Task CancelPipeline()
+    {
+        try
+        {
+            await PipelineService.CancelPipelineAsync();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Cancel error: {ex.Message}";
+        }
+    }
+
+    private void BackToIssues()
+    {
+        _showCompletionOnly = false;
+        _errorMessage = null;
+    }
+
+    private static string GetElapsedTime(PipelineRun run)
+    {
+        var elapsed = (run.CompletedAt ?? DateTime.UtcNow) - run.StartedAt;
+        return elapsed.ToString(@"hh\:mm\:ss");
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        PipelineService.OnChange -= HandleStateChanged;
+        PipelineService.OnOutputLine -= HandleOutputLine;
+    }
+}

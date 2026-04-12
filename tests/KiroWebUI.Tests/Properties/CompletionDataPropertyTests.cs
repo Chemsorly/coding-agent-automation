@@ -11,7 +11,7 @@ using Xunit;
 using ILogger = Serilog.ILogger;
 using TestResult = KiroCliLib.Models.TestResult;
 
-namespace KiroCliPoc.Tests.Properties;
+namespace KiroWebUI.Tests.Properties;
 
 /// <summary>
 /// Property 6: Completion Data Propagation

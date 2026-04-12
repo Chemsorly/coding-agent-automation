@@ -7,7 +7,7 @@ using KiroWebUI.Models;
 using Xunit;
 using TestResult = KiroCliLib.Models.TestResult;
 
-namespace KiroCliPoc.Tests.Properties;
+namespace KiroWebUI.Tests.Properties;
 
 /// <summary>
 /// Property 9: API Response Completeness

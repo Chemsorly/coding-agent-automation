@@ -4,7 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
 
-namespace KiroCliPoc.Tests.Unit;
+namespace KiroWebUI.Tests.Unit;
 
 /// <summary>
 /// Unit tests for API endpoints: health check, prompt validation, and concurrency guard.

@@ -14,6 +14,7 @@ COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
 COPY src/KiroWebUI/KiroWebUI.csproj src/KiroWebUI/
 COPY src/KiroCliPoc/KiroCliPoc.csproj src/KiroCliPoc/
 COPY tests/KiroCliPoc.Tests/KiroCliPoc.Tests.csproj tests/KiroCliPoc.Tests/
+COPY tests/KiroWebUI.Tests/KiroWebUI.Tests.csproj tests/KiroWebUI.Tests/
 RUN dotnet restore
 
 # Copy everything else and publish
@@ -48,6 +49,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf \
 
 WORKDIR /app
 
+# Pre-create config directory with correct ownership (before volume mount)
+RUN mkdir -p /app/config/pipeline/providers/issue /app/config/pipeline/providers/repository /app/config/pipeline/providers/agent
+
 # Configure ASP.NET to listen on port 5000
 ENV ASPNETCORE_URLS=http://+:5000
 EXPOSE 5000
@@ -59,6 +63,7 @@ COPY --chown=ubuntu:ubuntu config/appsettings.docker.json config/appsettings.jso
 # Mount points:
 #   /home/ubuntu/.kiro   - Kiro CLI auth/session data (REQUIRED)
 #   /workspace           - Target workspace for the agent to operate on
-VOLUME ["/home/ubuntu/.kiro", "/workspace"]
+#   /app/config/pipeline - Pipeline provider & settings config (mount for persistence across restarts)
+VOLUME ["/home/ubuntu/.kiro", "/workspace", "/app/config/pipeline"]
 
 ENTRYPOINT ["dotnet", "KiroWebUI.dll"]

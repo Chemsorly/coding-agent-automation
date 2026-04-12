@@ -6,7 +6,7 @@ using FsCheck.Xunit;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
 
-namespace KiroCliPoc.Tests.Properties;
+namespace KiroWebUI.Tests.Properties;
 
 /// <summary>
 /// Property 3: API Empty/Null Prompt Rejection

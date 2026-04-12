@@ -12,7 +12,9 @@ WORKDIR /src
 COPY KiroCliPoc.sln ./
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
 COPY src/KiroCliPoc/KiroCliPoc.csproj src/KiroCliPoc/
+COPY src/KiroWebUI/KiroWebUI.csproj src/KiroWebUI/
 COPY tests/KiroCliPoc.Tests/KiroCliPoc.Tests.csproj tests/KiroCliPoc.Tests/
+COPY tests/KiroWebUI.Tests/KiroWebUI.Tests.csproj tests/KiroWebUI.Tests/
 RUN dotnet restore
 
 # Copy everything else and publish
