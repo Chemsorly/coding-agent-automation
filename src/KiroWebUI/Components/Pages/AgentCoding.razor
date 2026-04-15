@@ -144,9 +144,10 @@
         {
             var run = PipelineService.ActiveRun!;
 
-            <!-- Pipeline Progress View (when running, not WaitingForChat) -->
+            <!-- Pipeline Progress View (when running, not WaitingForChat or WaitingForAnalysisApproval) -->
             if (run.CurrentStep is PipelineStep.CloningRepository or PipelineStep.CreatingBranch
-                or PipelineStep.GeneratingCode or PipelineStep.RunningQualityGates
+                or PipelineStep.AnalyzingCode or PipelineStep.GeneratingCode
+                or PipelineStep.RunningQualityGates
                 or PipelineStep.CreatingPullRequest or PipelineStep.Created
                 or PipelineStep.PostingAnalysis)
             {
@@ -173,6 +174,35 @@
                     </div>
 
                     <button class="btn-delete" @onclick="CancelPipeline">Cancel</button>
+                </div>
+            }
+
+            <!-- Analysis Approval View (WaitingForAnalysisApproval) -->
+            if (run.CurrentStep == PipelineStep.WaitingForAnalysisApproval)
+            {
+                <div class="analysis-approval-panel">
+                    <h2>Review Agent Analysis</h2>
+                    <p class="analysis-subtitle">The agent analyzed the codebase in context of issue <strong>#@run.IssueIdentifier @run.IssueTitle</strong>. Review the analysis before proceeding to implementation.</p>
+
+                    <div class="analysis-content" id="analysisContent">
+                        @if (!string.IsNullOrWhiteSpace(run.AnalysisContent))
+                        {
+                            <pre class="analysis-text">@run.AnalysisContent</pre>
+                        }
+                        else
+                        {
+                            <p class="analysis-fallback">Agent analysis was not available. A metadata-based analysis was posted to the issue instead.</p>
+                        }
+                    </div>
+
+                    <div class="analysis-actions">
+                        <button class="btn-save" @onclick="ApproveAnalysis">
+                            ✅ Approve &amp; Continue to Implementation
+                        </button>
+                        <button class="btn-delete" @onclick="CancelPipeline">
+                            Cancel Pipeline
+                        </button>
+                    </div>
                 </div>
             }
 
@@ -319,8 +349,8 @@
 
     private static readonly string[] _progressSteps =
     {
-        "Created", "PostingAnalysis", "CloningRepository", "CreatingBranch", "GeneratingCode",
-        "RunningQualityGates", "CreatingPullRequest"
+        "Created", "CloningRepository", "CreatingBranch", "AnalyzingCode", "PostingAnalysis",
+        "GeneratingCode", "RunningQualityGates", "CreatingPullRequest"
     };
 
     protected override async Task OnInitializedAsync()
@@ -534,6 +564,34 @@
         finally
         {
             _isSending = false;
+        }
+    }
+
+    private async Task ApproveAnalysis()
+    {
+        _errorMessage = null;
+
+        try
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await PipelineService.ApproveAnalysisAsync(CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    await InvokeAsync(() =>
+                    {
+                        _errorMessage = $"Pipeline failed: {ex.Message}";
+                        StateHasChanged();
+                    });
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to approve analysis: {ex.Message}";
         }
     }
 

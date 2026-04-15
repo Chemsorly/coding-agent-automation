@@ -10,6 +10,62 @@ namespace KiroWebUI.Pipeline.Services;
 public static class PromptBuilder
 {
     /// <summary>
+    /// The file path (relative to workspace) where the agent writes its analysis.
+    /// </summary>
+    public const string AnalysisFilePath = ".kiro/analysis.md";
+
+    /// <summary>
+    /// Constructs an analysis-only prompt. The agent examines the codebase in context of the
+    /// issue and writes its recommendation to .kiro/analysis.md without making any other changes.
+    /// </summary>
+    public static string BuildAnalysisPrompt(IssueDetail issue, ParsedIssue parsed)
+    {
+        ArgumentNullException.ThrowIfNull(issue);
+        ArgumentNullException.ThrowIfNull(parsed);
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine("Analyze the codebase in context of the following issue. Examine the relevant source files and provide a concise recommendation.");
+        sb.AppendLine("Do NOT implement any changes. Only analyze and recommend.");
+        sb.AppendLine();
+        sb.AppendLine($"Write your analysis to the file `{AnalysisFilePath}` in the workspace. Do NOT print the analysis to stdout — only write it to that file.");
+        sb.AppendLine();
+        sb.AppendLine("The file should contain your analysis in this structure:");
+        sb.AppendLine("1. **Planned Approach** — What files need to change and how. Be specific about the strategy.");
+        sb.AppendLine("2. **Affected Components** — Which files, classes, or modules will be touched.");
+        sb.AppendLine("3. **Estimated Complexity** — Low / Medium / High with a brief justification.");
+        sb.AppendLine("4. **Risks & Considerations** — Anything that could go wrong or needs special attention.");
+        sb.AppendLine();
+
+        sb.AppendLine($"# Issue: {issue.Title}");
+        sb.AppendLine();
+        sb.AppendLine("## Description");
+        sb.AppendLine(issue.Description);
+        sb.AppendLine();
+
+        if (!string.IsNullOrWhiteSpace(parsed.RequirementsSection))
+        {
+            sb.AppendLine("## Requirements");
+            sb.AppendLine(parsed.RequirementsSection);
+            sb.AppendLine();
+        }
+
+        if (parsed.AcceptanceCriteria.Count > 0)
+        {
+            sb.AppendLine("## Acceptance Criteria");
+            foreach (var criterion in parsed.AcceptanceCriteria)
+            {
+                sb.AppendLine($"- {criterion}");
+            }
+            sb.AppendLine();
+        }
+
+        sb.AppendLine($"Analyze the workspace now and write your recommendation to `{AnalysisFilePath}`.");
+
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
     /// Constructs a prompt containing action instructions, the issue title, description,
     /// and all acceptance criteria. The prompt explicitly instructs the agent to implement
     /// the changes in the workspace, not just analyze them.

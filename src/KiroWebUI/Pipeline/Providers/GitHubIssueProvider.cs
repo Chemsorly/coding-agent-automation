@@ -141,7 +141,30 @@ public class GitHubIssueProvider : IIssueProvider
         if (!int.TryParse(identifier, out var issueNumber))
             throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
 
-        await _client.Issue.Comment.Create(_owner, _repo, issueNumber, body);
+        var client = await GetClientAsync(ct);
+        await client.Issue.Comment.Create(_owner, _repo, issueNumber, body);
+    }
+
+    public async Task<IReadOnlyList<Models.IssueComment>> ListCommentsAsync(string identifier, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(identifier);
+
+        if (!int.TryParse(identifier, out var issueNumber))
+            throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
+
+        var client = await GetClientAsync(ct);
+        var comments = await client.Issue.Comment.GetAllForIssue(_owner, _repo, issueNumber);
+
+        return comments
+            .Select(c => new Models.IssueComment
+            {
+                Id = c.Id.ToString(),
+                Body = c.Body ?? string.Empty,
+                Author = c.User?.Login ?? string.Empty,
+                CreatedAt = c.CreatedAt.UtcDateTime
+            })
+            .ToList()
+            .AsReadOnly();
     }
 
     private static IssueSummary MapToIssueSummary(Issue issue)

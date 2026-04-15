@@ -34,9 +34,13 @@ public class PipelineRetryPropertyTests
 
         var service = CreateServiceWithFailingQualityGates(maxRetries, errorMessages);
 
-        // Start the pipeline — should reach WaitingForChat
+        // Start the pipeline — should reach WaitingForAnalysisApproval
         var run = service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None)
             .GetAwaiter().GetResult();
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+
+        // Approve analysis to continue to code generation
+        service.ApproveAnalysisAsync(CancellationToken.None).GetAwaiter().GetResult();
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
 
         // Simulate retry cycles: proceed to quality gates (which always fail)
@@ -113,7 +117,8 @@ public class PipelineRetryPropertyTests
             });
         mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-
+        mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
         var mockRepoProvider = new Mock<IRepositoryProvider>();
         mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);

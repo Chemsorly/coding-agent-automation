@@ -35,18 +35,27 @@ public class PipelineStateTransitionPropertyTests
         var run = service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None)
             .GetAwaiter().GetResult();
 
-        // After start, should be in WaitingForChat
+        // After start, should be in WaitingForAnalysisApproval
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+
+        // Approve analysis to continue to code generation
+        service.ApproveAnalysisAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+        // After approval, should be in WaitingForChat
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
 
         // Verify the expected transitions occurred in order
         transitionLog.Should().ContainInOrder(
             PipelineStep.CloningRepository,
             PipelineStep.CreatingBranch,
+            PipelineStep.AnalyzingCode,
+            PipelineStep.PostingAnalysis,
+            PipelineStep.WaitingForAnalysisApproval,
             PipelineStep.GeneratingCode,
             PipelineStep.WaitingForChat);
 
         // OnChange should have fired at least once per transition
-        transitionLog.Count.Should().BeGreaterThanOrEqualTo(4);
+        transitionLog.Count.Should().BeGreaterThanOrEqualTo(7);
 
         if (shouldCancel)
         {
@@ -98,7 +107,8 @@ public class PipelineStateTransitionPropertyTests
             });
         mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-
+        mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
         var mockRepoProvider = new Mock<IRepositoryProvider>();
         mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");

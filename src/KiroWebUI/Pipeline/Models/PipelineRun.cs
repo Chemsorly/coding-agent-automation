@@ -18,6 +18,9 @@ public sealed class PipelineRun
     public string? PullRequestUrl { get; set; }
     public int RetryCount { get; set; }
 
+    /// <summary>Agent-generated analysis content, populated during AnalyzingCode step.</summary>
+    public string? AnalysisContent { get; set; }
+
     /// <summary>Thread-safe collections — mutated by orchestration service while UI reads via OnChange.</summary>
     public ConcurrentBag<string> RetryErrors { get; init; } = new();
     public ConcurrentQueue<ChatEntry> ChatHistory { get; init; } = new();

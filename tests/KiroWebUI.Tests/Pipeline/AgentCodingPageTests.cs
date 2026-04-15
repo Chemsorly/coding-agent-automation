@@ -77,6 +77,8 @@ public class AgentCodingPageTests
                 new() { Identifier = "42", Title = "Test Issue", Labels = Array.Empty<string>() },
                 new() { Identifier = "43", Title = "Another Issue", Labels = new[] { "bug" } }
             });
+        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
 
         _mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
@@ -105,14 +107,14 @@ public class AgentCodingPageTests
     }
 
     [Fact]
-    public async Task AfterStartPipeline_ActiveRunExists_ShowsProgressOrChatView()
+    public async Task AfterStartPipeline_ActiveRunExists_ShowsAnalysisApprovalView()
     {
-        // After starting a pipeline, ActiveRun is set and the page switches away from issue selection
+        // After starting a pipeline, ActiveRun is set and the page shows analysis approval
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
 
         _service.ActiveRun.Should().NotBeNull();
-        // Agent exits immediately in mock, so we land on WaitingForChat
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+        // Pipeline pauses at WaitingForAnalysisApproval for user review
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
     }
 
     [Fact]
@@ -120,6 +122,9 @@ public class AgentCodingPageTests
     {
         // When step is WaitingForChat, the page renders the chat panel view
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
         _service.IsRunning.Should().BeTrue();
@@ -148,6 +153,7 @@ public class AgentCodingPageTests
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
         await _service.ProceedToQualityGatesAsync(CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
@@ -167,6 +173,7 @@ public class AgentCodingPageTests
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
         await _service.ProceedToQualityGatesAsync(CancellationToken.None);
 
         // Should return to WaitingForChat with quality report available
@@ -219,6 +226,7 @@ public class AgentCodingPageTests
         // The page's SendChatMessage checks: if (string.IsNullOrWhiteSpace(_chatInput) || _isSending) return;
         // This validates that empty/whitespace inputs are rejected before reaching the service
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
 
         var chatCountBefore = run.ChatHistory.Count;
@@ -240,6 +248,7 @@ public class AgentCodingPageTests
     {
         // Whitespace-only input is also rejected by the page guard
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
         var chatCountBefore = run.ChatHistory.Count;
 
         string chatInput = "   \t  ";
@@ -257,6 +266,7 @@ public class AgentCodingPageTests
     {
         // Contrast: a valid non-empty message does get sent
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
         var chatCountBefore = run.ChatHistory.Count;
 
         string chatInput = "fix the tests";
@@ -288,6 +298,7 @@ public class AgentCodingPageTests
             .Returns(agentTcs.Task);
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
 
         // Start sending a chat message (will block on agent execution)
@@ -314,6 +325,7 @@ public class AgentCodingPageTests
             .Returns(gateTcs.Task);
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
 
         // Start proceeding to quality gates (will block on validation)

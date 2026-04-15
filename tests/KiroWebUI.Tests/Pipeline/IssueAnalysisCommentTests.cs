@@ -67,6 +67,6 @@ public class IssueAnalysisCommentTests
         md.Should().Contain("- ComponentB");
         md.Should().Contain("### Estimated Complexity");
         md.Should().Contain("### Confidence Assessment");
-        md.Should().Contain("course-correct");
+        md.Should().Contain("Review it before approving implementation");
     }
 }

@@ -19,12 +19,19 @@ public class PipelineOrchestrationService : IDisposable
     private readonly List<PipelineRunSummary> _runHistory = new();
     private readonly string _runsDirectory;
 
+    /// <summary>Marker text used to identify analysis comments on GitHub issues.</summary>
+    private const string AnalysisCommentMarker = "## 🤖 Agent Analysis";
+
     private CancellationTokenSource? _cancellationTokenSource;
     private IAgentProvider? _activeAgentProvider;
     private IRepositoryProvider? _activeRepoProvider;
     private IIssueProvider? _activeIssueProvider;
     private PipelineConfiguration? _activeConfig;
     private string _activeBaseBranch = "main";
+
+    // Stored between analysis and implementation phases
+    private IssueDetail? _activeIssue;
+    private ParsedIssue? _activeParsedIssue;
 
     /// <summary>Fired after each state transition for UI binding.</summary>
     public event Action? OnChange;
@@ -174,23 +181,12 @@ public class PipelineOrchestrationService : IDisposable
             // Update run with issue title
             run.IssueTitle = issue.Title;
 
-            // Parse issue description (used for analysis comment and code generation prompt)
+            // Parse issue description
             var parsed = _issueParser.Parse(issue.Description);
 
-            // Post analysis comment on the issue (non-fatal)
-            TransitionTo(run, PipelineStep.PostingAnalysis);
-            try
-            {
-                var analysis = IssueAnalysisComment.FromIssue(issue, parsed);
-                await _activeIssueProvider!.PostCommentAsync(run.IssueIdentifier, analysis.ToMarkdown(), ct);
-                _logger.Information("Pipeline {RunId} posted analysis comment on issue {IssueIdentifier}",
-                    run.RunId, run.IssueIdentifier);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Warning(ex, "Pipeline {RunId} failed to post analysis comment on issue {IssueIdentifier}",
-                    run.RunId, run.IssueIdentifier);
-            }
+            // Store for use after approval
+            _activeIssue = issue;
+            _activeParsedIssue = parsed;
 
             // Create workspace
             var workspacePath = Path.Combine(_activeConfig!.WorkspaceBaseDirectory, run.RunId);
@@ -234,21 +230,141 @@ public class PipelineOrchestrationService : IDisposable
                 return;
             }
 
-            // Generate code
+            // Check for existing analysis comment on the issue
+            string? existingAnalysis = null;
+            try
+            {
+                var comments = await issueProvider.ListCommentsAsync(run.IssueIdentifier, ct);
+                var analysisComment = comments.FirstOrDefault(c => c.Body.Contains(AnalysisCommentMarker));
+                if (analysisComment != null)
+                {
+                    existingAnalysis = analysisComment.Body;
+                    _logger.Information("Pipeline {RunId} found existing analysis comment on issue {IssueIdentifier}, skipping agent analysis",
+                        run.RunId, run.IssueIdentifier);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Pipeline {RunId} failed to check for existing analysis comments, will run fresh analysis",
+                    run.RunId);
+            }
+
+            if (existingAnalysis != null)
+            {
+                // Reuse existing analysis — skip agent call and comment posting
+                run.AnalysisContent = existingAnalysis;
+                TransitionTo(run, PipelineStep.AnalyzingCode);
+                TransitionTo(run, PipelineStep.PostingAnalysis);
+            }
+            else
+            {
+                // Analyze code — agent examines the codebase in context of the issue
+                TransitionTo(run, PipelineStep.AnalyzingCode);
+                try
+                {
+                    var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(issue, parsed);
+                    var analysisRequest = new AgentRequest
+                    {
+                        Prompt = analysisPrompt,
+                        WorkspacePath = workspacePath,
+                        Timeout = _activeConfig.AgentTimeout
+                    };
+
+                    await _activeAgentProvider!.ExecuteAsync(
+                        analysisRequest, ct, line =>
+                        {
+                            var clean = StripAnsi(line);
+                            run.OutputLines.Enqueue(clean);
+                            OnOutputLine?.Invoke(clean);
+                        });
+
+                    // Read the analysis from the file the agent wrote
+                    var analysisFilePath = Path.Combine(workspacePath, PromptBuilder.AnalysisFilePath);
+                    if (File.Exists(analysisFilePath))
+                    {
+                        run.AnalysisContent = await File.ReadAllTextAsync(analysisFilePath, ct);
+                        _logger.Information("Pipeline {RunId} read analysis from {AnalysisFilePath}",
+                            run.RunId, analysisFilePath);
+                    }
+                    else
+                    {
+                        _logger.Warning("Pipeline {RunId} agent did not write analysis file at {AnalysisFilePath}",
+                            run.RunId, analysisFilePath);
+                        run.AnalysisContent = null;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex, "Pipeline {RunId} code analysis failed, falling back to issue-based analysis",
+                        run.RunId);
+                    run.AnalysisContent = null;
+                }
+
+                // Post analysis comment on the issue (non-fatal)
+                TransitionTo(run, PipelineStep.PostingAnalysis);
+                try
+                {
+                    var analysis = !string.IsNullOrWhiteSpace(run.AnalysisContent)
+                        ? IssueAnalysisComment.FromAgentAnalysis(issue, run.AnalysisContent)
+                        : IssueAnalysisComment.FromIssue(issue, parsed);
+
+                    await _activeIssueProvider!.PostCommentAsync(run.IssueIdentifier, analysis.ToMarkdown(), ct);
+                    _logger.Information("Pipeline {RunId} posted analysis comment on issue {IssueIdentifier}",
+                        run.RunId, run.IssueIdentifier);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex, "Pipeline {RunId} failed to post analysis comment on issue {IssueIdentifier}",
+                        run.RunId, run.IssueIdentifier);
+                }
+            }
+
+            // Pause for user approval before implementation
+            TransitionTo(run, PipelineStep.WaitingForAnalysisApproval);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
+            run.CompletedAt = DateTime.UtcNow;
+            TransitionTo(run, PipelineStep.Cancelled);
+            AddRunToHistory(run);
+        }
+    }
+
+    /// <summary>
+    /// Approves the analysis and continues the pipeline to code generation.
+    /// Must be called when the pipeline is in WaitingForAnalysisApproval state.
+    /// </summary>
+    public async Task ApproveAnalysisAsync(CancellationToken ct)
+    {
+        if (ActiveRun == null || ActiveRun.CurrentStep != PipelineStep.WaitingForAnalysisApproval)
+            throw new InvalidOperationException("No active pipeline run in WaitingForAnalysisApproval state.");
+
+        var run = ActiveRun;
+        using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
+
+        using var linkedCts = _cancellationTokenSource != null
+            ? CancellationTokenSource.CreateLinkedTokenSource(ct, _cancellationTokenSource.Token)
+            : null;
+        var linkedCt = linkedCts?.Token ?? ct;
+
+        try
+        {
+            // Generate code — agent implements the issue
             TransitionTo(run, PipelineStep.GeneratingCode);
             try
             {
-                var prompt = PromptBuilder.BuildPrompt(issue, parsed);
+                var prompt = PromptBuilder.BuildPrompt(_activeIssue!, _activeParsedIssue!);
 
                 var agentRequest = new AgentRequest
                 {
                     Prompt = prompt,
-                    WorkspacePath = workspacePath,
-                    Timeout = _activeConfig.AgentTimeout
+                    WorkspacePath = run.WorkspacePath!,
+                    Timeout = _activeConfig!.AgentTimeout
                 };
 
                 var agentResult = await _activeAgentProvider!.ExecuteAsync(
-                    agentRequest, ct, line =>
+                    agentRequest, linkedCt, line =>
                     {
                         var clean = StripAnsi(line);
                         run.OutputLines.Enqueue(clean);
@@ -270,14 +386,13 @@ public class PipelineOrchestrationService : IDisposable
             }
             catch (OperationCanceledException) when (_cancellationTokenSource?.IsCancellationRequested == true)
             {
-                // Check if this is a user cancellation vs timeout
                 throw;
             }
             catch (OperationCanceledException)
             {
                 // Agent timeout
                 _logger.Warning("Pipeline {RunId} agent timed out after {Duration}",
-                    run.RunId, _activeConfig.AgentTimeout);
+                    run.RunId, _activeConfig!.AgentTimeout);
                 run.ChatHistory.Enqueue(new ChatEntry
                 {
                     Role = ChatRole.System,

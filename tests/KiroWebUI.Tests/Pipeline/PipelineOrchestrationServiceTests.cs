@@ -70,8 +70,8 @@ public class PipelineOrchestrationServiceTests
             });
         _mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-
-        _mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());        _mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
         _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
@@ -90,9 +90,9 @@ public class PipelineOrchestrationServiceTests
     [Fact]
     public async Task StartPipeline_WhenAlreadyRunning_ThrowsInvalidOperationException()
     {
-        // Start first pipeline
+        // Start first pipeline — now pauses at WaitingForAnalysisApproval
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
         // Attempt to start second pipeline — should throw
         var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "99", CancellationToken.None);
@@ -101,9 +101,46 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
+    public async Task CancelPipeline_DuringWaitingForAnalysisApproval_TransitionsToCancelled()
+    {
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+
+        await _service.CancelPipelineAsync();
+
+        run.CurrentStep.Should().Be(PipelineStep.Cancelled);
+        run.CompletedAt.Should().NotBeNull();
+        _service.IsRunning.Should().BeFalse();
+        _service.GetRunHistory().Should().HaveCount(1);
+        _service.GetRunHistory()[0].FinalStep.Should().Be(PipelineStep.Cancelled);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_TransitionsToWaitingForChat()
+    {
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WhenNotInApprovalState_ThrowsInvalidOperationException()
+    {
+        var act = () => _service.ApproveAnalysisAsync(CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*WaitingForAnalysisApproval*");
+    }
+
+    [Fact]
     public async Task CancelPipeline_DuringWaitingForChat_TransitionsToCancelled()
     {
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
 
         await _service.CancelPipelineAsync();
@@ -159,6 +196,9 @@ public class PipelineOrchestrationServiceTests
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
 
         await _service.ProceedToQualityGatesAsync(CancellationToken.None);
@@ -192,20 +232,89 @@ public class PipelineOrchestrationServiceTests
     {
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
 
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
         _mockIssueProvider.Verify(
             p => p.PostCommentAsync("42", It.Is<string>(s => s.Contains("Agent Analysis")), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
     [Fact]
-    public async Task StartPipeline_WhenAnalysisCommentFails_ContinuesPipeline()
+    public async Task StartPipeline_WhenAnalysisCommentFails_PausesAtApproval()
     {
         _mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("API error"));
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
 
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+    }
+
+    [Fact]
+    public async Task StartPipeline_AnalyzesCodeBeforePostingComment()
+    {
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+
+        // Agent should have been called once for analysis (not yet for implementation)
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase")),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenExistingAnalysisCommentFound_SkipsAgentAnalysis()
+    {
+        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>
+            {
+                new()
+                {
+                    Id = "1",
+                    Body = "## 🤖 Agent Analysis\n\nPrevious analysis content here.",
+                    Author = "bot",
+                    CreatedAt = DateTime.UtcNow.AddHours(-1)
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+        run.AnalysisContent.Should().Contain("Previous analysis content here.");
+
+        // Agent should NOT have been called for analysis
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase")),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()),
+            Times.Never);
+
+        // Comment should NOT have been posted again
+        _mockIssueProvider.Verify(
+            p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenListCommentsFails_RunsFreshAnalysis()
+    {
+        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("API error"));
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+
+        // Should have fallen back to running fresh analysis
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase")),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()),
+            Times.Once);
     }
 }
