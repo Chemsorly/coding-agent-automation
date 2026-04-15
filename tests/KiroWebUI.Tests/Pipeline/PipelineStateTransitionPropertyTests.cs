@@ -96,6 +96,8 @@ public class PipelineStateTransitionPropertyTests
                 Identifier = "42", Title = "Test Issue", Description = "Test description",
                 Labels = Array.Empty<string>(), AcceptanceCriteria = Array.Empty<string>()
             });
+        mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
         mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);

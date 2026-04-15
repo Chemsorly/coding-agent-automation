@@ -22,6 +22,7 @@ public class PipelineOrchestrationService : IDisposable
     private CancellationTokenSource? _cancellationTokenSource;
     private IAgentProvider? _activeAgentProvider;
     private IRepositoryProvider? _activeRepoProvider;
+    private IIssueProvider? _activeIssueProvider;
     private PipelineConfiguration? _activeConfig;
     private string _activeBaseBranch = "main";
 
@@ -99,6 +100,7 @@ public class PipelineOrchestrationService : IDisposable
 
             // Create provider instances
             var issueProvider = _providerFactory.CreateIssueProvider(issueProviderConfig);
+            _activeIssueProvider = issueProvider;
             _activeRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
             _activeAgentProvider = _providerFactory.CreateAgentProvider(agentProviderConfig);
             _activeBaseBranch = repoProviderConfig.Settings.GetValueOrDefault("baseBranch", "main");
@@ -172,6 +174,24 @@ public class PipelineOrchestrationService : IDisposable
             // Update run with issue title
             run.IssueTitle = issue.Title;
 
+            // Parse issue description (used for analysis comment and code generation prompt)
+            var parsed = _issueParser.Parse(issue.Description);
+
+            // Post analysis comment on the issue (non-fatal)
+            TransitionTo(run, PipelineStep.PostingAnalysis);
+            try
+            {
+                var analysis = IssueAnalysisComment.FromIssue(issue, parsed);
+                await _activeIssueProvider!.PostCommentAsync(run.IssueIdentifier, analysis.ToMarkdown(), ct);
+                _logger.Information("Pipeline {RunId} posted analysis comment on issue {IssueIdentifier}",
+                    run.RunId, run.IssueIdentifier);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Pipeline {RunId} failed to post analysis comment on issue {IssueIdentifier}",
+                    run.RunId, run.IssueIdentifier);
+            }
+
             // Create workspace
             var workspacePath = Path.Combine(_activeConfig!.WorkspaceBaseDirectory, run.RunId);
             Directory.CreateDirectory(workspacePath);
@@ -218,7 +238,6 @@ public class PipelineOrchestrationService : IDisposable
             TransitionTo(run, PipelineStep.GeneratingCode);
             try
             {
-                var parsed = _issueParser.Parse(issue.Description);
                 var prompt = PromptBuilder.BuildPrompt(issue, parsed);
 
                 var agentRequest = new AgentRequest
