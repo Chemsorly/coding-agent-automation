@@ -1,4 +1,4 @@
-using FluentAssertions;
+using AwesomeAssertions;
 using FsCheck.Xunit;
 using Moq;
 using KiroWebUI.Pipeline.Interfaces;

@@ -1,4 +1,4 @@
-using FluentAssertions;
+using AwesomeAssertions;
 using Moq;
 using Octokit;
 using KiroWebUI.Pipeline.Providers;

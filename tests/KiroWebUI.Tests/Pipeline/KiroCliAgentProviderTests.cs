@@ -1,4 +1,4 @@
-using FluentAssertions;
+using AwesomeAssertions;
 using Moq;
 using KiroCliLib.Core;
 using KiroWebUI.Pipeline.Models;

@@ -1,4 +1,4 @@
-using FluentAssertions;
+using AwesomeAssertions;
 using KiroWebUI.Pipeline.Providers;
 
 namespace KiroWebUI.Tests.Pipeline;
