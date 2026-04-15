@@ -3,6 +3,7 @@ using Moq;
 using KiroWebUI.Components.Pages;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
+using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
@@ -27,7 +28,7 @@ public class AgentCodingPageComponentTests : BunitContext
         _mockIssueProvider = new Mock<IIssueProvider>();
 
         var mockLogger = new Mock<Serilog.ILogger>();
-        var mockValidator = new Mock<QualityGateValidator>(mockLogger.Object) { CallBase = false };
+        var mockValidator = new Mock<IQualityGateValidator>();
 
         _pipelineService = new PipelineOrchestrationService(
             _mockStore.Object,

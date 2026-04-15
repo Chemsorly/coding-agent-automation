@@ -4,6 +4,7 @@ using KiroCliLib.Configuration;
 using KiroCliLib.Core;
 using KiroCliLib.Models;
 using KiroWebUI.Models;
+using KiroWebUI.Pipeline.Services;
 using KiroWebUI.Services;
 using Moq;
 using Xunit;
@@ -35,6 +36,7 @@ public class OutputAccumulationPropertyTests
         var outputLines = outputLineValues.Get
             .Select(s => s.Get.Replace("\n", " ").Replace("\r", " "))
             .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Where(s => !string.IsNullOrWhiteSpace(AnsiStripper.Strip(s))) // skip lines that become empty after ANSI stripping
             .Take(50)
             .ToList();
 
@@ -71,21 +73,22 @@ public class OutputAccumulationPropertyTests
         var assistantMessage = service.Messages.FirstOrDefault(m => m.Role == ChatMessageRole.Assistant);
         Assert.NotNull(assistantMessage);
 
-        // Verify all lines are present in order
+        // Verify all lines are present in order (after ANSI stripping)
         var content = assistantMessage.Content;
         var contentLines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var expectedLines = outputLines.Select(AnsiStripper.Strip).Where(l => !string.IsNullOrEmpty(l)).ToList();
 
-        Assert.Equal(outputLines.Count, contentLines.Length);
-        for (var i = 0; i < outputLines.Count; i++)
+        Assert.Equal(expectedLines.Count, contentLines.Length);
+        for (var i = 0; i < expectedLines.Count; i++)
         {
-            Assert.Equal(outputLines[i], contentLines[i]);
+            Assert.Equal(expectedLines[i], contentLines[i]);
         }
 
-        // Also verify the ExecutionResult output lines
-        Assert.Equal(outputLines.Count, result.OutputLines.Count);
-        for (var i = 0; i < outputLines.Count; i++)
+        // Also verify the ExecutionResult output lines (also ANSI-stripped)
+        Assert.Equal(expectedLines.Count, result.OutputLines.Count);
+        for (var i = 0; i < expectedLines.Count; i++)
         {
-            Assert.Equal(outputLines[i], result.OutputLines[i]);
+            Assert.Equal(expectedLines[i], result.OutputLines[i]);
         }
 
         service.Dispose();

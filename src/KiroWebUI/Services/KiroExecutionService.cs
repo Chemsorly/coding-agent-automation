@@ -2,8 +2,8 @@ using KiroCliLib.Configuration;
 using KiroCliLib.Core;
 using KiroCliLib.Models;
 using KiroWebUI.Models;
+using KiroWebUI.Pipeline.Services;
 using Serilog;
-using System.Text.RegularExpressions;
 using ILogger = Serilog.ILogger;
 
 namespace KiroWebUI.Services;
@@ -31,9 +31,6 @@ public sealed class KiroExecutionService : IDisposable
     private DateTime _lastNotifyTime = DateTime.MinValue;
     private bool _pendingNotify;
     private static readonly TimeSpan NotifyThrottle = TimeSpan.FromMilliseconds(100);
-
-    // ANSI escape code stripper
-    private static readonly Regex AnsiRegex = new(@"\x1B\[[0-9;]*[A-Za-z]|\x1B\].*?\x07", RegexOptions.Compiled);
 
     // Events for UI binding
     public event Action? OnChange;
@@ -132,7 +129,7 @@ public sealed class KiroExecutionService : IDisposable
                 onOutputLine: line =>
                 {
                     if (_disposed) return;
-                    var cleanLine = AnsiRegex.Replace(line, string.Empty);
+                    var cleanLine = AnsiStripper.Strip(line);
                     lock (_messageLock)
                     {
                         assistantMessage.Content += cleanLine + "\n";

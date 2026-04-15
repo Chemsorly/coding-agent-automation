@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
 using Serilog.Context;
@@ -10,21 +9,15 @@ namespace KiroWebUI.Pipeline.Services;
 /// Manages the active pipeline run, state transitions, chat interaction, retry logic,
 /// quality gate validation, and PR creation.
 /// </summary>
-public class PipelineOrchestrationService
+public class PipelineOrchestrationService : IDisposable
 {
     private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
     private readonly IssueDescriptionParser _issueParser;
-    private readonly QualityGateValidator _qualityGateValidator;
+    private readonly IQualityGateValidator _qualityGateValidator;
     private readonly Serilog.ILogger _logger;
-    private readonly SemaphoreSlim _pipelineLock = new(1, 1);
     private readonly List<PipelineRunSummary> _runHistory = new();
     private readonly string _runsDirectory;
-
-    // Matches both \x1B[...m (standard) and bare [38;5;...m (some CLI tools omit ESC byte)
-    private static readonly Regex AnsiRegex = new(
-        @"\x1B\[[0-9;]*[A-Za-z]|\x1B\].*?\x07|\[(?:\d+;)*\d*[A-Za-z]|\[K",
-        RegexOptions.Compiled);
 
     private CancellationTokenSource? _cancellationTokenSource;
     private IAgentProvider? _activeAgentProvider;
@@ -51,7 +44,7 @@ public class PipelineOrchestrationService
         IConfigurationStore configStore,
         IProviderFactory providerFactory,
         IssueDescriptionParser issueParser,
-        QualityGateValidator qualityGateValidator,
+        IQualityGateValidator qualityGateValidator,
         Serilog.ILogger logger,
         string runsDirectory = "config/pipeline/runs")
     {
@@ -83,15 +76,14 @@ public class PipelineOrchestrationService
         ArgumentNullException.ThrowIfNull(repoProviderId);
         ArgumentNullException.ThrowIfNull(issueIdentifier);
 
-        await _pipelineLock.WaitAsync(ct);
+        if (IsRunning)
+            throw new InvalidOperationException("A pipeline run is already in progress.");
+
+        _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var linkedCt = _cancellationTokenSource.Token;
+
         try
         {
-            if (IsRunning)
-                throw new InvalidOperationException("A pipeline run is already in progress.");
-
-            _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var linkedCt = _cancellationTokenSource.Token;
-
             // Load pipeline configuration
             _activeConfig = await _configStore.LoadPipelineConfigAsync(linkedCt);
 
@@ -141,10 +133,6 @@ public class PipelineOrchestrationService
                 await HandlePipelineErrorAsync(ActiveRun, ex);
             }
             throw;
-        }
-        finally
-        {
-            _pipelineLock.Release();
         }
     }
 
@@ -680,5 +668,10 @@ public class PipelineOrchestrationService
         return string.Join(Environment.NewLine, errors);
     }
 
-    private static string StripAnsi(string input) => AnsiRegex.Replace(input, string.Empty);
+    private static string StripAnsi(string input) => AnsiStripper.Strip(input);
+
+    public void Dispose()
+    {
+        _cancellationTokenSource?.Dispose();
+    }
 }

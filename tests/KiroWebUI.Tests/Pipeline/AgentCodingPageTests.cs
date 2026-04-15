@@ -2,6 +2,7 @@ using FluentAssertions;
 using Moq;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
+using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Services;
 
 namespace KiroWebUI.Tests.Pipeline;
@@ -19,7 +20,7 @@ public class AgentCodingPageTests
     private readonly Mock<IIssueProvider> _mockIssueProvider;
     private readonly Mock<IRepositoryProvider> _mockRepoProvider;
     private readonly Mock<IAgentProvider> _mockAgentProvider;
-    private readonly Mock<QualityGateValidator> _mockValidator;
+    private readonly Mock<IQualityGateValidator> _mockValidator;
     private readonly Mock<Serilog.ILogger> _mockLogger;
     private readonly PipelineOrchestrationService _service;
 
@@ -31,7 +32,7 @@ public class AgentCodingPageTests
         _mockRepoProvider = new Mock<IRepositoryProvider>();
         _mockAgentProvider = new Mock<IAgentProvider>();
         _mockLogger = new Mock<Serilog.ILogger>();
-        _mockValidator = new Mock<QualityGateValidator>(_mockLogger.Object) { CallBase = false };
+        _mockValidator = new Mock<IQualityGateValidator>();
 
         SetupDefaultMocks();
 

@@ -3,6 +3,7 @@ using FsCheck.Xunit;
 using Moq;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
+using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Services;
 
 namespace KiroWebUI.Tests.Pipeline;
@@ -115,7 +116,7 @@ public class PipelineStateTransitionPropertyTests
         mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>())).Returns(mockAgentProvider.Object);
 
         var mockLogger = new Mock<Serilog.ILogger>();
-        var mockValidator = new Mock<QualityGateValidator>(mockLogger.Object) { CallBase = false };
+        var mockValidator = new Mock<IQualityGateValidator>();
         mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {

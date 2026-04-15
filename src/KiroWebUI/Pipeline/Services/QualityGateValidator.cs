@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
 
 namespace KiroWebUI.Pipeline.Services;
@@ -9,7 +10,7 @@ namespace KiroWebUI.Pipeline.Services;
 /// dotnet build and dotnet test in the workspace directory.
 /// Limitation: hardcoded to dotnet build/test commands (PoC).
 /// </summary>
-public partial class QualityGateValidator
+public partial class QualityGateValidator : IQualityGateValidator
 {
     private readonly Serilog.ILogger _logger;
 
