@@ -1,6 +1,7 @@
 using KiroCliLib.Core;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
+using KiroWebUI.Pipeline.Services;
 
 namespace KiroWebUI.Pipeline.Providers;
 
@@ -22,18 +23,42 @@ public class ProviderFactory : IProviderFactory
         // Register built-in providers
         RegisterIssueProvider("GitHub", config =>
         {
-            ValidateRequiredSettings(config, "apiUrl", "token", "owner", "repo");
+            ValidateRequiredSettings(config, "apiUrl", "clientId", "installationId", "privateKeyBase64", "owner", "repo");
+            if (!long.TryParse(config.Settings["installationId"], out var installationId))
+                throw new ArgumentException(
+                    $"Provider '{config.DisplayName}' (type: {config.ProviderType}) has invalid installationId: '{config.Settings["installationId"]}'. Expected a numeric value.",
+                    nameof(config));
+            var authService = new GitHubAppAuthService(
+                config.Settings["clientId"],
+                installationId,
+                config.Settings["privateKeyBase64"],
+                config.Settings["apiUrl"],
+                Serilog.Log.Logger);
             return new GitHubIssueProvider(
-                config.Settings["apiUrl"], config.Settings["token"],
-                config.Settings["owner"], config.Settings["repo"]);
+                config.Settings["apiUrl"],
+                authService.GetTokenAsync,
+                config.Settings["owner"],
+                config.Settings["repo"]);
         });
 
         RegisterRepositoryProvider("GitHub", config =>
         {
-            ValidateRequiredSettings(config, "apiUrl", "token", "owner", "repo", "baseBranch");
+            ValidateRequiredSettings(config, "apiUrl", "clientId", "installationId", "privateKeyBase64", "owner", "repo", "baseBranch");
+            if (!long.TryParse(config.Settings["installationId"], out var installationId))
+                throw new ArgumentException(
+                    $"Provider '{config.DisplayName}' (type: {config.ProviderType}) has invalid installationId: '{config.Settings["installationId"]}'. Expected a numeric value.",
+                    nameof(config));
+            var authService = new GitHubAppAuthService(
+                config.Settings["clientId"],
+                installationId,
+                config.Settings["privateKeyBase64"],
+                config.Settings["apiUrl"],
+                Serilog.Log.Logger);
             return new GitHubRepositoryProvider(
-                config.Settings["apiUrl"], config.Settings["token"],
-                config.Settings["owner"], config.Settings["repo"],
+                config.Settings["apiUrl"],
+                authService.GetTokenAsync,
+                config.Settings["owner"],
+                config.Settings["repo"],
                 config.Settings["baseBranch"]);
         });
 

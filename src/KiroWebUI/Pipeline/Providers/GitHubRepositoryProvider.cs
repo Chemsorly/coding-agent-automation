@@ -10,18 +10,24 @@ namespace KiroWebUI.Pipeline.Providers;
 
 /// <summary>
 /// Performs Git operations via LibGit2Sharp and PR creation via Octokit.
+/// Supports both static token authentication (backward compatible) and
+/// dynamic token provider delegate (for GitHub App auth).
 /// </summary>
 public partial class GitHubRepositoryProvider : IRepositoryProvider
 {
     private readonly string _apiUrl;
-    private readonly string _token;
+    private readonly string? _token;
+    private readonly Func<CancellationToken, Task<string>>? _tokenProvider;
     private readonly string _owner;
     private readonly string _repo;
     private readonly string _baseBranch;
-    private readonly IGitHubClient _gitHubClient;
+    private readonly IGitHubClient? _gitHubClient;
 
     public RepositoryProviderType ProviderType => RepositoryProviderType.GitHub;
 
+    /// <summary>
+    /// Creates a provider with a static token (backward compatible).
+    /// </summary>
     public GitHubRepositoryProvider(string apiUrl, string token, string owner, string repo, string baseBranch)
     {
         ArgumentNullException.ThrowIfNull(apiUrl);
@@ -42,6 +48,25 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
         {
             Credentials = new Octokit.Credentials(token)
         };
+    }
+
+    /// <summary>
+    /// Creates a provider with a token provider delegate (for GitHub App auth).
+    /// The delegate is called before each API call to obtain a fresh token.
+    /// </summary>
+    public GitHubRepositoryProvider(string apiUrl, Func<CancellationToken, Task<string>> tokenProvider, string owner, string repo, string baseBranch)
+    {
+        ArgumentNullException.ThrowIfNull(apiUrl);
+        ArgumentNullException.ThrowIfNull(tokenProvider);
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(repo);
+        ArgumentNullException.ThrowIfNull(baseBranch);
+
+        _apiUrl = apiUrl;
+        _tokenProvider = tokenProvider;
+        _owner = owner;
+        _repo = repo;
+        _baseBranch = baseBranch;
     }
 
     /// <summary>
@@ -67,8 +92,10 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
     {
         ArgumentNullException.ThrowIfNull(workspacePath);
 
-        return Task.Run(() =>
+        return Task.Run(async () =>
         {
+            var token = await GetTokenAsync(ct);
+
             // Derive clone URL: api.github.com → github.com, or GHE api base → GHE base
             var cloneBaseUrl = _apiUrl.Replace("api.github.com", "github.com", StringComparison.OrdinalIgnoreCase);
             // For GHE: https://github.example.com/api/v3 → https://github.example.com
@@ -81,7 +108,7 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
                 FetchOptions =
                 {
                     CredentialsProvider = (_, _, _) =>
-                        new UsernamePasswordCredentials { Username = "x-access-token", Password = _token }
+                        new UsernamePasswordCredentials { Username = "x-access-token", Password = token }
                 }
             };
             Repository.Clone(cloneUrl, workspacePath, options);
@@ -111,6 +138,12 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
         {
             using var repo = new Repository(workspacePath);
             Commands.Stage(repo, "*");
+
+            // Check if there are any staged changes before committing
+            var status = repo.RetrieveStatus();
+            if (!status.IsDirty && status.Staged.Count() == 0)
+                throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
+
             var signature = new Signature("KiroWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
             repo.Commit(message, signature, signature);
         }, ct);
@@ -121,14 +154,16 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
         ArgumentNullException.ThrowIfNull(workspacePath);
         ArgumentNullException.ThrowIfNull(branchName);
 
-        return Task.Run(() =>
+        return Task.Run(async () =>
         {
+            var token = await GetTokenAsync(ct);
+
             using var repo = new Repository(workspacePath);
             var remote = repo.Network.Remotes["origin"];
             var options = new PushOptions
             {
                 CredentialsProvider = (_, _, _) =>
-                    new UsernamePasswordCredentials { Username = "x-access-token", Password = _token }
+                    new UsernamePasswordCredentials { Username = "x-access-token", Password = token }
             };
             repo.Network.Push(remote, $"refs/heads/{branchName}", options);
         }, ct);
@@ -138,14 +173,48 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
     {
         ArgumentNullException.ThrowIfNull(prInfo);
 
+        var client = await GetClientAsync(ct);
+
         var newPr = new NewPullRequest(prInfo.Title, prInfo.BranchName, prInfo.BaseBranch)
         {
             Body = prInfo.Body,
             Draft = prInfo.IsDraft
         };
 
-        var pr = await _gitHubClient.PullRequest.Create(_owner, _repo, newPr);
+        var pr = await client.PullRequest.Create(_owner, _repo, newPr);
         return pr.HtmlUrl;
+    }
+
+    /// <summary>
+    /// Returns a current token, either from the static field or by calling the token provider.
+    /// </summary>
+    private async Task<string> GetTokenAsync(CancellationToken ct)
+    {
+        if (_tokenProvider is not null)
+            return await _tokenProvider(ct);
+
+        return _token!;
+    }
+
+    /// <summary>
+    /// Returns a GitHubClient configured with a current token.
+    /// If a token provider is set, calls it to get a fresh token and creates a new client.
+    /// Otherwise, returns the static client.
+    /// </summary>
+    private async Task<IGitHubClient> GetClientAsync(CancellationToken ct)
+    {
+        if (_tokenProvider is not null)
+        {
+            var token = await _tokenProvider(ct);
+            return new GitHubClient(
+                new Octokit.ProductHeaderValue("KiroWebUI-Pipeline"),
+                new Uri(_apiUrl))
+            {
+                Credentials = new Octokit.Credentials(token)
+            };
+        }
+
+        return _gitHubClient!;
     }
 
     // --- Static helper methods — delegate to PipelineFormatting for shared use ---

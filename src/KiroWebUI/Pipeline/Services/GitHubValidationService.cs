@@ -1,4 +1,6 @@
 using Octokit;
+using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace KiroWebUI.Pipeline.Services;
 
@@ -8,35 +10,60 @@ namespace KiroWebUI.Pipeline.Services;
 /// </summary>
 public class GitHubValidationService
 {
+    private readonly ILogger _logger = Log.Logger;
+
     /// <summary>
-    /// Validates a GitHub token by attempting to get the authenticated user.
-    /// Returns the username on success, or an error message on failure.
+    /// Validates GitHub App credentials by generating a JWT, exchanging it for an installation token,
+    /// and verifying access by listing installation repositories or checking specific repository access.
+    /// Returns user-friendly error messages for all failure modes.
     /// </summary>
-    public async Task<(bool Success, string Message)> ValidateTokenAsync(
-        string apiUrl, string token, CancellationToken ct)
+    public async Task<(bool Success, string Message)> ValidateAppCredentialsAsync(
+        string apiUrl, string clientId, long installationId, string privateKeyBase64, CancellationToken ct,
+        string? owner = null, string? repo = null)
     {
+        // Step 1: Create a temporary auth service and get a token
+        string token;
         try
         {
-            var client = CreateClient(apiUrl, token);
-            var user = await client.User.Current();
-            return (true, $"Authenticated as {user.Login}");
+            var authService = new GitHubAppAuthService(
+                clientId, installationId, privateKeyBase64, apiUrl, _logger);
+            token = await authService.GetTokenAsync(ct);
         }
-        catch (AuthorizationException)
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Failed to decode private key"))
         {
-            return (false, "Invalid token or token has expired");
+            return (false, "Invalid private key: could not decode from base64");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("token exchange failed"))
+        {
+            return (false, $"Authentication failed: {ex.InnerException?.Message ?? ex.Message}");
         }
         catch (Exception ex)
         {
             return (false, $"Connection failed: {ex.Message}");
         }
-    }
 
-    /// <summary>
-    /// Validates that the token has access to a specific repository.
-    /// </summary>
-    public async Task<(bool Success, string Message)> ValidateRepoAccessAsync(
-        string apiUrl, string token, string owner, string repo, CancellationToken ct)
-    {
+        // Step 2: Verify the installation token works.
+        // If owner/repo are provided, go straight to repo validation (Step 3).
+        // Otherwise, list installation repos to confirm the token is accepted.
+        if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(repo))
+        {
+            try
+            {
+                var client = CreateClient(apiUrl, token);
+                var response = await client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
+                return (true, $"✅ GitHub App credentials validated — {response.TotalCount} repository(ies) accessible");
+            }
+            catch (AuthorizationException)
+            {
+                return (false, "Authentication failed: installation token was rejected");
+            }
+            catch (Exception ex)
+            {
+                return (false, $"Connection failed: {ex.Message}");
+            }
+        }
+
+        // Step 3: owner/repo provided — verify repository access and permissions
         try
         {
             var client = CreateClient(apiUrl, token);
@@ -53,11 +80,7 @@ public class GitHubValidationService
         }
         catch (NotFoundException)
         {
-            return (false, $"Repository {owner}/{repo} not found or token lacks access");
-        }
-        catch (AuthorizationException)
-        {
-            return (false, "Invalid token or token has expired");
+            return (false, $"Repository {owner}/{repo} not found or app lacks access");
         }
         catch (Exception ex)
         {
@@ -66,23 +89,31 @@ public class GitHubValidationService
     }
 
     /// <summary>
-    /// Lists repositories accessible to the authenticated token.
+    /// Lists repositories accessible to a GitHub App installation.
+    /// Creates a temporary auth service, generates a token, and lists installation repos.
     /// Returns up to 100 repos sorted by most recently pushed.
     /// </summary>
-    public async Task<IReadOnlyList<(string FullName, string Owner, string Name)>> ListRepositoriesAsync(
-        string apiUrl, string token, CancellationToken ct)
+    public async Task<IReadOnlyList<(string FullName, string Owner, string Name)>> ListRepositoriesWithAppAsync(
+        string apiUrl, string clientId, long installationId, string privateKeyBase64, CancellationToken ct)
     {
         try
         {
-            var client = CreateClient(apiUrl, token);
-            var repos = await client.Repository.GetAllForCurrent(
-                new RepositoryRequest { Sort = RepositorySort.Pushed, Direction = SortDirection.Descending },
-                new ApiOptions { PageSize = 100, PageCount = 1 });
+            var authService = new GitHubAppAuthService(
+                clientId, installationId, privateKeyBase64, apiUrl, _logger);
+            var token = await authService.GetTokenAsync(ct);
 
-            return repos.Select(r => (r.FullName, r.Owner.Login, r.Name)).ToList();
+            // Installation tokens can access GET /installation/repositories
+            // via Octokit's GitHubApps.Installation sub-client
+            var client = CreateClient(apiUrl, token);
+            var response = await client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
+
+            return (response.Repositories ?? Array.Empty<Octokit.Repository>())
+                .Select(r => (r.FullName, r.Owner.Login, r.Name))
+                .ToList();
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.Warning(ex, "Failed to list repositories for GitHub App installation");
             return Array.Empty<(string, string, string)>();
         }
     }

@@ -81,7 +81,10 @@ public class SettingsPageTests
             Settings = new Dictionary<string, string>
             {
                 ["apiUrl"] = "https://api.github.com",
-                ["token"] = "ghp_test",
+                ["clientId"] = "Iv1.abc123",
+                ["appId"] = "123456",
+                ["installationId"] = "78901234",
+                ["privateKeyBase64"] = "LS0tLS1CRUdJTi...",
                 ["owner"] = "myorg",
                 ["repo"] = "myrepo"
             }
@@ -94,9 +97,13 @@ public class SettingsPageTests
         savedConfig.ProviderType.Should().Be("GitHub");
         savedConfig.DisplayName.Should().Be("My GitHub Issues");
         savedConfig.Settings.Should().ContainKey("apiUrl").WhoseValue.Should().Be("https://api.github.com");
-        savedConfig.Settings.Should().ContainKey("token").WhoseValue.Should().Be("ghp_test");
+        savedConfig.Settings.Should().ContainKey("clientId").WhoseValue.Should().Be("Iv1.abc123");
+        savedConfig.Settings.Should().ContainKey("appId").WhoseValue.Should().Be("123456");
+        savedConfig.Settings.Should().ContainKey("installationId").WhoseValue.Should().Be("78901234");
+        savedConfig.Settings.Should().ContainKey("privateKeyBase64").WhoseValue.Should().Be("LS0tLS1CRUdJTi...");
         savedConfig.Settings.Should().ContainKey("owner").WhoseValue.Should().Be("myorg");
         savedConfig.Settings.Should().ContainKey("repo").WhoseValue.Should().Be("myrepo");
+        savedConfig.Settings.Should().NotContainKey("token");
     }
 
     [Fact]
@@ -118,7 +125,10 @@ public class SettingsPageTests
             Settings = new Dictionary<string, string>
             {
                 ["apiUrl"] = "https://api.github.com",
-                ["token"] = "ghp_repo",
+                ["clientId"] = "Iv1.abc123",
+                ["appId"] = "123456",
+                ["installationId"] = "78901234",
+                ["privateKeyBase64"] = "LS0tLS1CRUdJTi...",
                 ["owner"] = "org",
                 ["repo"] = "repo",
                 ["baseBranch"] = "develop"
@@ -130,6 +140,7 @@ public class SettingsPageTests
         savedConfig.Should().NotBeNull();
         savedConfig!.Kind.Should().Be(ProviderKind.Repository);
         savedConfig.Settings.Should().ContainKey("baseBranch").WhoseValue.Should().Be("develop");
+        savedConfig.Settings.Should().NotContainKey("token");
     }
 
     [Fact]
@@ -186,7 +197,10 @@ public class SettingsPageTests
             Settings = new Dictionary<string, string>
             {
                 ["apiUrl"] = "https://api.github.com",
-                ["token"] = "ghp_new",
+                ["clientId"] = "Iv1.new123",
+                ["appId"] = "654321",
+                ["installationId"] = "11111111",
+                ["privateKeyBase64"] = "LS0tLS1CRUdJTi...",
                 ["owner"] = "neworg",
                 ["repo"] = "newrepo"
             }

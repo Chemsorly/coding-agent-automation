@@ -54,9 +54,25 @@
                             <input type="text" @bind="_issueForm.ApiUrl" placeholder="https://api.github.com" />
                         </div>
                         <div class="form-group">
-                            <label>Token</label>
-                            <div class="input-with-action">
-                                <input type="password" @bind="_issueForm.Token" placeholder="ghp_..." />
+                            <label>Client ID</label>
+                            <input type="text" @bind="_issueForm.ClientId" placeholder="Iv1.abc123..." />
+                        </div>
+                        <div class="form-group">
+                            <label>App ID</label>
+                            <input type="text" @bind="_issueForm.AppId" placeholder="123456" />
+                        </div>
+                        <div class="form-group">
+                            <label>Installation ID</label>
+                            <input type="text" @bind="_issueForm.InstallationId" placeholder="78901234" />
+                        </div>
+                        <div class="form-group">
+                            <label>Private Key (.pem file)</label>
+                            <InputFile OnChange="OnIssueKeyFileSelected" accept=".pem" />
+                            <div class="input-with-action" style="margin-top: 0.5rem;">
+                                @if (!string.IsNullOrEmpty(_issueForm.PrivateKeyBase64))
+                                {
+                                    <span class="key-status" style="color: #4ade80;">✅ Key loaded</span>
+                                }
                                 <button class="btn-edit" @onclick="FetchIssueRepos" disabled="@_issueLoadingRepos">
                                     @(_issueLoadingRepos ? "Loading..." : "Fetch Repos")
                                 </button>
@@ -98,20 +114,22 @@
                         </div>
                     </div>
                     <div class="provider-help">
-                        <h4>🔑 GitHub Token Setup</h4>
-                        <p>Create a <strong>fine-grained personal access token</strong> at
-                            <a href="https://github.com/settings/tokens?type=beta" target="_blank">github.com/settings/tokens</a>.</p>
+                        <h4>🔐 GitHub App Setup</h4>
+                        <p>Configure a <strong>GitHub App</strong> for authentication. See
+                            <a href="https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app" target="_blank">GitHub App docs</a>.</p>
                         <p class="help-heading">Required permissions:</p>
                         <ul>
-                            <li><strong>Issues: Read-only</strong> — fetch and list issues</li>
+                            <li><strong>Issues: Read &amp; write</strong> — fetch and list issues</li>
                         </ul>
                         <p class="help-heading">Fields:</p>
                         <ul>
+                            <li><strong>Client ID</strong> — from the App's General settings page (e.g. <code>Iv1.abc123...</code>)</li>
+                            <li><strong>App ID</strong> — numeric ID from the App's settings page</li>
+                            <li><strong>Installation ID</strong> — from the installation URL (<code>github.com/settings/installations/{'{'}id{'}'}</code>)</li>
+                            <li><strong>Private Key</strong> — upload the .pem file downloaded from the App's settings</li>
                             <li><strong>API URL</strong> — use <code>https://api.github.com</code> for github.com, or your GitHub Enterprise URL</li>
-                            <li><strong>Owner</strong> — the GitHub user or organization (e.g. <code>myorg</code>)</li>
-                            <li><strong>Repository</strong> — the repo name (e.g. <code>my-project</code>)</li>
                         </ul>
-                        <p class="help-tip">💡 You can reuse the same token for the Repository Provider if you add write permissions.</p>
+                        <p class="help-tip">💡 You can reuse the same GitHub App for the Repository Provider if you add Contents and Pull requests permissions.</p>
                     </div>
                 </div>
             }
@@ -158,9 +176,25 @@
                             <input type="text" @bind="_repoForm.ApiUrl" placeholder="https://api.github.com" />
                         </div>
                         <div class="form-group">
-                            <label>Token</label>
-                            <div class="input-with-action">
-                                <input type="password" @bind="_repoForm.Token" placeholder="ghp_..." />
+                            <label>Client ID</label>
+                            <input type="text" @bind="_repoForm.ClientId" placeholder="Iv1.abc123..." />
+                        </div>
+                        <div class="form-group">
+                            <label>App ID</label>
+                            <input type="text" @bind="_repoForm.AppId" placeholder="123456" />
+                        </div>
+                        <div class="form-group">
+                            <label>Installation ID</label>
+                            <input type="text" @bind="_repoForm.InstallationId" placeholder="78901234" />
+                        </div>
+                        <div class="form-group">
+                            <label>Private Key (.pem file)</label>
+                            <InputFile OnChange="OnRepoKeyFileSelected" accept=".pem" />
+                            <div class="input-with-action" style="margin-top: 0.5rem;">
+                                @if (!string.IsNullOrEmpty(_repoForm.PrivateKeyBase64))
+                                {
+                                    <span class="key-status" style="color: #4ade80;">✅ Key loaded</span>
+                                }
                                 <button class="btn-edit" @onclick="FetchRepoRepos" disabled="@_repoLoadingRepos">
                                     @(_repoLoadingRepos ? "Loading..." : "Fetch Repos")
                                 </button>
@@ -206,21 +240,24 @@
                         </div>
                     </div>
                     <div class="provider-help">
-                        <h4>🔑 GitHub Token Setup</h4>
-                        <p>Create a <strong>fine-grained personal access token</strong> at
-                            <a href="https://github.com/settings/tokens?type=beta" target="_blank">github.com/settings/tokens</a>.</p>
+                        <h4>🔐 GitHub App Setup</h4>
+                        <p>Configure a <strong>GitHub App</strong> for authentication. See
+                            <a href="https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app" target="_blank">GitHub App docs</a>.</p>
                         <p class="help-heading">Required permissions:</p>
                         <ul>
-                            <li><strong>Contents: Read and write</strong> — clone, push branches, commit</li>
-                            <li><strong>Pull requests: Read and write</strong> — create PRs</li>
+                            <li><strong>Contents: Read &amp; write</strong> — clone, push branches, commit</li>
+                            <li><strong>Pull requests: Read &amp; write</strong> — create PRs</li>
                         </ul>
                         <p class="help-heading">Fields:</p>
                         <ul>
+                            <li><strong>Client ID</strong> — from the App's General settings page (e.g. <code>Iv1.abc123...</code>)</li>
+                            <li><strong>App ID</strong> — numeric ID from the App's settings page</li>
+                            <li><strong>Installation ID</strong> — from the installation URL (<code>github.com/settings/installations/{'{'}id{'}'}</code>)</li>
+                            <li><strong>Private Key</strong> — upload the .pem file downloaded from the App's settings</li>
                             <li><strong>API URL</strong> — use <code>https://api.github.com</code> for github.com, or your GitHub Enterprise URL</li>
-                            <li><strong>Owner / Repository</strong> — same as the issue provider</li>
                             <li><strong>Base Branch</strong> — the branch PRs will target (e.g. <code>main</code>, <code>develop</code>)</li>
                         </ul>
-                        <p class="help-tip">💡 If using a classic PAT, the <code>repo</code> scope covers everything.</p>
+                        <p class="help-tip">💡 Use the same GitHub App as the Issue Provider — just ensure it has Contents and Pull requests permissions.</p>
                     </div>
                 </div>
             }
@@ -417,7 +454,10 @@
             ProviderType = p.ProviderType,
             DisplayName = p.DisplayName,
             ApiUrl = p.Settings.GetValueOrDefault("apiUrl", ""),
-            Token = p.Settings.GetValueOrDefault("token", ""),
+            ClientId = p.Settings.GetValueOrDefault("clientId", ""),
+            AppId = p.Settings.GetValueOrDefault("appId", ""),
+            InstallationId = p.Settings.GetValueOrDefault("installationId", ""),
+            PrivateKeyBase64 = p.Settings.GetValueOrDefault("privateKeyBase64", ""),
             Owner = p.Settings.GetValueOrDefault("owner", ""),
             Repo = p.Settings.GetValueOrDefault("repo", "")
         };
@@ -451,14 +491,23 @@
             return;
         }
 
-        // Validate token and repo access
+        // Validate App credentials
         _issueSaving = true;
-        _issueValidationMessage = "Validating token and repository access...";
+        _issueValidationMessage = "Validating GitHub App credentials...";
         _issueValidationSuccess = true;
         StateHasChanged();
 
-        var (success, message) = await GitHubValidator.ValidateRepoAccessAsync(
-            _issueForm.ApiUrl, _issueForm.Token, _issueForm.Owner, _issueForm.Repo, CancellationToken.None);
+        if (!long.TryParse(_issueForm.InstallationId, out var installationId))
+        {
+            _issueValidationMessage = "Installation ID must be a valid number.";
+            _issueValidationSuccess = false;
+            _issueSaving = false;
+            return;
+        }
+
+        var (success, message) = await GitHubValidator.ValidateAppCredentialsAsync(
+            _issueForm.ApiUrl, _issueForm.ClientId, installationId, _issueForm.PrivateKeyBase64, CancellationToken.None,
+            _issueForm.Owner, _issueForm.Repo);
 
         if (!success)
         {
@@ -477,7 +526,10 @@
             Settings = new Dictionary<string, string>
             {
                 ["apiUrl"] = _issueForm.ApiUrl,
-                ["token"] = _issueForm.Token,
+                ["clientId"] = _issueForm.ClientId,
+                ["appId"] = _issueForm.AppId,
+                ["installationId"] = _issueForm.InstallationId,
+                ["privateKeyBase64"] = _issueForm.PrivateKeyBase64,
                 ["owner"] = _issueForm.Owner,
                 ["repo"] = _issueForm.Repo
             }
@@ -521,7 +573,10 @@
             ProviderType = p.ProviderType,
             DisplayName = p.DisplayName,
             ApiUrl = p.Settings.GetValueOrDefault("apiUrl", ""),
-            Token = p.Settings.GetValueOrDefault("token", ""),
+            ClientId = p.Settings.GetValueOrDefault("clientId", ""),
+            AppId = p.Settings.GetValueOrDefault("appId", ""),
+            InstallationId = p.Settings.GetValueOrDefault("installationId", ""),
+            PrivateKeyBase64 = p.Settings.GetValueOrDefault("privateKeyBase64", ""),
             Owner = p.Settings.GetValueOrDefault("owner", ""),
             Repo = p.Settings.GetValueOrDefault("repo", ""),
             BaseBranch = p.Settings.GetValueOrDefault("baseBranch", "main")
@@ -556,14 +611,23 @@
             return;
         }
 
-        // Validate token and repo access
+        // Validate App credentials
         _repoSaving = true;
-        _repoValidationMessage = "Validating token and repository access...";
+        _repoValidationMessage = "Validating GitHub App credentials...";
         _repoValidationSuccess = true;
         StateHasChanged();
 
-        var (success, message) = await GitHubValidator.ValidateRepoAccessAsync(
-            _repoForm.ApiUrl, _repoForm.Token, _repoForm.Owner, _repoForm.Repo, CancellationToken.None);
+        if (!long.TryParse(_repoForm.InstallationId, out var repoInstallationId))
+        {
+            _repoValidationMessage = "Installation ID must be a valid number.";
+            _repoValidationSuccess = false;
+            _repoSaving = false;
+            return;
+        }
+
+        var (success, message) = await GitHubValidator.ValidateAppCredentialsAsync(
+            _repoForm.ApiUrl, _repoForm.ClientId, repoInstallationId, _repoForm.PrivateKeyBase64, CancellationToken.None,
+            _repoForm.Owner, _repoForm.Repo);
 
         if (!success)
         {
@@ -582,7 +646,10 @@
             Settings = new Dictionary<string, string>
             {
                 ["apiUrl"] = _repoForm.ApiUrl,
-                ["token"] = _repoForm.Token,
+                ["clientId"] = _repoForm.ClientId,
+                ["appId"] = _repoForm.AppId,
+                ["installationId"] = _repoForm.InstallationId,
+                ["privateKeyBase64"] = _repoForm.PrivateKeyBase64,
                 ["owner"] = _repoForm.Owner,
                 ["repo"] = _repoForm.Repo,
                 ["baseBranch"] = _repoForm.BaseBranch
@@ -665,12 +732,46 @@
         }
     }
 
+    // --- File Upload Handlers ---
+    private async Task OnIssueKeyFileSelected(InputFileChangeEventArgs e)
+    {
+        await ReadPemFileAsync(e, base64 => _issueForm.PrivateKeyBase64 = base64);
+    }
+
+    private async Task OnRepoKeyFileSelected(InputFileChangeEventArgs e)
+    {
+        await ReadPemFileAsync(e, base64 => _repoForm.PrivateKeyBase64 = base64);
+    }
+
+    private async Task ReadPemFileAsync(InputFileChangeEventArgs e, Action<string> setter)
+    {
+        var file = e.File;
+        if (file is null) return;
+
+        // Limit to 32KB — PEM files are typically ~3KB
+        const int maxSize = 32 * 1024;
+        using var stream = file.OpenReadStream(maxSize);
+        using var reader = new StreamReader(stream);
+        var pemContent = await reader.ReadToEndAsync();
+        var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(pemContent));
+        setter(base64);
+        StateHasChanged();
+    }
+
     // --- Fetch Repos ---
     private async Task FetchIssueRepos()
     {
-        if (string.IsNullOrWhiteSpace(_issueForm.Token))
+        if (string.IsNullOrWhiteSpace(_issueForm.ClientId) || string.IsNullOrWhiteSpace(_issueForm.InstallationId)
+            || string.IsNullOrWhiteSpace(_issueForm.PrivateKeyBase64))
         {
-            _issueValidationMessage = "Enter a token first.";
+            _issueValidationMessage = "Enter Client ID, Installation ID, and Private Key first.";
+            _issueValidationSuccess = false;
+            return;
+        }
+
+        if (!long.TryParse(_issueForm.InstallationId, out var installationId))
+        {
+            _issueValidationMessage = "Installation ID must be a valid number.";
             _issueValidationSuccess = false;
             return;
         }
@@ -679,27 +780,37 @@
         _issueValidationMessage = null;
         StateHasChanged();
 
-        var (tokenOk, tokenMsg) = await GitHubValidator.ValidateTokenAsync(_issueForm.ApiUrl, _issueForm.Token, CancellationToken.None);
-        if (!tokenOk)
+        var (credOk, credMsg) = await GitHubValidator.ValidateAppCredentialsAsync(
+            _issueForm.ApiUrl, _issueForm.ClientId, installationId, _issueForm.PrivateKeyBase64, CancellationToken.None);
+        if (!credOk)
         {
-            _issueValidationMessage = tokenMsg;
+            _issueValidationMessage = credMsg;
             _issueValidationSuccess = false;
             _issueLoadingRepos = false;
             return;
         }
 
-        var repos = await GitHubValidator.ListRepositoriesAsync(_issueForm.ApiUrl, _issueForm.Token, CancellationToken.None);
+        var repos = await GitHubValidator.ListRepositoriesWithAppAsync(
+            _issueForm.ApiUrl, _issueForm.ClientId, installationId, _issueForm.PrivateKeyBase64, CancellationToken.None);
         _issueAvailableRepos = repos.ToList();
-        _issueValidationMessage = $"{tokenMsg} — {repos.Count} repositories found";
+        _issueValidationMessage = $"{credMsg} — {repos.Count} repositories found";
         _issueValidationSuccess = true;
         _issueLoadingRepos = false;
     }
 
     private async Task FetchRepoRepos()
     {
-        if (string.IsNullOrWhiteSpace(_repoForm.Token))
+        if (string.IsNullOrWhiteSpace(_repoForm.ClientId) || string.IsNullOrWhiteSpace(_repoForm.InstallationId)
+            || string.IsNullOrWhiteSpace(_repoForm.PrivateKeyBase64))
         {
-            _repoValidationMessage = "Enter a token first.";
+            _repoValidationMessage = "Enter Client ID, Installation ID, and Private Key first.";
+            _repoValidationSuccess = false;
+            return;
+        }
+
+        if (!long.TryParse(_repoForm.InstallationId, out var repoInstallationId))
+        {
+            _repoValidationMessage = "Installation ID must be a valid number.";
             _repoValidationSuccess = false;
             return;
         }
@@ -708,18 +819,20 @@
         _repoValidationMessage = null;
         StateHasChanged();
 
-        var (tokenOk, tokenMsg) = await GitHubValidator.ValidateTokenAsync(_repoForm.ApiUrl, _repoForm.Token, CancellationToken.None);
-        if (!tokenOk)
+        var (credOk, credMsg) = await GitHubValidator.ValidateAppCredentialsAsync(
+            _repoForm.ApiUrl, _repoForm.ClientId, repoInstallationId, _repoForm.PrivateKeyBase64, CancellationToken.None);
+        if (!credOk)
         {
-            _repoValidationMessage = tokenMsg;
+            _repoValidationMessage = credMsg;
             _repoValidationSuccess = false;
             _repoLoadingRepos = false;
             return;
         }
 
-        var repos = await GitHubValidator.ListRepositoriesAsync(_repoForm.ApiUrl, _repoForm.Token, CancellationToken.None);
+        var repos = await GitHubValidator.ListRepositoriesWithAppAsync(
+            _repoForm.ApiUrl, _repoForm.ClientId, repoInstallationId, _repoForm.PrivateKeyBase64, CancellationToken.None);
         _repoAvailableRepos = repos.ToList();
-        _repoValidationMessage = $"{tokenMsg} — {repos.Count} repositories found";
+        _repoValidationMessage = $"{credMsg} — {repos.Count} repositories found";
         _repoValidationSuccess = true;
         _repoLoadingRepos = false;
     }
@@ -773,7 +886,10 @@
         public string ProviderType { get; set; } = "GitHub";
         public string DisplayName { get; set; } = "";
         public string ApiUrl { get; set; } = "https://api.github.com";
-        public string Token { get; set; } = "";
+        public string ClientId { get; set; } = "";
+        public string AppId { get; set; } = "";
+        public string InstallationId { get; set; } = "";
+        public string PrivateKeyBase64 { get; set; } = "";
         public string Owner { get; set; } = "";
         public string Repo { get; set; } = "";
     }
@@ -783,7 +899,10 @@
         public string ProviderType { get; set; } = "GitHub";
         public string DisplayName { get; set; } = "";
         public string ApiUrl { get; set; } = "https://api.github.com";
-        public string Token { get; set; } = "";
+        public string ClientId { get; set; } = "";
+        public string AppId { get; set; } = "";
+        public string InstallationId { get; set; } = "";
+        public string PrivateKeyBase64 { get; set; } = "";
         public string Owner { get; set; } = "";
         public string Repo { get; set; } = "";
         public string BaseBranch { get; set; } = "main";

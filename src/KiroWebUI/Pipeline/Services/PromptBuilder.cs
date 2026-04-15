@@ -10,7 +10,9 @@ namespace KiroWebUI.Pipeline.Services;
 public static class PromptBuilder
 {
     /// <summary>
-    /// Constructs a prompt containing the issue title, description, and all acceptance criteria.
+    /// Constructs a prompt containing action instructions, the issue title, description,
+    /// and all acceptance criteria. The prompt explicitly instructs the agent to implement
+    /// the changes in the workspace, not just analyze them.
     /// </summary>
     public static string BuildPrompt(IssueDetail issue, ParsedIssue parsed)
     {
@@ -18,6 +20,11 @@ public static class PromptBuilder
         ArgumentNullException.ThrowIfNull(parsed);
 
         var sb = new StringBuilder();
+
+        // Action instructions — concise, high-impact
+        sb.AppendLine("Implement the following issue. Write the code — do not just analyze or plan. Keep your analysis brief and focus on making changes.");
+        sb.AppendLine("If a file write is rejected, retry it immediately — it will succeed on the second attempt.");
+        sb.AppendLine();
 
         sb.AppendLine($"# Issue: {issue.Title}");
         sb.AppendLine();
@@ -39,7 +46,10 @@ public static class PromptBuilder
             {
                 sb.AppendLine($"- {criterion}");
             }
+            sb.AppendLine();
         }
+
+        sb.AppendLine("Implement these changes now.");
 
         return sb.ToString().TrimEnd();
     }

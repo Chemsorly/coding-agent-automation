@@ -6,16 +6,22 @@ namespace KiroWebUI.Pipeline.Providers;
 
 /// <summary>
 /// Fetches issues from GitHub using the Octokit.NET library.
-/// Configured with API URL, authentication token, owner, and repository.
+/// Supports both static token authentication (backward compatible) and
+/// dynamic token provider delegate (for GitHub App auth).
 /// </summary>
 public class GitHubIssueProvider : IIssueProvider
 {
-    private readonly IGitHubClient _client;
+    private readonly IGitHubClient? _client;
+    private readonly string? _apiUrl;
+    private readonly Func<CancellationToken, Task<string>>? _tokenProvider;
     private readonly string _owner;
     private readonly string _repo;
 
     public IssueProviderType ProviderType => IssueProviderType.GitHub;
 
+    /// <summary>
+    /// Creates a provider with a static token (backward compatible).
+    /// </summary>
     public GitHubIssueProvider(string apiUrl, string token, string owner, string repo)
     {
         ArgumentNullException.ThrowIfNull(apiUrl);
@@ -31,6 +37,23 @@ public class GitHubIssueProvider : IIssueProvider
         {
             Credentials = new Credentials(token)
         };
+    }
+
+    /// <summary>
+    /// Creates a provider with a token provider delegate (for GitHub App auth).
+    /// The delegate is called before each API call to obtain a fresh token.
+    /// </summary>
+    public GitHubIssueProvider(string apiUrl, Func<CancellationToken, Task<string>> tokenProvider, string owner, string repo)
+    {
+        ArgumentNullException.ThrowIfNull(apiUrl);
+        ArgumentNullException.ThrowIfNull(tokenProvider);
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(repo);
+
+        _apiUrl = apiUrl;
+        _tokenProvider = tokenProvider;
+        _owner = owner;
+        _repo = repo;
     }
 
     /// <summary>
@@ -54,7 +77,8 @@ public class GitHubIssueProvider : IIssueProvider
         if (!int.TryParse(identifier, out var issueNumber))
             throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
 
-        var issue = await _client.Issue.Get(_owner, _repo, issueNumber);
+        var client = await GetClientAsync(ct);
+        var issue = await client.Issue.Get(_owner, _repo, issueNumber);
         return MapToIssueDetail(issue);
     }
 
@@ -65,13 +89,35 @@ public class GitHubIssueProvider : IIssueProvider
             State = ItemStateFilter.Open
         };
 
-        var issues = await _client.Issue.GetAllForRepository(_owner, _repo, request);
+        var client = await GetClientAsync(ct);
+        var issues = await client.Issue.GetAllForRepository(_owner, _repo, request);
 
         return issues
             .Where(i => i.PullRequest == null) // PRs show up as issues in GitHub API — filter them out
             .Select(MapToIssueSummary)
             .ToList()
             .AsReadOnly();
+    }
+
+    /// <summary>
+    /// Returns a GitHubClient configured with a current token.
+    /// If a token provider is set, calls it to get a fresh token.
+    /// Otherwise, returns the static client.
+    /// </summary>
+    private async Task<IGitHubClient> GetClientAsync(CancellationToken ct)
+    {
+        if (_tokenProvider is not null)
+        {
+            var token = await _tokenProvider(ct);
+            return new GitHubClient(
+                new ProductHeaderValue("KiroWebUI-Pipeline"),
+                new Uri(_apiUrl!))
+            {
+                Credentials = new Credentials(token)
+            };
+        }
+
+        return _client!;
     }
 
     private static IssueDetail MapToIssueDetail(Issue issue)

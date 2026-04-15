@@ -111,7 +111,9 @@ public class SettingsPageComponentTests : BunitContext
         Assert.Contains("Add Issue Provider", component.Markup);
         Assert.Contains("Display Name", component.Markup);
         Assert.Contains("API URL", component.Markup);
-        Assert.Contains("Token", component.Markup);
+        Assert.Contains("Client ID", component.Markup);
+        Assert.Contains("Installation ID", component.Markup);
+        Assert.Contains("Private Key", component.Markup);
         Assert.Contains("Owner", component.Markup);
         Assert.Contains("Repository", component.Markup);
     }
