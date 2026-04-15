@@ -42,7 +42,7 @@ public class ProcessWrapper : IDisposable
         var startInfo = new ProcessStartInfo
         {
             FileName = _useWsl ? "wsl" : _config.KiroCliPath,
-            Arguments = _useWsl ? $"{_config.KiroCliPath} chat" : "chat",
+            Arguments = _useWsl ? $"{_config.KiroCliPath} chat --no-interactive" : "chat --no-interactive",
             WorkingDirectory = workspaceDirectory,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -109,8 +109,8 @@ public class ProcessWrapper : IDisposable
 
         var escapedPrompt = prompt.Replace("\"", "\\\"");
         var kiroArgs = useResume
-            ? $"chat --resume --trust-all-tools \"{escapedPrompt}\""
-            : $"chat --trust-all-tools \"{escapedPrompt}\"";
+            ? $"chat --no-interactive --resume --trust-all-tools \"{escapedPrompt}\""
+            : $"chat --no-interactive --trust-all-tools \"{escapedPrompt}\"";
 
         var startInfo = new ProcessStartInfo
         {
