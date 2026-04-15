@@ -75,6 +75,24 @@ public class GitHubIssueProviderTests
         await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Invalid issue identifier*");
     }
 
+    [Fact]
+    public async Task PostCommentAsync_CallsOctokitCreateComment()
+    {
+        var mockComments = new Mock<IIssueCommentsClient>();
+        _mockIssues.Setup(i => i.Comment).Returns(mockComments.Object);
+
+        await _provider.PostCommentAsync("42", "Test comment body", CancellationToken.None);
+
+        mockComments.Verify(c => c.Create("owner", "repo", 42, "Test comment body"), Times.Once);
+    }
+
+    [Fact]
+    public async Task PostCommentAsync_InvalidIdentifier_ThrowsArgumentException()
+    {
+        var act = () => _provider.PostCommentAsync("not-a-number", "body", CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Invalid issue identifier*");
+    }
+
     private static Issue CreateOctokitIssue(int number, string title, string? body, string[] labels)
     {
         var labelObjects = labels.Select(name =>

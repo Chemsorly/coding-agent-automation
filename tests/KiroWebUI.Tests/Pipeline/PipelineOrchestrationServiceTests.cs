@@ -68,6 +68,8 @@ public class PipelineOrchestrationServiceTests
                 Identifier = "42", Title = "Test Issue", Description = "Test description",
                 Labels = Array.Empty<string>(), AcceptanceCriteria = Array.Empty<string>()
             });
+        _mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         _mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
@@ -183,5 +185,27 @@ public class PipelineOrchestrationServiceTests
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("Failed to fetch issue");
         run.FailureReason.Should().Contain("Connection refused");
+    }
+
+    [Fact]
+    public async Task StartPipeline_PostsAnalysisCommentOnIssue()
+    {
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+        _mockIssueProvider.Verify(
+            p => p.PostCommentAsync("42", It.Is<string>(s => s.Contains("Agent Analysis")), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenAnalysisCommentFails_ContinuesPipeline()
+    {
+        _mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("API error"));
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
     }
 }
