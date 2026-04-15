@@ -133,6 +133,17 @@ public class GitHubIssueProvider : IIssueProvider
         };
     }
 
+    public async Task PostCommentAsync(string identifier, string body, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(body);
+
+        if (!int.TryParse(identifier, out var issueNumber))
+            throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
+
+        await _client.Issue.Comment.Create(_owner, _repo, issueNumber, body);
+    }
+
     private static IssueSummary MapToIssueSummary(Issue issue)
     {
         return new IssueSummary

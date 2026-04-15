@@ -147,7 +147,8 @@
             <!-- Pipeline Progress View (when running, not WaitingForChat) -->
             if (run.CurrentStep is PipelineStep.CloningRepository or PipelineStep.CreatingBranch
                 or PipelineStep.GeneratingCode or PipelineStep.RunningQualityGates
-                or PipelineStep.CreatingPullRequest or PipelineStep.Created)
+                or PipelineStep.CreatingPullRequest or PipelineStep.Created
+                or PipelineStep.PostingAnalysis)
             {
                 <div class="progress-view">
                     <h2>Pipeline in Progress</h2>
@@ -318,7 +319,7 @@
 
     private static readonly string[] _progressSteps =
     {
-        "Created", "CloningRepository", "CreatingBranch", "GeneratingCode",
+        "Created", "PostingAnalysis", "CloningRepository", "CreatingBranch", "GeneratingCode",
         "RunningQualityGates", "CreatingPullRequest"
     };
 
