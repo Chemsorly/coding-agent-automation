@@ -246,11 +246,12 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
         string issueTitle,
         string issueDescription,
         IReadOnlyList<string> acceptanceCriteria,
-        bool isDraft = false)
+        bool isDraft = false,
+        IReadOnlyList<Models.IssueComment>? comments = null)
         => Services.PipelineFormatting.GeneratePrBody(
             issueNumber, testsPassed, testsFailed, testsSkipped,
             coveragePercent, fileChanges, issueTitle, issueDescription,
-            acceptanceCriteria, isDraft);
+            acceptanceCriteria, isDraft, comments);
 
     /// <summary>
     /// Generates a commit message in conventional format.

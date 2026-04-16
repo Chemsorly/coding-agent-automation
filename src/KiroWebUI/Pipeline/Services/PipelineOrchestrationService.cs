@@ -818,7 +818,7 @@ public class PipelineOrchestrationService : IDisposable
             var prBody = PipelineFormatting.GeneratePrBody(
                 run.IssueIdentifier, testsPassed, testsFailed, testsSkipped,
                 coverage, fileChanges, issueTitle, issueDescription,
-                acceptanceCriteria, isDraft);
+                acceptanceCriteria, isDraft, _activeIssueComments);
 
             var prInfo = new PullRequestInfo
             {

@@ -34,6 +34,9 @@ public static partial class PipelineFormatting
         return $"feat: {issueTitle} (#{issueNumber})";
     }
 
+    /// <summary>Maximum character length for a comment body in the PR description before truncation.</summary>
+    private const int MaxCommentLength = 200;
+
     /// <summary>
     /// Generates a PR body with all required sections including file changes and issue context.
     /// </summary>
@@ -47,7 +50,8 @@ public static partial class PipelineFormatting
         string issueTitle,
         string issueDescription,
         IReadOnlyList<string> acceptanceCriteria,
-        bool isDraft = false)
+        bool isDraft = false,
+        IReadOnlyList<IssueComment>? comments = null)
     {
         var sb = new StringBuilder();
 
@@ -76,6 +80,9 @@ public static partial class PipelineFormatting
                 sb.AppendLine($"- {criterion}");
             sb.AppendLine();
         }
+
+        // Input comments
+        AppendInputComments(sb, comments);
 
         // Files changed
         sb.AppendLine("## Files Changed");
@@ -162,6 +169,30 @@ public static partial class PipelineFormatting
     public static string GenerateCommitMessage(string title, string issueNumber)
     {
         return $"feat: {title} (#{issueNumber})\n\nAutomated implementation via pipeline";
+    }
+
+    private static void AppendInputComments(StringBuilder sb, IReadOnlyList<IssueComment>? comments)
+    {
+        if (comments == null || comments.Count == 0)
+            return;
+
+        var filtered = comments
+            .Where(c => !PromptBuilder.ExcludedCommentMarkers.Any(marker => c.Body.Contains(marker)))
+            .TakeLast(10)
+            .ToList();
+
+        if (filtered.Count == 0)
+            return;
+
+        sb.AppendLine("## Input Comments");
+        foreach (var comment in filtered)
+        {
+            var body = comment.Body.Length > MaxCommentLength
+                ? comment.Body[..MaxCommentLength] + "…"
+                : comment.Body;
+            sb.AppendLine($"- **@{comment.Author}** ({comment.CreatedAt:yyyy-MM-dd HH:mm} UTC): {body}");
+        }
+        sb.AppendLine();
     }
 
     [GeneratedRegex(@"[^a-z0-9]+")]
