@@ -362,6 +362,23 @@
                         Security Scan Enabled
                     </label>
                 </div>
+                <div class="form-group form-checkbox">
+                    <label>
+                        <input type="checkbox" @bind="_pipelineConfig.SelfReviewEnabled" />
+                        Agent Self-Review Enabled
+                    </label>
+                </div>
+                @if (_pipelineConfig.SelfReviewEnabled)
+                {
+                    <div class="form-group">
+                        <label>Max Review Iterations</label>
+                        <input type="number" @bind="_pipelineConfig.SelfReviewMaxIterations" min="1" max="5" />
+                    </div>
+                    <div class="form-group">
+                        <label>Review Prompt</label>
+                        <textarea @bind="_pipelineConfig.SelfReviewPrompt" rows="4" style="width:100%;"></textarea>
+                    </div>
+                }
                 <div class="form-buttons">
                     <button class="btn-save" @onclick="SavePipelineConfig">Save Pipeline Configuration</button>
                 </div>
@@ -425,7 +442,10 @@
             {
                 MaxRetries = config.MaxRetries,
                 MinCoverageThreshold = config.MinCoverageThreshold,
-                SecurityScanEnabled = config.SecurityScanEnabled
+                SecurityScanEnabled = config.SecurityScanEnabled,
+                SelfReviewEnabled = config.SelfReviewEnabled,
+                SelfReviewMaxIterations = config.SelfReviewMaxIterations,
+                SelfReviewPrompt = config.SelfReviewPrompt
             };
             _agentTimeoutMinutes = (int)config.AgentTimeout.TotalMinutes;
         }
@@ -860,7 +880,10 @@
             MaxRetries = _pipelineConfig.MaxRetries,
             AgentTimeout = TimeSpan.FromMinutes(_agentTimeoutMinutes),
             MinCoverageThreshold = _pipelineConfig.MinCoverageThreshold,
-            SecurityScanEnabled = _pipelineConfig.SecurityScanEnabled
+            SecurityScanEnabled = _pipelineConfig.SecurityScanEnabled,
+            SelfReviewEnabled = _pipelineConfig.SelfReviewEnabled,
+            SelfReviewMaxIterations = _pipelineConfig.SelfReviewMaxIterations,
+            SelfReviewPrompt = _pipelineConfig.SelfReviewPrompt
         };
 
         try
@@ -922,5 +945,11 @@
         public int MaxRetries { get; set; } = 3;
         public double MinCoverageThreshold { get; set; } = 80.0;
         public bool SecurityScanEnabled { get; set; }
+        public bool SelfReviewEnabled { get; set; }
+        public int SelfReviewMaxIterations { get; set; } = 1;
+        public string SelfReviewPrompt { get; set; } =
+            "Use a sub-agent to review the changes you just made against the original issue requirements. " +
+            "The sub-agent should check for: correctness against acceptance criteria, code quality and " +
+            "project conventions, unhandled edge cases, and security gaps. Fix any issues the review finds.";
     }
 }

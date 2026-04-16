@@ -9,6 +9,7 @@ public enum PipelineStep
     PostingAnalysis,
     WaitingForAnalysisApproval,
     GeneratingCode,
+    ReviewingCode,
     WaitingForChat,
     RunningQualityGates,
     CreatingPullRequest,

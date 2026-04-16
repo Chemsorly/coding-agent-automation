@@ -330,4 +330,136 @@ public class PipelineOrchestrationServiceTests
                 It.IsAny<Action<string>?>()),
             Times.Once);
     }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithSelfReviewEnabled_RunsReviewBeforeChat()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                SelfReviewEnabled = true,
+                SelfReviewMaxIterations = 1
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+        run.ReviewIterationsCompleted.Should().Be(1);
+
+        // Verify the review prompt was sent via ExecuteWithResumeAsync
+        _mockAgentProvider.Verify(
+            p => p.ExecuteWithResumeAsync(
+                It.Is<string>(s => s.Contains("sub-agent")),
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()),
+            Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithSelfReviewDisabled_SkipsReview()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                SelfReviewEnabled = false
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+        run.ReviewIterationsCompleted.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithMultipleReviewIterations_RunsAllIterations()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                SelfReviewEnabled = true,
+                SelfReviewMaxIterations = 3
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+        run.ReviewIterationsCompleted.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WhenReviewFails_StopsIterationsAndContinuesToChat()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                SelfReviewEnabled = true,
+                SelfReviewMaxIterations = 3
+            });
+
+        // First review call succeeds, second throws
+        var callCount = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteWithResumeAsync(
+                It.Is<string>(s => s.Contains("sub-agent")),
+                It.IsAny<string>(), It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount >= 2)
+                    throw new InvalidOperationException("Agent crashed");
+                return new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() };
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+        run.ReviewIterationsCompleted.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task SelfReviewPrompt_IsConfigurable()
+    {
+        var customPrompt = "Custom review: check for bugs only.";
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                SelfReviewEnabled = true,
+                SelfReviewMaxIterations = 1,
+                SelfReviewPrompt = customPrompt
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        _mockAgentProvider.Verify(
+            p => p.ExecuteWithResumeAsync(
+                customPrompt,
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public void SelfReviewDefaults_AreCorrect()
+    {
+        var config = new PipelineConfiguration();
+        config.SelfReviewEnabled.Should().BeFalse();
+        config.SelfReviewMaxIterations.Should().Be(1);
+        config.SelfReviewPrompt.Should().Contain("sub-agent");
+    }
 }
