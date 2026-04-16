@@ -251,9 +251,28 @@ public class PipelineOrchestrationService : IDisposable
 
             if (existingAnalysis != null)
             {
-                // Reuse existing analysis — skip agent call and comment posting
+                // Reuse existing analysis — skip agent analysis and comment posting
                 run.AnalysisContent = existingAnalysis;
                 TransitionTo(run, PipelineStep.AnalyzingCode);
+
+                // Send a read-only warm-up prompt to establish a session.
+                // The first --no-interactive call can't write; --resume on a subsequent call can.
+                try
+                {
+                    var warmupRequest = new AgentRequest
+                    {
+                        Prompt = "Briefly describe the project structure of this workspace. Do not make any changes.",
+                        WorkspacePath = workspacePath,
+                        Timeout = _activeConfig.AgentTimeout
+                    };
+                    await _activeAgentProvider!.ExecuteAsync(warmupRequest, ct);
+                    _logger.Information("Pipeline {RunId} session established via warm-up prompt", run.RunId);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex, "Pipeline {RunId} warm-up prompt failed", run.RunId);
+                }
+
                 TransitionTo(run, PipelineStep.PostingAnalysis);
             }
             else
@@ -356,15 +375,12 @@ public class PipelineOrchestrationService : IDisposable
             {
                 var prompt = PromptBuilder.BuildPrompt(_activeIssue!, _activeParsedIssue!);
 
-                var agentRequest = new AgentRequest
-                {
-                    Prompt = prompt,
-                    WorkspacePath = run.WorkspacePath!,
-                    Timeout = _activeConfig!.AgentTimeout
-                };
-
-                var agentResult = await _activeAgentProvider!.ExecuteAsync(
-                    agentRequest, linkedCt, line =>
+                var agentResult = await _activeAgentProvider!.ExecuteWithResumeAsync(
+                    prompt,
+                    run.WorkspacePath!,
+                    _activeConfig!.AgentTimeout,
+                    linkedCt,
+                    line =>
                     {
                         var clean = StripAnsi(line);
                         run.OutputLines.Enqueue(clean);
