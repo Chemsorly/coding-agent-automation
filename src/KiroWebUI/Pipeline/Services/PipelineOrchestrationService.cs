@@ -414,6 +414,37 @@ public class PipelineOrchestrationService : IDisposable
             {
                 var prompt = PromptBuilder.BuildPrompt(_activeIssue!, _activeParsedIssue!, _activeIssueComments);
 
+                var lastOutputTime = DateTime.UtcNow;
+                var stallWarningInterval = TimeSpan.FromMinutes(5);
+
+                // Stall monitor: periodically check if the agent is still producing output
+                var stallCts = CancellationTokenSource.CreateLinkedTokenSource(linkedCt);
+                var stallMonitorTask = Task.Run(async () =>
+                {
+                    try
+                    {
+                        while (!stallCts.Token.IsCancellationRequested)
+                        {
+                            await Task.Delay(TimeSpan.FromSeconds(30), stallCts.Token);
+                            var silence = DateTime.UtcNow - lastOutputTime;
+                            var elapsed = DateTime.UtcNow - run.StartedAt;
+                            if (silence >= stallWarningInterval)
+                            {
+                                var msg = $"No agent output for {silence.TotalMinutes:F0}m. " +
+                                          $"Agent call still in progress. " +
+                                          $"Total elapsed: {elapsed:hh\\:mm\\:ss}. Timeout: {_activeConfig!.AgentTimeout:hh\\:mm\\:ss}.";
+                                _logger.Warning("Pipeline {RunId} {StallMessage}", run.RunId, msg);
+                                run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = msg });
+                                NotifyChange();
+                                // Reset so we warn again after another interval
+                                lastOutputTime = DateTime.UtcNow;
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) { }
+                    catch (ObjectDisposedException) { }
+                }, CancellationToken.None);
+
                 var agentResult = await _activeAgentProvider!.ExecuteWithResumeAsync(
                     prompt,
                     run.WorkspacePath!,
@@ -421,10 +452,16 @@ public class PipelineOrchestrationService : IDisposable
                     linkedCt,
                     line =>
                     {
+                        lastOutputTime = DateTime.UtcNow;
                         var clean = StripAnsi(line);
                         run.OutputLines.Enqueue(clean);
                         OnOutputLine?.Invoke(clean);
                     });
+
+                // Stop stall monitor
+                await stallCts.CancelAsync();
+                try { await stallMonitorTask; } catch (OperationCanceledException) { }
+                stallCts.Dispose();
 
                 var outputSummary = agentResult.OutputLines.Count > 0
                     ? StripAnsi(string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10)))
@@ -436,8 +473,21 @@ public class PipelineOrchestrationService : IDisposable
                     Content = outputSummary
                 });
 
-                _logger.Information("Pipeline {RunId} initial code generation completed with exit code {ExitCode}",
-                    run.RunId, agentResult.ExitCode);
+                _logger.Information("Pipeline {RunId} initial code generation completed with exit code {ExitCode} after {Elapsed}",
+                    run.RunId, agentResult.ExitCode, DateTime.UtcNow - run.StartedAt);
+
+                if (agentResult.ExitCode != 0)
+                {
+                    _logger.Warning("Pipeline {RunId} agent exited with non-zero code {ExitCode}, continuing to chat phase",
+                        run.RunId, agentResult.ExitCode);
+                    run.ChatHistory.Enqueue(new ChatEntry
+                    {
+                        Role = ChatRole.System,
+                        Content = $"Agent process exited with code {agentResult.ExitCode} after {(DateTime.UtcNow - run.StartedAt):hh\\:mm\\:ss}. " +
+                                  $"Output lines captured: {agentResult.OutputLines.Count}. " +
+                                  $"The process may have stopped unexpectedly. You can continue via chat."
+                    });
+                }
             }
             catch (OperationCanceledException) when (_cancellationTokenSource?.IsCancellationRequested == true)
             {
@@ -456,11 +506,14 @@ public class PipelineOrchestrationService : IDisposable
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Pipeline {RunId} code generation failed", run.RunId);
-                run.FailureReason = $"Code generation failed: {ex.Message}";
-                TransitionTo(run, PipelineStep.Failed);
-                AddRunToHistory(run);
-                return;
+                // Agent crash or unexpected error — log and continue to WaitingForChat
+                // so the user can retry via chat instead of the pipeline dying
+                _logger.Warning(ex, "Pipeline {RunId} code generation failed, continuing to chat phase", run.RunId);
+                run.ChatHistory.Enqueue(new ChatEntry
+                {
+                    Role = ChatRole.System,
+                    Content = $"Agent process failed: {ex.Message}. You can retry via chat."
+                });
             }
 
             // Transition to WaitingForChat

@@ -12,6 +12,35 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
     private readonly Configuration.Configuration _config;
     private readonly CallbackHandler _callbackHandler;
     private readonly ILogger _logger;
+    private volatile ProcessWrapper? _activeProcess;
+
+    public bool IsExecuting => _activeProcess != null;
+    public int? ActiveProcessId
+    {
+        get
+        {
+            try { return _activeProcess?.IsRunning == true ? _activeProcess.ProcessId : null; }
+            catch { return null; }
+        }
+    }
+    public bool? IsActiveProcessAlive
+    {
+        get
+        {
+            var p = _activeProcess;
+            if (p == null) return null;
+            try { return p.IsRunning; }
+            catch { return null; }
+        }
+    }
+    public DateTime? LastOutputTime
+    {
+        get
+        {
+            var p = _activeProcess;
+            return p != null ? p.LastOutputTime : null;
+        }
+    }
 
     public KiroCliOrchestrator(Configuration.Configuration config, CallbackHandler callbackHandler, ILogger logger)
     {
@@ -29,6 +58,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
         ArgumentNullException.ThrowIfNull(workspaceDirectory);
 
         using var processWrapper = new ProcessWrapper(_config, _logger);
+        _activeProcess = processWrapper;
         var outputParser = new OutputParser();
         var fileSystemMonitor = new FileSystemMonitor();
 
@@ -84,6 +114,10 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
             _logger.Error(ex, "Kiro CLI execution failed");
             _callbackHandler.Invoke(KiroState.Error, new CallbackContext { State = KiroState.Error, Message = $"Execution failed: {ex.Message}" });
             return 1;
+        }
+        finally
+        {
+            _activeProcess = null;
         }
     }
 }

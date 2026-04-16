@@ -2,7 +2,6 @@ using AwesomeAssertions;
 using Moq;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
-using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Services;
 
 namespace KiroWebUI.Tests.Pipeline;
@@ -90,6 +89,8 @@ public class AgentCodingPageTests
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         _mockAgentProvider.Setup(p => p.ExecuteWithResumeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        _mockAgentProvider.Setup(p => p.GetHealthStatus())
+            .Returns(new AgentHealthStatus { IsExecuting = false });
 
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(_mockIssueProvider.Object);
         _mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>())).Returns(_mockRepoProvider.Object);
@@ -290,16 +291,17 @@ public class AgentCodingPageTests
         // We validate this by checking that the service transitions to GeneratingCode
         // during SendChatMessageAsync (which is when _isSending would be true).
 
-        // Use a TaskCompletionSource to hold the agent execution so we can observe the intermediate state
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+
+        // NOW override the mock to hold the agent execution so we can observe the intermediate state.
+        // This must happen AFTER StartPipelineAsync/ApproveAnalysisAsync which also call ExecuteWithResumeAsync.
         var agentTcs = new TaskCompletionSource<AgentResult>();
         _mockAgentProvider.Setup(p => p.ExecuteWithResumeAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns(agentTcs.Task);
-
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
-        await _service.ApproveAnalysisAsync(CancellationToken.None);
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
 
         // Start sending a chat message (will block on agent execution)
         var sendTask = _service.SendChatMessageAsync("fix the tests", CancellationToken.None);

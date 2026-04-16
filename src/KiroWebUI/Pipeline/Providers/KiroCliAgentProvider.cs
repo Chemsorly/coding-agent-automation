@@ -21,6 +21,14 @@ public class KiroCliAgentProvider : IAgentProvider
         _orchestrator = orchestrator;
     }
 
+    public AgentHealthStatus GetHealthStatus() => new()
+    {
+        IsExecuting = _orchestrator.IsExecuting,
+        ProcessId = _orchestrator.ActiveProcessId,
+        IsProcessAlive = _orchestrator.IsActiveProcessAlive,
+        LastOutputTime = _orchestrator.LastOutputTime
+    };
+
     public async Task<AgentResult> ExecuteAsync(
         AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null)
     {

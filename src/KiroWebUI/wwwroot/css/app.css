@@ -267,7 +267,7 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 .retry-count { font-size: 0.8rem; color: var(--warning); margin-top: 8px; }
 
 /* Run History */
-.run-history { padding: 20px; border-top: 1px solid var(--border); background: var(--surface); }
+.run-history { padding: 20px; border-top: 1px solid var(--border); background: var(--surface); max-height: 33vh; overflow-y: auto; }
 .run-history h2 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: var(--text-muted); }
 .no-history { font-size: 0.85rem; color: var(--text-muted); }
 .history-list { display: flex; flex-direction: column; gap: 6px; }

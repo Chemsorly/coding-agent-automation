@@ -8,6 +8,7 @@ using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using KiroWebUI.Pipeline.Services;
 using Moq;
+using Octokit;
 using Xunit;
 using ILogger = Serilog.ILogger;
 
@@ -20,6 +21,24 @@ namespace KiroWebUI.Tests.Pipeline;
 public class GitHubAppAuthServicePropertyTests
 {
     private static readonly Mock<ILogger> MockLogger = new();
+
+    /// <summary>
+    /// Creates a client factory that throws immediately, simulating a failed API call
+    /// without making any real HTTP requests.
+    /// </summary>
+    private static Func<string, Uri, IGitHubClient> CreateFailingClientFactory()
+    {
+        return (jwt, uri) =>
+        {
+            var mockClient = new Mock<IGitHubClient>();
+            var mockApps = new Mock<IGitHubAppsClient>();
+            mockApps
+                .Setup(a => a.CreateInstallationToken(It.IsAny<long>()))
+                .ThrowsAsync(new ApiException("Simulated API failure for test", System.Net.HttpStatusCode.ServiceUnavailable));
+            mockClient.Setup(c => c.GitHubApps).Returns(mockApps.Object);
+            return mockClient.Object;
+        };
+    }
 
     /// <summary>
     /// Property 3: Private key base64 round-trip
@@ -324,9 +343,8 @@ public class GitHubAppAuthServicePropertyTests
     [Property(MaxTest = 100, Arbitrary = [typeof(RenewalTriggerArbitrary)])]
     public void TokenCaching_RenewalTrigger_AttemptsRenewalWhenNearExpiry(RenewalTriggerInput input)
     {
-        // Arrange: Create a valid auth service with a real RSA key.
-        // The valid key ensures GenerateJwt() succeeds, so the code path reaches
-        // the CreateInstallationToken call (which fails — no real GitHub API).
+        // Arrange: Create a valid auth service with a real RSA key and a MOCK client factory
+        // that throws immediately — no real HTTP calls.
         using var rsa = RSA.Create(2048);
         var pemString = rsa.ExportRSAPrivateKeyPem();
         var pemBytes = Encoding.UTF8.GetBytes(pemString);
@@ -337,7 +355,8 @@ public class GitHubAppAuthServicePropertyTests
             1L,
             privateKeyBase64,
             "https://api.github.com",
-            MockLogger.Object);
+            MockLogger.Object,
+            CreateFailingClientFactory());
 
         // Use reflection to set the cached token and expiry directly.
         // The expiry is ≤ 5 minutes from now but still in the future,
@@ -387,9 +406,8 @@ public class GitHubAppAuthServicePropertyTests
     [Property(MaxTest = 100, Arbitrary = [typeof(RenewalTriggerArbitrary)])]
     public void GracefulDegradation_RenewalFailure_ReturnsCachedTokenWithoutThrowing(RenewalTriggerInput input)
     {
-        // Arrange: Create a valid auth service with a real RSA key.
-        // The valid key ensures GenerateJwt() succeeds, so the code path reaches
-        // the CreateInstallationToken call (which fails — no real GitHub API).
+        // Arrange: Create a valid auth service with a real RSA key and a MOCK client factory
+        // that throws immediately — no real HTTP calls.
         using var rsa = RSA.Create(2048);
         var pemString = rsa.ExportRSAPrivateKeyPem();
         var pemBytes = Encoding.UTF8.GetBytes(pemString);
@@ -400,7 +418,8 @@ public class GitHubAppAuthServicePropertyTests
             1L,
             privateKeyBase64,
             "https://api.github.com",
-            MockLogger.Object);
+            MockLogger.Object,
+            CreateFailingClientFactory());
 
         // Use reflection to set the cached token with expiry within the 5-minute
         // renewal buffer but still in the future (not yet expired).

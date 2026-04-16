@@ -23,6 +23,13 @@ public sealed class GitHubAppAuthService : IGitHubAppAuthService
     private readonly SemaphoreSlim _semaphore = new(1, 1);
     private readonly TimeSpan _renewalBuffer = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// Factory for creating the IGitHubClient used to exchange JWTs for installation tokens.
+    /// Defaults to creating a real Octokit GitHubClient. Tests can override this via the
+    /// internal constructor to avoid real HTTP calls.
+    /// </summary>
+    private readonly Func<string, Uri, IGitHubClient> _clientFactory;
+
     // Cache fields: reads outside the semaphore may see slightly stale values,
     // but the double-check inside the semaphore ensures correctness.
     // Worst case is an unnecessary semaphore acquisition.
@@ -43,6 +50,21 @@ public sealed class GitHubAppAuthService : IGitHubAppAuthService
         string privateKeyBase64,
         string apiUrl,
         ILogger logger)
+        : this(clientId, installationId, privateKeyBase64, apiUrl, logger, null)
+    {
+    }
+
+    /// <summary>
+    /// Internal constructor that accepts an optional client factory for testing.
+    /// When clientFactory is null, defaults to creating real Octokit GitHubClient instances.
+    /// </summary>
+    internal GitHubAppAuthService(
+        string clientId,
+        long installationId,
+        string privateKeyBase64,
+        string apiUrl,
+        ILogger logger,
+        Func<string, Uri, IGitHubClient>? clientFactory)
     {
         ArgumentNullException.ThrowIfNull(clientId);
         ArgumentNullException.ThrowIfNull(privateKeyBase64);
@@ -53,6 +75,7 @@ public sealed class GitHubAppAuthService : IGitHubAppAuthService
         _installationId = installationId;
         _apiUrl = apiUrl;
         _logger = logger;
+        _clientFactory = clientFactory ?? DefaultClientFactory;
 
         // Decode base64 to get the PEM string and validate it looks like a PEM key.
         try
@@ -68,6 +91,16 @@ public sealed class GitHubAppAuthService : IGitHubAppAuthService
         {
             throw new InvalidOperationException("Failed to decode private key from base64", ex);
         }
+    }
+
+    private static IGitHubClient DefaultClientFactory(string jwt, Uri apiUri)
+    {
+        return new GitHubClient(
+            new ProductHeaderValue("KiroWebUI-Pipeline"),
+            apiUri)
+        {
+            Credentials = new Credentials(jwt, AuthenticationType.Bearer)
+        };
     }
 
     /// <inheritdoc />
@@ -92,12 +125,7 @@ public sealed class GitHubAppAuthService : IGitHubAppAuthService
             {
                 var jwt = GenerateJwt();
 
-                var client = new GitHubClient(
-                    new ProductHeaderValue("KiroWebUI-Pipeline"),
-                    new Uri(_apiUrl))
-                {
-                    Credentials = new Credentials(jwt, AuthenticationType.Bearer)
-                };
+                var client = _clientFactory(jwt, new Uri(_apiUrl));
 
                 var response = await client.GitHubApps.CreateInstallationToken(_installationId);
 

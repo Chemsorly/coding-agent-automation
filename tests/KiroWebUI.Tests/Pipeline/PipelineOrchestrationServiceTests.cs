@@ -2,7 +2,6 @@ using AwesomeAssertions;
 using Moq;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
-using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Services;
 
 namespace KiroWebUI.Tests.Pipeline;
@@ -81,6 +80,8 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         _mockAgentProvider.Setup(p => p.ExecuteWithResumeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        _mockAgentProvider.Setup(p => p.GetHealthStatus())
+            .Returns(new AgentHealthStatus { IsExecuting = false });
 
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(_mockIssueProvider.Object);
         _mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>())).Returns(_mockRepoProvider.Object);
@@ -256,10 +257,20 @@ public class PipelineOrchestrationServiceTests
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
-        // Agent should have been called once for analysis (not yet for implementation)
+        // Warm-up prompt should have been called via ExecuteAsync
         _mockAgentProvider.Verify(
             p => p.ExecuteAsync(
-                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase")),
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Briefly describe the project structure")),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()),
+            Times.Once);
+
+        // Analysis should have been called via ExecuteWithResumeAsync (resumes the warm-up session)
+        _mockAgentProvider.Verify(
+            p => p.ExecuteWithResumeAsync(
+                It.Is<string>(s => s.Contains("Analyze the codebase")),
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<Action<string>?>()),
             Times.Once);
@@ -309,10 +320,12 @@ public class PipelineOrchestrationServiceTests
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
-        // Should have fallen back to running fresh analysis
+        // Should have fallen back to running fresh analysis via warm-up + resume
         _mockAgentProvider.Verify(
-            p => p.ExecuteAsync(
-                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase")),
+            p => p.ExecuteWithResumeAsync(
+                It.Is<string>(s => s.Contains("Analyze the codebase")),
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<Action<string>?>()),
             Times.Once);

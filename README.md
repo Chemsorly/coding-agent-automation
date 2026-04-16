@@ -344,18 +344,6 @@ All code follows:
 - Comprehensive XML documentation
 - Input validation with ArgumentNullException.ThrowIfNull
 
-## Next Steps
-
-This PoC successfully validates the core integration approach with persistent conversation support. Future enhancements could include:
-
-1. **Enhanced Response Detection**: Improve detection of when Kiro is asking questions vs finished responding
-2. **Full CLI Argument Parsing**: Support custom prompts via command line
-3. **Parallel Execution**: Run multiple Kiro CLI instances simultaneously
-4. **Metrics Collection**: Track execution times, success rates, conversation lengths
-5. **Web API**: Expose functionality via REST API for remote access
-6. **Docker Support**: Run in containers for isolation and scalability
-7. **GitHub Integration**: Automated issue processing and PR creation
-8. **Conversation Management**: Save/load conversation history, branching conversations
 
 ## License
 

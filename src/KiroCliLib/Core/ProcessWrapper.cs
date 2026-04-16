@@ -22,6 +22,7 @@ public class ProcessWrapper : IDisposable
 
     public bool IsRunning => _process != null && !_process.HasExited;
     public int? ExitCode => _process?.HasExited == true ? _process.ExitCode : null;
+    public int? ProcessId { get { try { return _process?.Id; } catch { return null; } } }
     public DateTime LastOutputTime => _lastOutputTime;
 
     public ProcessWrapper(Configuration.Configuration config, ILogger logger)
