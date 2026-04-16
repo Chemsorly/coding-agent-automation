@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Xunit;
+using KiroWebUI.Pipeline.Models;
 using KiroWebUI.Pipeline.Providers;
 
 namespace KiroWebUI.Tests.Pipeline;
@@ -58,9 +59,7 @@ public class GitHubRepositoryProviderPropertyTests
     }
 
     /// <summary>
-    /// Property 6: PR body contains all required sections.
-    /// For any issue number, test result counts, coverage percentage, and implementation summary,
-    /// the generated PR body contains all required sections and Closes #{issueNumber}.
+    /// Property 6: PR body contains all required sections including file changes and issue context.
     /// **Validates: Requirements 6.3, 6.4**
     /// </summary>
     [Property(MaxTest = 100)]
@@ -69,19 +68,33 @@ public class GitHubRepositoryProviderPropertyTests
         NonNegativeInt passed,
         NonNegativeInt failed,
         NonNegativeInt skipped,
-        NonEmptyString summary)
+        NonEmptyString title,
+        NonEmptyString description)
     {
         var number = issueNum.Get.ToString();
+        var fileChanges = new List<FileChangeSummary>
+        {
+            new("Added", "src/Test.cs"),
+            new("Modified", "src/Other.cs")
+        };
+        var criteria = new[] { "Must compile" };
+
         var body = GitHubRepositoryProvider.GeneratePrBody(
             number,
             passed.Get,
             failed.Get,
             skipped.Get,
             coveragePercent: 85.5,
-            implementationSummary: summary.Get);
+            fileChanges: fileChanges,
+            issueTitle: title.Get,
+            issueDescription: description.Get,
+            acceptanceCriteria: criteria);
 
-        body.Should().Contain("## Implementation Summary");
-        body.Should().Contain(summary.Get);
+        body.Should().Contain("## Issue Context");
+        body.Should().Contain(title.Get);
+        body.Should().Contain("Must compile");
+        body.Should().Contain("## Files Changed");
+        body.Should().Contain("src/Test.cs");
         body.Should().Contain("## Test Results");
         body.Should().Contain($"Passed: {passed.Get}");
         body.Should().Contain($"Failed: {failed.Get}");

@@ -2,8 +2,7 @@ using System.Text.RegularExpressions;
 using LibGit2Sharp;
 using Octokit;
 using KiroWebUI.Pipeline.Interfaces;
-using KiroWebUI.Pipeline.Models;
-using Signature = LibGit2Sharp.Signature;
+using KiroWebUI.Pipeline.Models;using Signature = LibGit2Sharp.Signature;
 using Repository = LibGit2Sharp.Repository;
 
 namespace KiroWebUI.Pipeline.Providers;
@@ -243,11 +242,15 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
         int testsFailed,
         int testsSkipped,
         double? coveragePercent,
-        string implementationSummary,
+        IReadOnlyList<FileChangeSummary> fileChanges,
+        string issueTitle,
+        string issueDescription,
+        IReadOnlyList<string> acceptanceCriteria,
         bool isDraft = false)
         => Services.PipelineFormatting.GeneratePrBody(
             issueNumber, testsPassed, testsFailed, testsSkipped,
-            coveragePercent, implementationSummary, isDraft);
+            coveragePercent, fileChanges, issueTitle, issueDescription,
+            acceptanceCriteria, isDraft);
 
     /// <summary>
     /// Generates a commit message in conventional format.

@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using KiroWebUI.Pipeline.Models;
 using KiroWebUI.Pipeline.Providers;
 
 namespace KiroWebUI.Tests.Pipeline;
@@ -28,16 +29,33 @@ public class GitHubRepositoryProviderTests
     [Fact]
     public void GeneratePrBody_IncludesAllSections()
     {
+        var fileChanges = new List<FileChangeSummary>
+        {
+            new("Added", "src/NewFile.cs"),
+            new("Modified", "src/Existing.cs")
+        };
+
         var body = GitHubRepositoryProvider.GeneratePrBody(
             issueNumber: "42",
             testsPassed: 10,
             testsFailed: 2,
             testsSkipped: 1,
             coveragePercent: 87.3,
-            implementationSummary: "Added new feature");
+            fileChanges: fileChanges,
+            issueTitle: "Add new feature",
+            issueDescription: "Implement the new feature as described.",
+            acceptanceCriteria: new[] { "Must compile", "Tests pass" });
 
-        body.Should().Contain("## Implementation Summary");
-        body.Should().Contain("Added new feature");
+        body.Should().Contain("## Issue Context");
+        body.Should().Contain("Add new feature");
+        body.Should().Contain("Implement the new feature as described.");
+        body.Should().Contain("Must compile");
+        body.Should().Contain("Tests pass");
+        body.Should().Contain("## Files Changed");
+        body.Should().Contain("Added");
+        body.Should().Contain("src/NewFile.cs");
+        body.Should().Contain("Modified");
+        body.Should().Contain("src/Existing.cs");
         body.Should().Contain("## Test Results");
         body.Should().Contain("Passed: 10");
         body.Should().Contain("Failed: 2");
@@ -56,7 +74,10 @@ public class GitHubRepositoryProviderTests
             testsFailed: 0,
             testsSkipped: 0,
             coveragePercent: null,
-            implementationSummary: "Summary");
+            fileChanges: Array.Empty<FileChangeSummary>(),
+            issueTitle: "Fix bug",
+            issueDescription: "Fix the bug.",
+            acceptanceCriteria: Array.Empty<string>());
 
         body.Should().Contain("Not available");
     }
@@ -70,7 +91,10 @@ public class GitHubRepositoryProviderTests
             testsFailed: 5,
             testsSkipped: 0,
             coveragePercent: 40.0,
-            implementationSummary: "Partial implementation",
+            fileChanges: new[] { new FileChangeSummary("Modified", "src/Foo.cs") },
+            issueTitle: "Partial feature",
+            issueDescription: "Partial implementation.",
+            acceptanceCriteria: Array.Empty<string>(),
             isDraft: true);
 
         body.Should().Contain("draft PR");
