@@ -28,6 +28,9 @@ public class GitHubRepositoryProviderPropertyTests
         // Must start with feature/auto-{number}
         branchName.Should().StartWith($"feature/auto-{number}");
 
+        // Must not exceed max length
+        branchName.Length.Should().BeLessThanOrEqualTo(100);
+
         // Extract slug part (after the prefix)
         var prefix = $"feature/auto-{number}";
         if (branchName.Length > prefix.Length)
