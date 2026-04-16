@@ -12,18 +12,33 @@ namespace KiroWebUI.Pipeline.Services;
 /// </summary>
 public static partial class PipelineFormatting
 {
+    private const int MaxBranchNameLength = 100;
+
     /// <summary>
     /// Generates a branch name from issue number, title, and run ID.
     /// Pattern: feature/auto-{issueNumber}-{slug}-{shortRunId}
     /// The short run ID suffix ensures re-runs for the same issue don't collide with existing remote branches.
+    /// The slug is truncated to keep the total branch name under <see cref="MaxBranchNameLength"/> characters.
     /// </summary>
     public static string GenerateBranchName(string issueNumber, string title, string? runId = null)
     {
         var slug = GenerateSlug(title);
         var suffix = runId != null ? $"-{runId[..8]}" : "";
-        return string.IsNullOrEmpty(slug)
-            ? $"feature/auto-{issueNumber}{suffix}"
-            : $"feature/auto-{issueNumber}-{slug}{suffix}";
+        var prefix = $"feature/auto-{issueNumber}";
+
+        if (!string.IsNullOrEmpty(slug))
+        {
+            var maxSlugLength = MaxBranchNameLength - prefix.Length - 1 - suffix.Length; // 1 for the hyphen before slug
+            if (maxSlugLength > 0)
+            {
+                if (slug.Length > maxSlugLength)
+                    slug = slug[..maxSlugLength].TrimEnd('-');
+                return $"{prefix}-{slug}{suffix}";
+            }
+        }
+
+        var result = $"{prefix}{suffix}";
+        return result.Length > MaxBranchNameLength ? result[..MaxBranchNameLength] : result;
     }
 
     /// <summary>

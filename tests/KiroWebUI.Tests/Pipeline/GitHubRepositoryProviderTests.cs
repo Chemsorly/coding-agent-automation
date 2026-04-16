@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using KiroWebUI.Pipeline.Models;
 using KiroWebUI.Pipeline.Providers;
+using KiroWebUI.Pipeline.Services;
 
 namespace KiroWebUI.Tests.Pipeline;
 
@@ -24,6 +25,38 @@ public class GitHubRepositoryProviderTests
     {
         var result = GitHubRepositoryProvider.GenerateBranchName("42", "");
         result.Should().Be("feature/auto-42");
+    }
+
+    [Fact]
+    public void GenerateBranchName_WithLongTitle_TruncatesToMaxLength()
+    {
+        var longTitle = new string('a', 200);
+        var result = GitHubRepositoryProvider.GenerateBranchName("42", longTitle);
+        result.Length.Should().BeLessThanOrEqualTo(100);
+        result.Should().StartWith("feature/auto-42-");
+        result.Should().NotEndWith("-");
+    }
+
+    [Fact]
+    public void GenerateBranchName_WithLongTitleAndRunId_TruncatesToMaxLength()
+    {
+        var longTitle = new string('a', 200);
+        var runId = "abcdef1234567890";
+        var result = PipelineFormatting.GenerateBranchName("42", longTitle, runId);
+        result.Length.Should().BeLessThanOrEqualTo(100);
+        result.Should().StartWith("feature/auto-42-");
+        result.Should().EndWith($"-{runId[..8]}");
+    }
+
+    [Fact]
+    public void GenerateBranchName_TruncationDoesNotLeaveTrailingHyphen()
+    {
+        // Spaces become hyphens in the slug; truncation mid-slug could leave a trailing hyphen
+        var title = string.Join(" ", Enumerable.Repeat("word", 50));
+        var result = GitHubRepositoryProvider.GenerateBranchName("1", title);
+        result.Length.Should().BeLessThanOrEqualTo(100);
+        result.Should().NotEndWith("-");
+        result.Should().NotContain("--");
     }
 
     [Fact]
