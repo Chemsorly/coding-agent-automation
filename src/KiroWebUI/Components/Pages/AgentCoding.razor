@@ -147,6 +147,7 @@
             <!-- Pipeline Progress View (when running, not WaitingForChat or WaitingForAnalysisApproval) -->
             if (run.CurrentStep is PipelineStep.CloningRepository or PipelineStep.CreatingBranch
                 or PipelineStep.AnalyzingCode or PipelineStep.GeneratingCode
+                or PipelineStep.ReviewingCode
                 or PipelineStep.RunningQualityGates
                 or PipelineStep.CreatingPullRequest or PipelineStep.Created
                 or PipelineStep.PostingAnalysis)
@@ -351,7 +352,7 @@
     private static readonly string[] _progressSteps =
     {
         "Created", "CloningRepository", "CreatingBranch", "AnalyzingCode", "PostingAnalysis",
-        "GeneratingCode", "RunningQualityGates", "CreatingPullRequest"
+        "GeneratingCode", "ReviewingCode", "RunningQualityGates", "CreatingPullRequest"
     };
 
     protected override async Task OnInitializedAsync()
@@ -381,6 +382,7 @@
         if (run is null) return;
         if (run.CurrentStep is not (PipelineStep.CloningRepository or PipelineStep.CreatingBranch
             or PipelineStep.AnalyzingCode or PipelineStep.GeneratingCode
+            or PipelineStep.ReviewingCode
             or PipelineStep.RunningQualityGates or PipelineStep.CreatingPullRequest
             or PipelineStep.Created or PipelineStep.PostingAnalysis))
             return;

@@ -516,6 +516,74 @@ public class PipelineOrchestrationService : IDisposable
                 });
             }
 
+            // Self-review step (if enabled)
+            if (_activeConfig!.SelfReviewEnabled && _activeConfig.SelfReviewMaxIterations > 0)
+            {
+                for (var i = 0; i < _activeConfig.SelfReviewMaxIterations; i++)
+                {
+                    TransitionTo(run, PipelineStep.ReviewingCode);
+                    _logger.Information(
+                        "Pipeline {RunId} starting self-review iteration {Iteration}/{MaxIterations}",
+                        run.RunId, i + 1, _activeConfig.SelfReviewMaxIterations);
+
+                    run.ChatHistory.Enqueue(new ChatEntry
+                    {
+                        Role = ChatRole.System,
+                        Content = $"Self-review iteration {i + 1}/{_activeConfig.SelfReviewMaxIterations} starting..."
+                    });
+                    NotifyChange();
+
+                    try
+                    {
+                        var reviewResult = await _activeAgentProvider!.ExecuteWithResumeAsync(
+                            _activeConfig.SelfReviewPrompt,
+                            run.WorkspacePath!,
+                            _activeConfig.AgentTimeout,
+                            linkedCt,
+                            line =>
+                            {
+                                var clean = StripAnsi(line);
+                                run.OutputLines.Enqueue(clean);
+                                OnOutputLine?.Invoke(clean);
+                            });
+
+                        run.ReviewIterationsCompleted++;
+
+                        var reviewOutput = reviewResult.OutputLines.Count > 0
+                            ? StripAnsi(string.Join(Environment.NewLine, reviewResult.OutputLines.TakeLast(10)))
+                            : "(no output)";
+
+                        _logger.Information(
+                            "Pipeline {RunId} self-review iteration {Iteration} completed with exit code {ExitCode}. Review output: {ReviewOutput}",
+                            run.RunId, i + 1, reviewResult.ExitCode, reviewOutput);
+
+                        run.ChatHistory.Enqueue(new ChatEntry
+                        {
+                            Role = ChatRole.Agent,
+                            Content = $"[Self-review {i + 1}/{_activeConfig.SelfReviewMaxIterations}] {reviewOutput}"
+                        });
+                        NotifyChange();
+                    }
+                    catch (OperationCanceledException) when (_cancellationTokenSource?.IsCancellationRequested == true)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex,
+                            "Pipeline {RunId} self-review iteration {Iteration} failed, skipping remaining reviews",
+                            run.RunId, i + 1);
+                        run.ChatHistory.Enqueue(new ChatEntry
+                        {
+                            Role = ChatRole.System,
+                            Content = $"Self-review iteration {i + 1} failed: {ex.Message}"
+                        });
+                        NotifyChange();
+                        break;
+                    }
+                }
+            }
+
             // Transition to WaitingForChat
             TransitionTo(run, PipelineStep.WaitingForChat);
         }

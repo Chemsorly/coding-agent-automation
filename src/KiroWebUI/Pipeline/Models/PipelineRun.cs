@@ -21,6 +21,9 @@ public sealed class PipelineRun
     /// <summary>Agent-generated analysis content, populated during AnalyzingCode step.</summary>
     public string? AnalysisContent { get; set; }
 
+    /// <summary>Number of self-review iterations completed during the ReviewingCode step.</summary>
+    public int ReviewIterationsCompleted { get; set; }
+
     /// <summary>Thread-safe collections — mutated by orchestration service while UI reads via OnChange.</summary>
     public ConcurrentBag<string> RetryErrors { get; init; } = new();
     public ConcurrentQueue<ChatEntry> ChatHistory { get; init; } = new();
