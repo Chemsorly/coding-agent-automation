@@ -18,7 +18,8 @@ public static class PromptBuilder
     /// Constructs an analysis-only prompt. The agent examines the codebase in context of the
     /// issue and writes its recommendation to .kiro/analysis.md without making any other changes.
     /// </summary>
-    public static string BuildAnalysisPrompt(IssueDetail issue, ParsedIssue parsed)
+    public static string BuildAnalysisPrompt(IssueDetail issue, ParsedIssue parsed,
+        IReadOnlyList<IssueComment>? comments = null)
     {
         ArgumentNullException.ThrowIfNull(issue);
         ArgumentNullException.ThrowIfNull(parsed);
@@ -60,6 +61,8 @@ public static class PromptBuilder
             sb.AppendLine();
         }
 
+        AppendComments(sb, comments);
+
         sb.AppendLine($"Analyze the workspace now and write your recommendation to `{AnalysisFilePath}`.");
 
         return sb.ToString().TrimEnd();
@@ -70,7 +73,8 @@ public static class PromptBuilder
     /// and all acceptance criteria. The prompt explicitly instructs the agent to implement
     /// the changes in the workspace, not just analyze them.
     /// </summary>
-    public static string BuildPrompt(IssueDetail issue, ParsedIssue parsed)
+    public static string BuildPrompt(IssueDetail issue, ParsedIssue parsed,
+        IReadOnlyList<IssueComment>? comments = null)
     {
         ArgumentNullException.ThrowIfNull(issue);
         ArgumentNullException.ThrowIfNull(parsed);
@@ -105,8 +109,37 @@ public static class PromptBuilder
             sb.AppendLine();
         }
 
+        AppendComments(sb, comments);
+
         sb.AppendLine("Implement these changes now.");
 
         return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>Markers identifying bot-generated comments that should be excluded from prompt context.</summary>
+    private static readonly string[] ExcludedCommentMarkers = ["## 🤖 Agent Analysis"];
+
+    private static void AppendComments(StringBuilder sb, IReadOnlyList<IssueComment>? comments)
+    {
+        if (comments == null || comments.Count == 0)
+            return;
+
+        var filtered = comments
+            .Where(c => !ExcludedCommentMarkers.Any(marker => c.Body.Contains(marker)))
+            .TakeLast(10)
+            .ToList();
+
+        if (filtered.Count == 0)
+            return;
+
+        sb.AppendLine("## Comments");
+        sb.AppendLine("The following comments were left on the issue and may contain clarifications, updated requirements, or stakeholder feedback.");
+        sb.AppendLine();
+        foreach (var comment in filtered)
+        {
+            sb.AppendLine($"**@{comment.Author}** ({comment.CreatedAt:yyyy-MM-dd}):");
+            sb.AppendLine(comment.Body);
+            sb.AppendLine();
+        }
     }
 }

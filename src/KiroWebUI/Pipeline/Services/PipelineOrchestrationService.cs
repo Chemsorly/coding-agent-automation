@@ -32,6 +32,7 @@ public class PipelineOrchestrationService : IDisposable
     // Stored between analysis and implementation phases
     private IssueDetail? _activeIssue;
     private ParsedIssue? _activeParsedIssue;
+    private IReadOnlyList<IssueComment>? _activeIssueComments;
 
     /// <summary>Fired after each state transition for UI binding.</summary>
     public event Action? OnChange;
@@ -188,6 +189,21 @@ public class PipelineOrchestrationService : IDisposable
             _activeIssue = issue;
             _activeParsedIssue = parsed;
 
+            // Fetch issue comments for additional context
+            IReadOnlyList<IssueComment> issueComments = Array.Empty<IssueComment>();
+            try
+            {
+                issueComments = await issueProvider.ListCommentsAsync(run.IssueIdentifier, ct);
+                _logger.Information("Pipeline {RunId} fetched {CommentCount} comment(s) for issue {IssueIdentifier}",
+                    run.RunId, issueComments.Count, run.IssueIdentifier);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Pipeline {RunId} failed to fetch issue comments, proceeding without them",
+                    run.RunId);
+            }
+            _activeIssueComments = issueComments;
+
             // Create workspace
             var workspacePath = Path.Combine(_activeConfig!.WorkspaceBaseDirectory, run.RunId);
             Directory.CreateDirectory(workspacePath);
@@ -281,7 +297,7 @@ public class PipelineOrchestrationService : IDisposable
                 TransitionTo(run, PipelineStep.AnalyzingCode);
                 try
                 {
-                    var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(issue, parsed);
+                    var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(issue, parsed, issueComments);
                     var analysisRequest = new AgentRequest
                     {
                         Prompt = analysisPrompt,
@@ -373,7 +389,7 @@ public class PipelineOrchestrationService : IDisposable
             TransitionTo(run, PipelineStep.GeneratingCode);
             try
             {
-                var prompt = PromptBuilder.BuildPrompt(_activeIssue!, _activeParsedIssue!);
+                var prompt = PromptBuilder.BuildPrompt(_activeIssue!, _activeParsedIssue!, _activeIssueComments);
 
                 var agentResult = await _activeAgentProvider!.ExecuteWithResumeAsync(
                     prompt,
