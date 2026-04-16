@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using KiroWebUI.Pipeline.Models;
 
 namespace KiroWebUI.Pipeline.Services;
 
@@ -34,7 +35,7 @@ public static partial class PipelineFormatting
     }
 
     /// <summary>
-    /// Generates a PR body with all required sections.
+    /// Generates a PR body with all required sections including file changes and issue context.
     /// </summary>
     public static string GeneratePrBody(
         string issueNumber,
@@ -42,7 +43,10 @@ public static partial class PipelineFormatting
         int testsFailed,
         int testsSkipped,
         double? coveragePercent,
-        string implementationSummary,
+        IReadOnlyList<FileChangeSummary> fileChanges,
+        string issueTitle,
+        string issueDescription,
+        IReadOnlyList<string> acceptanceCriteria,
         bool isDraft = false)
     {
         var sb = new StringBuilder();
@@ -53,10 +57,45 @@ public static partial class PipelineFormatting
             sb.AppendLine();
         }
 
-        sb.AppendLine("## Implementation Summary");
-        sb.AppendLine(implementationSummary);
+        // Issue context
+        sb.AppendLine("## Issue Context");
+        sb.AppendLine($"**{issueTitle}** (#{issueNumber})");
+        sb.AppendLine();
+        if (!string.IsNullOrWhiteSpace(issueDescription))
+        {
+            var desc = issueDescription.Length > 500
+                ? issueDescription[..500] + "…"
+                : issueDescription;
+            sb.AppendLine(desc);
+            sb.AppendLine();
+        }
+        if (acceptanceCriteria.Count > 0)
+        {
+            sb.AppendLine("**Acceptance Criteria:**");
+            foreach (var criterion in acceptanceCriteria)
+                sb.AppendLine($"- {criterion}");
+            sb.AppendLine();
+        }
+
+        // Files changed
+        sb.AppendLine("## Files Changed");
+        if (fileChanges.Count > 0)
+        {
+            sb.AppendLine("| Status | File |");
+            sb.AppendLine("|--------|------|");
+            const int maxFiles = 50;
+            foreach (var fc in fileChanges.Take(maxFiles))
+                sb.AppendLine($"| {fc.Status} | `{fc.Path}` |");
+            if (fileChanges.Count > maxFiles)
+                sb.AppendLine($"| | *(and {fileChanges.Count - maxFiles} more)* |");
+        }
+        else
+        {
+            sb.AppendLine("No file changes detected.");
+        }
         sb.AppendLine();
 
+        // Test results
         sb.AppendLine("## Test Results");
         sb.AppendLine($"- Passed: {testsPassed}");
         sb.AppendLine($"- Failed: {testsFailed}");
@@ -77,6 +116,44 @@ public static partial class PipelineFormatting
         sb.AppendLine("*Automated implementation via pipeline*");
 
         return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Builds a list of file changes by comparing the current branch HEAD against the base branch.
+    /// Falls back to an empty list if the diff cannot be computed.
+    /// </summary>
+    public static IReadOnlyList<FileChangeSummary> GetFileChanges(string workspacePath, string baseBranch)
+    {
+        try
+        {
+            using var repo = new LibGit2Sharp.Repository(workspacePath);
+            var baseBranchRef = repo.Branches[$"origin/{baseBranch}"]
+                ?? repo.Branches[baseBranch];
+            if (baseBranchRef == null)
+                return Array.Empty<FileChangeSummary>();
+
+            var baseCommit = baseBranchRef.Tip;
+            var headCommit = repo.Head.Tip;
+            var diff = repo.Diff.Compare<LibGit2Sharp.TreeChanges>(baseCommit.Tree, headCommit.Tree);
+
+            var changes = new List<FileChangeSummary>();
+            foreach (var entry in diff)
+            {
+                var status = entry.Status switch
+                {
+                    LibGit2Sharp.ChangeKind.Added => "Added",
+                    LibGit2Sharp.ChangeKind.Deleted => "Deleted",
+                    LibGit2Sharp.ChangeKind.Renamed => "Renamed",
+                    _ => "Modified"
+                };
+                changes.Add(new FileChangeSummary(status, entry.Path));
+            }
+            return changes;
+        }
+        catch
+        {
+            return Array.Empty<FileChangeSummary>();
+        }
     }
 
     /// <summary>

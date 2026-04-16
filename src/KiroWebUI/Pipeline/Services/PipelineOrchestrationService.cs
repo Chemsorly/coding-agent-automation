@@ -807,14 +807,18 @@ public class PipelineOrchestrationService : IDisposable
             var testsSkipped = report.Tests.TestsSkipped ?? 0;
             var coverage = report.Coverage?.CoveragePercent;
 
-            var implementationSummary = isDraft
-                ? "Implementation incomplete — quality gates failed after max retries."
-                : "Automated implementation via pipeline.";
+            var fileChanges = PipelineFormatting.GetFileChanges(run.WorkspacePath!, _activeBaseBranch);
+
+            var issueTitle = _activeIssue?.Title ?? run.IssueTitle;
+            var issueDescription = _activeIssue?.Description ?? string.Empty;
+            var acceptanceCriteria = _activeParsedIssue?.AcceptanceCriteria
+                ?? (IReadOnlyList<string>)Array.Empty<string>();
 
             var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, run.IssueIdentifier);
             var prBody = PipelineFormatting.GeneratePrBody(
                 run.IssueIdentifier, testsPassed, testsFailed, testsSkipped,
-                coverage, implementationSummary, isDraft);
+                coverage, fileChanges, issueTitle, issueDescription,
+                acceptanceCriteria, isDraft);
 
             var prInfo = new PullRequestInfo
             {
