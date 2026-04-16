@@ -295,6 +295,25 @@ public class PipelineOrchestrationService : IDisposable
             {
                 // Analyze code — agent examines the codebase in context of the issue
                 TransitionTo(run, PipelineStep.AnalyzingCode);
+
+                // Send a read-only warm-up prompt to establish a session.
+                // The first --no-interactive call can't write; --resume on a subsequent call can.
+                try
+                {
+                    var warmupRequest = new AgentRequest
+                    {
+                        Prompt = "Briefly describe the project structure of this workspace. Do not make any changes.",
+                        WorkspacePath = workspacePath,
+                        Timeout = _activeConfig.AgentTimeout
+                    };
+                    await _activeAgentProvider!.ExecuteAsync(warmupRequest, ct);
+                    _logger.Information("Pipeline {RunId} session established via warm-up prompt", run.RunId);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex, "Pipeline {RunId} warm-up prompt failed", run.RunId);
+                }
+
                 try
                 {
                     var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(issue, parsed, issueComments);
@@ -305,8 +324,12 @@ public class PipelineOrchestrationService : IDisposable
                         Timeout = _activeConfig.AgentTimeout
                     };
 
-                    await _activeAgentProvider!.ExecuteAsync(
-                        analysisRequest, ct, line =>
+                    await _activeAgentProvider!.ExecuteWithResumeAsync(
+                        analysisRequest.Prompt,
+                        analysisRequest.WorkspacePath,
+                        analysisRequest.Timeout,
+                        ct,
+                        line =>
                         {
                             var clean = StripAnsi(line);
                             run.OutputLines.Enqueue(clean);
