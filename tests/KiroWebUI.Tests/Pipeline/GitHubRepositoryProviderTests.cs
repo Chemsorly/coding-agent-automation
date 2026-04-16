@@ -103,6 +103,81 @@ public class GitHubRepositoryProviderTests
     }
 
     [Fact]
+    public void GeneratePrBody_WithComments_IncludesInputCommentsSection()
+    {
+        var comments = new List<IssueComment>
+        {
+            new() { Id = "1", Body = "Please handle edge cases", Author = "alice", CreatedAt = new DateTime(2026, 4, 10, 14, 30, 0, DateTimeKind.Utc) },
+            new() { Id = "2", Body = "Also update the docs", Author = "bob", CreatedAt = new DateTime(2026, 4, 11, 9, 0, 0, DateTimeKind.Utc) },
+        };
+
+        var body = GitHubRepositoryProvider.GeneratePrBody(
+            issueNumber: "42", testsPassed: 5, testsFailed: 0, testsSkipped: 0,
+            coveragePercent: 90.0, fileChanges: Array.Empty<FileChangeSummary>(),
+            issueTitle: "Feature", issueDescription: "Desc",
+            acceptanceCriteria: Array.Empty<string>(), isDraft: false, comments: comments);
+
+        body.Should().Contain("## Input Comments");
+        body.Should().Contain("@alice");
+        body.Should().Contain("2026-04-10 14:30 UTC");
+        body.Should().Contain("Please handle edge cases");
+        body.Should().Contain("@bob");
+        body.Should().Contain("Also update the docs");
+    }
+
+    [Fact]
+    public void GeneratePrBody_WithNoComments_OmitsInputCommentsSection()
+    {
+        var body = GitHubRepositoryProvider.GeneratePrBody(
+            issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
+            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
+            issueTitle: "Bug", issueDescription: "Fix",
+            acceptanceCriteria: Array.Empty<string>());
+
+        body.Should().NotContain("## Input Comments");
+    }
+
+    [Fact]
+    public void GeneratePrBody_ExcludesAgentAnalysisComments()
+    {
+        var comments = new List<IssueComment>
+        {
+            new() { Id = "1", Body = "Real feedback", Author = "alice", CreatedAt = DateTime.UtcNow },
+            new() { Id = "2", Body = "## 🤖 Agent Analysis\n\nPlanned approach...", Author = "bot", CreatedAt = DateTime.UtcNow },
+        };
+
+        var body = GitHubRepositoryProvider.GeneratePrBody(
+            issueNumber: "5", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
+            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
+            issueTitle: "Test", issueDescription: "Desc",
+            acceptanceCriteria: Array.Empty<string>(), isDraft: false, comments: comments);
+
+        body.Should().Contain("@alice");
+        body.Should().Contain("Real feedback");
+        body.Should().NotContain("@bot");
+        body.Should().NotContain("Agent Analysis");
+    }
+
+    [Fact]
+    public void GeneratePrBody_TruncatesLongComments()
+    {
+        var longBody = new string('x', 300);
+        var comments = new List<IssueComment>
+        {
+            new() { Id = "1", Body = longBody, Author = "alice", CreatedAt = DateTime.UtcNow },
+        };
+
+        var body = GitHubRepositoryProvider.GeneratePrBody(
+            issueNumber: "1", testsPassed: 0, testsFailed: 0, testsSkipped: 0,
+            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
+            issueTitle: "T", issueDescription: "D",
+            acceptanceCriteria: Array.Empty<string>(), isDraft: false, comments: comments);
+
+        body.Should().Contain("…");
+        body.Should().NotContain(longBody);
+    }
+
+    [Fact]
     public void GenerateCommitMessage_FollowsConventionalFormat()
     {
         var msg = GitHubRepositoryProvider.GenerateCommitMessage("Add login page", "15");

@@ -116,8 +116,8 @@ public static class PromptBuilder
         return sb.ToString().TrimEnd();
     }
 
-    /// <summary>Markers identifying bot-generated comments that should be excluded from prompt context.</summary>
-    private static readonly string[] ExcludedCommentMarkers = ["## 🤖 Agent Analysis"];
+    /// <summary>Markers identifying bot-generated comments that should be excluded from context.</summary>
+    internal static readonly string[] ExcludedCommentMarkers = ["## 🤖 Agent Analysis"];
 
     private static void AppendComments(StringBuilder sb, IReadOnlyList<IssueComment>? comments)
     {
