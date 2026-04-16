@@ -62,8 +62,8 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
         var outputParser = new OutputParser();
         var fileSystemMonitor = new FileSystemMonitor();
 
-        processWrapper.OutputReceived += (_, line) => { _logger.Information("Kiro: {Line}", line); outputParser.ProcessLine(line); onOutputLine?.Invoke(line); };
-        processWrapper.ErrorReceived += (_, line) => { _logger.Debug("Kiro (stderr): {Line}", line); outputParser.ProcessLine(line); };
+        processWrapper.OutputReceived += (_, line) => { _logger.Information("Kiro: {Line}", AnsiStripper.Strip(line)); outputParser.ProcessLine(line); onOutputLine?.Invoke(line); };
+        processWrapper.ErrorReceived += (_, line) => { _logger.Debug("Kiro (stderr): {Line}", AnsiStripper.Strip(line)); outputParser.ProcessLine(line); };
         outputParser.StateChanged += (_, newState) =>
         {
             _logger.Debug("State changed to: {State}", newState);

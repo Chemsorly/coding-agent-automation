@@ -714,13 +714,13 @@ public class PipelineOrchestrationService : IDisposable
             }
             else if (run.RetryCount < _activeConfig!.MaxRetries)
             {
-                // Gates failed, retries left
+                // Gates failed, retries left — auto-fix via agent
                 run.RetryCount++;
                 var errorSummary = BuildQualityGateErrorSummary(report);
                 run.RetryErrors.Add(errorSummary);
 
                 _logger.Information(
-                    "Pipeline {RunId} quality gates failed, retry {RetryCount}/{MaxRetries}",
+                    "Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}",
                     run.RunId, run.RetryCount, _activeConfig.MaxRetries);
 
                 run.ChatHistory.Enqueue(new ChatEntry
@@ -729,7 +729,15 @@ public class PipelineOrchestrationService : IDisposable
                     Content = $"Quality gates failed (attempt {run.RetryCount}/{_activeConfig.MaxRetries}):\n{errorSummary}"
                 });
 
+                // Transition to WaitingForChat so SendChatMessageAsync's precondition is met
                 TransitionTo(run, PipelineStep.WaitingForChat);
+
+                // Automatically send the failure details to the agent to fix
+                var fixPrompt = $"The quality gates failed. Please fix the following issues:\n{errorSummary}";
+                await SendChatMessageAsync(fixPrompt, linkedCt);
+
+                // Agent has attempted the fix — re-run quality gates
+                await ProceedToQualityGatesAsync(ct);
             }
             else
             {

@@ -45,7 +45,7 @@ builder.Services.AddTransient<GitHubValidationService>();
 // Configure Serilog
 builder.Host.UseSerilog((ctx, lc) => lc
     .MinimumLevel.Is(config.LogLevel)
-    .WriteTo.Console());
+    .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None));
 
 var app = builder.Build();
 

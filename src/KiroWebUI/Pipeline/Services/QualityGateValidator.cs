@@ -26,10 +26,26 @@ public class QualityGateValidator : IQualityGateValidator
         ArgumentNullException.ThrowIfNull(workspacePath);
         ArgumentNullException.ThrowIfNull(config);
 
+        // Clean up any leftover TestResults from previous quality gate iterations
+        var testResultsRoot = Path.GetFullPath(Path.Combine(workspacePath, "TestResults"));
+        try
+        {
+            if (Directory.Exists(testResultsRoot))
+            {
+                Directory.Delete(testResultsRoot, recursive: true);
+                _logger.Debug("Cleaned up previous test results at {TestResultsRoot}", testResultsRoot);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to clean up previous test results at {TestResultsRoot}", testResultsRoot);
+        }
+
         var compilation = await RunCompilationGateAsync(workspacePath, ct);
 
-        // Use a dedicated results directory to avoid conflicts with previous runs
-        var resultsDir = Path.Combine(workspacePath, "TestResults", $"qg-{Guid.NewGuid():N}");
+        // Use a dedicated results directory — must be absolute so dotnet test
+        // (which runs with WorkingDirectory=workspacePath) writes to the correct location
+        var resultsDir = Path.GetFullPath(Path.Combine(workspacePath, "TestResults", $"qg-{Guid.NewGuid():N}"));
         var collectCoverage = config.MinCoverageThreshold > 0;
 
         var tests = await RunTestGateAsync(workspacePath, resultsDir, collectCoverage, ct);
@@ -89,11 +105,21 @@ public class QualityGateValidator : IQualityGateValidator
     private async Task<GateResult> RunTestGateAsync(
         string workspacePath, string resultsDir, bool collectCoverage, CancellationToken ct)
     {
-        var args = $"test --logger \"trx\" --results-directory \"{resultsDir}\"";
+        // Ensure the results directory exists before running tests
+        Directory.CreateDirectory(resultsDir);
+
+        var args = $"test --logger trx --results-directory \"{resultsDir}\"";
         if (collectCoverage)
             args += " --collect:\"XPlat Code Coverage\"";
 
+        _logger.Debug("Running tests: dotnet {Args} in {WorkspacePath}", args, workspacePath);
+
         var (exitCode, stdout, stderr) = await RunProcessAsync("dotnet", args, workspacePath, ct);
+
+        _logger.Debug("Test results directory contents: {Files}",
+            Directory.Exists(resultsDir)
+                ? string.Join(", ", Directory.GetFiles(resultsDir, "*", SearchOption.AllDirectories))
+                : "DIRECTORY NOT FOUND");
 
         // Parse TRX files for accurate test counts
         var (passed, failed, skipped) = ParseTestCountsFromTrx(resultsDir);

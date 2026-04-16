@@ -129,7 +129,7 @@ public sealed class KiroExecutionService : IDisposable
                 onOutputLine: line =>
                 {
                     if (_disposed) return;
-                    var cleanLine = AnsiStripper.Strip(line);
+                    var cleanLine = Pipeline.Services.AnsiStripper.Strip(line);
                     lock (_messageLock)
                     {
                         assistantMessage.Content += cleanLine + "\n";

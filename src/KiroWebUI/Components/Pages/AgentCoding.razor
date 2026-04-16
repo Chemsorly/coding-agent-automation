@@ -155,10 +155,32 @@
                 <div class="progress-view">
                     <h2>Pipeline in Progress</h2>
                     <div class="step-indicator">
+                        @{
+                            // Map the current pipeline step to its position in the progress bar.
+                            // For steps not in the array (WaitingForChat, WaitingForAnalysisApproval),
+                            // find the last progress step that was completed before the current state.
+                            var currentStepName = run.CurrentStep.ToString();
+                            var currentStepIndex = Array.IndexOf(_progressSteps, currentStepName);
+                            if (currentStepIndex < 0)
+                            {
+                                // Current step isn't a progress step — find the highest progress step
+                                // whose enum value is less than the current step's enum value
+                                var currentEnumVal = (int)run.CurrentStep;
+                                for (var i = _progressSteps.Length - 1; i >= 0; i--)
+                                {
+                                    if (Enum.TryParse<PipelineStep>(_progressSteps[i], out var ps) && (int)ps < currentEnumVal)
+                                    {
+                                        currentStepIndex = i + 1; // mark all up to and including that step as done
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                         @foreach (var step in _progressSteps)
                         {
-                            var isCurrent = run.CurrentStep.ToString() == step;
-                            var isPast = (int)run.CurrentStep > Array.IndexOf(_progressSteps, step);
+                            var stepIndex = Array.IndexOf(_progressSteps, step);
+                            var isCurrent = currentStepName == step;
+                            var isPast = currentStepIndex >= 0 && stepIndex < currentStepIndex;
                             <span class="step-dot @(isCurrent ? "step-current" : isPast ? "step-done" : "")">
                                 @(isPast ? "✓" : isCurrent ? "●" : "○") @step
                             </span>
@@ -236,7 +258,11 @@
                                 @if (run.LatestQualityReport.Coverage is not null)
                                 {
                                     <div class="gate-result @(run.LatestQualityReport.Coverage.Passed ? "gate-pass" : "gate-fail")">
-                                        @(run.LatestQualityReport.Coverage.Passed ? "✅" : "❌") Coverage: @(run.LatestQualityReport.Coverage.CoveragePercent?.ToString("F1"))%
+                                        @(run.LatestQualityReport.Coverage.Passed ? "✅" : "❌") Coverage: @(run.LatestQualityReport.Coverage.CoveragePercent.HasValue ? $"{run.LatestQualityReport.Coverage.CoveragePercent.Value:F1}%" : "N/A")
+                                        @if (!string.IsNullOrEmpty(run.LatestQualityReport.Coverage.Details))
+                                        {
+                                            <div class="gate-details">@run.LatestQualityReport.Coverage.Details</div>
+                                        }
                                     </div>
                                 }
                                 @if (run.LatestQualityReport.SecurityScan is not null)

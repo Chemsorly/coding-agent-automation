@@ -163,9 +163,10 @@ public class AgentCodingPageTests
     }
 
     [Fact]
-    public async Task AfterQualityGatesFail_ReturnsToWaitingForChat()
+    public async Task AfterQualityGatesFail_AutoRetriesAndExhaustsRetries()
     {
-        // When quality gates fail with retries left, the page returns to chat panel
+        // When quality gates always fail, the pipeline auto-retries by sending fix prompts
+        // to the agent, then re-running quality gates until max retries are exhausted.
         _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
@@ -177,11 +178,12 @@ public class AgentCodingPageTests
         await _service.ApproveAnalysisAsync(CancellationToken.None);
         await _service.ProceedToQualityGatesAsync(CancellationToken.None);
 
-        // Should return to WaitingForChat with quality report available
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+        // Auto-retry exhausted all retries (default MaxRetries=3), created draft PR, marked Failed
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.LatestQualityReport.Should().NotBeNull();
         run.LatestQualityReport!.AllPassed.Should().BeFalse();
-        run.RetryCount.Should().Be(1);
+        run.RetryCount.Should().Be(3);
+        run.RetryErrors.Should().HaveCount(4); // initial + 3 retries
     }
 
     // --- Requirement 10.6: Concurrent start rejection ---

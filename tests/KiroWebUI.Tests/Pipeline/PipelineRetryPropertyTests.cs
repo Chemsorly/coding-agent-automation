@@ -16,8 +16,8 @@ public class PipelineRetryPropertyTests
     /// <summary>
     /// Property 4: Retry logic enforces max count and accumulates all errors.
     /// For any max retry count N (1-5) and any sequence of N distinct error messages,
-    /// when quality gates fail on every attempt, the orchestrator retries exactly N times
-    /// and RetryErrors contains all N error messages in order.
+    /// when quality gates fail on every attempt, the orchestrator auto-retries exactly N times
+    /// (sending fix prompts to the agent) and RetryErrors contains all N+1 error messages.
     /// **Validates: Requirements 5.2, 5.4**
     /// </summary>
     [Property(MaxTest = 100)]
@@ -42,31 +42,14 @@ public class PipelineRetryPropertyTests
         service.ApproveAnalysisAsync(CancellationToken.None).GetAwaiter().GetResult();
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
 
-        // Simulate retry cycles: proceed to quality gates (which always fail)
-        // First call is the initial attempt, subsequent calls are retries
-        // Total calls needed: maxRetries + 1 (initial + maxRetries retries)
-        // But the last call (when retries exhausted) creates a draft PR
-        for (var i = 0; i <= maxRetries; i++)
-        {
-            service.ProceedToQualityGatesAsync(CancellationToken.None).GetAwaiter().GetResult();
-
-            if (i < maxRetries)
-            {
-                // Retries still available — should be back in WaitingForChat
-                run.CurrentStep.Should().Be(PipelineStep.WaitingForChat,
-                    $"after attempt {i + 1}/{maxRetries + 1}, should be WaitingForChat");
-                run.RetryCount.Should().Be(i + 1);
-
-                // Send a follow-up message to simulate user interaction before next attempt
-                service.SendChatMessageAsync("fix the errors", CancellationToken.None)
-                    .GetAwaiter().GetResult();
-            }
-        }
+        // Single call drives the entire auto-retry loop:
+        // quality gates fail → agent fix prompt → quality gates fail → ... → draft PR
+        service.ProceedToQualityGatesAsync(CancellationToken.None).GetAwaiter().GetResult();
 
         // After max retries exhausted: draft PR created, run marked Failed
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.RetryCount.Should().Be(maxRetries);
-        // RetryErrors: one per failed attempt (maxRetries from retry attempts + 1 from final exhausted attempt)
+        // RetryErrors: one per failed attempt (initial + maxRetries retries)
         run.RetryErrors.Should().HaveCount(maxRetries + 1);
 
         // All error messages accumulated in order

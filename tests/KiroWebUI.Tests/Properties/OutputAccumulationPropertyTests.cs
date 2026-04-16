@@ -36,7 +36,7 @@ public class OutputAccumulationPropertyTests
         var outputLines = outputLineValues.Get
             .Select(s => s.Get.Replace("\n", " ").Replace("\r", " "))
             .Where(s => !string.IsNullOrWhiteSpace(s))
-            .Where(s => !string.IsNullOrWhiteSpace(AnsiStripper.Strip(s))) // skip lines that become empty after ANSI stripping
+            .Where(s => !string.IsNullOrWhiteSpace(KiroWebUI.Pipeline.Services.AnsiStripper.Strip(s))) // skip lines that become empty after ANSI stripping
             .Take(50)
             .ToList();
 
@@ -76,7 +76,7 @@ public class OutputAccumulationPropertyTests
         // Verify all lines are present in order (after ANSI stripping)
         var content = assistantMessage.Content;
         var contentLines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        var expectedLines = outputLines.Select(AnsiStripper.Strip).Where(l => !string.IsNullOrEmpty(l)).ToList();
+        var expectedLines = outputLines.Select(KiroWebUI.Pipeline.Services.AnsiStripper.Strip).Where(l => !string.IsNullOrEmpty(l)).ToList();
 
         Assert.Equal(expectedLines.Count, contentLines.Length);
         for (var i = 0; i < expectedLines.Count; i++)
