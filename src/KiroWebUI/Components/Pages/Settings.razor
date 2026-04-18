@@ -342,6 +342,88 @@
 
         <!-- Pipeline Configuration Section -->
         <section class="settings-section">
+            <h2>Pipeline Providers</h2>
+            <div class="provider-list">
+                @foreach (var p in _pipelineProviders)
+                {
+                    <div class="provider-card">
+                        <div class="provider-info">
+                            <strong>@p.DisplayName</strong>
+                            <span class="provider-type">@p.ProviderType</span>
+                            <span class="provider-detail">@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "")</span>
+                        </div>
+                        <div class="provider-actions">
+                            <button class="btn-edit" @onclick="() => EditPipelineProvider(p)">Edit</button>
+                            <button class="btn-delete" @onclick="() => DeleteProvider(p.Id, ProviderKind.Pipeline)">Delete</button>
+                        </div>
+                    </div>
+                }
+            </div>
+            @if (_showPipelineProviderForm)
+            {
+                <div class="provider-form-row">
+                    <div class="provider-form">
+                        <h3>@(_editingPipelineProvider != null ? "Edit" : "Add") Pipeline Provider</h3>
+                        <div class="form-group">
+                            <label>Provider Type</label>
+                            <select @bind="_pipelineProviderForm.ProviderType"><option value="GitHub">GitHub</option></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Display Name</label>
+                            <input type="text" @bind="_pipelineProviderForm.DisplayName" placeholder="My GitHub CI" />
+                        </div>
+                        <div class="form-group">
+                            <label>API URL</label>
+                            <input type="text" @bind="_pipelineProviderForm.ApiUrl" placeholder="https://api.github.com" />
+                        </div>
+                        <div class="form-group">
+                            <label>Client ID</label>
+                            <input type="text" @bind="_pipelineProviderForm.ClientId" placeholder="Iv1.abc123..." />
+                        </div>
+                        <div class="form-group">
+                            <label>Installation ID</label>
+                            <input type="text" @bind="_pipelineProviderForm.InstallationId" placeholder="78901234" />
+                        </div>
+                        <div class="form-group">
+                            <label>Private Key (.pem file)</label>
+                            <InputFile OnChange="OnPipelineKeyFileSelected" accept=".pem" />
+                            @if (!string.IsNullOrEmpty(_pipelineProviderForm.PrivateKeyBase64))
+                            {
+                                <span class="key-status" style="color: #4ade80;">✅ Key loaded</span>
+                            }
+                        </div>
+                        <div class="form-group">
+                            <label>Owner</label>
+                            <input type="text" @bind="_pipelineProviderForm.Owner" placeholder="owner" />
+                        </div>
+                        <div class="form-group">
+                            <label>Repository</label>
+                            <input type="text" @bind="_pipelineProviderForm.Repo" placeholder="repo" />
+                        </div>
+                        <div class="form-buttons">
+                            <button class="btn-save" @onclick="SavePipelineProvider">Save</button>
+                            <button class="btn-cancel" @onclick="() => _showPipelineProviderForm = false">Cancel</button>
+                        </div>
+                    </div>
+                    <div class="provider-help">
+                        <h4>🔄 GitHub Actions CI</h4>
+                        <p>Reads CI/CD pipeline status from GitHub Actions workflow runs. Used as an external quality gate.</p>
+                        <p class="help-heading">Required permissions:</p>
+                        <ul>
+                            <li><strong>Actions: Read</strong> — read workflow run status and job results</li>
+                        </ul>
+                        <p class="help-tip">💡 Use the same GitHub App as the Issue/Repository providers if it has Actions read permission.</p>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <button class="btn-add" @onclick="ShowAddPipelineProvider">+ Add Pipeline Provider</button>
+            }
+        </section>
+
+        <!-- Pipeline Configuration Section -->
+        <section class="settings-section">
             <h2>Pipeline Configuration</h2>
             <div class="provider-form">
                 <div class="form-group">
@@ -379,6 +461,23 @@
                         <textarea @bind="_pipelineConfig.SelfReviewPrompt" rows="4" style="width:100%;"></textarea>
                     </div>
                 }
+                <div class="form-group form-checkbox">
+                    <label>
+                        <input type="checkbox" @bind="_pipelineConfig.ExternalCiEnabled" />
+                        External CI Quality Gate
+                    </label>
+                </div>
+                @if (_pipelineConfig.ExternalCiEnabled)
+                {
+                    <div class="form-group">
+                        <label>CI Timeout (minutes)</label>
+                        <input type="number" @bind="_externalCiTimeoutMinutes" min="1" max="60" />
+                    </div>
+                    <div class="form-group">
+                        <label>CI Poll Interval (seconds)</label>
+                        <input type="number" @bind="_externalCiPollIntervalSeconds" min="10" max="300" />
+                    </div>
+                }
                 <div class="form-buttons">
                     <button class="btn-save" @onclick="SavePipelineConfig">Save Pipeline Configuration</button>
                 </div>
@@ -391,8 +490,11 @@
     private List<ProviderConfig> _issueProviders = new();
     private List<ProviderConfig> _repoProviders = new();
     private List<ProviderConfig> _agentProviders = new();
+    private List<ProviderConfig> _pipelineProviders = new();
     private PipelineConfigForm _pipelineConfig = new();
     private int _agentTimeoutMinutes = 30;
+    private int _externalCiTimeoutMinutes = 15;
+    private int _externalCiPollIntervalSeconds = 30;
 
     private string? _statusMessage;
     private bool _isError;
@@ -424,6 +526,11 @@
     private ProviderConfig? _editingAgentProvider;
     private AgentProviderForm _agentForm = new();
 
+    // Pipeline provider form
+    private bool _showPipelineProviderForm;
+    private ProviderConfig? _editingPipelineProvider;
+    private PipelineProviderForm _pipelineProviderForm = new();
+
     protected override async Task OnInitializedAsync()
     {
         await LoadAllData();
@@ -436,6 +543,7 @@
             _issueProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
             _repoProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
             _agentProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None)).ToList();
+            _pipelineProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
 
             var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
             _pipelineConfig = new PipelineConfigForm
@@ -445,9 +553,12 @@
                 SecurityScanEnabled = config.SecurityScanEnabled,
                 SelfReviewEnabled = config.SelfReviewEnabled,
                 SelfReviewMaxIterations = config.SelfReviewMaxIterations,
-                SelfReviewPrompt = config.SelfReviewPrompt
+                SelfReviewPrompt = config.SelfReviewPrompt,
+                ExternalCiEnabled = config.ExternalCiEnabled
             };
             _agentTimeoutMinutes = (int)config.AgentTimeout.TotalMinutes;
+            _externalCiTimeoutMinutes = (int)config.ExternalCiTimeout.TotalMinutes;
+            _externalCiPollIntervalSeconds = (int)config.ExternalCiPollInterval.TotalSeconds;
         }
         catch (Exception ex)
         {
@@ -752,6 +863,80 @@
         }
     }
 
+    // --- Pipeline Provider CRUD ---
+    private void ShowAddPipelineProvider()
+    {
+        _editingPipelineProvider = null;
+        _pipelineProviderForm = new PipelineProviderForm();
+        _showPipelineProviderForm = true;
+    }
+
+    private void EditPipelineProvider(ProviderConfig p)
+    {
+        _editingPipelineProvider = p;
+        _pipelineProviderForm = new PipelineProviderForm
+        {
+            ProviderType = p.ProviderType,
+            DisplayName = p.DisplayName,
+            ApiUrl = p.Settings.GetValueOrDefault("apiUrl", ""),
+            ClientId = p.Settings.GetValueOrDefault("clientId", ""),
+            InstallationId = p.Settings.GetValueOrDefault("installationId", ""),
+            PrivateKeyBase64 = p.Settings.GetValueOrDefault("privateKeyBase64", ""),
+            Owner = p.Settings.GetValueOrDefault("owner", ""),
+            Repo = p.Settings.GetValueOrDefault("repo", "")
+        };
+        _showPipelineProviderForm = true;
+    }
+
+    private async Task SavePipelineProvider()
+    {
+        if (string.IsNullOrWhiteSpace(_pipelineProviderForm.DisplayName))
+        {
+            ShowStatus("Display Name is required.", isError: true);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_pipelineProviderForm.Owner) || string.IsNullOrWhiteSpace(_pipelineProviderForm.Repo))
+        {
+            ShowStatus("Owner and Repository are required.", isError: true);
+            return;
+        }
+
+        var config = new ProviderConfig
+        {
+            Id = _editingPipelineProvider?.Id ?? Guid.NewGuid().ToString(),
+            Kind = ProviderKind.Pipeline,
+            ProviderType = _pipelineProviderForm.ProviderType,
+            DisplayName = _pipelineProviderForm.DisplayName,
+            Settings = new Dictionary<string, string>
+            {
+                ["apiUrl"] = _pipelineProviderForm.ApiUrl,
+                ["clientId"] = _pipelineProviderForm.ClientId,
+                ["installationId"] = _pipelineProviderForm.InstallationId,
+                ["privateKeyBase64"] = _pipelineProviderForm.PrivateKeyBase64,
+                ["owner"] = _pipelineProviderForm.Owner,
+                ["repo"] = _pipelineProviderForm.Repo
+            }
+        };
+
+        try
+        {
+            await ConfigStore.SaveProviderConfigAsync(config, CancellationToken.None);
+            _showPipelineProviderForm = false;
+            await LoadAllData();
+            ShowStatus("Pipeline provider saved.");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Failed to save: {ex.Message}", isError: true);
+        }
+    }
+
+    private async Task OnPipelineKeyFileSelected(InputFileChangeEventArgs e)
+    {
+        await ReadPemFileAsync(e, base64 => _pipelineProviderForm.PrivateKeyBase64 = base64);
+    }
+
     // --- File Upload Handlers ---
     private async Task OnIssueKeyFileSelected(InputFileChangeEventArgs e)
     {
@@ -883,7 +1068,10 @@
             SecurityScanEnabled = _pipelineConfig.SecurityScanEnabled,
             SelfReviewEnabled = _pipelineConfig.SelfReviewEnabled,
             SelfReviewMaxIterations = _pipelineConfig.SelfReviewMaxIterations,
-            SelfReviewPrompt = _pipelineConfig.SelfReviewPrompt
+            SelfReviewPrompt = _pipelineConfig.SelfReviewPrompt,
+            ExternalCiEnabled = _pipelineConfig.ExternalCiEnabled,
+            ExternalCiTimeout = TimeSpan.FromMinutes(_externalCiTimeoutMinutes),
+            ExternalCiPollInterval = TimeSpan.FromSeconds(_externalCiPollIntervalSeconds)
         };
 
         try
@@ -951,5 +1139,18 @@
             "Use a sub-agent to review the changes you just made against the original issue requirements. " +
             "The sub-agent should check for: correctness against acceptance criteria, code quality and " +
             "project conventions, unhandled edge cases, and security gaps. Fix any issues the review finds.";
+        public bool ExternalCiEnabled { get; set; }
+    }
+
+    private class PipelineProviderForm
+    {
+        public string ProviderType { get; set; } = "GitHub";
+        public string DisplayName { get; set; } = "";
+        public string ApiUrl { get; set; } = "https://api.github.com";
+        public string ClientId { get; set; } = "";
+        public string InstallationId { get; set; } = "";
+        public string PrivateKeyBase64 { get; set; } = "";
+        public string Owner { get; set; } = "";
+        public string Repo { get; set; } = "";
     }
 }

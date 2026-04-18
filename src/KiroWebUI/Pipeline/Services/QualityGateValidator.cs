@@ -10,6 +10,7 @@ namespace KiroWebUI.Pipeline.Services;
 /// Validates generated code against quality thresholds by running
 /// dotnet build and dotnet test in the workspace directory.
 /// Uses TRX and Cobertura XML reports for accurate test/coverage data.
+/// Optionally validates against an external CI/CD pipeline.
 /// </summary>
 public class QualityGateValidator : IQualityGateValidator
 {
@@ -68,6 +69,8 @@ public class QualityGateValidator : IQualityGateValidator
             };
         }
 
+        // External CI gate is handled by PipelineOrchestrationService after local gates pass
+
         // Clean up results directory (non-fatal)
         try
         {
@@ -86,6 +89,31 @@ public class QualityGateValidator : IQualityGateValidator
             Coverage = coverage,
             SecurityScan = securityScan
         };
+    }
+
+    /// <summary>
+    /// Formats CI failure details for display in quality gate error summaries.
+    /// </summary>
+    internal static string BuildCiFailureDetails(PipelineRunStatus status)
+    {
+        var lines = new List<string> { $"CI {status.State}." };
+
+        var failedJobs = status.Jobs.Where(j => j.State == PipelineRunState.Failed).ToList();
+        if (failedJobs.Count > 0)
+        {
+            lines.Add($"{failedJobs.Count} job(s) failed:");
+            foreach (var job in failedJobs)
+            {
+                var reason = !string.IsNullOrEmpty(job.FailureReason) ? $" — {job.FailureReason}" : "";
+                var logLink = !string.IsNullOrEmpty(job.LogUrl) ? $" (logs: {job.LogUrl})" : "";
+                lines.Add($"  - {job.Name}{reason}{logLink}");
+            }
+        }
+
+        if (!string.IsNullOrEmpty(status.Url))
+            lines.Add($"Full run: {status.Url}");
+
+        return string.Join(Environment.NewLine, lines);
     }
 
     private async Task<GateResult> RunCompilationGateAsync(string workspacePath, CancellationToken ct)

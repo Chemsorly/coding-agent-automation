@@ -77,6 +77,7 @@ public class JsonConfigurationStore : IConfigurationStore
             ProviderKind.Issue => "issue",
             ProviderKind.Repository => "repository",
             ProviderKind.Agent => "agent",
+            ProviderKind.Pipeline => "pipeline",
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown provider kind")
         };
         return Path.Combine(_baseDirectory, "providers", subfolder);

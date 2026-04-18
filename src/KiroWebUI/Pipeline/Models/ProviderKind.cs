@@ -1,3 +1,3 @@
 namespace KiroWebUI.Pipeline.Models;
 
-public enum ProviderKind { Issue, Repository, Agent }
+public enum ProviderKind { Issue, Repository, Agent, Pipeline }

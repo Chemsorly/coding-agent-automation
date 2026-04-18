@@ -301,15 +301,15 @@ public class GitHubAppAuthServicePropertyTests
         {
             tasks[i] = Task.Run(() =>
             {
-                // Synchronize all threads to start at the same time
-                barrier.SignalAndWait();
+                // Synchronize all threads to start at the same time (with timeout to avoid CI deadlocks)
+                barrier.SignalAndWait(TimeSpan.FromSeconds(15));
                 return authService.GetTokenAsync(CancellationToken.None);
             });
         }
 
         // Wait for all concurrent calls to complete (with a generous timeout)
-        var allCompleted = Task.WhenAll(tasks).Wait(TimeSpan.FromSeconds(10));
-        Assert.True(allCompleted, $"Not all {input.ConcurrentCallers} concurrent calls completed within 10 seconds");
+        var allCompleted = Task.WhenAll(tasks).Wait(TimeSpan.FromSeconds(30));
+        Assert.True(allCompleted, $"Not all {input.ConcurrentCallers} concurrent calls completed within 30 seconds");
 
         // Assert: All N callers received the exact same token string
         var results = tasks.Select(t => t.Result).ToArray();

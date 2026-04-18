@@ -13,4 +13,7 @@ public sealed class PipelineConfiguration
         "Use a sub-agent to review the changes you just made against the original issue requirements. " +
         "The sub-agent should check for: correctness against acceptance criteria, code quality and " +
         "project conventions, unhandled edge cases, and security gaps. Fix any issues the review finds.";
+    public bool ExternalCiEnabled { get; init; } = false;
+    public TimeSpan ExternalCiTimeout { get; init; } = TimeSpan.FromMinutes(15);
+    public TimeSpan ExternalCiPollInterval { get; init; } = TimeSpan.FromSeconds(30);
 }

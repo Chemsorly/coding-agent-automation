@@ -123,6 +123,16 @@
                                     {
                                         <div class="qg-line qg-skip">— Security</div>
                                     }
+                                    @if (qr.ExternalCi is { } ci)
+                                    {
+                                        <div class="qg-line @(ci.Passed ? "qg-pass" : "qg-fail")">
+                                            @(ci.Passed ? "✅" : "❌") External CI
+                                            @if (!ci.Passed && !string.IsNullOrEmpty(ci.Details))
+                                            {
+                                                <span class="qg-sub">@Truncate(ci.Details, 60)</span>
+                                            }
+                                        </div>
+                                    }
 
                                     @{
                                         var history = Run.QualityGateHistory.ToArray();
