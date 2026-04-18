@@ -537,8 +537,10 @@ public class PipelineOrchestrationService : IDisposable
             // Self-review step (if enabled)
             if (_activeConfig!.SelfReviewEnabled && _activeConfig.SelfReviewMaxIterations > 0)
             {
+                run.ReviewIterationsTotal = _activeConfig.SelfReviewMaxIterations;
                 for (var i = 0; i < _activeConfig.SelfReviewMaxIterations; i++)
                 {
+                    run.ReviewIterationInProgress = i + 1;
                     TransitionTo(run, PipelineStep.ReviewingCode);
                     _logger.Information(
                         "Pipeline {RunId} starting self-review iteration {Iteration}/{MaxIterations}",
@@ -600,6 +602,8 @@ public class PipelineOrchestrationService : IDisposable
                         break;
                     }
                 }
+
+                run.ReviewIterationInProgress = 0;
             }
 
             // Transition to WaitingForChat

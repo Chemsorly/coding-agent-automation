@@ -72,9 +72,19 @@
                                 }
                             </div>
                         }
-                        else if (step == PipelineStep.ReviewingCode && Run.ReviewIterationsCompleted > 0)
+                        else if (step == PipelineStep.ReviewingCode)
                         {
-                            <div class="step-detail">@Run.ReviewIterationsCompleted iteration(s)</div>
+                            <div class="step-detail-box">
+                                @if (state == StepState.Active && Run.ReviewIterationInProgress > 0)
+                                {
+                                    <div>🔍 Iteration @Run.ReviewIterationInProgress/@Run.ReviewIterationsTotal</div>
+                                    <div class="step-detail-sub">Agent is reviewing &amp; fixing code</div>
+                                }
+                                else if (Run.ReviewIterationsCompleted > 0)
+                                {
+                                    <div>@Run.ReviewIterationsCompleted/@Run.ReviewIterationsTotal iteration(s) done</div>
+                                }
+                            </div>
                         }
                         else if (step == PipelineStep.RunningQualityGates)
                         {

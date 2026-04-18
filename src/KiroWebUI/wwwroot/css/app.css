@@ -283,6 +283,7 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 }
 .step-detail-box a { color: var(--accent-light); text-decoration: none; }
 .step-detail-box a:hover { text-decoration: underline; }
+.step-detail-sub { font-size: 0.72rem; color: var(--text-muted); opacity: 0.8; }
 
 /* Step card states */
 .step-card-pending .step-card-name { color: var(--text-muted); }
