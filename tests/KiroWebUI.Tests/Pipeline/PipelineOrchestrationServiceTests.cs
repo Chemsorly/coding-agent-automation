@@ -407,7 +407,11 @@ public class PipelineOrchestrationServiceTests
                 SelfReviewMaxIterations = 3
             });
 
-        // First review call succeeds, second throws
+        // The "sub-agent" matcher hits both the analysis call in StartPipelineAsync
+        // and the review calls in ApproveAnalysisAsync. Call sequence:
+        //   1. StartPipelineAsync → analysis prompt (contains "sub-agent") → callCount=1
+        //   2. ApproveAnalysisAsync → review iteration 1 → callCount=2 (succeeds)
+        //   3. ApproveAnalysisAsync → review iteration 2 → callCount=3 (throws)
         var callCount = 0;
         _mockAgentProvider.Setup(p => p.ExecuteWithResumeAsync(
                 It.Is<string>(s => s.Contains("sub-agent")),
@@ -416,7 +420,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(() =>
             {
                 callCount++;
-                if (callCount >= 2)
+                if (callCount >= 3)
                     throw new InvalidOperationException("Agent crashed");
                 return new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() };
             });
