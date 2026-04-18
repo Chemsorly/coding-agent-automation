@@ -244,6 +244,7 @@ public sealed class KiroExecutionService : IDisposable
 
     private void NotifyChanged()
     {
+        if (_disposed) return;
         _lastNotifyTime = DateTime.UtcNow;
         _pendingNotify = false;
         OnChange?.Invoke();
