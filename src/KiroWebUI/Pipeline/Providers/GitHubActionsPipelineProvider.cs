@@ -168,7 +168,7 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
 
             var status = await GetRunStatusAsync(branchName, commitSha, linkedCt);
 
-            _logger.Debug("CI poll #{PollCount}: {State} — {RunCount} run(s), {JobCount} job(s)",
+            _logger.Information("CI poll #{PollCount}: {State} — {RunCount} run(s), {JobCount} job(s)",
                 pollCount, status.State, status.Jobs.Count > 0 ? status.Jobs.Count : 0,
                 status.Jobs.Count);
 

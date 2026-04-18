@@ -923,7 +923,7 @@ public class PipelineOrchestrationService : IDisposable
 
         try
         {
-            // Commit and push (skip if already committed by external CI step)
+            // Commit any uncommitted changes and push (skip if already pushed by external CI step)
             try
             {
                 var commitMessage = PipelineFormatting.GenerateCommitMessage(
@@ -934,8 +934,21 @@ public class PipelineOrchestrationService : IDisposable
             catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
             {
                 _logger.Information(
-                    "Pipeline {RunId} changes already committed (pushed during CI validation), skipping commit",
+                    "Pipeline {RunId} no uncommitted changes (already pushed during CI validation), skipping commit",
                     run.RunId);
+            }
+
+            // Verify the branch actually has commits beyond the base branch.
+            // If the agent didn't implement anything, there's nothing to PR.
+            if (!BranchHasCommitsAhead(run.WorkspacePath!, _activeBaseBranch))
+            {
+                _logger.Warning("Pipeline {RunId} branch has no commits ahead of {BaseBranch} — agent did not produce any changes",
+                    run.RunId, _activeBaseBranch);
+                run.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";
+                run.CompletedAt = DateTime.UtcNow;
+                TransitionTo(run, PipelineStep.Failed);
+                AddRunToHistory(run);
+                return;
             }
 
             // Build PR info
@@ -1153,6 +1166,28 @@ public class PipelineOrchestrationService : IDisposable
         if (report.ExternalCi is { Passed: false })
             errors.Add($"External CI: {report.ExternalCi.Details}");
         return string.Join(Environment.NewLine, errors);
+    }
+
+    /// <summary>
+    /// Checks whether the current branch has any commits ahead of the base branch.
+    /// Returns false if the branch tip equals the merge base (no new commits).
+    /// </summary>
+    private static bool BranchHasCommitsAhead(string workspacePath, string baseBranch)
+    {
+        try
+        {
+            using var repo = new LibGit2Sharp.Repository(workspacePath);
+            var head = repo.Head.Tip;
+            var baseBranchRef = repo.Branches[$"origin/{baseBranch}"]
+                ?? repo.Branches[baseBranch];
+            if (baseBranchRef == null) return true; // Can't determine — assume there are changes
+            var mergeBase = repo.ObjectDatabase.FindMergeBase(head, baseBranchRef.Tip);
+            return mergeBase == null || mergeBase.Sha != head.Sha;
+        }
+        catch
+        {
+            return true; // On error, assume there are changes and let PR creation decide
+        }
     }
 
     private static string StripAnsi(string input) => AnsiStripper.Strip(input);

@@ -159,12 +159,18 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
 
             using var repo = new Repository(workspacePath);
             var remote = repo.Network.Remotes["origin"];
+            string? pushError = null;
             var options = new PushOptions
             {
                 CredentialsProvider = (_, _, _) =>
-                    new UsernamePasswordCredentials { Username = "x-access-token", Password = token }
+                    new UsernamePasswordCredentials { Username = "x-access-token", Password = token },
+                OnPushStatusError = error =>
+                    pushError = $"Push failed for ref '{error.Reference}': {error.Message}"
             };
             repo.Network.Push(remote, $"refs/heads/{branchName}", options);
+
+            if (pushError != null)
+                throw new InvalidOperationException(pushError);
         }, ct);
     }
 
