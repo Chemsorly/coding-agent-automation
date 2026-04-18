@@ -122,7 +122,8 @@ public class PipelineOrchestrationService : IDisposable
                 IssueProviderConfigId = issueProviderId,
                 RepoProviderConfigId = repoProviderId,
                 StartedAt = DateTime.UtcNow,
-                CurrentStep = PipelineStep.Created
+                CurrentStep = PipelineStep.Created,
+                RepositoryName = $"{repoProviderConfig.Settings.GetValueOrDefault("owner", "")}/{repoProviderConfig.Settings.GetValueOrDefault("repo", "")}"
             };
             ActiveRun = run;
 
@@ -181,6 +182,7 @@ public class PipelineOrchestrationService : IDisposable
 
             // Update run with issue title
             run.IssueTitle = issue.Title;
+            run.IssueLabels = issue.Labels;
 
             // Parse issue description
             var parsed = _issueParser.Parse(issue.Description);
@@ -269,6 +271,7 @@ public class PipelineOrchestrationService : IDisposable
             {
                 // Reuse existing analysis — skip agent analysis and comment posting
                 run.AnalysisContent = existingAnalysis;
+                run.AnalysisSkipped = true;
                 TransitionTo(run, PipelineStep.AnalyzingCode);
 
                 // Send a read-only warm-up prompt to establish a session.
@@ -399,6 +402,7 @@ public class PipelineOrchestrationService : IDisposable
             throw new InvalidOperationException("No active pipeline run in WaitingForAnalysisApproval state.");
 
         var run = ActiveRun;
+        run.ApprovalTimestamp = DateTime.UtcNow;
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
 
         using var linkedCts = _cancellationTokenSource != null
@@ -475,6 +479,8 @@ public class PipelineOrchestrationService : IDisposable
 
                 _logger.Information("Pipeline {RunId} initial code generation completed with exit code {ExitCode} after {Elapsed}",
                     run.RunId, agentResult.ExitCode, DateTime.UtcNow - run.StartedAt);
+
+                UpdateFileChangeStats(run);
 
                 if (agentResult.ExitCode != 0)
                 {
@@ -644,6 +650,8 @@ public class PipelineOrchestrationService : IDisposable
 
             _logger.Information("Pipeline {RunId} chat response completed with exit code {ExitCode}",
                 run.RunId, agentResult.ExitCode);
+
+            UpdateFileChangeStats(run);
         }
         catch (OperationCanceledException) when (_cancellationTokenSource?.IsCancellationRequested == true)
         {
@@ -702,6 +710,7 @@ public class PipelineOrchestrationService : IDisposable
             var report = await _qualityGateValidator.ValidateAsync(
                 run.WorkspacePath!, _activeConfig!, linkedCt);
             run.LatestQualityReport = report;
+            run.QualityGateHistory.Enqueue(report);
 
             _logger.Information(
                 "Pipeline {RunId} quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}",
@@ -839,6 +848,8 @@ public class PipelineOrchestrationService : IDisposable
 
             var prUrl = await _activeRepoProvider.CreatePullRequestAsync(prInfo, ct);
             run.PullRequestUrl = prUrl;
+            run.IsDraftPr = isDraft;
+            run.PullRequestNumber = ExtractPrNumber(prUrl);
             run.CompletedAt = DateTime.UtcNow;
 
             var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
@@ -860,6 +871,35 @@ public class PipelineOrchestrationService : IDisposable
             TransitionTo(run, PipelineStep.Failed);
             AddRunToHistory(run);
         }
+    }
+
+    private void UpdateFileChangeStats(PipelineRun run)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(run.WorkspacePath)) return;
+            var changes = PipelineFormatting.GetFileChanges(run.WorkspacePath, _activeBaseBranch);
+            run.FilesChangedCount = changes.Count;
+            // Approximate line stats from change count (detailed stats would require git diff --numstat)
+            _logger.Debug("Pipeline {RunId} file changes: {Count} files", run.RunId, changes.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Pipeline {RunId} failed to compute file change stats", run.RunId);
+        }
+    }
+
+    private static string? ExtractPrNumber(string? prUrl)
+    {
+        if (string.IsNullOrEmpty(prUrl)) return null;
+        // GitHub PR URLs: https://github.com/owner/repo/pull/47
+        var lastSlash = prUrl.LastIndexOf('/');
+        if (lastSlash >= 0 && lastSlash < prUrl.Length - 1)
+        {
+            var candidate = prUrl[(lastSlash + 1)..];
+            if (int.TryParse(candidate, out _)) return candidate;
+        }
+        return null;
     }
 
     private void TransitionTo(PipelineRun run, PipelineStep step)

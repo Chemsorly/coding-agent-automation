@@ -19,6 +19,14 @@
                 element.scrollTop = element.scrollHeight;
             }
         };
+        window.scrollActiveStepIntoView = function (containerId) {
+            var container = document.getElementById(containerId);
+            if (!container) return;
+            var active = container.querySelector('.step-card-active');
+            if (active) {
+                active.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        };
     </script>
 </body>
 </html>

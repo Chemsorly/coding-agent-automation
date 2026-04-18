@@ -25,299 +25,230 @@
         <div class="settings-status status-error">@_errorMessage</div>
     }
 
-    <div class="agent-content">
-        @if (!PipelineService.IsRunning && PipelineService.ActiveRun is null or { CurrentStep: PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled })
-        {
-            <!-- Completion View (if a run just finished) -->
-            @if (PipelineService.ActiveRun is { CurrentStep: PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled } completedRun)
-            {
-                <div class="completion-view">
-                    <div class="completion-icon">
-                        @(completedRun.CurrentStep == PipelineStep.Completed ? "✅" : completedRun.CurrentStep == PipelineStep.Cancelled ? "🚫" : "❌")
-                    </div>
-                    <h2>Pipeline @completedRun.CurrentStep</h2>
-                    @if (!string.IsNullOrEmpty(completedRun.PullRequestUrl))
-                    {
-                        <div class="pr-link">
-                            <span>📎</span> <a href="@completedRun.PullRequestUrl" target="_blank">View Pull Request</a>
-                        </div>
-                    }
-                    @if (!string.IsNullOrEmpty(completedRun.FailureReason))
-                    {
-                        <div class="failure-reason">@completedRun.FailureReason</div>
-                    }
-                    <button class="btn-save" @onclick="BackToIssues">Back to Issues</button>
-                </div>
-            }
+    @{
+        var activeRun = PipelineService.ActiveRun;
+        var hasActiveRun = activeRun is not null
+            && activeRun.CurrentStep is not (PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled);
+        var hasFinishedRun = activeRun is { CurrentStep: PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled };
+    }
 
-            <!-- Issue Selection View -->
-            @if (PipelineService.ActiveRun is null || PipelineService.ActiveRun.CurrentStep is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled)
+    <div class="agent-content-layout @(hasActiveRun || hasFinishedRun ? "with-sidebar" : "")">
+        <div class="agent-main">
+            @if (!PipelineService.IsRunning && activeRun is null or { CurrentStep: PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled })
             {
-                @if (!_showCompletionOnly)
+                <!-- Completion View -->
+                @if (hasFinishedRun)
                 {
-                    <div class="issue-selection">
-                        <h2>Select an Issue</h2>
-                        <div class="form-group">
-                            <label>Issue Provider</label>
-                            <select @bind="_selectedIssueProviderId" @bind:after="OnIssueProviderChanged">
-                                <option value="">-- Select Provider --</option>
-                                @foreach (var p in _issueProviders)
-                                {
-                                    <option value="@p.Id">@p.DisplayName</option>
-                                }
-                            </select>
+                    <div class="completion-view">
+                        <div class="completion-icon">
+                            @(activeRun!.CurrentStep == PipelineStep.Completed ? "✅" : activeRun.CurrentStep == PipelineStep.Cancelled ? "🚫" : "❌")
                         </div>
-
-                        @if (_loadingIssues)
+                        <h2>Pipeline @activeRun.CurrentStep</h2>
+                        @if (!string.IsNullOrEmpty(activeRun.PullRequestUrl))
                         {
-                            <div class="loading-text">Loading issues...</div>
-                        }
-
-                        @if (_issues.Count > 0)
-                        {
-                            <div class="issue-list">
-                                @foreach (var issue in _issues)
-                                {
-                                    <div class="issue-card @(_selectedIssueId == issue.Identifier ? "issue-selected" : "")"
-                                         @onclick="() => SelectIssue(issue.Identifier)">
-                                        <span class="issue-id">#@issue.Identifier</span>
-                                        <span class="issue-title">@issue.Title</span>
-                                        @if (issue.Labels.Count > 0)
-                                        {
-                                            <div class="issue-labels">
-                                                @foreach (var label in issue.Labels)
-                                                {
-                                                    <span class="issue-label">@label</span>
-                                                }
-                                            </div>
-                                        }
-                                    </div>
-                                }
+                            <div class="pr-link">
+                                <span>📎</span> <a href="@activeRun.PullRequestUrl" target="_blank" rel="noopener noreferrer">View Pull Request</a>
                             </div>
                         }
-
-                        @if (_loadingIssueDetail)
+                        @if (!string.IsNullOrEmpty(activeRun.FailureReason))
                         {
-                            <div class="loading-text">Loading issue details...</div>
+                            <div class="failure-reason">@activeRun.FailureReason</div>
                         }
+                        <button class="btn-save" @onclick="BackToIssues">Back to Issues</button>
+                    </div>
+                }
 
-                        @if (_selectedIssueDetail != null)
-                        {
-                            <div class="issue-detail-panel">
-                                <h3>#@_selectedIssueDetail.Identifier @_selectedIssueDetail.Title</h3>
-                                <pre class="issue-description">@_selectedIssueDetail.Description</pre>
-                                @if (_selectedIssueDetail.Labels.Count > 0)
-                                {
-                                    <div class="issue-labels">
-                                        @foreach (var label in _selectedIssueDetail.Labels)
-                                        {
-                                            <span class="issue-label">@label</span>
-                                        }
-                                    </div>
-                                }
-                            </div>
-                        }
-
-                        @if (!string.IsNullOrEmpty(_selectedIssueId))
-                        {
+                <!-- Issue Selection View -->
+                @if (activeRun is null || hasFinishedRun)
+                {
+                    @if (!_showCompletionOnly)
+                    {
+                        <div class="issue-selection">
+                            <h2>Select an Issue</h2>
                             <div class="form-group">
-                                <label>Repository Provider</label>
-                                <select @bind="_selectedRepoProviderId">
-                                    <option value="">-- Select Repository --</option>
-                                    @foreach (var p in _repoProviders)
+                                <label>Issue Provider</label>
+                                <select @bind="_selectedIssueProviderId" @bind:after="OnIssueProviderChanged">
+                                    <option value="">-- Select Provider --</option>
+                                    @foreach (var p in _issueProviders)
                                     {
-                                        <option value="@p.Id">@p.DisplayName (@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "") → @p.Settings.GetValueOrDefault("baseBranch", "main"))</option>
+                                        <option value="@p.Id">@p.DisplayName</option>
                                     }
                                 </select>
                             </div>
 
-                            <button class="btn-save" @onclick="StartPipeline"
-                                    disabled="@(string.IsNullOrEmpty(_selectedRepoProviderId))">
-                                🚀 Start Pipeline
-                            </button>
-                        }
-                    </div>
-                }
-            }
-        }
-        else
-        {
-            var run = PipelineService.ActiveRun!;
-
-            <!-- Pipeline Progress View (when running, not WaitingForChat or WaitingForAnalysisApproval) -->
-            if (run.CurrentStep is PipelineStep.CloningRepository or PipelineStep.CreatingBranch
-                or PipelineStep.AnalyzingCode or PipelineStep.GeneratingCode
-                or PipelineStep.ReviewingCode
-                or PipelineStep.RunningQualityGates
-                or PipelineStep.CreatingPullRequest or PipelineStep.Created
-                or PipelineStep.PostingAnalysis)
-            {
-                <div class="progress-view">
-                    <h2>Pipeline in Progress</h2>
-                    <div class="step-indicator">
-                        @{
-                            // Map the current pipeline step to its position in the progress bar.
-                            // For steps not in the array (WaitingForChat, WaitingForAnalysisApproval),
-                            // find the last progress step that was completed before the current state.
-                            var currentStepName = run.CurrentStep.ToString();
-                            var currentStepIndex = Array.IndexOf(_progressSteps, currentStepName);
-                            if (currentStepIndex < 0)
+                            @if (_loadingIssues)
                             {
-                                // Current step isn't a progress step — find the highest progress step
-                                // whose enum value is less than the current step's enum value
-                                var currentEnumVal = (int)run.CurrentStep;
-                                for (var i = _progressSteps.Length - 1; i >= 0; i--)
-                                {
-                                    if (Enum.TryParse<PipelineStep>(_progressSteps[i], out var ps) && (int)ps < currentEnumVal)
-                                    {
-                                        currentStepIndex = i + 1; // mark all up to and including that step as done
-                                        break;
-                                    }
-                                }
+                                <div class="loading-text">Loading issues...</div>
                             }
-                        }
-                        @foreach (var step in _progressSteps)
-                        {
-                            var stepIndex = Array.IndexOf(_progressSteps, step);
-                            var isCurrent = currentStepName == step;
-                            var isPast = currentStepIndex >= 0 && stepIndex < currentStepIndex;
-                            <span class="step-dot @(isCurrent ? "step-current" : isPast ? "step-done" : "")">
-                                @(isPast ? "✓" : isCurrent ? "●" : "○") @step
-                            </span>
-                        }
-                    </div>
 
-                    <div class="elapsed-time">⏱️ Elapsed: @GetElapsedTime(run)</div>
-
-                    <div class="output-panel" id="outputPanel">
-                        @foreach (var line in _outputLines.TakeLast(200))
-                        {
-                            <div class="output-line">@line</div>
-                        }
-                    </div>
-
-                    <button class="btn-delete" @onclick="CancelPipeline">Cancel</button>
-                </div>
-            }
-
-            <!-- Analysis Approval View (WaitingForAnalysisApproval) -->
-            if (run.CurrentStep == PipelineStep.WaitingForAnalysisApproval)
-            {
-                <div class="analysis-approval-panel">
-                    <h2>Review Agent Analysis</h2>
-                    <p class="analysis-subtitle">The agent analyzed the codebase in context of issue <strong>#@run.IssueIdentifier @run.IssueTitle</strong>. Review the analysis before proceeding to implementation.</p>
-
-                    <div class="analysis-content" id="analysisContent">
-                        @if (!string.IsNullOrWhiteSpace(run.AnalysisContent))
-                        {
-                            <pre class="analysis-text">@run.AnalysisContent</pre>
-                        }
-                        else
-                        {
-                            <p class="analysis-fallback">Agent analysis was not available. A metadata-based analysis was posted to the issue instead.</p>
-                        }
-                    </div>
-
-                    <div class="analysis-actions">
-                        <button class="btn-save" @onclick="ApproveAnalysis">
-                            ✅ Approve &amp; Continue to Implementation
-                        </button>
-                        <button class="btn-delete" @onclick="CancelPipeline">
-                            Cancel Pipeline
-                        </button>
-                    </div>
-                </div>
-            }
-
-            <!-- Chat Panel View (WaitingForChat) -->
-            if (run.CurrentStep == PipelineStep.WaitingForChat)
-            {
-                <div class="chat-panel">
-                    <h2>Chat with Agent</h2>
-
-                    @if (run.LatestQualityReport is not null)
-                    {
-                        <div class="quality-report">
-                            <h3>Quality Gate Report @(run.LatestQualityReport.AllPassed ? "✅" : "❌")</h3>
-                            <div class="gate-results">
-                                <div class="gate-result @(run.LatestQualityReport.Compilation.Passed ? "gate-pass" : "gate-fail")">
-                                    @(run.LatestQualityReport.Compilation.Passed ? "✅" : "❌") Compilation
-                                    @if (!string.IsNullOrEmpty(run.LatestQualityReport.Compilation.Details))
-                                    {
-                                        <div class="gate-details">@run.LatestQualityReport.Compilation.Details</div>
-                                    }
-                                </div>
-                                <div class="gate-result @(run.LatestQualityReport.Tests.Passed ? "gate-pass" : "gate-fail")">
-                                    @(run.LatestQualityReport.Tests.Passed ? "✅" : "❌") Tests
-                                    (@(run.LatestQualityReport.Tests.TestsPassed)/@(run.LatestQualityReport.Tests.TestsPassed + run.LatestQualityReport.Tests.TestsFailed) passed)
-                                    @if (!string.IsNullOrEmpty(run.LatestQualityReport.Tests.Details))
-                                    {
-                                        <div class="gate-details">@run.LatestQualityReport.Tests.Details</div>
-                                    }
-                                </div>
-                                @if (run.LatestQualityReport.Coverage is not null)
-                                {
-                                    <div class="gate-result @(run.LatestQualityReport.Coverage.Passed ? "gate-pass" : "gate-fail")">
-                                        @(run.LatestQualityReport.Coverage.Passed ? "✅" : "❌") Coverage: @(run.LatestQualityReport.Coverage.CoveragePercent.HasValue ? $"{run.LatestQualityReport.Coverage.CoveragePercent.Value:F1}%" : "N/A")
-                                        @if (!string.IsNullOrEmpty(run.LatestQualityReport.Coverage.Details))
-                                        {
-                                            <div class="gate-details">@run.LatestQualityReport.Coverage.Details</div>
-                                        }
-                                    </div>
-                                }
-                                @if (run.LatestQualityReport.SecurityScan is not null)
-                                {
-                                    <div class="gate-result @(run.LatestQualityReport.SecurityScan.Passed ? "gate-pass" : "gate-fail")">
-                                        @(run.LatestQualityReport.SecurityScan.Passed ? "✅" : "❌") Security Scan
-                                    </div>
-                                }
-                            </div>
-                            @if (run.RetryCount > 0)
+                            @if (_issues.Count > 0)
                             {
-                                <div class="retry-count">Retry @run.RetryCount</div>
+                                <div class="issue-list">
+                                    @foreach (var issue in _issues)
+                                    {
+                                        <div class="issue-card @(_selectedIssueId == issue.Identifier ? "issue-selected" : "")"
+                                             @onclick="() => SelectIssue(issue.Identifier)">
+                                            <span class="issue-id">#@issue.Identifier</span>
+                                            <span class="issue-title">@issue.Title</span>
+                                            @if (issue.Labels.Count > 0)
+                                            {
+                                                <div class="issue-labels">
+                                                    @foreach (var label in issue.Labels)
+                                                    {
+                                                        <span class="issue-label">@label</span>
+                                                    }
+                                                </div>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+
+                            @if (_loadingIssueDetail)
+                            {
+                                <div class="loading-text">Loading issue details...</div>
+                            }
+
+                            @if (_selectedIssueDetail != null)
+                            {
+                                <div class="issue-detail-panel">
+                                    <h3>#@_selectedIssueDetail.Identifier @_selectedIssueDetail.Title</h3>
+                                    <pre class="issue-description">@_selectedIssueDetail.Description</pre>
+                                    @if (_selectedIssueDetail.Labels.Count > 0)
+                                    {
+                                        <div class="issue-labels">
+                                            @foreach (var label in _selectedIssueDetail.Labels)
+                                            {
+                                                <span class="issue-label">@label</span>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+
+                            @if (!string.IsNullOrEmpty(_selectedIssueId))
+                            {
+                                <div class="form-group">
+                                    <label>Repository Provider</label>
+                                    <select @bind="_selectedRepoProviderId">
+                                        <option value="">-- Select Repository --</option>
+                                        @foreach (var p in _repoProviders)
+                                        {
+                                            <option value="@p.Id">@p.DisplayName (@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "") → @p.Settings.GetValueOrDefault("baseBranch", "main"))</option>
+                                        }
+                                    </select>
+                                </div>
+
+                                <button class="btn-save" @onclick="StartPipeline"
+                                        disabled="@(string.IsNullOrEmpty(_selectedRepoProviderId))">
+                                    🚀 Start Pipeline
+                                </button>
                             }
                         </div>
                     }
-
-                    <div class="chat-history" id="chatHistory">
-                        @foreach (var entry in run.ChatHistory.ToArray())
-                        {
-                            <div class="chat-entry chat-@entry.Role.ToString().ToLowerInvariant()">
-                                <div class="chat-role">
-                                    @(entry.Role == ChatRole.User ? "You" : entry.Role == ChatRole.Agent ? "Agent" : "System")
-                                    <span class="chat-timestamp">@entry.Timestamp.ToLocalTime().ToString("h:mm tt")</span>
-                                </div>
-                                <pre class="chat-content">@entry.Content</pre>
-                            </div>
-                        }
-                    </div>
-
-                    <div class="chat-input-area">
-                        <div class="input-row">
-                            <input type="text"
-                                   @bind="_chatInput"
-                                   @bind:event="oninput"
-                                   @onkeydown="HandleChatKeyDown"
-                                   placeholder="Send follow-up instructions..."
-                                   disabled="@_isSending"
-                                   class="prompt-input" />
-                            <button class="send-button" @onclick="SendChatMessage" disabled="@_isSending">
-                                @(_isSending ? "⏳" : "Send")
-                            </button>
-                        </div>
-                        <div class="chat-actions">
-                            <button class="btn-save" @onclick="ProceedToQualityGates" disabled="@_isSending">
-                                Proceed to Quality Gates
-                            </button>
-                            <button class="btn-delete" @onclick="CancelPipeline">Cancel</button>
-                        </div>
-                    </div>
-                </div>
+                }
             }
+            else if (activeRun is not null)
+            {
+                var run = activeRun;
+
+                <!-- Pipeline Progress View -->
+                @if (run.CurrentStep is PipelineStep.CloningRepository or PipelineStep.CreatingBranch
+                    or PipelineStep.AnalyzingCode or PipelineStep.GeneratingCode
+                    or PipelineStep.ReviewingCode
+                    or PipelineStep.RunningQualityGates
+                    or PipelineStep.CreatingPullRequest or PipelineStep.Created
+                    or PipelineStep.PostingAnalysis)
+                {
+                    <div class="progress-view">
+                        <h2>Pipeline in Progress</h2>
+
+                        <div class="output-panel" id="outputPanel">
+                            @foreach (var line in _outputLines.TakeLast(200))
+                            {
+                                <div class="output-line">@line</div>
+                            }
+                        </div>
+                    </div>
+                }
+
+                <!-- Analysis Approval View -->
+                @if (run.CurrentStep == PipelineStep.WaitingForAnalysisApproval)
+                {
+                    <div class="analysis-approval-panel">
+                        <h2>Review Agent Analysis</h2>
+                        <p class="analysis-subtitle">The agent analyzed the codebase in context of issue <strong>#@run.IssueIdentifier @run.IssueTitle</strong>. Review the analysis before proceeding to implementation.</p>
+
+                        <div class="analysis-content" id="analysisContent">
+                            @if (!string.IsNullOrWhiteSpace(run.AnalysisContent))
+                            {
+                                <pre class="analysis-text">@run.AnalysisContent</pre>
+                            }
+                            else
+                            {
+                                <p class="analysis-fallback">Agent analysis was not available. A metadata-based analysis was posted to the issue instead.</p>
+                            }
+                        </div>
+
+                        <div class="analysis-actions">
+                            <button class="btn-save" @onclick="ApproveAnalysis">
+                                ✅ Approve &amp; Continue to Implementation
+                            </button>
+                        </div>
+                    </div>
+                }
+
+                <!-- Chat Panel View -->
+                @if (run.CurrentStep == PipelineStep.WaitingForChat)
+                {
+                    <div class="chat-panel">
+                        <h2>Chat with Agent</h2>
+
+                        <div class="chat-history" id="chatHistory">
+                            @foreach (var entry in run.ChatHistory.ToArray())
+                            {
+                                <div class="chat-entry chat-@entry.Role.ToString().ToLowerInvariant()">
+                                    <div class="chat-role">
+                                        @(entry.Role == ChatRole.User ? "You" : entry.Role == ChatRole.Agent ? "Agent" : "System")
+                                        <span class="chat-timestamp">@entry.Timestamp.ToLocalTime().ToString("h:mm tt")</span>
+                                    </div>
+                                    <pre class="chat-content">@entry.Content</pre>
+                                </div>
+                            }
+                        </div>
+
+                        <div class="chat-input-area">
+                            <div class="input-row">
+                                <input type="text"
+                                       @bind="_chatInput"
+                                       @bind:event="oninput"
+                                       @onkeydown="HandleChatKeyDown"
+                                       placeholder="Send follow-up instructions..."
+                                       disabled="@_isSending"
+                                       class="prompt-input" />
+                                <button class="send-button" @onclick="SendChatMessage" disabled="@_isSending">
+                                    @(_isSending ? "⏳" : "Send")
+                                </button>
+                            </div>
+                            <div class="chat-actions">
+                                <button class="btn-save" @onclick="ProceedToQualityGates" disabled="@_isSending">
+                                    Proceed to Quality Gates
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+
+        @if (activeRun is not null && (hasActiveRun || hasFinishedRun))
+        {
+            <PipelineSidebar Run="activeRun" IsRunning="PipelineService.IsRunning"
+                             OnCancel="CancelPipeline" MaxRetries="@_maxRetries" />
         }
     </div>
 
-    <!-- Run History Panel (always visible) -->
+    <!-- Run History Panel -->
     <div class="run-history">
         <h2>Run History</h2>
         @{
@@ -346,7 +277,7 @@
                             }
                             @if (!string.IsNullOrEmpty(h.PullRequestUrl))
                             {
-                                <a href="@h.PullRequestUrl" target="_blank">PR</a>
+                                <a href="@h.PullRequestUrl" target="_blank" rel="noopener noreferrer">PR</a>
                             }
                         </div>
                     </div>
@@ -374,25 +305,22 @@
     private bool _isSending;
     private bool _disposed;
     private Timer? _elapsedTimer;
-
-    private static readonly string[] _progressSteps =
-    {
-        "Created", "CloningRepository", "CreatingBranch", "AnalyzingCode", "PostingAnalysis",
-        "GeneratingCode", "ReviewingCode", "RunningQualityGates", "CreatingPullRequest"
-    };
+    private int _maxRetries = 3;
 
     protected override async Task OnInitializedAsync()
     {
         PipelineService.OnChange += HandleStateChanged;
         PipelineService.OnOutputLine += HandleOutputLine;
 
-        // Tick every second to keep the elapsed timer up to date
         _elapsedTimer = new Timer(ElapsedTimerTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
         try
         {
             _issueProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
             _repoProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
+
+            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+            _maxRetries = config.MaxRetries;
         }
         catch (Exception ex)
         {
@@ -403,14 +331,9 @@
     private async void ElapsedTimerTick(object? state)
     {
         if (_disposed) return;
-        // Only re-render when the pipeline is in a progress step that shows the elapsed timer
         var run = PipelineService.ActiveRun;
         if (run is null) return;
-        if (run.CurrentStep is not (PipelineStep.CloningRepository or PipelineStep.CreatingBranch
-            or PipelineStep.AnalyzingCode or PipelineStep.GeneratingCode
-            or PipelineStep.ReviewingCode
-            or PipelineStep.RunningQualityGates or PipelineStep.CreatingPullRequest
-            or PipelineStep.Created or PipelineStep.PostingAnalysis))
+        if (run.CurrentStep is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled)
             return;
 
         try
@@ -433,11 +356,9 @@
                 {
                     await JS.InvokeVoidAsync("scrollToBottom", "outputPanel");
                     await JS.InvokeVoidAsync("scrollToBottom", "chatHistory");
+                    await JS.InvokeVoidAsync("scrollActiveStepIntoView", "sidebarSteps");
                 }
-                catch
-                {
-                    // Element may not exist in current view
-                }
+                catch { }
             });
         }
         catch (ObjectDisposedException) { }
@@ -457,10 +378,7 @@
                 {
                     await JS.InvokeVoidAsync("scrollToBottom", "outputPanel");
                 }
-                catch
-                {
-                    // Element may not exist
-                }
+                catch { }
             });
         }
         catch (ObjectDisposedException) { }
@@ -662,12 +580,6 @@
     {
         _showCompletionOnly = false;
         _errorMessage = null;
-    }
-
-    private static string GetElapsedTime(PipelineRun run)
-    {
-        var elapsed = (run.CompletedAt ?? DateTime.UtcNow) - run.StartedAt;
-        return elapsed.ToString(@"hh\:mm\:ss");
     }
 
     public void Dispose()
