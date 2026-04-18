@@ -16,6 +16,7 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
     private readonly string _owner;
     private readonly string _repo;
     private readonly TimeSpan _pollInterval;
+    private readonly Serilog.ILogger _logger;
 
     /// <summary>
     /// Creates a provider with a token provider delegate (for GitHub App auth).
@@ -25,7 +26,8 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         Func<CancellationToken, Task<string>> tokenProvider,
         string owner,
         string repo,
-        TimeSpan pollInterval)
+        TimeSpan pollInterval,
+        Serilog.ILogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(apiUrl);
         ArgumentNullException.ThrowIfNull(tokenProvider);
@@ -37,6 +39,7 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         _owner = owner;
         _repo = repo;
         _pollInterval = pollInterval;
+        _logger = logger ?? Serilog.Log.Logger;
     }
 
     /// <summary>
@@ -47,7 +50,8 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         string token,
         string owner,
         string repo,
-        TimeSpan pollInterval)
+        TimeSpan pollInterval,
+        Serilog.ILogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(apiUrl);
         ArgumentNullException.ThrowIfNull(token);
@@ -57,6 +61,7 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         _owner = owner;
         _repo = repo;
         _pollInterval = pollInterval;
+        _logger = logger ?? Serilog.Log.Logger;
         _client = new GitHubClient(new ProductHeaderValue("KiroWebUI-Pipeline"), new Uri(apiUrl))
         {
             Credentials = new Credentials(token)
@@ -70,7 +75,8 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         IGitHubClient client,
         string owner,
         string repo,
-        TimeSpan pollInterval)
+        TimeSpan pollInterval,
+        Serilog.ILogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(owner);
@@ -80,6 +86,7 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         _owner = owner;
         _repo = repo;
         _pollInterval = pollInterval;
+        _logger = logger ?? Serilog.Log.Logger;
     }
 
     public async Task<PipelineRunStatus> GetRunStatusAsync(
@@ -146,18 +153,30 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
     {
         ArgumentNullException.ThrowIfNull(branchName);
 
+        _logger.Information("Polling CI for branch {Branch} (commit: {CommitSha}, timeout: {Timeout})",
+            branchName, commitSha ?? "any", timeout);
+
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(timeout);
         var linkedCt = timeoutCts.Token;
+        var pollCount = 0;
 
         while (true)
         {
             linkedCt.ThrowIfCancellationRequested();
+            pollCount++;
 
             var status = await GetRunStatusAsync(branchName, commitSha, linkedCt);
 
+            _logger.Debug("CI poll #{PollCount}: {State} — {RunCount} run(s), {JobCount} job(s)",
+                pollCount, status.State, status.Jobs.Count > 0 ? status.Jobs.Count : 0,
+                status.Jobs.Count);
+
             if (status.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled)
+            {
+                _logger.Information("CI completed: {State} after {PollCount} poll(s)", status.State, pollCount);
                 return status;
+            }
 
             try
             {
@@ -165,7 +184,8 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
             }
             catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
             {
-                // Timeout expired — return last known status
+                _logger.Warning("CI polling timed out after {Timeout} ({PollCount} polls). Last state: {State}",
+                    timeout, pollCount, status.State);
                 return status;
             }
         }
