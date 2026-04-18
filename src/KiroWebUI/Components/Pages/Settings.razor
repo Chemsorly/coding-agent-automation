@@ -387,22 +387,49 @@
                         <div class="form-group">
                             <label>Private Key (.pem file)</label>
                             <InputFile OnChange="OnPipelineKeyFileSelected" accept=".pem" />
-                            @if (!string.IsNullOrEmpty(_pipelineProviderForm.PrivateKeyBase64))
-                            {
-                                <span class="key-status" style="color: #4ade80;">✅ Key loaded</span>
-                            }
+                            <div class="input-with-action" style="margin-top: 0.5rem;">
+                                @if (!string.IsNullOrEmpty(_pipelineProviderForm.PrivateKeyBase64))
+                                {
+                                    <span class="key-status" style="color: #4ade80;">✅ Key loaded</span>
+                                }
+                                <button class="btn-edit" @onclick="FetchPipelineRepos" disabled="@_pipelineLoadingRepos">
+                                    @(_pipelineLoadingRepos ? "Loading..." : "Fetch Repos")
+                                </button>
+                            </div>
                         </div>
-                        <div class="form-group">
-                            <label>Owner</label>
-                            <input type="text" @bind="_pipelineProviderForm.Owner" placeholder="owner" />
-                        </div>
-                        <div class="form-group">
-                            <label>Repository</label>
-                            <input type="text" @bind="_pipelineProviderForm.Repo" placeholder="repo" />
-                        </div>
+                        @if (_pipelineAvailableRepos.Count > 0)
+                        {
+                            <div class="form-group">
+                                <label>Repository</label>
+                                <select @bind="_pipelineSelectedRepo">
+                                    <option value="">-- Select Repository --</option>
+                                    @foreach (var r in _pipelineAvailableRepos)
+                                    {
+                                        <option value="@r.FullName">@r.FullName</option>
+                                    }
+                                </select>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="form-group">
+                                <label>Owner</label>
+                                <input type="text" @bind="_pipelineProviderForm.Owner" placeholder="owner" />
+                            </div>
+                            <div class="form-group">
+                                <label>Repository</label>
+                                <input type="text" @bind="_pipelineProviderForm.Repo" placeholder="repo" />
+                            </div>
+                        }
+                        @if (!string.IsNullOrEmpty(_pipelineValidationMessage))
+                        {
+                            <div class="settings-status @(_pipelineValidationSuccess ? "status-success" : "status-error")">@_pipelineValidationMessage</div>
+                        }
                         <div class="form-buttons">
-                            <button class="btn-save" @onclick="SavePipelineProvider">Save</button>
-                            <button class="btn-cancel" @onclick="() => _showPipelineProviderForm = false">Cancel</button>
+                            <button class="btn-save" @onclick="SavePipelineProvider" disabled="@_pipelineSaving">
+                                @(_pipelineSaving ? "Validating..." : "Save")
+                            </button>
+                            <button class="btn-cancel" @onclick="() => { _showPipelineProviderForm = false; _pipelineAvailableRepos.Clear(); _pipelineValidationMessage = null; }">Cancel</button>
                         </div>
                     </div>
                     <div class="provider-help">
@@ -530,6 +557,12 @@
     private bool _showPipelineProviderForm;
     private ProviderConfig? _editingPipelineProvider;
     private PipelineProviderForm _pipelineProviderForm = new();
+    private List<(string FullName, string Owner, string Name)> _pipelineAvailableRepos = new();
+    private string _pipelineSelectedRepo = "";
+    private bool _pipelineLoadingRepos;
+    private string? _pipelineValidationMessage;
+    private bool _pipelineValidationSuccess;
+    private bool _pipelineSaving;
 
     protected override async Task OnInitializedAsync()
     {
@@ -868,6 +901,9 @@
     {
         _editingPipelineProvider = null;
         _pipelineProviderForm = new PipelineProviderForm();
+        _pipelineAvailableRepos.Clear();
+        _pipelineSelectedRepo = "";
+        _pipelineValidationMessage = null;
         _showPipelineProviderForm = true;
     }
 
@@ -892,13 +928,70 @@
     {
         if (string.IsNullOrWhiteSpace(_pipelineProviderForm.DisplayName))
         {
-            ShowStatus("Display Name is required.", isError: true);
+            _pipelineValidationMessage = "Display Name is required.";
+            _pipelineValidationSuccess = false;
             return;
+        }
+
+        // Apply selected repo from dropdown if available
+        if (!string.IsNullOrEmpty(_pipelineSelectedRepo))
+        {
+            var selected = _pipelineAvailableRepos.FirstOrDefault(r => r.FullName == _pipelineSelectedRepo);
+            if (selected != default)
+            {
+                _pipelineProviderForm.Owner = selected.Owner;
+                _pipelineProviderForm.Repo = selected.Name;
+            }
         }
 
         if (string.IsNullOrWhiteSpace(_pipelineProviderForm.Owner) || string.IsNullOrWhiteSpace(_pipelineProviderForm.Repo))
         {
-            ShowStatus("Owner and Repository are required.", isError: true);
+            _pipelineValidationMessage = "Owner and Repository are required.";
+            _pipelineValidationSuccess = false;
+            return;
+        }
+
+        // Validate App credentials
+        _pipelineSaving = true;
+        _pipelineValidationMessage = "Validating GitHub App credentials...";
+        _pipelineValidationSuccess = true;
+        StateHasChanged();
+
+        if (!long.TryParse(_pipelineProviderForm.InstallationId, out var installationId))
+        {
+            _pipelineValidationMessage = "Installation ID must be a valid number.";
+            _pipelineValidationSuccess = false;
+            _pipelineSaving = false;
+            return;
+        }
+
+        var (success, message) = await GitHubValidator.ValidateAppCredentialsAsync(
+            _pipelineProviderForm.ApiUrl, _pipelineProviderForm.ClientId, installationId,
+            _pipelineProviderForm.PrivateKeyBase64, CancellationToken.None,
+            _pipelineProviderForm.Owner, _pipelineProviderForm.Repo);
+
+        if (!success)
+        {
+            _pipelineValidationMessage = message;
+            _pipelineValidationSuccess = false;
+            _pipelineSaving = false;
+            return;
+        }
+
+        // Verify Actions read access specifically
+        _pipelineValidationMessage = "Checking Actions access...";
+        StateHasChanged();
+
+        var (actionsOk, actionsMsg) = await GitHubValidator.ValidateActionsAccessAsync(
+            _pipelineProviderForm.ApiUrl, _pipelineProviderForm.ClientId, installationId,
+            _pipelineProviderForm.PrivateKeyBase64,
+            _pipelineProviderForm.Owner, _pipelineProviderForm.Repo, CancellationToken.None);
+
+        if (!actionsOk)
+        {
+            _pipelineValidationMessage = actionsMsg;
+            _pipelineValidationSuccess = false;
+            _pipelineSaving = false;
             return;
         }
 
@@ -923,12 +1016,18 @@
         {
             await ConfigStore.SaveProviderConfigAsync(config, CancellationToken.None);
             _showPipelineProviderForm = false;
+            _pipelineAvailableRepos.Clear();
+            _pipelineValidationMessage = null;
             await LoadAllData();
-            ShowStatus("Pipeline provider saved.");
+            ShowStatus($"Pipeline provider saved. {message} {actionsMsg}");
         }
         catch (Exception ex)
         {
             ShowStatus($"Failed to save: {ex.Message}", isError: true);
+        }
+        finally
+        {
+            _pipelineSaving = false;
         }
     }
 
@@ -1040,6 +1139,47 @@
         _repoValidationMessage = $"{credMsg} — {repos.Count} repositories found";
         _repoValidationSuccess = true;
         _repoLoadingRepos = false;
+    }
+
+    private async Task FetchPipelineRepos()
+    {
+        if (string.IsNullOrWhiteSpace(_pipelineProviderForm.ClientId) || string.IsNullOrWhiteSpace(_pipelineProviderForm.InstallationId)
+            || string.IsNullOrWhiteSpace(_pipelineProviderForm.PrivateKeyBase64))
+        {
+            _pipelineValidationMessage = "Enter Client ID, Installation ID, and Private Key first.";
+            _pipelineValidationSuccess = false;
+            return;
+        }
+
+        if (!long.TryParse(_pipelineProviderForm.InstallationId, out var installationId))
+        {
+            _pipelineValidationMessage = "Installation ID must be a valid number.";
+            _pipelineValidationSuccess = false;
+            return;
+        }
+
+        _pipelineLoadingRepos = true;
+        _pipelineValidationMessage = null;
+        StateHasChanged();
+
+        var (credOk, credMsg) = await GitHubValidator.ValidateAppCredentialsAsync(
+            _pipelineProviderForm.ApiUrl, _pipelineProviderForm.ClientId, installationId,
+            _pipelineProviderForm.PrivateKeyBase64, CancellationToken.None);
+        if (!credOk)
+        {
+            _pipelineValidationMessage = credMsg;
+            _pipelineValidationSuccess = false;
+            _pipelineLoadingRepos = false;
+            return;
+        }
+
+        var repos = await GitHubValidator.ListRepositoriesWithAppAsync(
+            _pipelineProviderForm.ApiUrl, _pipelineProviderForm.ClientId, installationId,
+            _pipelineProviderForm.PrivateKeyBase64, CancellationToken.None);
+        _pipelineAvailableRepos = repos.ToList();
+        _pipelineValidationMessage = $"{credMsg} — {repos.Count} repositories found";
+        _pipelineValidationSuccess = true;
+        _pipelineLoadingRepos = false;
     }
 
     // --- Delete ---

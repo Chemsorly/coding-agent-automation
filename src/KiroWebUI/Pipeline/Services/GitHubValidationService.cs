@@ -118,6 +118,46 @@ public class GitHubValidationService
         }
     }
 
+    /// <summary>
+    /// Validates that the GitHub App has Actions read access on the specified repository
+    /// by attempting to list workflow runs. Returns a user-friendly message.
+    /// </summary>
+    public async Task<(bool Success, string Message)> ValidateActionsAccessAsync(
+        string apiUrl, string clientId, long installationId, string privateKeyBase64,
+        string owner, string repo, CancellationToken ct)
+    {
+        string token;
+        try
+        {
+            var authService = new GitHubAppAuthService(
+                clientId, installationId, privateKeyBase64, apiUrl, _logger);
+            token = await authService.GetTokenAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Authentication failed: {ex.Message}");
+        }
+
+        try
+        {
+            var client = CreateClient(apiUrl, token);
+            var runs = await client.Actions.Workflows.Runs.List(owner, repo);
+            return (true, $"✅ Actions access verified — {runs.TotalCount} workflow run(s) found");
+        }
+        catch (ForbiddenException)
+        {
+            return (false, $"GitHub App lacks Actions read permission on {owner}/{repo}");
+        }
+        catch (NotFoundException)
+        {
+            return (false, $"Repository {owner}/{repo} not found or app lacks access");
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Actions access check failed: {ex.Message}");
+        }
+    }
+
     private static GitHubClient CreateClient(string apiUrl, string token)
     {
         var client = new GitHubClient(
