@@ -923,11 +923,20 @@ public class PipelineOrchestrationService : IDisposable
 
         try
         {
-            // Commit and push
-            var commitMessage = PipelineFormatting.GenerateCommitMessage(
-                run.IssueTitle, run.IssueIdentifier);
-            await _activeRepoProvider!.CommitAllAsync(run.WorkspacePath!, commitMessage, ct);
-            await _activeRepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, ct);
+            // Commit and push (skip if already committed by external CI step)
+            try
+            {
+                var commitMessage = PipelineFormatting.GenerateCommitMessage(
+                    run.IssueTitle, run.IssueIdentifier);
+                await _activeRepoProvider!.CommitAllAsync(run.WorkspacePath!, commitMessage, ct);
+                await _activeRepoProvider!.PushBranchAsync(run.WorkspacePath!, run.BranchName!, ct);
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
+            {
+                _logger.Information(
+                    "Pipeline {RunId} changes already committed (pushed during CI validation), skipping commit",
+                    run.RunId);
+            }
 
             // Build PR info
             var testsPassed = report.Tests.TestsPassed ?? 0;
@@ -957,7 +966,7 @@ public class PipelineOrchestrationService : IDisposable
                 IsDraft = isDraft
             };
 
-            var prUrl = await _activeRepoProvider.CreatePullRequestAsync(prInfo, ct);
+            var prUrl = await _activeRepoProvider!.CreatePullRequestAsync(prInfo, ct);
             run.PullRequestUrl = prUrl;
             run.IsDraftPr = isDraft;
             run.PullRequestNumber = ExtractPrNumber(prUrl);
