@@ -235,13 +235,8 @@ The KiroWebUI application provides a web-based interface for the automated devel
 ```powershell
 docker build -f webUI.Dockerfile -t kiro-webui:latest .
 
-docker run -it --rm -p 5000:5000 `
-  -v C:\Projects\coding-agent-automation:/workspace `
-  -v kiro-cli-data:/home/ubuntu/.local/share/kiro-cli `
-  -v "$env:USERPROFILE\.aws:/home/ubuntu/.aws" `
-  -v "$env:USERPROFILE\.kiro\settings:/home/ubuntu/.kiro/settings" `
-  -v kiro-pipeline-config:/app/config/pipeline `
-  kiro-webui:latest
+docker run -it --rm -p 5000:5000 -v C:\Projects\coding-agent-automation:/workspace -v kiro-cli-data:/home/ubuntu/.local/share/kiro-cli -v "$env:USERPROFILE\.aws:/home/ubuntu/.aws" -v "$env:USERPROFILE\.kiro\settings:/home/ubuntu/.kiro/settings" -v kiro-pipeline-config:/app/config/pipeline kiro-webui:latest 2>&1 | Tee-Object -FilePath .kiro/debug.log
+
 ```
 
 ### Required Volume Mounts
@@ -277,64 +272,6 @@ dotnet test
 docker run --rm -v "${PWD}:/app" -w /app mcr.microsoft.com/dotnet/sdk:10.0 dotnet test
 ```
 
-### Property-Based Tests
-
-The PoC includes property-based tests using FsCheck to validate:
-- State detection accuracy across random inputs
-- File operation extraction correctness
-- Test result parsing reliability
-
-## Project Structure
-
-```
-KiroCliPoc/
-├── src/KiroCliPoc/
-│   ├── Program.cs                    # Entry point
-│   ├── Configuration/
-│   │   ├── Configuration.cs          # Configuration model
-│   │   ├── ConfigurationManager.cs   # Configuration loading
-│   │   └── CommandLineArgs.cs        # CLI arguments model
-│   ├── Core/
-│   │   ├── KiroCliOrchestrator.cs    # Main orchestrator
-│   │   ├── ProcessWrapper.cs         # Process management
-│   │   ├── OutputParser.cs           # Output parsing
-│   │   ├── CallbackHandler.cs        # Callback management
-│   │   └── FileSystemMonitor.cs      # File change detection
-│   ├── Models/
-│   │   ├── ExecutionContext.cs       # Execution context
-│   │   ├── TestResult.cs             # Test result model
-│   │   ├── FileChange.cs             # File change model
-│   │   ├── CallbackContext.cs        # Callback context
-│   │   └── KiroState.cs              # State enumeration
-│   └── TestScenarios/
-│       └── TestScenarios.cs          # Predefined test scenarios
-├── tests/KiroCliPoc.Tests/
-│   └── Unit/
-│       └── OutputParserTests.cs      # Property-based tests
-└── config/
-    └── appsettings.json              # Default configuration
-```
-
-## Development
-
-### Building
-
-```bash
-dotnet build
-```
-
-### Running
-
-```bash
-dotnet run [scenario]
-```
-
-### Testing
-
-```bash
-dotnet test
-```
-
 ### Code Quality
 
 All code follows:
@@ -343,7 +280,6 @@ All code follows:
 - Immutability patterns (init-only properties)
 - Comprehensive XML documentation
 - Input validation with ArgumentNullException.ThrowIfNull
-
 
 ## License
 

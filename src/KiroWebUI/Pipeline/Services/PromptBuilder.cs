@@ -29,6 +29,8 @@ public static class PromptBuilder
         sb.AppendLine("Analyze the codebase in context of the following issue. Examine the relevant source files and provide a concise recommendation.");
         sb.AppendLine("Do NOT implement any changes. Only analyze and recommend.");
         sb.AppendLine();
+        sb.AppendLine("Use sub-agents to cover more ground and provide a thorough analysis. For example, delegate parallel investigations to explore different parts of the codebase — one sub-agent could examine the data layer while another looks at the UI components, or one traces the call chain while another checks for test coverage gaps. This produces a more complete picture than a single-threaded read-through.");
+        sb.AppendLine();
         sb.AppendLine($"Write your analysis to the file `{AnalysisFilePath}` in the workspace. Do NOT print the analysis to stdout — only write it to that file.");
         sb.AppendLine();
         sb.AppendLine("The file should contain your analysis in this structure:");
