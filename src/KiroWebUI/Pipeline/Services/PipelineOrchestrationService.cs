@@ -970,7 +970,7 @@ public class PipelineOrchestrationService : IDisposable
             RetryCount = run.RetryCount,
             PullRequestUrl = run.PullRequestUrl
         };
-        _runHistory.Add(summary);
+        _runHistory.Insert(0, summary);
         PersistRunSummary(summary);
     }
 
@@ -998,20 +998,23 @@ public class PipelineOrchestrationService : IDisposable
             if (!Directory.Exists(_runsDirectory))
                 return;
 
-            foreach (var file in Directory.GetFiles(_runsDirectory, "*.json").OrderBy(f => f))
+            var summaries = new List<PipelineRunSummary>();
+            foreach (var file in Directory.GetFiles(_runsDirectory, "*.json"))
             {
                 try
                 {
                     var json = File.ReadAllText(file);
                     var summary = System.Text.Json.JsonSerializer.Deserialize<PipelineRunSummary>(json, _jsonOptions);
                     if (summary != null)
-                        _runHistory.Add(summary);
+                        summaries.Add(summary);
                 }
                 catch (Exception ex)
                 {
                     _logger.Warning(ex, "Failed to load run summary from {File}", file);
                 }
             }
+
+            _runHistory.AddRange(summaries.OrderByDescending(s => s.StartedAt));
 
             _logger.Information("Loaded {Count} pipeline run(s) from history", _runHistory.Count);
         }
