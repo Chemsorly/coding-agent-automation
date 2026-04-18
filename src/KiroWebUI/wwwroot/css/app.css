@@ -240,6 +240,15 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 .output-panel { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; flex: 1; overflow-y: auto; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.8rem; line-height: 1.4; }
 .output-line { color: var(--text-muted); white-space: pre-wrap; word-break: break-all; }
 
+/* Analysis Approval Panel */
+.analysis-approval-panel { display: flex; flex-direction: column; gap: 14px; height: 100%; }
+.analysis-approval-panel h2 { font-size: 1rem; font-weight: 600; color: var(--accent-light); }
+.analysis-subtitle { font-size: 0.85rem; color: var(--text-muted); line-height: 1.4; }
+.analysis-content { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; flex: 1; overflow-y: auto; min-height: 0; }
+.analysis-text { white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.8rem; line-height: 1.4; color: var(--text); background: none; margin: 0; }
+.analysis-fallback { color: var(--text-muted); font-size: 0.85rem; }
+.analysis-actions { flex-shrink: 0; padding-top: 8px; border-top: 1px solid var(--border); }
+
 /* ===== Pipeline Sidebar ===== */
 .pipeline-sidebar {
     width: 300px; min-width: 280px; max-width: 320px; background: var(--surface);
@@ -274,6 +283,7 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 }
 .step-detail-box a { color: var(--accent-light); text-decoration: none; }
 .step-detail-box a:hover { text-decoration: underline; }
+.step-detail-sub { font-size: 0.72rem; color: var(--text-muted); opacity: 0.8; }
 
 /* Step card states */
 .step-card-pending .step-card-name { color: var(--text-muted); }

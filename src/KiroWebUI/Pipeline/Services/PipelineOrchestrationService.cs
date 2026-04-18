@@ -301,7 +301,13 @@ public class PipelineOrchestrationService : IDisposable
                         WorkspacePath = workspacePath,
                         Timeout = _activeConfig.AgentTimeout
                     };
-                    await _activeAgentProvider!.ExecuteAsync(warmupRequest, ct);
+                    await _activeAgentProvider!.ExecuteAsync(warmupRequest, ct,
+                        line =>
+                        {
+                            var clean = StripAnsi(line);
+                            run.OutputLines.Enqueue(clean);
+                            OnOutputLine?.Invoke(clean);
+                        });
                     _logger.Information("Pipeline {RunId} session established via warm-up prompt", run.RunId);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -326,7 +332,13 @@ public class PipelineOrchestrationService : IDisposable
                         WorkspacePath = workspacePath,
                         Timeout = _activeConfig.AgentTimeout
                     };
-                    await _activeAgentProvider!.ExecuteAsync(warmupRequest, ct);
+                    await _activeAgentProvider!.ExecuteAsync(warmupRequest, ct,
+                        line =>
+                        {
+                            var clean = StripAnsi(line);
+                            run.OutputLines.Enqueue(clean);
+                            OnOutputLine?.Invoke(clean);
+                        });
                     _logger.Information("Pipeline {RunId} session established via warm-up prompt", run.RunId);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -542,8 +554,10 @@ public class PipelineOrchestrationService : IDisposable
             // Self-review step (if enabled)
             if (_activeConfig!.SelfReviewEnabled && _activeConfig.SelfReviewMaxIterations > 0)
             {
+                run.ReviewIterationsTotal = _activeConfig.SelfReviewMaxIterations;
                 for (var i = 0; i < _activeConfig.SelfReviewMaxIterations; i++)
                 {
+                    run.ReviewIterationInProgress = i + 1;
                     TransitionTo(run, PipelineStep.ReviewingCode);
                     _logger.Information(
                         "Pipeline {RunId} starting self-review iteration {Iteration}/{MaxIterations}",
@@ -605,6 +619,8 @@ public class PipelineOrchestrationService : IDisposable
                         break;
                     }
                 }
+
+                run.ReviewIterationInProgress = 0;
             }
 
             // Transition to WaitingForChat
@@ -1053,7 +1069,7 @@ public class PipelineOrchestrationService : IDisposable
             RetryCount = run.RetryCount,
             PullRequestUrl = run.PullRequestUrl
         };
-        _runHistory.Add(summary);
+        _runHistory.Insert(0, summary);
         PersistRunSummary(summary);
     }
 
@@ -1081,20 +1097,23 @@ public class PipelineOrchestrationService : IDisposable
             if (!Directory.Exists(_runsDirectory))
                 return;
 
-            foreach (var file in Directory.GetFiles(_runsDirectory, "*.json").OrderBy(f => f))
+            var summaries = new List<PipelineRunSummary>();
+            foreach (var file in Directory.GetFiles(_runsDirectory, "*.json"))
             {
                 try
                 {
                     var json = File.ReadAllText(file);
                     var summary = System.Text.Json.JsonSerializer.Deserialize<PipelineRunSummary>(json, _jsonOptions);
                     if (summary != null)
-                        _runHistory.Add(summary);
+                        summaries.Add(summary);
                 }
                 catch (Exception ex)
                 {
                     _logger.Warning(ex, "Failed to load run summary from {File}", file);
                 }
             }
+
+            _runHistory.AddRange(summaries.OrderByDescending(s => s.StartedAt));
 
             _logger.Information("Loaded {Count} pipeline run(s) from history", _runHistory.Count);
         }
