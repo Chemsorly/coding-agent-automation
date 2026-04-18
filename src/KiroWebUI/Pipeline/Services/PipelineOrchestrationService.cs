@@ -284,7 +284,13 @@ public class PipelineOrchestrationService : IDisposable
                         WorkspacePath = workspacePath,
                         Timeout = _activeConfig.AgentTimeout
                     };
-                    await _activeAgentProvider!.ExecuteAsync(warmupRequest, ct);
+                    await _activeAgentProvider!.ExecuteAsync(warmupRequest, ct,
+                        line =>
+                        {
+                            var clean = StripAnsi(line);
+                            run.OutputLines.Enqueue(clean);
+                            OnOutputLine?.Invoke(clean);
+                        });
                     _logger.Information("Pipeline {RunId} session established via warm-up prompt", run.RunId);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -309,7 +315,13 @@ public class PipelineOrchestrationService : IDisposable
                         WorkspacePath = workspacePath,
                         Timeout = _activeConfig.AgentTimeout
                     };
-                    await _activeAgentProvider!.ExecuteAsync(warmupRequest, ct);
+                    await _activeAgentProvider!.ExecuteAsync(warmupRequest, ct,
+                        line =>
+                        {
+                            var clean = StripAnsi(line);
+                            run.OutputLines.Enqueue(clean);
+                            OnOutputLine?.Invoke(clean);
+                        });
                     _logger.Information("Pipeline {RunId} session established via warm-up prompt", run.RunId);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
