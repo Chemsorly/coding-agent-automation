@@ -83,8 +83,45 @@
 
                             @if (_issues.Count > 0)
                             {
+                                @if (_availableLabels.Count > 0)
+                                {
+                                    <div class="label-filter">
+                                        <div class="label-filter-header">
+                                            <span class="label-filter-title">Filter by labels:</span>
+                                            @if (_selectedLabels.Count > 0)
+                                            {
+                                                <button class="label-clear-btn" @onclick="ClearLabelFilter">Clear all</button>
+                                            }
+                                        </div>
+                                        @if (_selectedLabels.Count > 0)
+                                        {
+                                            <div class="label-active-filters">
+                                                @foreach (var label in _selectedLabels.OrderBy(l => l))
+                                                {
+                                                    <button class="label-chip label-chip-active"
+                                                            aria-label="Remove filter: @label"
+                                                            @onclick="() => ToggleLabel(label)">@label ✕</button>
+                                                }
+                                            </div>
+                                        }
+                                        <div class="label-chip-list">
+                                            @foreach (var label in _availableLabels)
+                                            {
+                                                <button class="label-chip @(_selectedLabels.Contains(label) ? "label-chip-selected" : "")"
+                                                        aria-pressed="@(_selectedLabels.Contains(label) ? "true" : "false")"
+                                                        @onclick="() => ToggleLabel(label)">@label</button>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+
+                                @if (_selectedLabels.Count > 0)
+                                {
+                                    <div class="label-filter-count" aria-live="polite">Showing @FilteredIssues.Count of @_issues.Count issues</div>
+                                }
+
                                 <div class="issue-list">
-                                    @foreach (var issue in _issues)
+                                    @foreach (var issue in FilteredIssues)
                                     {
                                         <div class="issue-card @(_selectedIssueId == issue.Identifier ? "issue-selected" : "")"
                                              @onclick="() => SelectIssue(issue.Identifier)">
@@ -291,6 +328,9 @@
     private List<ProviderConfig> _issueProviders = new();
     private List<ProviderConfig> _repoProviders = new();
     private List<IssueSummary> _issues = new();
+    private List<string> _availableLabels = new();
+    private HashSet<string> _selectedLabels = new();
+    private List<IssueSummary>? _filteredIssuesCache;
     private List<string> _outputLines = new();
     private IssueDetail? _selectedIssueDetail;
     private bool _loadingIssueDetail;
@@ -306,6 +346,35 @@
     private bool _disposed;
     private Timer? _elapsedTimer;
     private int _maxRetries = 3;
+
+    private IReadOnlyList<IssueSummary> FilteredIssues =>
+        _filteredIssuesCache ??= _selectedLabels.Count == 0
+            ? _issues
+            : _issues.Where(i => i.Labels.Any(l => _selectedLabels.Contains(l))).ToList();
+
+    private void ToggleLabel(string label)
+    {
+        if (!_selectedLabels.Remove(label))
+            _selectedLabels.Add(label);
+        _filteredIssuesCache = null;
+        ClearSelectionIfFiltered();
+    }
+
+    private void ClearLabelFilter()
+    {
+        _selectedLabels.Clear();
+        _filteredIssuesCache = null;
+    }
+
+    private void ClearSelectionIfFiltered()
+    {
+        if (!string.IsNullOrEmpty(_selectedIssueId)
+            && !FilteredIssues.Any(i => i.Identifier == _selectedIssueId))
+        {
+            _selectedIssueId = "";
+            _selectedIssueDetail = null;
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -388,6 +457,9 @@
     {
         _issues.Clear();
         _selectedIssueId = "";
+        _selectedLabels.Clear();
+        _availableLabels.Clear();
+        _filteredIssuesCache = null;
         _errorMessage = null;
 
         if (string.IsNullOrEmpty(_selectedIssueProviderId))
@@ -402,6 +474,7 @@
             var issueProvider = ProviderFactory.CreateIssueProvider(providerConfig);
             var issues = await issueProvider.ListOpenIssuesAsync(CancellationToken.None);
             _issues = issues.ToList();
+            _availableLabels = _issues.SelectMany(i => i.Labels).Distinct().OrderBy(l => l).ToList();
         }
         catch (Exception ex)
         {
