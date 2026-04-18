@@ -29,4 +29,34 @@ public sealed class PipelineRun
     public ConcurrentQueue<ChatEntry> ChatHistory { get; init; } = new();
     public QualityGateReport? LatestQualityReport { get; set; }
     public ConcurrentQueue<string> OutputLines { get; init; } = new();
+
+    /// <summary>Issue labels, populated when the issue is fetched.</summary>
+    public IReadOnlyList<string> IssueLabels { get; set; } = Array.Empty<string>();
+
+    /// <summary>History of quality gate reports across retry attempts.</summary>
+    public ConcurrentQueue<QualityGateReport> QualityGateHistory { get; init; } = new();
+
+    /// <summary>Whether existing analysis was reused (skipped agent analysis).</summary>
+    public bool AnalysisSkipped { get; set; }
+
+    /// <summary>Timestamp when analysis was approved.</summary>
+    public DateTime? ApprovalTimestamp { get; set; }
+
+    /// <summary>Whether the PR is a draft (quality gates failed after max retries).</summary>
+    public bool IsDraftPr { get; set; }
+
+    /// <summary>Repository display name (owner/repo).</summary>
+    public string? RepositoryName { get; set; }
+
+    /// <summary>Number of files changed during code generation, updated after agent execution.</summary>
+    public int FilesChangedCount { get; set; }
+
+    /// <summary>Lines added during code generation.</summary>
+    public int LinesAdded { get; set; }
+
+    /// <summary>Lines removed during code generation.</summary>
+    public int LinesRemoved { get; set; }
+
+    /// <summary>PR number extracted from the PR URL (e.g. "47").</summary>
+    public string? PullRequestNumber { get; set; }
 }

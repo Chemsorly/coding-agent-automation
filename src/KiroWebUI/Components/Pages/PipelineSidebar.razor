@@ -1,0 +1,292 @@
+@using KiroWebUI.Pipeline.Models
+
+<aside class="pipeline-sidebar" id="pipelineSidebar">
+    <div class="sidebar-header">
+        <div class="sidebar-elapsed">⏱ Elapsed: @GetElapsedTime()</div>
+        <div class="sidebar-issue" title="@Run.WorkspacePath">
+            Issue #@Run.IssueIdentifier · @Truncate(Run.IssueTitle, 30)
+        </div>
+        @if (Run.IssueLabels.Count > 0)
+        {
+            <div class="sidebar-labels">
+                🏷
+                @foreach (var label in Run.IssueLabels)
+                {
+                    <span class="sidebar-label">@label</span>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="sidebar-steps" id="sidebarSteps">
+        @foreach (var step in _steps)
+        {
+            var state = GetStepState(step);
+            var isExpanded = state is StepState.Active or StepState.Failed || _expandedSteps.Contains(step);
+
+            <div class="step-card step-card-@state.ToString().ToLowerInvariant()"
+                 id="step-@step.ToString()"
+                 @onclick="() => ToggleStep(step, state)">
+                <div class="step-card-header">
+                    <span class="step-card-icon">@GetStepIcon(state)</span>
+                    <span class="step-card-name">@FormatStepName(step)</span>
+                </div>
+
+                @if (isExpanded)
+                {
+                    <div class="step-card-details">
+                        @if (step == PipelineStep.CloningRepository && !string.IsNullOrEmpty(Run.RepositoryName))
+                        {
+                            <div class="step-detail">@Run.RepositoryName</div>
+                        }
+                        else if (step == PipelineStep.CreatingBranch && !string.IsNullOrEmpty(Run.BranchName))
+                        {
+                            <div class="step-detail step-detail-mono">@Truncate(Run.BranchName, 36)</div>
+                        }
+                        else if (step == PipelineStep.AnalyzingCode)
+                        {
+                            <div class="step-detail">@(Run.AnalysisSkipped ? "Skipped (existing)" : "Agent analysis")</div>
+                        }
+                        else if (step == PipelineStep.WaitingForAnalysisApproval)
+                        {
+                            @if (Run.ApprovalTimestamp.HasValue)
+                            {
+                                <div class="step-detail">Approved at @Run.ApprovalTimestamp.Value.ToLocalTime().ToString("HH:mm:ss")</div>
+                            }
+                            else if (state == StepState.Active)
+                            {
+                                <div class="step-detail">Awaiting approval…</div>
+                            }
+                        }
+                        else if (step == PipelineStep.GeneratingCode)
+                        {
+                            <div class="step-detail-box">
+                                <div>🤖 Agent @(state == StepState.Active ? "active" : "idle")</div>
+                                @if (Run.FilesChangedCount > 0)
+                                {
+                                    <div>Files changed: @Run.FilesChangedCount</div>
+                                }
+                                @if (Run.LinesAdded > 0 || Run.LinesRemoved > 0)
+                                {
+                                    <div>+@Run.LinesAdded -@Run.LinesRemoved</div>
+                                }
+                            </div>
+                        }
+                        else if (step == PipelineStep.ReviewingCode && Run.ReviewIterationsCompleted > 0)
+                        {
+                            <div class="step-detail">@Run.ReviewIterationsCompleted iteration(s)</div>
+                        }
+                        else if (step == PipelineStep.RunningQualityGates)
+                        {
+                            @if (Run.LatestQualityReport is { } qr)
+                            {
+                                <div class="step-detail-box">
+                                    @if (qr.AllPassed)
+                                    {
+                                        <div class="qg-header-pass">All gates passed ✅</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="qg-header-fail">Attempt @(Run.QualityGateHistory.Count)/@(MaxRetries + 1)</div>
+                                    }
+                                    <div class="qg-line @(qr.Compilation.Passed ? "qg-pass" : "qg-fail")">
+                                        @(qr.Compilation.Passed ? "✅" : "❌") Compilation
+                                    </div>
+                                    <div class="qg-line @(qr.Tests.Passed ? "qg-pass" : "qg-fail")">
+                                        @(qr.Tests.Passed ? "✅" : "❌") Tests
+                                        <span class="qg-sub">@(qr.Tests.TestsPassed ?? 0) passed, @(qr.Tests.TestsFailed ?? 0) failed</span>
+                                    </div>
+                                    @if (qr.Coverage is { } cov)
+                                    {
+                                        <div class="qg-line @(cov.Passed ? "qg-pass" : "qg-fail")">
+                                            @(cov.Passed ? "✅" : "❌") Coverage
+                                            <span class="qg-sub">@(cov.CoveragePercent.HasValue ? $"{cov.CoveragePercent.Value:F1}%" : "N/A")</span>
+                                        </div>
+                                    }
+                                    @if (qr.SecurityScan is { } sec)
+                                    {
+                                        <div class="qg-line @(sec.Passed ? "qg-pass" : "qg-fail")">
+                                            @(sec.Passed ? "✅" : "❌") Security
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="qg-line qg-skip">— Security</div>
+                                    }
+
+                                    @{
+                                        var history = Run.QualityGateHistory.ToArray();
+                                    }
+                                    @if (history.Length > 1)
+                                    {
+                                        <div class="qg-history">
+                                            <div class="qg-history-title">Previous attempts:</div>
+                                            @for (var i = 0; i < history.Length - 1; i++)
+                                            {
+                                                var h = history[i];
+                                                var covPct = h.Coverage?.CoveragePercent;
+                                                <div class="qg-history-item">
+                                                    #@(i + 1): @(h.AllPassed ? "Passed ✅" : covPct.HasValue ? $"Coverage {covPct.Value:F1}% ❌" : "Failed ❌")
+                                                </div>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        }
+                        else if (step == PipelineStep.CreatingPullRequest && !string.IsNullOrEmpty(Run.PullRequestUrl))
+                        {
+                            <div class="step-detail-box">
+                                <div>PR @(!string.IsNullOrEmpty(Run.PullRequestNumber) ? $"#{Run.PullRequestNumber}" : "") @(Run.IsDraftPr ? "(draft)" : "(final)")</div>
+                                @if (Run.FilesChangedCount > 0)
+                                {
+                                    <div>@Run.FilesChangedCount files changed</div>
+                                }
+                                <div><a href="@Run.PullRequestUrl" target="_blank" rel="noopener noreferrer" @onclick:stopPropagation="true">🔗 View on GitHub</a></div>
+                            </div>
+                        }
+
+                        @if (state == StepState.Failed && !string.IsNullOrEmpty(Run.FailureReason))
+                        {
+                            <div class="step-detail step-detail-error">@Run.FailureReason</div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    @if (IsRunning)
+    {
+        <div class="sidebar-footer">
+            <button class="btn-sidebar-cancel" @onclick="OnCancel">Cancel Pipeline</button>
+        </div>
+    }
+</aside>
+
+@code {
+    /// <summary>The active pipeline run to display in the sidebar.</summary>
+    [Parameter, EditorRequired] public PipelineRun Run { get; set; } = default!;
+
+    /// <summary>Whether the pipeline is currently running (controls cancel button visibility).</summary>
+    [Parameter] public bool IsRunning { get; set; }
+
+    /// <summary>Callback invoked when the user clicks the cancel button.</summary>
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    /// <summary>Maximum retry count from pipeline configuration (for QG attempt display).</summary>
+    [Parameter] public int MaxRetries { get; set; } = 3;
+
+    private readonly HashSet<PipelineStep> _expandedSteps = new();
+    private string? _lastRunId;
+
+    /// <summary>
+    /// Pipeline steps displayed in the sidebar. Excludes WaitingForChat (shown as chat panel
+    /// in main content), Completed, Failed, and Cancelled (terminal states that affect how
+    /// other step cards render rather than appearing as their own cards).
+    /// </summary>
+    private static readonly PipelineStep[] _steps =
+    {
+        PipelineStep.Created,
+        PipelineStep.CloningRepository,
+        PipelineStep.CreatingBranch,
+        PipelineStep.AnalyzingCode,
+        PipelineStep.PostingAnalysis,
+        PipelineStep.WaitingForAnalysisApproval,
+        PipelineStep.GeneratingCode,
+        PipelineStep.ReviewingCode,
+        PipelineStep.RunningQualityGates,
+        PipelineStep.CreatingPullRequest
+    };
+
+    private enum StepState { Completed, Active, Pending, Failed, Cancelled }
+
+    protected override void OnParametersSet()
+    {
+        if (Run.RunId != _lastRunId)
+        {
+            _expandedSteps.Clear();
+            _lastRunId = Run.RunId;
+        }
+    }
+
+    private StepState GetStepState(PipelineStep step)
+    {
+        var current = Run.CurrentStep;
+
+        if (current is PipelineStep.Failed or PipelineStep.Cancelled)
+        {
+            // GetLastReachedStep returns the step that was active when the pipeline ended.
+            var last = GetLastReachedStep();
+            if ((int)step < (int)last) return StepState.Completed;
+            if ((int)step == (int)last)
+                return current == PipelineStep.Failed ? StepState.Failed : StepState.Cancelled;
+            return StepState.Pending;
+        }
+
+        if (current == PipelineStep.Completed)
+            return (int)step <= (int)PipelineStep.CreatingPullRequest ? StepState.Completed : StepState.Pending;
+
+        if (step == current) return StepState.Active;
+        return (int)step < (int)current ? StepState.Completed : StepState.Pending;
+    }
+
+    /// <summary>
+    /// Infers the last pipeline step that was reached before a terminal state.
+    /// Used to determine which step to mark as failed/cancelled.
+    /// </summary>
+    private PipelineStep GetLastReachedStep()
+    {
+        if (!string.IsNullOrEmpty(Run.PullRequestUrl)) return PipelineStep.CreatingPullRequest;
+        if (Run.LatestQualityReport != null) return PipelineStep.RunningQualityGates;
+        if (Run.ReviewIterationsCompleted > 0) return PipelineStep.ReviewingCode;
+        if (Run.ApprovalTimestamp.HasValue) return PipelineStep.GeneratingCode;
+        if (Run.AnalysisContent != null) return PipelineStep.PostingAnalysis;
+        if (!string.IsNullOrEmpty(Run.BranchName)) return PipelineStep.CreatingBranch;
+        if (!string.IsNullOrEmpty(Run.WorkspacePath)) return PipelineStep.CloningRepository;
+        return PipelineStep.Created;
+    }
+
+    private static string GetStepIcon(StepState state) => state switch
+    {
+        StepState.Completed => "✅",
+        StepState.Active => "▶",
+        StepState.Failed => "❌",
+        StepState.Cancelled => "⊘",
+        _ => "○"
+    };
+
+    private static string FormatStepName(PipelineStep step) => step switch
+    {
+        PipelineStep.Created => "Pipeline Created",
+        PipelineStep.CloningRepository => "Cloning Repository",
+        PipelineStep.CreatingBranch => "Creating Branch",
+        PipelineStep.AnalyzingCode => "Analyzing Code",
+        PipelineStep.PostingAnalysis => "Posting Analysis",
+        PipelineStep.WaitingForAnalysisApproval => "Waiting for Approval",
+        PipelineStep.GeneratingCode => "Generating Code",
+        PipelineStep.ReviewingCode => "Reviewing Code",
+        PipelineStep.RunningQualityGates => "Running Quality Gates",
+        PipelineStep.CreatingPullRequest => "Creating Pull Request",
+        _ => step.ToString()
+    };
+
+    private void ToggleStep(PipelineStep step, StepState state)
+    {
+        if (state == StepState.Pending) return;
+        if (!_expandedSteps.Remove(step))
+            _expandedSteps.Add(step);
+    }
+
+    private string GetElapsedTime()
+    {
+        var elapsed = (Run.CompletedAt ?? DateTime.UtcNow) - Run.StartedAt;
+        return elapsed.ToString(@"hh\:mm\:ss");
+    }
+
+    private static string Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value)) return string.Empty;
+        return value.Length <= maxLength ? value : value[..(maxLength - 3)] + "...";
+    }
+}
