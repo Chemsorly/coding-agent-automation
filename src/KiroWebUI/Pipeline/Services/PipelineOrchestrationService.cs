@@ -26,6 +26,7 @@ public class PipelineOrchestrationService : IDisposable
     private IAgentProvider? _activeAgentProvider;
     private IRepositoryProvider? _activeRepoProvider;
     private IIssueProvider? _activeIssueProvider;
+    private IPipelineProvider? _activePipelineProvider;
     private PipelineConfiguration? _activeConfig;
     private string _activeBaseBranch = "main";
 
@@ -126,6 +127,22 @@ public class PipelineOrchestrationService : IDisposable
                 RepositoryName = $"{repoProviderConfig.Settings.GetValueOrDefault("owner", "")}/{repoProviderConfig.Settings.GetValueOrDefault("repo", "")}"
             };
             ActiveRun = run;
+
+            // Create pipeline provider if external CI is enabled
+            _activePipelineProvider = null;
+            if (_activeConfig.ExternalCiEnabled)
+            {
+                var pipelineConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, linkedCt);
+                if (pipelineConfigs.Count > 0)
+                {
+                    _activePipelineProvider = _providerFactory.CreatePipelineProvider(pipelineConfigs[0]);
+                    _logger.Information("Pipeline {RunId} external CI provider configured", run.RunId);
+                }
+                else
+                {
+                    _logger.Warning("Pipeline {RunId} external CI enabled but no pipeline provider configured", run.RunId);
+                }
+            }
 
             _logger.Information("Pipeline {RunId} created for issue {IssueIdentifier}", run.RunId, issueIdentifier);
             NotifyChange();
@@ -707,8 +724,86 @@ public class PipelineOrchestrationService : IDisposable
                 : null;
             var linkedCt = linkedCts?.Token ?? ct;
 
+            // Run local quality gates first (compilation, tests, coverage)
             var report = await _qualityGateValidator.ValidateAsync(
                 run.WorkspacePath!, _activeConfig!, linkedCt);
+
+            // If local gates passed and external CI is enabled, push and wait for CI
+            if (report.Compilation.Passed && report.Tests.Passed
+                && (report.Coverage?.Passed ?? true) && (report.SecurityScan?.Passed ?? true)
+                && _activeConfig!.ExternalCiEnabled && _activePipelineProvider != null)
+            {
+                GateResult? externalCiGate = null;
+                try
+                {
+                    var commitMessage = PipelineFormatting.GenerateCommitMessage(
+                        run.IssueTitle, run.IssueIdentifier);
+                    await _activeRepoProvider!.CommitAllAsync(run.WorkspacePath!, commitMessage, linkedCt);
+                    await _activeRepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, linkedCt);
+                    _logger.Information("Pipeline {RunId} pushed branch {BranchName} for CI validation",
+                        run.RunId, run.BranchName);
+
+                    // Get HEAD commit SHA for precise CI matching
+                    string? commitSha = null;
+                    try
+                    {
+                        var gitLogResult = await RunGitCommandAsync(run.WorkspacePath!, "rev-parse HEAD", linkedCt);
+                        commitSha = gitLogResult?.Trim();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA", run.RunId);
+                    }
+
+                    // Wait for external CI
+                    var ciStatus = await _activePipelineProvider.WaitForCompletionAsync(
+                        run.BranchName!, commitSha, _activeConfig.ExternalCiTimeout, linkedCt);
+
+                    var ciPassed = ciStatus.State == PipelineRunState.Passed;
+                    externalCiGate = new GateResult
+                    {
+                        GateName = "External CI",
+                        Passed = ciPassed,
+                        Details = ciPassed
+                            ? $"CI passed. {ciStatus.Jobs.Count} job(s) completed."
+                            : QualityGateValidator.BuildCiFailureDetails(ciStatus)
+                    };
+                }
+                catch (OperationCanceledException) when (!linkedCt.IsCancellationRequested)
+                {
+                    externalCiGate = new GateResult
+                    {
+                        GateName = "External CI",
+                        Passed = false,
+                        Details = $"External CI timed out after {_activeConfig.ExternalCiTimeout}"
+                    };
+                }
+                catch (OperationCanceledException)
+                {
+                    throw; // Pipeline cancellation — propagate
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Pipeline {RunId} external CI check failed, treating as gate failure", run.RunId);
+                    externalCiGate = new GateResult
+                    {
+                        GateName = "External CI",
+                        Passed = false,
+                        Details = $"External CI error: {ex.Message}"
+                    };
+                }
+
+                // Rebuild report with external CI result
+                report = new QualityGateReport
+                {
+                    Compilation = report.Compilation,
+                    Tests = report.Tests,
+                    Coverage = report.Coverage,
+                    SecurityScan = report.SecurityScan,
+                    ExternalCi = externalCiGate
+                };
+            }
+
             run.LatestQualityReport = report;
             run.QualityGateHistory.Enqueue(report);
 
@@ -1027,10 +1122,30 @@ public class PipelineOrchestrationService : IDisposable
             errors.Add($"Coverage: {report.Coverage.Details}");
         if (report.SecurityScan is { Passed: false })
             errors.Add($"Security: {report.SecurityScan.Details}");
+        if (report.ExternalCi is { Passed: false })
+            errors.Add($"External CI: {report.ExternalCi.Details}");
         return string.Join(Environment.NewLine, errors);
     }
 
     private static string StripAnsi(string input) => AnsiStripper.Strip(input);
+
+    private static async Task<string?> RunGitCommandAsync(string workspacePath, string args, CancellationToken ct)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "git",
+            Arguments = args,
+            WorkingDirectory = workspacePath,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        using var process = System.Diagnostics.Process.Start(psi);
+        if (process == null) return null;
+        var output = await process.StandardOutput.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct);
+        return process.ExitCode == 0 ? output : null;
+    }
 
     public void Dispose()
     {

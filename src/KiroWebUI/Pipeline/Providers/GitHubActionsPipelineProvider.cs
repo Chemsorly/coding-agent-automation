@@ -1,0 +1,235 @@
+using Octokit;
+using KiroWebUI.Pipeline.Interfaces;
+using KiroWebUI.Pipeline.Models;
+
+namespace KiroWebUI.Pipeline.Providers;
+
+/// <summary>
+/// Reads GitHub Actions workflow run status via the GitHub REST API.
+/// Supports both static token and dynamic token provider (GitHub App auth).
+/// </summary>
+public class GitHubActionsPipelineProvider : IPipelineProvider
+{
+    private readonly string? _apiUrl;
+    private readonly Func<CancellationToken, Task<string>>? _tokenProvider;
+    private readonly IGitHubClient? _client;
+    private readonly string _owner;
+    private readonly string _repo;
+    private readonly TimeSpan _pollInterval;
+
+    /// <summary>
+    /// Creates a provider with a token provider delegate (for GitHub App auth).
+    /// </summary>
+    public GitHubActionsPipelineProvider(
+        string apiUrl,
+        Func<CancellationToken, Task<string>> tokenProvider,
+        string owner,
+        string repo,
+        TimeSpan pollInterval)
+    {
+        ArgumentNullException.ThrowIfNull(apiUrl);
+        ArgumentNullException.ThrowIfNull(tokenProvider);
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(repo);
+
+        _apiUrl = apiUrl;
+        _tokenProvider = tokenProvider;
+        _owner = owner;
+        _repo = repo;
+        _pollInterval = pollInterval;
+    }
+
+    /// <summary>
+    /// Creates a provider with a static token.
+    /// </summary>
+    public GitHubActionsPipelineProvider(
+        string apiUrl,
+        string token,
+        string owner,
+        string repo,
+        TimeSpan pollInterval)
+    {
+        ArgumentNullException.ThrowIfNull(apiUrl);
+        ArgumentNullException.ThrowIfNull(token);
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(repo);
+
+        _owner = owner;
+        _repo = repo;
+        _pollInterval = pollInterval;
+        _client = new GitHubClient(new ProductHeaderValue("KiroWebUI-Pipeline"), new Uri(apiUrl))
+        {
+            Credentials = new Credentials(token)
+        };
+    }
+
+    /// <summary>
+    /// Internal constructor for testing with a mock IGitHubClient.
+    /// </summary>
+    internal GitHubActionsPipelineProvider(
+        IGitHubClient client,
+        string owner,
+        string repo,
+        TimeSpan pollInterval)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(repo);
+
+        _client = client;
+        _owner = owner;
+        _repo = repo;
+        _pollInterval = pollInterval;
+    }
+
+    public async Task<PipelineRunStatus> GetRunStatusAsync(
+        string branchName, string? commitSha, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(branchName);
+
+        var client = await GetClientAsync(ct);
+        var request = new WorkflowRunsRequest { Branch = branchName };
+        var runs = await client.Actions.Workflows.Runs.List(_owner, _repo, request);
+
+        // Filter by commit SHA if provided
+        var matchingRuns = commitSha != null
+            ? runs.WorkflowRuns.Where(r => r.HeadSha == commitSha).ToList()
+            : runs.WorkflowRuns.ToList();
+
+        if (matchingRuns.Count == 0)
+        {
+            return new PipelineRunStatus
+            {
+                State = PipelineRunState.Pending,
+                Jobs = Array.Empty<PipelineJobResult>(),
+                CommitSha = commitSha
+            };
+        }
+
+        var jobs = new List<PipelineJobResult>();
+        foreach (var run in matchingRuns)
+        {
+            var runJobs = await client.Actions.Workflows.Jobs.List(_owner, _repo, run.Id);
+            foreach (var job in runJobs.Jobs)
+            {
+                jobs.Add(new PipelineJobResult
+                {
+                    Name = job.Name,
+                    State = MapJobState(job.Status.Value, job.Conclusion?.Value),
+                    FailureReason = job.Conclusion?.Value == WorkflowJobConclusion.Failure
+                        ? $"Job '{job.Name}' failed"
+                        : null,
+                    LogUrl = job.HtmlUrl
+                });
+            }
+        }
+
+        var aggregateState = AggregateState(matchingRuns);
+        var firstRun = matchingRuns.OrderBy(r => r.CreatedAt).First();
+        var lastRun = matchingRuns.OrderByDescending(r => r.UpdatedAt).First();
+
+        return new PipelineRunStatus
+        {
+            State = aggregateState,
+            Jobs = jobs,
+            Url = firstRun.HtmlUrl,
+            StartedAt = firstRun.CreatedAt.UtcDateTime,
+            CompletedAt = aggregateState is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled
+                ? lastRun.UpdatedAt.UtcDateTime
+                : null,
+            CommitSha = commitSha ?? firstRun.HeadSha
+        };
+    }
+
+    public async Task<PipelineRunStatus> WaitForCompletionAsync(
+        string branchName, string? commitSha, TimeSpan timeout, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(branchName);
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(timeout);
+        var linkedCt = timeoutCts.Token;
+
+        while (true)
+        {
+            linkedCt.ThrowIfCancellationRequested();
+
+            var status = await GetRunStatusAsync(branchName, commitSha, linkedCt);
+
+            if (status.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled)
+                return status;
+
+            try
+            {
+                await Task.Delay(_pollInterval, linkedCt);
+            }
+            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                // Timeout expired — return last known status
+                return status;
+            }
+        }
+    }
+
+    private async Task<IGitHubClient> GetClientAsync(CancellationToken ct)
+    {
+        if (_tokenProvider is not null)
+        {
+            var token = await _tokenProvider(ct);
+            return new GitHubClient(
+                new ProductHeaderValue("KiroWebUI-Pipeline"),
+                new Uri(_apiUrl!))
+            {
+                Credentials = new Credentials(token)
+            };
+        }
+
+        return _client!;
+    }
+
+    internal static PipelineRunState MapJobState(WorkflowJobStatus status, WorkflowJobConclusion? conclusion)
+    {
+        if (status == WorkflowJobStatus.Queued) return PipelineRunState.Pending;
+        if (status == WorkflowJobStatus.InProgress) return PipelineRunState.Running;
+
+        // Completed — check conclusion
+        return conclusion switch
+        {
+            WorkflowJobConclusion.Success => PipelineRunState.Passed,
+            WorkflowJobConclusion.Failure => PipelineRunState.Failed,
+            WorkflowJobConclusion.Cancelled => PipelineRunState.Cancelled,
+            _ => PipelineRunState.Failed
+        };
+    }
+
+    internal static PipelineRunState AggregateState(IReadOnlyList<WorkflowRun> runs)
+    {
+        if (runs.Count == 0) return PipelineRunState.Pending;
+
+        var hasRunning = false;
+        var hasPending = false;
+        var hasFailed = false;
+        var hasCancelled = false;
+
+        foreach (var run in runs)
+        {
+            if (run.Status.Value == WorkflowRunStatus.InProgress || run.Status.Value == WorkflowRunStatus.Waiting)
+                hasRunning = true;
+            else if (run.Status.Value == WorkflowRunStatus.Queued || run.Status.Value == WorkflowRunStatus.Requested || run.Status.Value == WorkflowRunStatus.Pending)
+                hasPending = true;
+            else if (run.Status.Value == WorkflowRunStatus.Completed)
+            {
+                if (run.Conclusion?.Value == WorkflowRunConclusion.Failure)
+                    hasFailed = true;
+                else if (run.Conclusion?.Value == WorkflowRunConclusion.Cancelled)
+                    hasCancelled = true;
+            }
+        }
+
+        if (hasRunning) return PipelineRunState.Running;
+        if (hasPending) return PipelineRunState.Pending;
+        if (hasFailed) return PipelineRunState.Failed;
+        if (hasCancelled) return PipelineRunState.Cancelled;
+        return PipelineRunState.Passed;
+    }
+}
