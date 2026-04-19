@@ -161,40 +161,47 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         timeoutCts.CancelAfter(timeout);
         var linkedCt = timeoutCts.Token;
         var pollCount = 0;
+        PipelineRunStatus? lastStatus = null;
 
         while (true)
         {
-            linkedCt.ThrowIfCancellationRequested();
-            pollCount++;
-
-            var status = await GetRunStatusAsync(branchName, commitSha, linkedCt);
-
-            _logger.Information("CI poll #{PollCount}: {State} — {RunCount} run(s), {JobCount} job(s)",
-                pollCount, status.State, status.Jobs.Count > 0 ? status.Jobs.Count : 0,
-                status.Jobs.Count);
-
-            if (status.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled)
-            {
-                _logger.Information("CI completed: {State} after {PollCount} poll(s)", status.State, pollCount);
-
-                // Automatically fetch logs for failed jobs so callers get actionable diagnostics
-                if (status.State == PipelineRunState.Failed)
-                {
-                    await EnrichFailedJobsWithLogsAsync(status, linkedCt);
-                }
-
-                return status;
-            }
-
             try
             {
+                linkedCt.ThrowIfCancellationRequested();
+                pollCount++;
+
+                var status = await GetRunStatusAsync(branchName, commitSha, linkedCt);
+                lastStatus = status;
+
+                _logger.Information("CI poll #{PollCount}: {State} — {RunCount} run(s), {JobCount} job(s)",
+                    pollCount, status.State, status.Jobs.Count > 0 ? status.Jobs.Count : 0,
+                    status.Jobs.Count);
+
+                if (status.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled)
+                {
+                    _logger.Information("CI completed: {State} after {PollCount} poll(s)", status.State, pollCount);
+
+                    // Automatically fetch logs for failed jobs so callers get actionable diagnostics
+                    if (status.State == PipelineRunState.Failed)
+                    {
+                        await EnrichFailedJobsWithLogsAsync(status, linkedCt);
+                    }
+
+                    return status;
+                }
+
                 await Task.Delay(_pollInterval, linkedCt);
             }
             catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
             {
                 _logger.Warning("CI polling timed out after {Timeout} ({PollCount} polls). Last state: {State}",
-                    timeout, pollCount, status.State);
-                return status;
+                    timeout, pollCount, lastStatus?.State);
+                return lastStatus ?? new PipelineRunStatus
+                {
+                    State = PipelineRunState.Pending,
+                    Jobs = Array.Empty<PipelineJobResult>(),
+                    CommitSha = commitSha
+                };
             }
         }
     }
