@@ -754,7 +754,10 @@ public class PipelineOrchestrationService : IDisposable
                 {
                     var commitMessage = PipelineFormatting.GenerateCommitMessage(
                         run.IssueTitle, run.IssueIdentifier);
-                    await _activeRepoProvider!.CommitAllAsync(run.WorkspacePath!, commitMessage, linkedCt);
+                    var excluded = await _activeRepoProvider!.CommitAllAsync(
+                        run.WorkspacePath!, commitMessage, _activeConfig!.BlacklistedPaths, linkedCt);
+                    if (RecordBlacklistedFiles(run, excluded))
+                        return;
                     await _activeRepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, linkedCt);
                     _logger.Information("Pipeline {RunId} pushed branch {BranchName} for CI validation",
                         run.RunId, run.BranchName);
@@ -928,7 +931,10 @@ public class PipelineOrchestrationService : IDisposable
             {
                 var commitMessage = PipelineFormatting.GenerateCommitMessage(
                     run.IssueTitle, run.IssueIdentifier);
-                await _activeRepoProvider!.CommitAllAsync(run.WorkspacePath!, commitMessage, ct);
+                var excluded = await _activeRepoProvider!.CommitAllAsync(
+                    run.WorkspacePath!, commitMessage, _activeConfig!.BlacklistedPaths, ct);
+                if (RecordBlacklistedFiles(run, excluded))
+                    return;
                 await _activeRepoProvider!.PushBranchAsync(run.WorkspacePath!, run.BranchName!, ct);
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
@@ -968,7 +974,8 @@ public class PipelineOrchestrationService : IDisposable
             var prBody = PipelineFormatting.GeneratePrBody(
                 run.IssueIdentifier, testsPassed, testsFailed, testsSkipped,
                 coverage, fileChanges, issueTitle, issueDescription,
-                acceptanceCriteria, isDraft, _activeIssueComments);
+                acceptanceCriteria, isDraft, _activeIssueComments,
+                run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null);
 
             var prInfo = new PullRequestInfo
             {
@@ -1033,6 +1040,38 @@ public class PipelineOrchestrationService : IDisposable
             if (int.TryParse(candidate, out _)) return candidate;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Records blacklisted files on the run and handles Fail mode.
+    /// Returns true if the pipeline should abort (Fail mode with violations).
+    /// </summary>
+    private bool RecordBlacklistedFiles(PipelineRun run, IReadOnlyList<string> excluded)
+    {
+        if (excluded.Count == 0)
+            return false;
+
+        // Merge with any previously detected files (from external CI commit)
+        var combined = run.BlacklistedFilesDetected.Count > 0
+            ? run.BlacklistedFilesDetected.Concat(excluded).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+            : excluded.ToList();
+        run.BlacklistedFilesDetected = combined;
+
+        _logger.Warning(
+            "Pipeline {RunId} blacklisted {Count} file(s) excluded from commit: {Files}. Patterns: {Patterns}. Mode: {Mode}",
+            run.RunId, excluded.Count, excluded, _activeConfig!.BlacklistedPaths, _activeConfig.BlacklistMode);
+
+        if (_activeConfig.BlacklistMode == Models.BlacklistMode.Fail)
+        {
+            run.FailureReason = $"Blacklisted files detected: {string.Join(", ", excluded)}. " +
+                "Pipeline configured to fail on blacklist violations.";
+            run.CompletedAt = DateTime.UtcNow;
+            TransitionTo(run, PipelineStep.Failed);
+            AddRunToHistory(run);
+            return true;
+        }
+
+        return false;
     }
 
     private void TransitionTo(PipelineRun run, PipelineStep step)

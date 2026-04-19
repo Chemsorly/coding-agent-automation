@@ -16,4 +16,6 @@ public sealed class PipelineConfiguration
     public bool ExternalCiEnabled { get; init; } = false;
     public TimeSpan ExternalCiTimeout { get; init; } = TimeSpan.FromMinutes(15);
     public TimeSpan ExternalCiPollInterval { get; init; } = TimeSpan.FromSeconds(30);
+    public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".kiro", ".github" };
+    public BlacklistMode BlacklistMode { get; init; } = BlacklistMode.WarnAndExclude;
 }

@@ -9,7 +9,7 @@ public interface IRepositoryProvider
     RepositoryProviderType ProviderType { get; }
     Task CloneAsync(string workspacePath, CancellationToken ct);
     Task<string> CreateBranchAsync(string workspacePath, string branchName, CancellationToken ct);
-    Task CommitAllAsync(string workspacePath, string message, CancellationToken ct);
+    Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message, IReadOnlyList<string> blacklistedPaths, CancellationToken ct);
     Task PushBranchAsync(string workspacePath, string branchName, CancellationToken ct);
     Task<string> CreatePullRequestAsync(PullRequestInfo prInfo, CancellationToken ct);
 }

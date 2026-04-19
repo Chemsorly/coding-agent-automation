@@ -505,6 +505,17 @@
                         <input type="number" @bind="_externalCiPollIntervalSeconds" min="10" max="300" />
                     </div>
                 }
+                <div class="form-group">
+                    <label>Blacklisted Paths (one per line)</label>
+                    <textarea @bind="_blacklistedPathsText" rows="3" style="width:100%;" placeholder=".kiro&#10;.github"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Blacklist Mode</label>
+                    <select @bind="_pipelineConfig.BlacklistMode">
+                        <option value="WarnAndExclude">Warn &amp; Exclude</option>
+                        <option value="Fail">Fail Pipeline</option>
+                    </select>
+                </div>
                 <div class="form-buttons">
                     <button class="btn-save" @onclick="SavePipelineConfig">Save Pipeline Configuration</button>
                 </div>
@@ -522,6 +533,7 @@
     private int _agentTimeoutMinutes = 30;
     private int _externalCiTimeoutMinutes = 15;
     private int _externalCiPollIntervalSeconds = 30;
+    private string _blacklistedPathsText = ".kiro\n.github";
 
     private string? _statusMessage;
     private bool _isError;
@@ -587,11 +599,13 @@
                 SelfReviewEnabled = config.SelfReviewEnabled,
                 SelfReviewMaxIterations = config.SelfReviewMaxIterations,
                 SelfReviewPrompt = config.SelfReviewPrompt,
-                ExternalCiEnabled = config.ExternalCiEnabled
+                ExternalCiEnabled = config.ExternalCiEnabled,
+                BlacklistMode = config.BlacklistMode.ToString()
             };
             _agentTimeoutMinutes = (int)config.AgentTimeout.TotalMinutes;
             _externalCiTimeoutMinutes = (int)config.ExternalCiTimeout.TotalMinutes;
             _externalCiPollIntervalSeconds = (int)config.ExternalCiPollInterval.TotalSeconds;
+            _blacklistedPathsText = string.Join("\n", config.BlacklistedPaths);
         }
         catch (Exception ex)
         {
@@ -1211,7 +1225,12 @@
             SelfReviewPrompt = _pipelineConfig.SelfReviewPrompt,
             ExternalCiEnabled = _pipelineConfig.ExternalCiEnabled,
             ExternalCiTimeout = TimeSpan.FromMinutes(_externalCiTimeoutMinutes),
-            ExternalCiPollInterval = TimeSpan.FromSeconds(_externalCiPollIntervalSeconds)
+            ExternalCiPollInterval = TimeSpan.FromSeconds(_externalCiPollIntervalSeconds),
+            BlacklistedPaths = _blacklistedPathsText
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToArray(),
+            BlacklistMode = Enum.TryParse<BlacklistMode>(_pipelineConfig.BlacklistMode, out var mode)
+                ? mode : BlacklistMode.WarnAndExclude
         };
 
         try
@@ -1280,6 +1299,7 @@
             "The sub-agent should check for: correctness against acceptance criteria, code quality and " +
             "project conventions, unhandled edge cases, and security gaps. Fix any issues the review finds.";
         public bool ExternalCiEnabled { get; set; }
+        public string BlacklistMode { get; set; } = "WarnAndExclude";
     }
 
     private class PipelineProviderForm

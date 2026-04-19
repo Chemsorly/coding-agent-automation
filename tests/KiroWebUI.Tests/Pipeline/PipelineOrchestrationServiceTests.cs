@@ -72,7 +72,7 @@ public class PipelineOrchestrationServiceTests
         _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());        _mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
-        _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<string>());
         _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>())).ReturnsAsync("https://github.com/test/pr/1");
 
@@ -465,5 +465,67 @@ public class PipelineOrchestrationServiceTests
         config.SelfReviewEnabled.Should().BeFalse();
         config.SelfReviewMaxIterations.Should().Be(1);
         config.SelfReviewPrompt.Should().Contain("sub-agent");
+    }
+
+    [Fact]
+    public void BlacklistDefaults_AreCorrect()
+    {
+        var config = new PipelineConfiguration();
+        config.BlacklistedPaths.Should().BeEquivalentTo(new[] { ".kiro", ".github" });
+        config.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
+    }
+
+    [Fact]
+    public async Task WarnAndExclude_PopulatesBlacklistedFiles_AndCompletes()
+    {
+        _mockRepoProvider.Setup(p => p.CommitAllAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { ".kiro/settings.json", ".github/workflows/ci.yml" });
+
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                Tests = new GateResult { GateName = "Tests", Passed = true }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+        await _service.ProceedToQualityGatesAsync(CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.BlacklistedFilesDetected.Should().BeEquivalentTo(
+            new[] { ".kiro/settings.json", ".github/workflows/ci.yml" });
+    }
+
+    [Fact]
+    public async Task FailMode_TransitionsToFailed_WhenBlacklistedFilesDetected()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                BlacklistMode = BlacklistMode.Fail
+            });
+
+        _mockRepoProvider.Setup(p => p.CommitAllAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { ".kiro/steering/rule.md" });
+
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                Tests = new GateResult { GateName = "Tests", Passed = true }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+        await _service.ProceedToQualityGatesAsync(CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain(".kiro/steering/rule.md");
+        run.FailureReason.Should().Contain("Blacklisted files detected");
+        run.BlacklistedFilesDetected.Should().Contain(".kiro/steering/rule.md");
     }
 }

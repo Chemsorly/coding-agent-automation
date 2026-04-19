@@ -162,6 +162,10 @@
                                 {
                                     <div>@Run.FilesChangedCount files changed</div>
                                 }
+                                @if ((Run.BlacklistedFilesDetected?.Count ?? 0) > 0)
+                                {
+                                    <div class="step-detail-warning">⚠️ @Run.BlacklistedFilesDetected!.Count file(s) excluded (blacklisted)</div>
+                                }
                                 <div><a href="@Run.PullRequestUrl" target="_blank" rel="noopener noreferrer" @onclick:stopPropagation="true">🔗 View on GitHub</a></div>
                             </div>
                         }

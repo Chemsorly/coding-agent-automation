@@ -66,7 +66,8 @@ public static partial class PipelineFormatting
         string issueDescription,
         IReadOnlyList<string> acceptanceCriteria,
         bool isDraft = false,
-        IReadOnlyList<IssueComment>? comments = null)
+        IReadOnlyList<IssueComment>? comments = null,
+        IReadOnlyList<string>? blacklistedFiles = null)
     {
         var sb = new StringBuilder();
 
@@ -133,6 +134,16 @@ public static partial class PipelineFormatting
         sb.AppendLine("## Issue Reference");
         sb.AppendLine($"Closes #{issueNumber}");
         sb.AppendLine();
+
+        if (blacklistedFiles is { Count: > 0 })
+        {
+            sb.AppendLine("## ⚠️ Excluded Files");
+            sb.AppendLine("The following files were modified by the agent but excluded from this commit (blacklisted paths):");
+            sb.AppendLine();
+            foreach (var file in blacklistedFiles)
+                sb.AppendLine($"- `{file}`");
+            sb.AppendLine();
+        }
 
         sb.AppendLine("---");
         sb.AppendLine("*Automated implementation via pipeline*");

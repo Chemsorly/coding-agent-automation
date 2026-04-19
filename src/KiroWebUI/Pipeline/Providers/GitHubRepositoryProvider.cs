@@ -128,23 +128,44 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
         }, ct);
     }
 
-    public Task CommitAllAsync(string workspacePath, string message, CancellationToken ct)
+    public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message, IReadOnlyList<string> blacklistedPaths, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(workspacePath);
         ArgumentNullException.ThrowIfNull(message);
+        ArgumentNullException.ThrowIfNull(blacklistedPaths);
 
         return Task.Run(() =>
         {
             using var repo = new Repository(workspacePath);
             Commands.Stage(repo, "*");
 
+            // Unstage blacklisted files
+            var excluded = new List<string>();
+            if (blacklistedPaths.Count > 0)
+            {
+                var staged = repo.RetrieveStatus()
+                    .Where(e => e.State is FileStatus.NewInIndex or FileStatus.ModifiedInIndex
+                        or FileStatus.DeletedFromIndex or FileStatus.RenamedInIndex or FileStatus.TypeChangeInIndex)
+                    .Select(e => e.FilePath)
+                    .ToList();
+
+                var blacklisted = Services.BlacklistMatcher.FindBlacklistedPaths(staged, blacklistedPaths);
+                if (blacklisted.Count > 0)
+                {
+                    Commands.Unstage(repo, blacklisted);
+                    excluded.AddRange(blacklisted);
+                }
+            }
+
             // Check if there are any staged changes before committing
             var status = repo.RetrieveStatus();
-            if (!status.IsDirty && status.Staged.Count() == 0)
+            if (!status.Staged.Any())
                 throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
 
             var signature = new Signature("KiroWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
             repo.Commit(message, signature, signature);
+
+            return (IReadOnlyList<string>)excluded;
         }, ct);
     }
 
@@ -253,11 +274,12 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
         string issueDescription,
         IReadOnlyList<string> acceptanceCriteria,
         bool isDraft = false,
-        IReadOnlyList<Models.IssueComment>? comments = null)
+        IReadOnlyList<Models.IssueComment>? comments = null,
+        IReadOnlyList<string>? blacklistedFiles = null)
         => Services.PipelineFormatting.GeneratePrBody(
             issueNumber, testsPassed, testsFailed, testsSkipped,
             coveragePercent, fileChanges, issueTitle, issueDescription,
-            acceptanceCriteria, isDraft, comments);
+            acceptanceCriteria, isDraft, comments, blacklistedFiles);
 
     /// <summary>
     /// Generates a commit message in conventional format.

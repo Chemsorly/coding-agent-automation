@@ -305,6 +305,7 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 .step-detail { font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; }
 .step-detail-mono { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.75rem; word-break: break-all; }
 .step-detail-error { color: var(--error); margin-top: 4px; }
+.step-detail-warning { color: var(--warning); margin-top: 4px; font-size: 0.78rem; }
 .step-detail-box {
     margin-top: 4px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border);
     border-radius: var(--radius); font-size: 0.78rem; color: var(--text-muted);
