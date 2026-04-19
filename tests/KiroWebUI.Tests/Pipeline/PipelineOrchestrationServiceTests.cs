@@ -466,6 +466,7 @@ public class PipelineOrchestrationServiceTests
         config.SelfReviewEnabled.Should().BeFalse();
         config.SelfReviewMaxIterations.Should().Be(1);
         config.SelfReviewPrompt.Should().Contain("sub-agent");
+        config.AutonomousMode.Should().BeFalse();
     }
 
     // --- Blacklist enforcement (GIT-04) ---
@@ -559,5 +560,107 @@ public class PipelineOrchestrationServiceTests
 
         // Assert — pipeline does not crash; it completes or fails gracefully
         run.CurrentStep.Should().BeOneOf(PipelineStep.Completed, PipelineStep.Failed);
+    }
+
+    // --- Autonomous mode (ARC-02) ---
+
+    [Fact]
+    public async Task AutonomousMode_SkipsBothPausesAndCompletes()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = true
+            });
+
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+                Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+        // In autonomous mode, StartPipelineAsync should run all the way to Completed
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.PullRequestUrl.Should().NotBeNullOrEmpty();
+        _service.GetRunHistory().Should().HaveCount(1);
+        _service.GetRunHistory()[0].FinalStep.Should().Be(PipelineStep.Completed);
+    }
+
+    [Fact]
+    public async Task AutonomousMode_WhenQualityGatesFail_CreatesDraftPrAfterRetries()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = true,
+                MaxRetries = 1
+            });
+
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+                Tests = new GateResult { GateName = "Tests", Passed = false, Details = "2 tests failed" }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+        // Should exhaust retries and create a draft PR → Failed
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.PullRequestUrl.Should().NotBeNullOrEmpty();
+        run.IsDraftPr.Should().BeTrue();
+        run.RetryCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task AutonomousMode_TransitionsThroughExpectedSteps()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = true
+            });
+
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+                Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
+            });
+
+        var transitions = new List<PipelineStep>();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+                transitions.Add(_service.ActiveRun.CurrentStep);
+        };
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+        // Should pass through both pause points without stopping
+        transitions.Should().ContainInOrder(
+            PipelineStep.CloningRepository,
+            PipelineStep.CreatingBranch,
+            PipelineStep.AnalyzingCode,
+            PipelineStep.PostingAnalysis,
+            PipelineStep.WaitingForAnalysisApproval,
+            PipelineStep.GeneratingCode,
+            PipelineStep.WaitingForChat,
+            PipelineStep.RunningQualityGates,
+            PipelineStep.CreatingPullRequest,
+            PipelineStep.Completed);
+    }
+
+    [Fact]
+    public void AutonomousMode_DefaultsToFalse()
+    {
+        var config = new PipelineConfiguration();
+        config.AutonomousMode.Should().BeFalse();
     }
 }

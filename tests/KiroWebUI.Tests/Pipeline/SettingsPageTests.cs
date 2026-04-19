@@ -351,6 +351,7 @@ public class SettingsPageTests
         savedConfig.SecurityScanEnabled.Should().BeFalse();
         savedConfig.BlacklistedPaths.Should().BeEquivalentTo(new[] { ".kiro", ".github" });
         savedConfig.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
+        savedConfig.AutonomousMode.Should().BeFalse();
     }
 
     [Fact]
