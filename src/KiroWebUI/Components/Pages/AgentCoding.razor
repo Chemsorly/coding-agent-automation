@@ -36,26 +36,11 @@
         <div class="agent-main">
             @if (!PipelineService.IsRunning && activeRun is null or { CurrentStep: PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled })
             {
-                <!-- Completion View -->
-                @if (hasFinishedRun)
+                <!-- Completion Summary -->
+                @if (hasFinishedRun && _showCompletionOnly)
                 {
-                    <div class="completion-view">
-                        <div class="completion-icon">
-                            @(activeRun!.CurrentStep == PipelineStep.Completed ? "✅" : activeRun.CurrentStep == PipelineStep.Cancelled ? "🚫" : "❌")
-                        </div>
-                        <h2>Pipeline @activeRun.CurrentStep</h2>
-                        @if (!string.IsNullOrEmpty(activeRun.PullRequestUrl))
-                        {
-                            <div class="pr-link">
-                                <span>📎</span> <a href="@activeRun.PullRequestUrl" target="_blank" rel="noopener noreferrer">View Pull Request</a>
-                            </div>
-                        }
-                        @if (!string.IsNullOrEmpty(activeRun.FailureReason))
-                        {
-                            <div class="failure-reason">@activeRun.FailureReason</div>
-                        }
-                        <button class="btn-save" @onclick="BackToIssues">Back to Issues</button>
-                    </div>
+                    <PipelineSummary Run="activeRun!" MaxRetries="@_maxRetries"
+                                     OnBackToIssues="BackToIssues" />
                 }
 
                 <!-- Issue Selection View -->
@@ -420,6 +405,11 @@
             await InvokeAsync(async () =>
             {
                 if (_disposed) return;
+
+                var run = PipelineService.ActiveRun;
+                if (run is { CurrentStep: PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled })
+                    _showCompletionOnly = true;
+
                 StateHasChanged();
                 try
                 {

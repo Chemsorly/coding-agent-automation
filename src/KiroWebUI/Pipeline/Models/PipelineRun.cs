@@ -65,4 +65,7 @@ public sealed class PipelineRun
 
     /// <summary>PR number extracted from the PR URL (e.g. "47").</summary>
     public string? PullRequestNumber { get; set; }
+
+    /// <summary>Files excluded from the commit due to blacklist rules (from GIT-04).</summary>
+    public IReadOnlyList<string> BlacklistedFilesDetected { get; set; } = Array.Empty<string>();
 }
