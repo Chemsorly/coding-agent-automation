@@ -760,7 +760,10 @@ public class PipelineOrchestrationService : IDisposable
                 {
                     var commitMessage = PipelineFormatting.GenerateCommitMessage(
                         run.IssueTitle, run.IssueIdentifier);
-                    await _activeRepoProvider!.CommitAllAsync(run.WorkspacePath!, commitMessage, linkedCt);
+                    var blacklisted = await _activeRepoProvider!.CommitAllAsync(
+                        run.WorkspacePath!, commitMessage, _activeConfig!.BlacklistedPaths, linkedCt);
+                    if (RecordBlacklistedFiles(run, blacklisted))
+                        return; // Fail mode — pipeline already transitioned to Failed
                     await _activeRepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, linkedCt);
                     _logger.Information("Pipeline {RunId} pushed branch {BranchName} for CI validation",
                         run.RunId, run.BranchName);
@@ -942,7 +945,10 @@ public class PipelineOrchestrationService : IDisposable
             {
                 var commitMessage = PipelineFormatting.GenerateCommitMessage(
                     run.IssueTitle, run.IssueIdentifier);
-                await _activeRepoProvider!.CommitAllAsync(run.WorkspacePath!, commitMessage, ct);
+                var blacklisted = await _activeRepoProvider!.CommitAllAsync(
+                    run.WorkspacePath!, commitMessage, _activeConfig!.BlacklistedPaths, ct);
+                if (RecordBlacklistedFiles(run, blacklisted))
+                    return; // Fail mode — pipeline already transitioned to Failed
                 await _activeRepoProvider!.PushBranchAsync(run.WorkspacePath!, run.BranchName!, ct);
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
@@ -985,7 +991,8 @@ public class PipelineOrchestrationService : IDisposable
             var prBody = PipelineFormatting.GeneratePrBody(
                 run.IssueIdentifier, testsPassed, testsFailed, testsSkipped,
                 coverage, fileChanges, issueTitle, issueDescription,
-                acceptanceCriteria, isDraft, _activeIssueComments);
+                acceptanceCriteria, isDraft, _activeIssueComments,
+                run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null);
 
             var prInfo = new PullRequestInfo
             {
@@ -1021,6 +1028,39 @@ public class PipelineOrchestrationService : IDisposable
             TransitionTo(run, PipelineStep.Failed);
             AddRunToHistory(run);
         }
+    }
+
+    /// <summary>
+    /// Records blacklisted files on the pipeline run and logs the violation.
+    /// Merges with any previously detected files (from earlier commit calls).
+    /// Returns true if the pipeline should stop (Fail mode), false otherwise.
+    /// In Fail mode, transitions the run to Failed with a clear FailureReason.
+    /// </summary>
+    private bool RecordBlacklistedFiles(PipelineRun run, IReadOnlyList<string> blacklisted)
+    {
+        if (blacklisted.Count == 0) return false;
+
+        var merged = run.BlacklistedFilesDetected.Count > 0
+            ? run.BlacklistedFilesDetected.Concat(blacklisted).Distinct().ToList()
+            : blacklisted.ToList();
+        run.BlacklistedFilesDetected = merged;
+
+        _logger.Warning(
+            "Pipeline {RunId} blacklisted {Count} file(s) excluded from commit (mode={BlacklistMode}, patterns={Patterns}): {Files}",
+            run.RunId, blacklisted.Count, _activeConfig?.BlacklistMode, _activeConfig?.BlacklistedPaths, blacklisted);
+
+        if (_activeConfig?.BlacklistMode == BlacklistMode.Fail)
+        {
+            var fileList = string.Join(", ", blacklisted);
+            run.FailureReason = $"Blacklisted files detected: {fileList}. The agent modified protected paths.";
+            run.CompletedAt = DateTime.UtcNow;
+            TransitionTo(run, PipelineStep.Failed);
+            AddRunToHistory(run);
+            return true;
+        }
+
+        NotifyChange();
+        return false;
     }
 
     private void UpdateFileChangeStats(PipelineRun run)

@@ -13,7 +13,7 @@ public class JsonConfigurationStore : IConfigurationStore
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals,
-        Converters = { new TimeSpanJsonConverter() }
+        Converters = { new TimeSpanJsonConverter(), new System.Text.Json.Serialization.JsonStringEnumConverter() }
     };
 
     public JsonConfigurationStore(string baseDirectory = "config/pipeline")

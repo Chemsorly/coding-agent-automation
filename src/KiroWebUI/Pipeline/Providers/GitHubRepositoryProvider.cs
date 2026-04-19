@@ -129,6 +129,10 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
     }
 
     public Task CommitAllAsync(string workspacePath, string message, CancellationToken ct)
+        => CommitAllAsync(workspacePath, message, null, ct);
+
+    public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message,
+        IReadOnlyList<string>? blacklistedPaths, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(workspacePath);
         ArgumentNullException.ThrowIfNull(message);
@@ -138,13 +142,34 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
             using var repo = new Repository(workspacePath);
             Commands.Stage(repo, "*");
 
-            // Check if there are any staged changes before committing
-            var status = repo.RetrieveStatus();
-            if (!status.IsDirty && status.Staged.Count() == 0)
+            // Enforce blacklist: unstage any staged files matching blacklisted path prefixes
+            var unstaged = new List<string>();
+            if (blacklistedPaths is { Count: > 0 })
+            {
+                var status = repo.RetrieveStatus();
+                var stagedFiles = status.Staged
+                    .Select(e => e.FilePath)
+                    .ToList();
+
+                foreach (var filePath in stagedFiles)
+                {
+                    if (Services.PipelineFormatting.IsPathBlacklisted(filePath, blacklistedPaths))
+                    {
+                        Commands.Unstage(repo, filePath);
+                        unstaged.Add(filePath.Replace('\\', '/'));
+                    }
+                }
+            }
+
+            // Check if there are any staged changes left after blacklist filtering
+            var finalStatus = repo.RetrieveStatus();
+            if (finalStatus.Staged.Count() == 0)
                 throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
 
             var signature = new Signature("KiroWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
             repo.Commit(message, signature, signature);
+
+            return (IReadOnlyList<string>)unstaged;
         }, ct);
     }
 
@@ -253,11 +278,12 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
         string issueDescription,
         IReadOnlyList<string> acceptanceCriteria,
         bool isDraft = false,
-        IReadOnlyList<Models.IssueComment>? comments = null)
+        IReadOnlyList<Models.IssueComment>? comments = null,
+        IReadOnlyList<string>? blacklistedFilesDetected = null)
         => Services.PipelineFormatting.GeneratePrBody(
             issueNumber, testsPassed, testsFailed, testsSkipped,
             coveragePercent, fileChanges, issueTitle, issueDescription,
-            acceptanceCriteria, isDraft, comments);
+            acceptanceCriteria, isDraft, comments, blacklistedFilesDetected);
 
     /// <summary>
     /// Generates a commit message in conventional format.

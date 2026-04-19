@@ -1,5 +1,17 @@
 namespace KiroWebUI.Pipeline.Models;
 
+/// <summary>
+/// Controls how blacklisted path violations are handled during commits.
+/// </summary>
+public enum BlacklistMode
+{
+    /// <summary>Unstage blacklisted files, log a warning, and continue the pipeline.</summary>
+    WarnAndExclude,
+
+    /// <summary>Fail the pipeline with a clear error listing the violating files.</summary>
+    Fail
+}
+
 public sealed class PipelineConfiguration
 {
     public int MaxRetries { get; init; } = 3;
@@ -16,4 +28,6 @@ public sealed class PipelineConfiguration
     public bool ExternalCiEnabled { get; init; } = false;
     public TimeSpan ExternalCiTimeout { get; init; } = TimeSpan.FromMinutes(15);
     public TimeSpan ExternalCiPollInterval { get; init; } = TimeSpan.FromSeconds(30);
+    public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".kiro", ".github" };
+    public BlacklistMode BlacklistMode { get; init; } = BlacklistMode.WarnAndExclude;
 }

@@ -66,7 +66,8 @@ public static partial class PipelineFormatting
         string issueDescription,
         IReadOnlyList<string> acceptanceCriteria,
         bool isDraft = false,
-        IReadOnlyList<IssueComment>? comments = null)
+        IReadOnlyList<IssueComment>? comments = null,
+        IReadOnlyList<string>? blacklistedFilesDetected = null)
     {
         var sb = new StringBuilder();
 
@@ -133,6 +134,15 @@ public static partial class PipelineFormatting
         sb.AppendLine("## Issue Reference");
         sb.AppendLine($"Closes #{issueNumber}");
         sb.AppendLine();
+
+        if (blacklistedFilesDetected is { Count: > 0 })
+        {
+            sb.AppendLine("## ⚠️ Blacklisted Files Excluded");
+            sb.AppendLine("The following agent-modified files were excluded from this commit (protected paths):");
+            foreach (var file in blacklistedFilesDetected)
+                sb.AppendLine($"- `{file}`");
+            sb.AppendLine();
+        }
 
         sb.AppendLine("---");
         sb.AppendLine("*Automated implementation via pipeline*");
@@ -206,6 +216,24 @@ public static partial class PipelineFormatting
     public static string GenerateCommitMessage(string title, string issueNumber)
     {
         return $"feat: {title} (#{issueNumber})\n\nAutomated implementation via pipeline";
+    }
+
+    /// <summary>
+    /// Checks whether a file path matches any of the blacklisted path prefixes.
+    /// Matching is prefix-based, case-insensitive, and normalizes backslashes to forward slashes.
+    /// </summary>
+    public static bool IsPathBlacklisted(string filePath, IReadOnlyList<string> blacklistedPrefixes)
+    {
+        if (blacklistedPrefixes.Count == 0) return false;
+        var normalized = filePath.Replace('\\', '/');
+        foreach (var prefix in blacklistedPrefixes)
+        {
+            var normalizedPrefix = prefix.Replace('\\', '/').TrimEnd('/');
+            if (normalized.StartsWith(normalizedPrefix + "/", StringComparison.OrdinalIgnoreCase)
+                || normalized.Equals(normalizedPrefix, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     private static void AppendInputComments(StringBuilder sb, IReadOnlyList<IssueComment>? comments)
