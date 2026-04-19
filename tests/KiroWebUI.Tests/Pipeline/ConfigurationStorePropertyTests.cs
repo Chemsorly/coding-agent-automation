@@ -41,6 +41,7 @@ public class ConfigurationStorePropertyTests : IDisposable
         var clampedRetries = Math.Clamp(Math.Abs(maxRetries), 0, 100);
         var clampedCoverage = Math.Round(Math.Abs(maxRetries % 101) * 1.0, 1);
         var timeoutMinutes = Math.Clamp(Math.Abs(maxRetries % 120) + 1, 1, 120);
+        var blacklistMode = (Math.Abs(maxRetries) % 2 == 0) ? BlacklistMode.WarnAndExclude : BlacklistMode.Fail;
 
         var original = new PipelineConfiguration
         {
@@ -48,7 +49,9 @@ public class ConfigurationStorePropertyTests : IDisposable
             AgentTimeout = TimeSpan.FromMinutes(timeoutMinutes),
             MinCoverageThreshold = clampedCoverage,
             SecurityScanEnabled = securityScan,
-            WorkspaceBaseDirectory = workspaceDir.Get
+            WorkspaceBaseDirectory = workspaceDir.Get,
+            BlacklistedPaths = new[] { ".kiro", ".github", $".custom-{Math.Abs(maxRetries % 10)}" },
+            BlacklistMode = blacklistMode
         };
 
         var store = new JsonConfigurationStore(_tempDir);
@@ -61,6 +64,8 @@ public class ConfigurationStorePropertyTests : IDisposable
         Assert.Equal(original.MinCoverageThreshold, loaded.MinCoverageThreshold);
         Assert.Equal(original.SecurityScanEnabled, loaded.SecurityScanEnabled);
         Assert.Equal(original.WorkspaceBaseDirectory, loaded.WorkspaceBaseDirectory);
+        Assert.Equal(original.BlacklistedPaths, loaded.BlacklistedPaths);
+        Assert.Equal(original.BlacklistMode, loaded.BlacklistMode);
     }
 
     /// <summary>

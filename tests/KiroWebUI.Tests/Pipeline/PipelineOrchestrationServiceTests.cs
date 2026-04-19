@@ -73,6 +73,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new List<IssueComment>());        _mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
         _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
         _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>())).ReturnsAsync("https://github.com/test/pr/1");
 
@@ -465,5 +466,98 @@ public class PipelineOrchestrationServiceTests
         config.SelfReviewEnabled.Should().BeFalse();
         config.SelfReviewMaxIterations.Should().Be(1);
         config.SelfReviewPrompt.Should().Contain("sub-agent");
+    }
+
+    // --- Blacklist enforcement (GIT-04) ---
+
+    [Fact]
+    public async Task ProceedToQualityGates_WarnAndExclude_PopulatesBlacklistedFilesAndCompletes()
+    {
+        // Arrange — CommitAllAsync returns blacklisted files
+        var blacklisted = new List<string> { ".kiro/steering/rule.md", ".github/workflows/ci.yml" };
+        _mockRepoProvider.Setup(p => p.CommitAllAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(blacklisted as IReadOnlyList<string>);
+
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                Tests = new GateResult { GateName = "Tests", Passed = true }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        // Act
+        await _service.ProceedToQualityGatesAsync(CancellationToken.None);
+
+        // Assert — pipeline completed, blacklisted files recorded
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.BlacklistedFilesDetected.Should().Contain(".kiro/steering/rule.md");
+        run.BlacklistedFilesDetected.Should().Contain(".github/workflows/ci.yml");
+    }
+
+    [Fact]
+    public async Task ProceedToQualityGates_FailMode_TransitionsToFailed()
+    {
+        // Arrange — Fail mode config
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                BlacklistMode = BlacklistMode.Fail
+            });
+
+        var blacklisted = new List<string> { ".github/workflows/ci.yml" };
+        _mockRepoProvider.Setup(p => p.CommitAllAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(blacklisted as IReadOnlyList<string>);
+
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                Tests = new GateResult { GateName = "Tests", Passed = true }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        // Act
+        await _service.ProceedToQualityGatesAsync(CancellationToken.None);
+
+        // Assert — pipeline failed with clear reason
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("Blacklisted files detected");
+        run.FailureReason.Should().Contain(".github/workflows/ci.yml");
+        run.BlacklistedFilesDetected.Should().Contain(".github/workflows/ci.yml");
+    }
+
+    [Fact]
+    public async Task ProceedToQualityGates_AllFilesBlacklisted_HandlesGracefully()
+    {
+        // Arrange — CommitAllAsync throws "No changes to commit" (all files were blacklisted)
+        // In CreatePullRequestAsync, this is caught and treated as "already committed".
+        // The pipeline continues and creates a PR (or fails at BranchHasCommitsAhead).
+        _mockRepoProvider.Setup(p => p.CommitAllAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace."));
+
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                Tests = new GateResult { GateName = "Tests", Passed = true }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        // Act
+        await _service.ProceedToQualityGatesAsync(CancellationToken.None);
+
+        // Assert — pipeline does not crash; it completes or fails gracefully
+        run.CurrentStep.Should().BeOneOf(PipelineStep.Completed, PipelineStep.Failed);
     }
 }
