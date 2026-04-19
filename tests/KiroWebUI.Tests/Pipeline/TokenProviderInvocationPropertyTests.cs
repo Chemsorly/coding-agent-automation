@@ -77,7 +77,7 @@ public class TokenProviderInvocationPropertyTests
                 {
                     var provider = new GitHubIssueProvider(
                         FakeApiUrl, trackingDelegate, input.Owner, input.Repo);
-                    provider.ListOpenIssuesAsync(CancellationToken.None)
+                    provider.ListOpenIssuesAsync(1, 25, CancellationToken.None)
                         .GetAwaiter().GetResult();
                     break;
                 }

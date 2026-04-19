@@ -55,17 +55,77 @@ public class GitHubIssueProviderTests
         };
 
         _mockIssues
-            .Setup(i => i.GetAllForRepository("owner", "repo", It.IsAny<RepositoryIssueRequest>()))
+            .Setup(i => i.GetAllForRepository("owner", "repo", It.IsAny<RepositoryIssueRequest>(), It.IsAny<ApiOptions>()))
             .ReturnsAsync(issues.AsReadOnly());
 
-        var result = await _provider.ListOpenIssuesAsync(CancellationToken.None);
+        var result = await _provider.ListOpenIssuesAsync(1, 25, CancellationToken.None);
 
-        result.Should().HaveCount(2);
-        result[0].Identifier.Should().Be("1");
-        result[0].Title.Should().Be("First");
-        result[0].Labels.Should().BeEquivalentTo(["feat"]);
-        result[1].Identifier.Should().Be("2");
-        result[1].Labels.Should().BeEmpty();
+        result.Items.Should().HaveCount(2);
+        result.Items[0].Identifier.Should().Be("1");
+        result.Items[0].Title.Should().Be("First");
+        result.Items[0].Labels.Should().BeEquivalentTo(["feat"]);
+        result.Items[1].Identifier.Should().Be("2");
+        result.Items[1].Labels.Should().BeEmpty();
+        result.Page.Should().Be(1);
+        result.PageSize.Should().Be(25);
+        result.HasMore.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_HasMore_WhenExtraItemReturned()
+    {
+        // Request pageSize=2, return 3 items → HasMore=true, only 2 items returned
+        var issues = new List<Issue>
+        {
+            CreateOctokitIssue(1, "First", body: "b", labels: []),
+            CreateOctokitIssue(2, "Second", body: "b", labels: []),
+            CreateOctokitIssue(3, "Third", body: "b", labels: [])
+        };
+
+        _mockIssues
+            .Setup(i => i.GetAllForRepository("owner", "repo", It.IsAny<RepositoryIssueRequest>(), It.IsAny<ApiOptions>()))
+            .ReturnsAsync(issues.AsReadOnly());
+
+        var result = await _provider.ListOpenIssuesAsync(1, 2, CancellationToken.None);
+
+        result.Items.Should().HaveCount(2);
+        result.HasMore.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_PassesCorrectApiOptions()
+    {
+        _mockIssues
+            .Setup(i => i.GetAllForRepository("owner", "repo", It.IsAny<RepositoryIssueRequest>(), It.IsAny<ApiOptions>()))
+            .ReturnsAsync(new List<Issue>().AsReadOnly());
+
+        await _provider.ListOpenIssuesAsync(3, 10, CancellationToken.None);
+
+        _mockIssues.Verify(i => i.GetAllForRepository("owner", "repo",
+            It.IsAny<RepositoryIssueRequest>(),
+            It.Is<ApiOptions>(o => o.StartPage == 3 && o.PageSize == 11 && o.PageCount == 1)),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_InvalidPage_ThrowsArgumentOutOfRangeException()
+    {
+        var act = () => _provider.ListOpenIssuesAsync(0, 10, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_InvalidPageSize_ThrowsArgumentOutOfRangeException()
+    {
+        var act = () => _provider.ListOpenIssuesAsync(1, 0, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_PageSizeExceedsMax_ThrowsArgumentOutOfRangeException()
+    {
+        var act = () => _provider.ListOpenIssuesAsync(1, 101, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
     }
 
     [Fact]

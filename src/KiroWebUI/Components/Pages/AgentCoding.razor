@@ -124,6 +124,12 @@
                                         </div>
                                     }
                                 </div>
+
+                                <div class="issue-pagination">
+                                    <button class="btn-page" disabled="@(_currentPage <= 1)" @onclick="PreviousPage">← Previous</button>
+                                    <span class="page-indicator">Page @_currentPage</span>
+                                    <button class="btn-page" disabled="@(!_hasMoreIssues)" @onclick="NextPage">Next →</button>
+                                </div>
                             }
 
                             @if (_loadingIssueDetail)
@@ -342,6 +348,9 @@
     private bool _disposed;
     private Timer? _elapsedTimer;
     private int _maxRetries = 3;
+    private int _currentPage = 1;
+    private int _issuePageSize = 25;
+    private bool _hasMoreIssues;
 
     private IReadOnlyList<IssueSummary> FilteredIssues =>
         _filteredIssuesCache ??= _selectedLabels.Count == 0
@@ -386,6 +395,7 @@
 
             var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
             _maxRetries = config.MaxRetries;
+            _issuePageSize = Math.Clamp(config.IssuePageSize, 1, 100);
         }
         catch (Exception ex)
         {
@@ -462,19 +472,31 @@
         _availableLabels.Clear();
         _filteredIssuesCache = null;
         _errorMessage = null;
+        _currentPage = 1;
+        _hasMoreIssues = false;
 
         if (string.IsNullOrEmpty(_selectedIssueProviderId))
             return;
 
+        await LoadIssuePage();
+    }
+
+    private async Task LoadIssuePage()
+    {
         _loadingIssues = true;
+        _filteredIssuesCache = null;
+        _selectedIssueId = "";
+        _selectedIssueDetail = null;
+        _selectedLabels.Clear();
         try
         {
             var providerConfig = _issueProviders.FirstOrDefault(p => p.Id == _selectedIssueProviderId);
             if (providerConfig == null) return;
 
             var issueProvider = ProviderFactory.CreateIssueProvider(providerConfig);
-            var issues = await issueProvider.ListOpenIssuesAsync(CancellationToken.None);
-            _issues = issues.ToList();
+            var result = await issueProvider.ListOpenIssuesAsync(_currentPage, _issuePageSize, CancellationToken.None);
+            _issues = result.Items.ToList();
+            _hasMoreIssues = result.HasMore;
             _availableLabels = _issues.SelectMany(i => i.Labels).Distinct().OrderBy(l => l).ToList();
         }
         catch (Exception ex)
@@ -485,6 +507,20 @@
         {
             _loadingIssues = false;
         }
+    }
+
+    private async Task PreviousPage()
+    {
+        if (_currentPage <= 1) return;
+        _currentPage--;
+        await LoadIssuePage();
+    }
+
+    private async Task NextPage()
+    {
+        if (!_hasMoreIssues) return;
+        _currentPage++;
+        await LoadIssuePage();
     }
 
     private async Task SelectIssue(string issueId)

@@ -8,7 +8,7 @@ public interface IIssueProvider
 {
     IssueProviderType ProviderType { get; }
     Task<IssueDetail> GetIssueAsync(string identifier, CancellationToken ct);
-    Task<IReadOnlyList<IssueSummary>> ListOpenIssuesAsync(CancellationToken ct);
+    Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize, CancellationToken ct);
     Task<IReadOnlyList<IssueComment>> ListCommentsAsync(string identifier, CancellationToken ct);
     Task PostCommentAsync(string identifier, string body, CancellationToken ct);
 }

@@ -15,6 +15,7 @@ public enum BlacklistMode
 public sealed class PipelineConfiguration
 {
     public int MaxRetries { get; init; } = 3;
+    public int IssuePageSize { get; init; } = 25;
     public TimeSpan AgentTimeout { get; init; } = TimeSpan.FromMinutes(30);
     public double MinCoverageThreshold { get; init; } = 80.0;
     public bool SecurityScanEnabled { get; init; } = false;

@@ -65,11 +65,17 @@ public class AgentCodingPageComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() });
 
-        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<IssueSummary>
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
             {
-                new() { Identifier = "42", Title = "Test Issue", Labels = Array.Empty<string>() },
-                new() { Identifier = "43", Title = "Bug Fix", Labels = new[] { "bug" } }
+                Items = new List<IssueSummary>
+                {
+                    new() { Identifier = "42", Title = "Test Issue", Labels = Array.Empty<string>() },
+                    new() { Identifier = "43", Title = "Bug Fix", Labels = new[] { "bug" } }
+                },
+                Page = 1,
+                PageSize = 25,
+                HasMore = false
             });
 
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
