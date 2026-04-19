@@ -28,6 +28,11 @@ public sealed class PipelineConfiguration
     public bool ExternalCiEnabled { get; init; } = false;
     public TimeSpan ExternalCiTimeout { get; init; } = TimeSpan.FromMinutes(15);
     public TimeSpan ExternalCiPollInterval { get; init; } = TimeSpan.FromSeconds(30);
+    /// <summary>
+    /// When enabled, the pipeline skips the analysis approval and chat interaction pauses,
+    /// proceeding directly to quality gates and PR creation.
+    /// </summary>
+    public bool AutonomousMode { get; init; } = false;
     public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".kiro", ".github" };
     public BlacklistMode BlacklistMode { get; init; } = BlacklistMode.WarnAndExclude;
 }

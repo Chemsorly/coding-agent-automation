@@ -409,15 +409,24 @@ public class PipelineOrchestrationService : IDisposable
                 }
             }
 
-            // Pause for user approval before implementation
+            // Pause for user approval before implementation (or auto-approve in autonomous mode)
             TransitionTo(run, PipelineStep.WaitingForAnalysisApproval);
+
+            if (_activeConfig!.AutonomousMode)
+            {
+                _logger.Information("Pipeline {RunId} autonomous mode: auto-approving analysis", run.RunId);
+                await ApproveAnalysisAsync(ct);
+            }
         }
         catch (OperationCanceledException)
         {
-            _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
-            run.CompletedAt = DateTime.UtcNow;
-            TransitionTo(run, PipelineStep.Cancelled);
-            AddRunToHistory(run);
+            if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
+            {
+                _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
+                run.CompletedAt = DateTime.UtcNow;
+                TransitionTo(run, PipelineStep.Cancelled);
+                AddRunToHistory(run);
+            }
         }
     }
 
@@ -629,15 +638,24 @@ public class PipelineOrchestrationService : IDisposable
                 run.ReviewIterationInProgress = 0;
             }
 
-            // Transition to WaitingForChat
+            // Transition to WaitingForChat (or auto-proceed in autonomous mode)
             TransitionTo(run, PipelineStep.WaitingForChat);
+
+            if (_activeConfig!.AutonomousMode)
+            {
+                _logger.Information("Pipeline {RunId} autonomous mode: proceeding directly to quality gates", run.RunId);
+                await ProceedToQualityGatesAsync(linkedCt);
+            }
         }
         catch (OperationCanceledException)
         {
-            _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
-            run.CompletedAt = DateTime.UtcNow;
-            TransitionTo(run, PipelineStep.Cancelled);
-            AddRunToHistory(run);
+            if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
+            {
+                _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
+                run.CompletedAt = DateTime.UtcNow;
+                TransitionTo(run, PipelineStep.Cancelled);
+                AddRunToHistory(run);
+            }
         }
     }
 
@@ -844,14 +862,9 @@ public class PipelineOrchestrationService : IDisposable
                 "Pipeline {RunId} quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}",
                 run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed);
 
-            if (report.AllPassed)
+            // Retry loop: if gates fail and retries remain, send fix prompt and re-validate
+            while (!report.AllPassed && run.RetryCount < _activeConfig!.MaxRetries)
             {
-                // All gates passed — create PR
-                await CreatePullRequestAsync(run, report, isDraft: false, linkedCt);
-            }
-            else if (run.RetryCount < _activeConfig!.MaxRetries)
-            {
-                // Gates failed, retries left — auto-fix via agent
                 run.RetryCount++;
                 var errorSummary = BuildQualityGateErrorSummary(report);
                 run.RetryErrors.Add(errorSummary);
@@ -873,8 +886,22 @@ public class PipelineOrchestrationService : IDisposable
                 var fixPrompt = $"The quality gates failed. Please fix the following issues:\n{errorSummary}";
                 await SendChatMessageAsync(fixPrompt, linkedCt);
 
-                // Agent has attempted the fix — re-run quality gates
-                await ProceedToQualityGatesAsync(ct);
+                // Re-run quality gates
+                TransitionTo(run, PipelineStep.RunningQualityGates);
+                report = await _qualityGateValidator.ValidateAsync(
+                    run.WorkspacePath!, _activeConfig!, linkedCt);
+                run.LatestQualityReport = report;
+                run.QualityGateHistory.Enqueue(report);
+
+                _logger.Information(
+                    "Pipeline {RunId} retry quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}",
+                    run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed);
+            }
+
+            if (report.AllPassed)
+            {
+                // All gates passed — create PR
+                await CreatePullRequestAsync(run, report, isDraft: false, linkedCt);
             }
             else
             {
