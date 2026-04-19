@@ -93,6 +93,7 @@ public class QualityGateValidator : IQualityGateValidator
 
     /// <summary>
     /// Formats CI failure details for display in quality gate error summaries.
+    /// References log file paths when available so the agent can read them on demand.
     /// </summary>
     internal static string BuildCiFailureDetails(PipelineRunStatus status)
     {
@@ -107,6 +108,12 @@ public class QualityGateValidator : IQualityGateValidator
                 var reason = !string.IsNullOrEmpty(job.FailureReason) ? $" — {job.FailureReason}" : "";
                 var logLink = !string.IsNullOrEmpty(job.LogUrl) ? $" (logs: {job.LogUrl})" : "";
                 lines.Add($"  - {job.Name}{reason}{logLink}");
+
+                if (!string.IsNullOrEmpty(job.LogFilePath))
+                {
+                    lines.Add($"    Full CI log saved to: {job.LogFilePath}");
+                    lines.Add($"    Read this file (raw GitHub Actions job log) to diagnose the failure.");
+                }
             }
         }
 

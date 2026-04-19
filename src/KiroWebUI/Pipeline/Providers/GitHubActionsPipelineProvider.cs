@@ -126,7 +126,8 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
                     FailureReason = job.Conclusion?.Value == WorkflowJobConclusion.Failure
                         ? $"Job '{job.Name}' failed"
                         : null,
-                    LogUrl = job.HtmlUrl
+                    LogUrl = job.HtmlUrl,
+                    JobId = job.Id
                 });
             }
         }
@@ -175,6 +176,13 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
             if (status.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled)
             {
                 _logger.Information("CI completed: {State} after {PollCount} poll(s)", status.State, pollCount);
+
+                // Automatically fetch logs for failed jobs so callers get actionable diagnostics
+                if (status.State == PipelineRunState.Failed)
+                {
+                    await EnrichFailedJobsWithLogsAsync(status, linkedCt);
+                }
+
                 return status;
             }
 
@@ -187,6 +195,39 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
                 _logger.Warning("CI polling timed out after {Timeout} ({PollCount} polls). Last state: {State}",
                     timeout, pollCount, status.State);
                 return status;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Fetches full log content from the GitHub Actions API for each failed job
+    /// and populates <see cref="PipelineJobResult.LogContent"/>.
+    /// Failures are logged and swallowed — missing logs should never block the pipeline.
+    /// </summary>
+    private async Task EnrichFailedJobsWithLogsAsync(
+        PipelineRunStatus status, CancellationToken ct)
+    {
+        var failedJobs = status.Jobs.Where(j => j.State == PipelineRunState.Failed && j.JobId > 0).ToList();
+        if (failedJobs.Count == 0)
+            return;
+
+        var client = await GetClientAsync(ct);
+
+        foreach (var job in failedJobs)
+        {
+            try
+            {
+                var rawLog = await client.Actions.Workflows.Jobs.GetLogs(_owner, _repo, job.JobId);
+                if (!string.IsNullOrEmpty(rawLog))
+                {
+                    job.LogContent = rawLog;
+                    _logger.Debug("Fetched {Length} chars of logs for failed job '{JobName}' (id={JobId})",
+                        rawLog.Length, job.Name, job.JobId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to fetch logs for job '{JobName}' (id={JobId})", job.Name, job.JobId);
             }
         }
     }

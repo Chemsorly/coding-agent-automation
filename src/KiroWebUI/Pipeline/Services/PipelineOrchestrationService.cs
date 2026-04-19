@@ -771,11 +771,19 @@ public class PipelineOrchestrationService : IDisposable
                         _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA", run.RunId);
                     }
 
-                    // Wait for external CI
+                    // Wait for external CI — logs for failed jobs are fetched
+                    // automatically by the provider before returning
                     var ciStatus = await _activePipelineProvider.WaitForCompletionAsync(
                         run.BranchName!, commitSha, _activeConfig.ExternalCiTimeout, linkedCt);
 
                     var ciPassed = ciStatus.State == PipelineRunState.Passed;
+
+                    // Write full CI logs to .kiro/ci-logs/ so the agent can read them on demand
+                    if (!ciPassed && run.WorkspacePath != null)
+                    {
+                        WriteCiLogsToWorkspace(ciStatus, run.WorkspacePath, run.RunId);
+                    }
+
                     externalCiGate = new GateResult
                     {
                         GateName = "External CI",
@@ -1166,6 +1174,64 @@ public class PipelineOrchestrationService : IDisposable
         if (report.ExternalCi is { Passed: false })
             errors.Add($"External CI: {report.ExternalCi.Details}");
         return string.Join(Environment.NewLine, errors);
+    }
+
+    /// <summary>
+    /// Writes full CI job logs to .kiro/ci-logs/{runId}/ in the workspace.
+    /// Each failed job gets its own file. Sets <see cref="PipelineJobResult.LogFilePath"/>
+    /// so <see cref="QualityGateValidator.BuildCiFailureDetails"/> can reference the paths.
+    /// Clears <see cref="PipelineJobResult.LogContent"/> after writing to free memory.
+    /// </summary>
+    private void WriteCiLogsToWorkspace(PipelineRunStatus ciStatus, string workspacePath, string runId)
+    {
+        var failedJobs = ciStatus.Jobs.Where(j => j.State == PipelineRunState.Failed && !string.IsNullOrEmpty(j.LogContent)).ToList();
+        if (failedJobs.Count == 0)
+            return;
+
+        var logsDir = Path.Combine(workspacePath, ".kiro", "ci-logs", runId);
+        try
+        {
+            // Clean previous logs for this run (handles retries writing to the same runId directory)
+            if (Directory.Exists(logsDir))
+                Directory.Delete(logsDir, recursive: true);
+
+            Directory.CreateDirectory(logsDir);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to prepare CI logs directory {LogsDir}", logsDir);
+            return;
+        }
+
+        var written = 0;
+        foreach (var job in failedJobs)
+        {
+            try
+            {
+                var safeJobName = string.Join("_", job.Name.Split(Path.GetInvalidFileNameChars()));
+                if (string.IsNullOrWhiteSpace(safeJobName))
+                    safeJobName = $"job_{job.JobId}";
+
+                var fileName = $"{safeJobName}_{job.JobId}.log";
+                var fullPath = Path.Combine(logsDir, fileName);
+
+                File.WriteAllText(fullPath, job.LogContent);
+
+                // Store the workspace-relative path so the agent prompt can reference it
+                job.LogFilePath = Path.Combine(".kiro", "ci-logs", runId, fileName).Replace('\\', '/');
+                job.LogContent = null; // Free the potentially large string — it's on disk now
+
+                _logger.Debug("Wrote CI log for job '{JobName}' to {LogPath}", job.Name, job.LogFilePath);
+                written++;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to write CI log for job '{JobName}'", job.Name);
+            }
+        }
+
+        if (written > 0)
+            _logger.Information("Wrote {Count} CI log file(s) to {LogsDir}", written, logsDir);
     }
 
     /// <summary>

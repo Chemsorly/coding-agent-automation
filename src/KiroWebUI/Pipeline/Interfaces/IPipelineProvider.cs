@@ -19,6 +19,9 @@ public interface IPipelineProvider
     /// <summary>
     /// Waits for all pipeline runs on a branch/commit to complete,
     /// polling at a configured interval until completion or timeout.
+    /// When CI fails, implementations should populate
+    /// <see cref="PipelineJobResult.LogContent"/> on failed jobs
+    /// so callers receive actionable diagnostics without a second call.
     /// </summary>
     Task<PipelineRunStatus> WaitForCompletionAsync(
         string branchName,
