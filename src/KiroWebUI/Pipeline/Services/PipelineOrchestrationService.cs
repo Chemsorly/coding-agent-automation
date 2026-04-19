@@ -952,6 +952,9 @@ public class PipelineOrchestrationService : IDisposable
                     run.RunId);
             }
 
+            // Refresh file change stats now that changes are committed
+            UpdateFileChangeStats(run);
+
             // Verify the branch actually has commits beyond the base branch.
             // If the agent didn't implement anything, there's nothing to PR.
             if (!BranchHasCommitsAhead(run.WorkspacePath!, _activeBaseBranch))
