@@ -493,6 +493,10 @@
                     <div class="form-group">
                         <label>Review Prompt</label>
                         <textarea @bind="_pipelineConfig.SelfReviewPrompt" rows="4" style="width:100%;"></textarea>
+                        @if (_pipelineConfig.SelfReviewPrompt != PipelineConfiguration.DefaultSelfReviewPrompt)
+                        {
+                            <button type="button" class="btn-revert" @onclick="() => _pipelineConfig.SelfReviewPrompt = PipelineConfiguration.DefaultSelfReviewPrompt">Revert to default</button>
+                        }
                     </div>
                 }
                 <div class="form-group form-checkbox">
@@ -1305,10 +1309,7 @@
         public bool SecurityScanEnabled { get; set; }
         public bool SelfReviewEnabled { get; set; }
         public int SelfReviewMaxIterations { get; set; } = 1;
-        public string SelfReviewPrompt { get; set; } =
-            "Use a sub-agent to review the changes you just made against the original issue requirements. " +
-            "The sub-agent should check for: correctness against acceptance criteria, code quality and " +
-            "project conventions, unhandled edge cases, and security gaps. Fix any issues the review finds.";
+        public string SelfReviewPrompt { get; set; } = PipelineConfiguration.DefaultSelfReviewPrompt;
         public bool ExternalCiEnabled { get; set; }
         public BlacklistMode BlacklistMode { get; set; } = BlacklistMode.WarnAndExclude;
     }
