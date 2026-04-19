@@ -272,39 +272,49 @@
 
     <!-- Run History Panel -->
     <div class="run-history">
-        <h2>Run History</h2>
-        @{
-            var history = PipelineService.GetRunHistory();
-        }
-        @if (history.Count == 0)
+        <div class="run-history-header" @onclick="() => _historyExpanded = !_historyExpanded" role="button" tabindex="0">
+            <span class="run-history-toggle">@(_historyExpanded ? "▾" : "▸")</span>
+            <h2>Run History</h2>
+            @{
+                var history = PipelineService.GetRunHistory();
+            }
+            @if (history.Count > 0)
+            {
+                <span class="run-history-count">@history.Count</span>
+            }
+        </div>
+        @if (_historyExpanded)
         {
-            <p class="no-history">No pipeline runs yet.</p>
-        }
-        else
-        {
-            <div class="history-list">
-                @foreach (var h in history)
-                {
-                    <div class="history-card">
-                        <div class="history-info">
-                            <span class="history-id">@h.RunId[..8]</span>
-                            <span class="history-title">#@h.IssueIdentifier @h.IssueTitle</span>
-                            <span class="step-badge step-@h.FinalStep.ToString().ToLowerInvariant()">@h.FinalStep</span>
+            @if (history.Count == 0)
+            {
+                <p class="no-history">No pipeline runs yet.</p>
+            }
+            else
+            {
+                <div class="history-list">
+                    @foreach (var h in history)
+                    {
+                        <div class="history-card">
+                            <div class="history-info">
+                                <span class="history-id">@h.RunId[..8]</span>
+                                <span class="history-title">#@h.IssueIdentifier @h.IssueTitle</span>
+                                <span class="step-badge step-@h.FinalStep.ToString().ToLowerInvariant()">@h.FinalStep</span>
+                            </div>
+                            <div class="history-meta">
+                                <span>@h.StartedAt.ToLocalTime().ToString("g")</span>
+                                @if (h.CompletedAt.HasValue)
+                                {
+                                    <span>Duration: @((h.CompletedAt.Value - h.StartedAt).ToString(@"hh\:mm\:ss"))</span>
+                                }
+                                @if (!string.IsNullOrEmpty(h.PullRequestUrl))
+                                {
+                                    <a href="@h.PullRequestUrl" target="_blank" rel="noopener noreferrer">PR</a>
+                                }
+                            </div>
                         </div>
-                        <div class="history-meta">
-                            <span>@h.StartedAt.ToLocalTime().ToString("g")</span>
-                            @if (h.CompletedAt.HasValue)
-                            {
-                                <span>Duration: @((h.CompletedAt.Value - h.StartedAt).ToString(@"hh\:mm\:ss"))</span>
-                            }
-                            @if (!string.IsNullOrEmpty(h.PullRequestUrl))
-                            {
-                                <a href="@h.PullRequestUrl" target="_blank" rel="noopener noreferrer">PR</a>
-                            }
-                        </div>
-                    </div>
-                }
-            </div>
+                    }
+                </div>
+            }
         }
     </div>
 </div>
@@ -318,6 +328,7 @@
     private List<IssueSummary>? _filteredIssuesCache;
     private List<string> _outputLines = new();
     private IssueDetail? _selectedIssueDetail;
+    private bool _historyExpanded;
     private bool _loadingIssueDetail;
 
     private string _selectedIssueProviderId = "";

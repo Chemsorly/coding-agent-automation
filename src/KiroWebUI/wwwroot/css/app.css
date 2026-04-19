@@ -374,10 +374,14 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 .retry-count { font-size: 0.8rem; color: var(--warning); margin-top: 8px; }
 
 /* Run History */
-.run-history { padding: 20px; border-top: 1px solid var(--border); background: var(--surface); max-height: 33vh; overflow-y: auto; }
-.run-history h2 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: var(--text-muted); }
-.no-history { font-size: 0.85rem; color: var(--text-muted); }
-.history-list { display: flex; flex-direction: column; gap: 6px; }
+.run-history { padding: 12px 20px; border-top: 1px solid var(--border); background: var(--surface); }
+.run-history-header { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.run-history-header:hover { opacity: 0.8; }
+.run-history-header h2 { font-size: 0.9rem; font-weight: 600; margin: 0; color: var(--text-muted); }
+.run-history-toggle { font-size: 0.75rem; color: var(--text-muted); width: 12px; }
+.run-history-count { font-size: 0.7rem; color: var(--text-muted); background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; margin-left: 2px; }
+.no-history { font-size: 0.85rem; color: var(--text-muted); margin-top: 8px; }
+.history-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 30vh; overflow-y: auto; }
 .history-card { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); }
 .history-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .history-id { font-size: 0.75rem; color: var(--text-muted); font-family: monospace; }
