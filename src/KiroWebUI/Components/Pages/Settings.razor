@@ -524,6 +524,18 @@
                         <option value="@BlacklistMode.Fail">Fail (stop pipeline on violation)</option>
                     </select>
                 </div>
+                <div class="form-group form-checkbox">
+                    <label>
+                        <input type="checkbox" @bind="_pipelineConfig.CleanupSuccessfulWorkspaces" />
+                        Delete Workspace After Successful PR
+                    </label>
+                    <span class="form-hint">Automatically remove workspace folders after a non-draft PR is created</span>
+                </div>
+                <div class="form-group">
+                    <label>Failed Run Workspace Retention (days)</label>
+                    <input type="number" @bind="_pipelineConfig.FailedWorkspaceRetentionDays" min="-1" />
+                    <span class="form-hint">Days to keep workspaces for failed/cancelled runs. 0 = delete immediately, -1 = keep forever</span>
+                </div>
                 <div class="form-buttons">
                     <button class="btn-save" @onclick="SavePipelineConfig">Save Pipeline Configuration</button>
                 </div>
@@ -609,7 +621,9 @@
                 SelfReviewMaxIterations = config.SelfReviewMaxIterations,
                 SelfReviewPrompt = config.SelfReviewPrompt,
                 ExternalCiEnabled = config.ExternalCiEnabled,
-                BlacklistMode = config.BlacklistMode
+                BlacklistMode = config.BlacklistMode,
+                CleanupSuccessfulWorkspaces = config.CleanupSuccessfulWorkspaces,
+                FailedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays
             };
             _agentTimeoutMinutes = (int)config.AgentTimeout.TotalMinutes;
             _externalCiTimeoutMinutes = (int)config.ExternalCiTimeout.TotalMinutes;
@@ -1240,7 +1254,9 @@
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .ToArray(),
-            BlacklistMode = _pipelineConfig.BlacklistMode
+            BlacklistMode = _pipelineConfig.BlacklistMode,
+            CleanupSuccessfulWorkspaces = _pipelineConfig.CleanupSuccessfulWorkspaces,
+            FailedWorkspaceRetentionDays = _pipelineConfig.FailedWorkspaceRetentionDays
         };
 
         try
@@ -1311,6 +1327,8 @@
             "project conventions, unhandled edge cases, and security gaps. Fix any issues the review finds.";
         public bool ExternalCiEnabled { get; set; }
         public BlacklistMode BlacklistMode { get; set; } = BlacklistMode.WarnAndExclude;
+        public bool CleanupSuccessfulWorkspaces { get; set; } = true;
+        public int FailedWorkspaceRetentionDays { get; set; } = 7;
     }
 
     private class PipelineProviderForm

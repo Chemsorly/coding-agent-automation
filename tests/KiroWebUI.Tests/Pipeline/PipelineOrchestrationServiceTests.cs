@@ -663,4 +663,390 @@ public class PipelineOrchestrationServiceTests
         var config = new PipelineConfiguration();
         config.AutonomousMode.Should().BeFalse();
     }
+
+    [Fact]
+    public void CleanupSuccessfulWorkspaces_DefaultsToTrue()
+    {
+        var config = new PipelineConfiguration();
+        config.CleanupSuccessfulWorkspaces.Should().BeTrue();
+    }
+
+    [Fact]
+    public void FailedWorkspaceRetentionDays_DefaultsToSeven()
+    {
+        var config = new PipelineConfiguration();
+        config.FailedWorkspaceRetentionDays.Should().Be(7);
+    }
+
+    [Fact]
+    public async Task SuccessfulPr_DeletesWorkspace_WhenCleanupEnabled()
+    {
+        var workspaceBase = Path.Combine(Path.GetTempPath(), $"ws-cleanup-{Guid.NewGuid()}");
+        Directory.CreateDirectory(workspaceBase);
+
+        try
+        {
+            _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PipelineConfiguration
+                {
+                    WorkspaceBaseDirectory = workspaceBase,
+                    AutonomousMode = true,
+                    CleanupSuccessfulWorkspaces = true
+                });
+
+            _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new QualityGateReport
+                {
+                    Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+                    Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
+                });
+
+            var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+            run.CurrentStep.Should().Be(PipelineStep.Completed);
+            // Workspace directory should have been deleted
+            if (run.WorkspacePath != null)
+                Directory.Exists(run.WorkspacePath).Should().BeFalse();
+        }
+        finally
+        {
+            if (Directory.Exists(workspaceBase))
+                Directory.Delete(workspaceBase, true);
+        }
+    }
+
+    [Fact]
+    public async Task SuccessfulPr_RetainsWorkspace_WhenCleanupDisabled()
+    {
+        var workspaceBase = Path.Combine(Path.GetTempPath(), $"ws-cleanup-{Guid.NewGuid()}");
+        Directory.CreateDirectory(workspaceBase);
+
+        try
+        {
+            _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PipelineConfiguration
+                {
+                    WorkspaceBaseDirectory = workspaceBase,
+                    AutonomousMode = true,
+                    CleanupSuccessfulWorkspaces = false
+                });
+
+            _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new QualityGateReport
+                {
+                    Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+                    Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
+                });
+
+            var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+            run.CurrentStep.Should().Be(PipelineStep.Completed);
+            // Workspace directory should still exist
+            if (run.WorkspacePath != null)
+                Directory.Exists(run.WorkspacePath).Should().BeTrue();
+        }
+        finally
+        {
+            if (Directory.Exists(workspaceBase))
+                Directory.Delete(workspaceBase, true);
+        }
+    }
+
+    [Fact]
+    public void CleanupExpiredWorkspaces_DeletesExpiredFailedRunWorkspaces()
+    {
+        var workspaceBase = Path.Combine(Path.GetTempPath(), $"ws-retention-{Guid.NewGuid()}");
+        var expiredRunId = Guid.NewGuid().ToString();
+        var recentRunId = Guid.NewGuid().ToString();
+        var expiredDir = Path.Combine(workspaceBase, expiredRunId);
+        var recentDir = Path.Combine(workspaceBase, recentRunId);
+
+        Directory.CreateDirectory(expiredDir);
+        Directory.CreateDirectory(recentDir);
+
+        var runsDir = Path.Combine(Path.GetTempPath(), $"test-runs-retention-{Guid.NewGuid()}");
+        Directory.CreateDirectory(runsDir);
+
+        try
+        {
+
+            var jsonOptions = new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+            };
+
+            var expiredSummary = new PipelineRunSummary
+            {
+                RunId = expiredRunId,
+                IssueIdentifier = "1",
+                IssueTitle = "Expired",
+                FinalStep = PipelineStep.Failed,
+                StartedAt = DateTime.UtcNow.AddDays(-10),
+                CompletedAt = DateTime.UtcNow.AddDays(-10)
+            };
+            File.WriteAllText(
+                Path.Combine(runsDir, $"{expiredRunId}.json"),
+                System.Text.Json.JsonSerializer.Serialize(expiredSummary, jsonOptions));
+
+            var recentSummary = new PipelineRunSummary
+            {
+                RunId = recentRunId,
+                IssueIdentifier = "2",
+                IssueTitle = "Recent",
+                FinalStep = PipelineStep.Failed,
+                StartedAt = DateTime.UtcNow.AddDays(-1),
+                CompletedAt = DateTime.UtcNow.AddDays(-1)
+            };
+            File.WriteAllText(
+                Path.Combine(runsDir, $"{recentRunId}.json"),
+                System.Text.Json.JsonSerializer.Serialize(recentSummary, jsonOptions));
+
+            var service = new PipelineOrchestrationService(
+                _mockConfigStore.Object,
+                _mockFactory.Object,
+                new IssueDescriptionParser(),
+                _mockValidator.Object,
+                _mockLogger.Object,
+                runsDirectory: runsDir);
+
+            var config = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = workspaceBase,
+                FailedWorkspaceRetentionDays = 7
+            };
+
+            service.CleanupExpiredWorkspaces(config);
+
+            Directory.Exists(expiredDir).Should().BeFalse("expired workspace should be deleted");
+            Directory.Exists(recentDir).Should().BeTrue("recent workspace should be retained");
+        }
+        finally
+        {
+            if (Directory.Exists(runsDir))
+                Directory.Delete(runsDir, true);
+            if (Directory.Exists(workspaceBase))
+                Directory.Delete(workspaceBase, true);
+        }
+    }
+
+    [Fact]
+    public void CleanupExpiredWorkspaces_RetainsAll_WhenRetentionIsNegativeOne()
+    {
+        var workspaceBase = Path.Combine(Path.GetTempPath(), $"ws-retain-{Guid.NewGuid()}");
+        var oldRunId = Guid.NewGuid().ToString();
+        var oldDir = Path.Combine(workspaceBase, oldRunId);
+        var runsDir = Path.Combine(Path.GetTempPath(), $"test-runs-retain-{Guid.NewGuid()}");
+        Directory.CreateDirectory(oldDir);
+        Directory.CreateDirectory(runsDir);
+
+        try
+        {
+
+            var jsonOptions = new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+            };
+
+            var summary = new PipelineRunSummary
+            {
+                RunId = oldRunId,
+                IssueIdentifier = "1",
+                IssueTitle = "Old",
+                FinalStep = PipelineStep.Failed,
+                StartedAt = DateTime.UtcNow.AddDays(-100),
+                CompletedAt = DateTime.UtcNow.AddDays(-100)
+            };
+            File.WriteAllText(
+                Path.Combine(runsDir, $"{oldRunId}.json"),
+                System.Text.Json.JsonSerializer.Serialize(summary, jsonOptions));
+
+            var service = new PipelineOrchestrationService(
+                _mockConfigStore.Object,
+                _mockFactory.Object,
+                new IssueDescriptionParser(),
+                _mockValidator.Object,
+                _mockLogger.Object,
+                runsDirectory: runsDir);
+
+            var config = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = workspaceBase,
+                FailedWorkspaceRetentionDays = -1
+            };
+
+            service.CleanupExpiredWorkspaces(config);
+
+            Directory.Exists(oldDir).Should().BeTrue("workspace should be retained when retention is -1");
+        }
+        finally
+        {
+            if (Directory.Exists(runsDir))
+                Directory.Delete(runsDir, true);
+            if (Directory.Exists(workspaceBase))
+                Directory.Delete(workspaceBase, true);
+        }
+    }
+
+    [Fact]
+    public void CleanupExpiredWorkspaces_DeletesImmediately_WhenRetentionIsZero()
+    {
+        var workspaceBase = Path.Combine(Path.GetTempPath(), $"ws-zero-{Guid.NewGuid()}");
+        var runId = Guid.NewGuid().ToString();
+        var runDir = Path.Combine(workspaceBase, runId);
+        var runsDir = Path.Combine(Path.GetTempPath(), $"test-runs-zero-{Guid.NewGuid()}");
+        Directory.CreateDirectory(runDir);
+        Directory.CreateDirectory(runsDir);
+
+        try
+        {
+
+            var jsonOptions = new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+            };
+
+            var summary = new PipelineRunSummary
+            {
+                RunId = runId,
+                IssueIdentifier = "1",
+                IssueTitle = "Recent",
+                FinalStep = PipelineStep.Failed,
+                StartedAt = DateTime.UtcNow.AddSeconds(-5),
+                CompletedAt = DateTime.UtcNow.AddSeconds(-1)
+            };
+            File.WriteAllText(
+                Path.Combine(runsDir, $"{runId}.json"),
+                System.Text.Json.JsonSerializer.Serialize(summary, jsonOptions));
+
+            var service = new PipelineOrchestrationService(
+                _mockConfigStore.Object,
+                _mockFactory.Object,
+                new IssueDescriptionParser(),
+                _mockValidator.Object,
+                _mockLogger.Object,
+                runsDirectory: runsDir);
+
+            var config = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = workspaceBase,
+                FailedWorkspaceRetentionDays = 0
+            };
+
+            service.CleanupExpiredWorkspaces(config);
+
+            Directory.Exists(runDir).Should().BeFalse("workspace should be deleted immediately when retention is 0");
+        }
+        finally
+        {
+            if (Directory.Exists(runsDir))
+                Directory.Delete(runsDir, true);
+            if (Directory.Exists(workspaceBase))
+                Directory.Delete(workspaceBase, true);
+        }
+    }
+
+    [Fact]
+    public void CleanupExpiredWorkspaces_IncludesCancelledRuns()
+    {
+        var workspaceBase = Path.Combine(Path.GetTempPath(), $"ws-cancel-{Guid.NewGuid()}");
+        var runId = Guid.NewGuid().ToString();
+        var runDir = Path.Combine(workspaceBase, runId);
+        var runsDir = Path.Combine(Path.GetTempPath(), $"test-runs-cancel-{Guid.NewGuid()}");
+        Directory.CreateDirectory(runDir);
+        Directory.CreateDirectory(runsDir);
+
+        try
+        {
+
+            var jsonOptions = new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+            };
+
+            var summary = new PipelineRunSummary
+            {
+                RunId = runId,
+                IssueIdentifier = "1",
+                IssueTitle = "Cancelled",
+                FinalStep = PipelineStep.Cancelled,
+                StartedAt = DateTime.UtcNow.AddDays(-10),
+                CompletedAt = DateTime.UtcNow.AddDays(-10)
+            };
+            File.WriteAllText(
+                Path.Combine(runsDir, $"{runId}.json"),
+                System.Text.Json.JsonSerializer.Serialize(summary, jsonOptions));
+
+            var service = new PipelineOrchestrationService(
+                _mockConfigStore.Object,
+                _mockFactory.Object,
+                new IssueDescriptionParser(),
+                _mockValidator.Object,
+                _mockLogger.Object,
+                runsDirectory: runsDir);
+
+            var config = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = workspaceBase,
+                FailedWorkspaceRetentionDays = 7
+            };
+
+            service.CleanupExpiredWorkspaces(config);
+
+            Directory.Exists(runDir).Should().BeFalse("expired cancelled workspace should be deleted");
+        }
+        finally
+        {
+            if (Directory.Exists(runsDir))
+                Directory.Delete(runsDir, true);
+            if (Directory.Exists(workspaceBase))
+                Directory.Delete(workspaceBase, true);
+        }
+    }
+
+    [Fact]
+    public async Task DraftPr_RetainsWorkspace_WhenCleanupEnabled()
+    {
+        var workspaceBase = Path.Combine(Path.GetTempPath(), $"ws-draft-{Guid.NewGuid()}");
+        Directory.CreateDirectory(workspaceBase);
+
+        try
+        {
+            _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PipelineConfiguration
+                {
+                    WorkspaceBaseDirectory = workspaceBase,
+                    AutonomousMode = true,
+                    CleanupSuccessfulWorkspaces = true,
+                    MaxRetries = 0 // fail immediately → draft PR
+                });
+
+            _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new QualityGateReport
+                {
+                    Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build failed" },
+                    Tests = new GateResult { GateName = "Tests", Passed = false, Details = "Tests failed" }
+                });
+
+            var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+            run.CurrentStep.Should().Be(PipelineStep.Failed);
+            run.IsDraftPr.Should().BeTrue();
+            // Workspace should be retained for failed (draft PR) runs
+            if (run.WorkspacePath != null)
+                Directory.Exists(run.WorkspacePath).Should().BeTrue();
+        }
+        finally
+        {
+            if (Directory.Exists(workspaceBase))
+                Directory.Delete(workspaceBase, true);
+        }
+    }
 }

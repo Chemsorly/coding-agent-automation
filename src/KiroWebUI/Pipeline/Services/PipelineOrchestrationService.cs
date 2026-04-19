@@ -97,6 +97,9 @@ public class PipelineOrchestrationService : IDisposable
             // Load pipeline configuration
             _activeConfig = await _configStore.LoadPipelineConfigAsync(linkedCt);
 
+            // Clean up expired workspaces from previous failed/cancelled runs
+            CleanupExpiredWorkspaces(_activeConfig);
+
             // Resolve provider configs
             var issueProviderConfig = await ResolveProviderConfigAsync(issueProviderId, ProviderKind.Issue, linkedCt);
             var repoProviderConfig = await ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, linkedCt);
@@ -1043,6 +1046,10 @@ public class PipelineOrchestrationService : IDisposable
             TransitionTo(run, finalStep);
             AddRunToHistory(run);
 
+            // Clean up workspace after successful (non-draft) PR creation
+            if (finalStep == PipelineStep.Completed && _activeConfig!.CleanupSuccessfulWorkspaces)
+                TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig.WorkspaceBaseDirectory);
+
             var duration = run.CompletedAt.Value - run.StartedAt;
             _logger.Information(
                 "Pipeline {RunId} {Outcome} in {Duration}. Retries: {RetryCount}. PR: {PullRequestUrl}",
@@ -1226,6 +1233,75 @@ public class PipelineOrchestrationService : IDisposable
         catch (Exception ex)
         {
             _logger.Warning(ex, "Failed to load run history");
+        }
+    }
+
+    /// <summary>
+    /// Attempts to delete a workspace directory. Logs but does not throw on failure.
+    /// Validates the path is a subdirectory of the workspace base and not a symlink
+    /// to prevent accidental deletion outside the workspace area.
+    /// </summary>
+    private void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory)
+    {
+        if (string.IsNullOrEmpty(workspacePath) || !Directory.Exists(workspacePath))
+            return;
+
+        // Reject symlinks to prevent following them into unrelated directories
+        var dirInfo = new DirectoryInfo(workspacePath);
+        if (dirInfo.LinkTarget != null)
+        {
+            _logger.Warning("Pipeline {RunId} workspace {Path} is a symlink, skipping cleanup",
+                runId, workspacePath);
+            return;
+        }
+
+        // Guard against deleting outside the workspace base directory
+        var fullPath = Path.GetFullPath(workspacePath);
+        var fullBase = Path.GetFullPath(workspaceBaseDirectory).TrimEnd(Path.DirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(fullBase, StringComparison.Ordinal) || fullPath.TrimEnd(Path.DirectorySeparatorChar) == fullBase.TrimEnd(Path.DirectorySeparatorChar))
+        {
+            _logger.Warning("Pipeline {RunId} workspace path {Path} is not inside base {Base}, skipping cleanup",
+                runId, workspacePath, workspaceBaseDirectory);
+            return;
+        }
+
+        try
+        {
+            Directory.Delete(workspacePath, recursive: true);
+            _logger.Information("Pipeline {RunId} workspace deleted: {Path}", runId, workspacePath);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} failed to delete workspace: {Path}", runId, workspacePath);
+        }
+    }
+
+    /// <summary>
+    /// Cleans up expired workspace folders for failed/cancelled runs based on retention policy.
+    /// Called after run history is loaded and a pipeline config is available.
+    /// </summary>
+    internal void CleanupExpiredWorkspaces(PipelineConfiguration config)
+    {
+        if (config.FailedWorkspaceRetentionDays < 0)
+            return; // -1 means retain indefinitely
+
+        var cutoff = DateTime.UtcNow.AddDays(-config.FailedWorkspaceRetentionDays);
+
+        foreach (var summary in _runHistory)
+        {
+            if (summary.FinalStep == PipelineStep.Completed)
+                continue; // successful runs are cleaned up immediately after PR creation
+
+            if (summary.CompletedAt == null || summary.CompletedAt > cutoff)
+                continue;
+
+            // Skip the active run
+            if (ActiveRun != null && ActiveRun.RunId == summary.RunId)
+                continue;
+
+            var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, summary.RunId);
+            TryDeleteWorkspace(workspacePath, summary.RunId, config.WorkspaceBaseDirectory);
         }
     }
 
