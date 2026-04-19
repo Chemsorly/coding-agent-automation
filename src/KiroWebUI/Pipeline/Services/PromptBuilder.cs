@@ -118,6 +118,54 @@ public static class PromptBuilder
         return sb.ToString().TrimEnd();
     }
 
+    /// <summary>
+    /// Constructs a self-review prompt that includes the original issue context so the
+    /// reviewing agent does not rely solely on conversation history for requirements.
+    /// The configurable review instructions are prepended, followed by the full issue
+    /// details (title, description, requirements, acceptance criteria, and comments).
+    /// </summary>
+    public static string BuildReviewPrompt(string reviewInstructions, IssueDetail issue,
+        ParsedIssue parsed, IReadOnlyList<IssueComment>? comments = null)
+    {
+        ArgumentNullException.ThrowIfNull(reviewInstructions);
+        ArgumentNullException.ThrowIfNull(issue);
+        ArgumentNullException.ThrowIfNull(parsed);
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine(reviewInstructions);
+        sb.AppendLine();
+        sb.AppendLine("Below is the original issue for reference. Review the changes against these requirements.");
+        sb.AppendLine();
+
+        sb.AppendLine($"# Issue: {issue.Title}");
+        sb.AppendLine();
+        sb.AppendLine("## Description");
+        sb.AppendLine(issue.Description);
+        sb.AppendLine();
+
+        if (!string.IsNullOrWhiteSpace(parsed.RequirementsSection))
+        {
+            sb.AppendLine("## Requirements");
+            sb.AppendLine(parsed.RequirementsSection);
+            sb.AppendLine();
+        }
+
+        if (parsed.AcceptanceCriteria.Count > 0)
+        {
+            sb.AppendLine("## Acceptance Criteria");
+            foreach (var criterion in parsed.AcceptanceCriteria)
+            {
+                sb.AppendLine($"- {criterion}");
+            }
+            sb.AppendLine();
+        }
+
+        AppendComments(sb, comments);
+
+        return sb.ToString().TrimEnd();
+    }
+
     /// <summary>Markers identifying bot-generated comments that should be excluded from context.</summary>
     internal static readonly string[] ExcludedCommentMarkers = ["## 🤖 Agent Analysis"];
 

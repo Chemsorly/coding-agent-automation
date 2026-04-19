@@ -450,7 +450,7 @@ public class PipelineOrchestrationServiceTests
 
         _mockAgentProvider.Verify(
             p => p.ExecuteWithResumeAsync(
-                customPrompt,
+                It.Is<string>(s => s.Contains(customPrompt) && s.Contains("Test Issue")),
                 It.IsAny<string>(),
                 It.IsAny<TimeSpan>(),
                 It.IsAny<CancellationToken>(),

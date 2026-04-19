@@ -572,8 +572,14 @@ public class PipelineOrchestrationService : IDisposable
 
                     try
                     {
-                        var reviewResult = await _activeAgentProvider!.ExecuteWithResumeAsync(
+                        var reviewPrompt = PromptBuilder.BuildReviewPrompt(
                             _activeConfig.SelfReviewPrompt,
+                            _activeIssue!,
+                            _activeParsedIssue!,
+                            _activeIssueComments);
+
+                        var reviewResult = await _activeAgentProvider!.ExecuteWithResumeAsync(
+                            reviewPrompt,
                             run.WorkspacePath!,
                             _activeConfig.AgentTimeout,
                             linkedCt,
