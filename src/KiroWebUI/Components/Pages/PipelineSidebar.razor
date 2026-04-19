@@ -22,7 +22,9 @@
         @foreach (var step in _steps)
         {
             var state = GetStepState(step);
-            var isExpanded = state is StepState.Active or StepState.Failed || _expandedSteps.Contains(step);
+            var isExpanded = state is StepState.Active or StepState.Failed
+                || _expandedSteps.Contains(step)
+                || (state == StepState.Completed && HasDetails(step));
 
             <div class="step-card step-card-@state.ToString().ToLowerInvariant()"
                  id="step-@step.ToString()"
@@ -297,6 +299,23 @@
         if (!_expandedSteps.Remove(step))
             _expandedSteps.Add(step);
     }
+
+    /// <summary>
+    /// Returns true if a completed step has meaningful details worth showing by default.
+    /// Steps without data (e.g. Created, PostingAnalysis) stay collapsed.
+    /// </summary>
+    private bool HasDetails(PipelineStep step) => step switch
+    {
+        PipelineStep.CloningRepository => !string.IsNullOrEmpty(Run.RepositoryName),
+        PipelineStep.CreatingBranch => !string.IsNullOrEmpty(Run.BranchName),
+        PipelineStep.AnalyzingCode => true,
+        PipelineStep.WaitingForAnalysisApproval => Run.ApprovalTimestamp.HasValue,
+        PipelineStep.GeneratingCode => Run.FilesChangedCount > 0 || Run.LinesAdded > 0 || Run.LinesRemoved > 0,
+        PipelineStep.ReviewingCode => Run.ReviewIterationsCompleted > 0,
+        PipelineStep.RunningQualityGates => Run.LatestQualityReport != null,
+        PipelineStep.CreatingPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
+        _ => false
+    };
 
     private string GetElapsedTime()
     {
