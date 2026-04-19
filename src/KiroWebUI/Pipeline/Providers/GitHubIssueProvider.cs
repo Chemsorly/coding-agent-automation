@@ -82,21 +82,45 @@ public class GitHubIssueProvider : IIssueProvider
         return MapToIssueDetail(issue);
     }
 
-    public async Task<IReadOnlyList<IssueSummary>> ListOpenIssuesAsync(CancellationToken ct)
+    public async Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize, CancellationToken ct)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, 100);
+
         var request = new RepositoryIssueRequest
         {
             State = ItemStateFilter.Open
         };
 
-        var client = await GetClientAsync(ct);
-        var issues = await client.Issue.GetAllForRepository(_owner, _repo, request);
+        var apiOptions = new ApiOptions
+        {
+            PageSize = pageSize + 1, // fetch one extra to detect HasMore
+            StartPage = page,
+            PageCount = 1
+        };
 
-        return issues
-            .Where(i => i.PullRequest == null) // PRs show up as issues in GitHub API — filter them out
+        var client = await GetClientAsync(ct);
+        var issues = await client.Issue.GetAllForRepository(_owner, _repo, request, apiOptions);
+
+        var items = issues
+            .Where(i => i.PullRequest == null)
             .Select(MapToIssueSummary)
-            .ToList()
-            .AsReadOnly();
+            .ToList();
+
+        // HasMore is approximate: PR filtering may cause false negatives when the
+        // extra item fetched for detection is a pull request that gets filtered out.
+        var hasMore = items.Count > pageSize;
+        if (hasMore)
+            items = items.Take(pageSize).ToList();
+
+        return new PagedResult<IssueSummary>
+        {
+            Items = items.AsReadOnly(),
+            Page = page,
+            PageSize = pageSize,
+            HasMore = hasMore
+        };
     }
 
     /// <summary>

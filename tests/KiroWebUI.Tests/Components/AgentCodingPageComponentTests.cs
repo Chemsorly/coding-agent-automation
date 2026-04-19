@@ -65,11 +65,17 @@ public class AgentCodingPageComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() });
 
-        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<IssueSummary>
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
             {
-                new() { Identifier = "42", Title = "Test Issue", Labels = Array.Empty<string>() },
-                new() { Identifier = "43", Title = "Bug Fix", Labels = new[] { "bug" } }
+                Items = new List<IssueSummary>
+                {
+                    new() { Identifier = "42", Title = "Test Issue", Labels = Array.Empty<string>() },
+                    new() { Identifier = "43", Title = "Bug Fix", Labels = new[] { "bug" } }
+                },
+                Page = 1,
+                PageSize = 25,
+                HasMore = false
             });
 
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
@@ -109,6 +115,11 @@ public class AgentCodingPageComponentTests : BunitContext
         var component = Render<AgentCoding>();
 
         Assert.Contains("Run History", component.Markup);
+
+        // Run history is collapsed by default — expand it to see content
+        var header = component.Find(".run-history-header");
+        header.Click();
+
         Assert.Contains("No pipeline runs yet", component.Markup);
     }
 

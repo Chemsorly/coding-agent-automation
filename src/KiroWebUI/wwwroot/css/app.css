@@ -214,6 +214,11 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 .issue-selection h2 { font-size: 1rem; font-weight: 600; color: var(--accent-light); }
 .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 8px 0; }
 .issue-list { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; }
+.issue-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 8px 0; }
+.btn-page { padding: 4px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); cursor: pointer; font-size: 0.85rem; }
+.btn-page:hover:not(:disabled) { border-color: var(--accent); }
+.btn-page:disabled { opacity: 0.4; cursor: not-allowed; }
+.page-indicator { font-size: 0.85rem; color: var(--text-muted); }
 .issue-card { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: border-color 0.15s; }
 .issue-card:hover { border-color: var(--accent); }
 .issue-card.issue-selected { border-color: var(--accent); background: var(--surface-alt); }

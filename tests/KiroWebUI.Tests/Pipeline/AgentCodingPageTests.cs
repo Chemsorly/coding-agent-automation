@@ -70,11 +70,17 @@ public class AgentCodingPageTests
                 Identifier = "42", Title = "Test Issue", Description = "Test description",
                 Labels = Array.Empty<string>(), AcceptanceCriteria = Array.Empty<string>()
             });
-        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<IssueSummary>
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
             {
-                new() { Identifier = "42", Title = "Test Issue", Labels = Array.Empty<string>() },
-                new() { Identifier = "43", Title = "Another Issue", Labels = new[] { "bug" } }
+                Items = new List<IssueSummary>
+                {
+                    new() { Identifier = "42", Title = "Test Issue", Labels = Array.Empty<string>() },
+                    new() { Identifier = "43", Title = "Another Issue", Labels = new[] { "bug" } }
+                },
+                Page = 1,
+                PageSize = 25,
+                HasMore = false
             });
         _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());
@@ -375,18 +381,18 @@ public class AgentCodingPageTests
             Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test"
         };
         var issueProvider = _mockFactory.Object.CreateIssueProvider(providerConfig);
-        var issues = await issueProvider.ListOpenIssuesAsync(CancellationToken.None);
+        var result = await issueProvider.ListOpenIssuesAsync(1, 25, CancellationToken.None);
 
-        issues.Should().HaveCount(2);
-        issues[0].Identifier.Should().Be("42");
-        issues[1].Identifier.Should().Be("43");
+        result.Items.Should().HaveCount(2);
+        result.Items[0].Identifier.Should().Be("42");
+        result.Items[1].Identifier.Should().Be("43");
     }
 
     [Fact]
     public async Task FetchIssues_WhenProviderThrows_SetsErrorMessage()
     {
         // Simulates connectivity error when loading issue list (Requirement 1.7)
-        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Connection refused"));
 
         var providerConfig = new ProviderConfig
@@ -399,7 +405,7 @@ public class AgentCodingPageTests
         string? errorMessage = null;
         try
         {
-            await issueProvider.ListOpenIssuesAsync(CancellationToken.None);
+            await issueProvider.ListOpenIssuesAsync(1, 25, CancellationToken.None);
         }
         catch (Exception ex)
         {
