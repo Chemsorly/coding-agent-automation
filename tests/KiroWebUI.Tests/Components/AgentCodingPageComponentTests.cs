@@ -109,6 +109,11 @@ public class AgentCodingPageComponentTests : BunitContext
         var component = Render<AgentCoding>();
 
         Assert.Contains("Run History", component.Markup);
+
+        // Run history is collapsed by default — expand it to see content
+        var header = component.Find(".run-history-header");
+        header.Click();
+
         Assert.Contains("No pipeline runs yet", component.Markup);
     }
 
