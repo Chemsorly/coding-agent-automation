@@ -95,7 +95,14 @@ public class QualityGateValidator : IQualityGateValidator
     /// Formats CI failure details for display in quality gate error summaries.
     /// References log file paths when available so the agent can read them on demand.
     /// </summary>
-    internal static string BuildCiFailureDetails(PipelineRunStatus status)
+    /// <param name="status">The CI run status containing job results.</param>
+    /// <param name="logPathMapping">
+    /// Optional mapping of jobId → workspace-relative file path, returned by
+    /// <see cref="CiLogWriter.WriteJobLogs"/>. When provided, failed jobs with
+    /// an entry in the dictionary get a "Full CI log saved to" reference.
+    /// </param>
+    internal static string BuildCiFailureDetails(
+        PipelineRunStatus status, IReadOnlyDictionary<long, string>? logPathMapping = null)
     {
         var lines = new List<string> { $"CI {status.State}." };
 
@@ -109,9 +116,9 @@ public class QualityGateValidator : IQualityGateValidator
                 var logLink = !string.IsNullOrEmpty(job.LogUrl) ? $" (logs: {job.LogUrl})" : "";
                 lines.Add($"  - {job.Name}{reason}{logLink}");
 
-                if (!string.IsNullOrEmpty(job.LogFilePath))
+                if (logPathMapping != null && logPathMapping.TryGetValue(job.JobId, out var logFilePath))
                 {
-                    lines.Add($"    Full CI log saved to: {job.LogFilePath}");
+                    lines.Add($"    Full CI log saved to: {logFilePath}");
                     lines.Add($"    Read this file (raw GitHub Actions job log) to diagnose the failure.");
                 }
             }
@@ -263,8 +270,8 @@ public class QualityGateValidator : IQualityGateValidator
             GateName = "Coverage",
             Passed = passed,
             Details = passed
-                ? $"Coverage {coveragePercent:F1}% meets threshold {threshold:F1}%"
-                : $"Coverage {coveragePercent:F1}% below threshold {threshold:F1}%",
+                ? $"Coverage {coveragePercent.ToString("F1", CultureInfo.InvariantCulture)}% meets threshold {threshold.ToString("F1", CultureInfo.InvariantCulture)}%"
+                : $"Coverage {coveragePercent.ToString("F1", CultureInfo.InvariantCulture)}% below threshold {threshold.ToString("F1", CultureInfo.InvariantCulture)}%",
             CoveragePercent = coveragePercent
         };
     }

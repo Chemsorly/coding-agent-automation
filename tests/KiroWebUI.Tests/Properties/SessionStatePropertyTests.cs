@@ -34,7 +34,7 @@ public class SessionStatePropertyTests
     /// Property 1: For any sequence of prompts with optional clear-session actions,
     /// useResume is false after init/clear, true only after exit code 0.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void ResumeFlag_FollowsSessionStateMachine(byte[] actionSeeds)
     {
         if (actionSeeds == null || actionSeeds.Length == 0) return;

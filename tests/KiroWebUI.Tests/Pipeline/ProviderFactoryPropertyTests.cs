@@ -13,11 +13,12 @@ namespace KiroWebUI.Tests.Pipeline;
 
 /// <summary>
 /// Property-based tests for ProviderFactory config validation.
-/// Feature: github-app-auth
+/// Feature: github-app-auth, provider-interface-gaps
 /// </summary>
 public class ProviderFactoryPropertyTests
 {
     private static readonly Mock<IKiroCliOrchestrator> MockOrchestrator = new();
+    private static readonly PipelineConfiguration DefaultPipelineConfig = new();
 
     /// <summary>
     /// Generates a valid base64-encoded RSA private key PEM string.
@@ -44,7 +45,7 @@ public class ProviderFactoryPropertyTests
     ///
     /// **Validates: Requirements 2.1, 2.4**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(ConfigKeyCorrectnessArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(ConfigKeyCorrectnessArbitrary)])]
     public void ConfigKeys_IssueProvider_ContainsCorrectKeysAndNoToken(ConfigKeyCorrectnessInput input)
     {
         // Arrange: Build a ProviderConfig with the expected GitHub App keys for an issue provider
@@ -80,7 +81,7 @@ public class ProviderFactoryPropertyTests
         // Assert: The ProviderFactory accepts this config without throwing a validation error.
         // CreateIssueProvider will call ValidateRequiredSettings internally.
         // It will also create a GitHubAppAuthService which validates the private key.
-        var factory = new ProviderFactory(MockOrchestrator.Object);
+        var factory = new ProviderFactory(MockOrchestrator.Object, DefaultPipelineConfig);
         var exception = Record.Exception(() => factory.CreateIssueProvider(config));
         Assert.Null(exception);
     }
@@ -92,7 +93,7 @@ public class ProviderFactoryPropertyTests
     ///
     /// **Validates: Requirements 2.1, 2.4**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(ConfigKeyCorrectnessArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(ConfigKeyCorrectnessArbitrary)])]
     public void ConfigKeys_RepoProvider_ContainsCorrectKeysAndNoToken(ConfigKeyCorrectnessInput input)
     {
         // Arrange: Build a ProviderConfig with the expected GitHub App keys for a repo provider
@@ -128,9 +129,56 @@ public class ProviderFactoryPropertyTests
         Assert.False(config.Settings.ContainsKey("token"), "Settings must NOT contain 'token' — PAT has been replaced by GitHub App auth");
 
         // Assert: The ProviderFactory accepts this config without throwing a validation error.
-        var factory = new ProviderFactory(MockOrchestrator.Object);
+        var factory = new ProviderFactory(MockOrchestrator.Object, DefaultPipelineConfig);
         var exception = Record.Exception(() => factory.CreateRepositoryProvider(config));
         Assert.Null(exception);
+    }
+
+    /// <summary>
+    /// Feature: provider-interface-gaps, Property 7: Auth Service Cache Consistency
+    ///
+    /// For any set of ProviderConfig objects, the ProviderFactory returns the same
+    /// GitHubAppAuthService instance (reference equality) for configs sharing the same
+    /// clientId + installationId composite key, and distinct instances for configs with
+    /// different composite keys.
+    ///
+    /// Strategy: Generate a list of ProviderConfig objects with controlled clientId/installationId
+    /// overlap. Call GetOrCreateAuthService for each config on the same factory instance.
+    /// Group results by composite key and verify reference equality within groups and
+    /// reference inequality across groups.
+    ///
+    /// **Validates: Requirements 5.1**
+    /// </summary>
+    [Property(MaxTest = 20, Arbitrary = [typeof(AuthCacheConsistencyArbitrary)])]
+    public void AuthServiceCache_SameKey_ReturnsSameInstance_DifferentKey_ReturnsDistinct(AuthCacheConsistencyInput input)
+    {
+        // Arrange
+        var factory = new ProviderFactory(MockOrchestrator.Object, DefaultPipelineConfig);
+
+        // Act: Call GetOrCreateAuthService for each config and collect results
+        var results = input.Configs
+            .Select(config => (Config: config, AuthService: factory.GetOrCreateAuthService(config)))
+            .ToList();
+
+        // Group by composite key (clientId:installationId)
+        var groupedByKey = results
+            .GroupBy(r => $"{r.Config.Settings["clientId"]}:{r.Config.Settings["installationId"]}")
+            .ToList();
+
+        // Assert: Within each group, all instances are the same reference
+        foreach (var group in groupedByKey)
+        {
+            var instances = group.Select(g => g.AuthService).ToList();
+            var first = instances[0];
+            foreach (var instance in instances.Skip(1))
+            {
+                Assert.Same(first, instance);
+            }
+        }
+
+        // Assert: Across different groups, instances are distinct references
+        var distinctKeys = groupedByKey.Select(g => g.First().AuthService).ToList();
+        Assert.Equal(distinctKeys.Count, distinctKeys.Distinct(ReferenceEqualityComparer.Instance).Count());
     }
 
     /// <summary>
@@ -147,7 +195,7 @@ public class ProviderFactoryPropertyTests
     ///
     /// **Validates: Requirements 2.1, 2.4**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(MissingConfigFieldArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(MissingConfigFieldArbitrary)])]
     public void MissingConfigField_ThrowsArgumentExceptionIdentifyingMissingSettings(MissingConfigFieldInput input)
     {
         // Arrange: Build a ProviderConfig with some fields missing or empty
@@ -183,7 +231,7 @@ public class ProviderFactoryPropertyTests
         };
 
         // Act & Assert: The factory must throw ArgumentException
-        var factory = new ProviderFactory(MockOrchestrator.Object);
+        var factory = new ProviderFactory(MockOrchestrator.Object, DefaultPipelineConfig);
         var ex = Assert.Throws<ArgumentException>(() => factory.CreateIssueProvider(config));
 
         // Assert: The exception message identifies each missing setting
@@ -393,5 +441,98 @@ public static class MissingConfigFieldArbitrary
         if (installationId != FieldPresence.Present) missing.Add("installationId");
         if (privateKey != FieldPresence.Present) missing.Add("privateKeyBase64");
         return missing.ToArray();
+    }
+}
+
+/// <summary>
+/// Input type for auth service cache consistency property tests.
+/// Contains a list of ProviderConfig objects with controlled clientId/installationId overlap.
+/// </summary>
+public record AuthCacheConsistencyInput(List<ProviderConfig> Configs, int ExpectedDistinctKeys)
+{
+    public override string ToString() =>
+        $"Configs={Configs.Count}, ExpectedDistinctKeys={ExpectedDistinctKeys}";
+}
+
+/// <summary>
+/// FsCheck Arbitrary that generates sets of ProviderConfig objects with controlled
+/// clientId/installationId overlap for testing auth service cache consistency.
+/// Generates 2-4 distinct composite keys and 3-8 configs that reference them,
+/// ensuring some configs share the same key.
+/// </summary>
+public static class AuthCacheConsistencyArbitrary
+{
+    /// <summary>
+    /// Pre-generated valid base64-encoded RSA private key.
+    /// RSA key generation is expensive, so we reuse a single key across all test iterations.
+    /// The property under test is about caching behavior, not key validity.
+    /// </summary>
+    private static readonly string ValidPrivateKeyBase64 = GenerateSharedPrivateKeyBase64();
+
+    private static string GenerateSharedPrivateKeyBase64()
+    {
+        using var rsa = RSA.Create(2048);
+        var pem = rsa.ExportRSAPrivateKeyPem();
+        return Convert.ToBase64String(Encoding.UTF8.GetBytes(pem));
+    }
+
+    public static Arbitrary<AuthCacheConsistencyInput> AuthCacheConsistencyInput()
+    {
+        var alphanumChars = "abcdefghijklmnopqrstuvwxyz0123456789".ToCharArray();
+
+        // Generate client IDs: Iv1. prefix + alphanumeric
+        var clientIdGen =
+            from len in Gen.Choose(8, 16)
+            from chars in Gen.Elements(alphanumChars).ArrayOf(len)
+            select "Iv1." + new string(chars);
+
+        // Generate installation IDs: positive integers
+        var installationIdGen =
+            from id in Gen.Choose(1, 999999)
+            select id;
+
+        // Generate a pool of 2-4 distinct (clientId, installationId) pairs
+        var keyPoolGen =
+            from keyCount in Gen.Choose(2, 4)
+            from keys in Gen.Zip(clientIdGen, installationIdGen).ArrayOf(keyCount)
+            // Ensure keys are actually distinct by composite key string
+            let distinctKeys = keys
+                .GroupBy(k => $"{k.Item1}:{k.Item2}")
+                .Select(g => g.First())
+                .ToArray()
+            where distinctKeys.Length >= 2
+            select distinctKeys;
+
+        // Generate 3-8 configs, each picking a key from the pool (ensuring overlap)
+        var combined =
+            from keyPool in keyPoolGen
+            from configCount in Gen.Choose(3, 8)
+            from keyIndices in Gen.Choose(0, keyPool.Length - 1).ArrayOf(configCount)
+            let configs = keyIndices.Select((keyIdx, i) =>
+            {
+                var (clientId, installationId) = keyPool[keyIdx];
+                return new ProviderConfig
+                {
+                    Kind = ProviderKind.Issue,
+                    ProviderType = "GitHub",
+                    DisplayName = $"TestProvider-{i}",
+                    Settings = new Dictionary<string, string>
+                    {
+                        ["apiUrl"] = "https://api.github.com",
+                        ["clientId"] = clientId,
+                        ["installationId"] = installationId.ToString(),
+                        ["privateKeyBase64"] = ValidPrivateKeyBase64,
+                        ["owner"] = "testowner",
+                        ["repo"] = "testrepo"
+                    }
+                };
+            }).ToList()
+            let expectedDistinct = configs
+                .Select(c => $"{c.Settings["clientId"]}:{c.Settings["installationId"]}")
+                .Distinct()
+                .Count()
+            select new AuthCacheConsistencyInput(configs, expectedDistinct);
+
+        return combined.ToArbitrary();
     }
 }

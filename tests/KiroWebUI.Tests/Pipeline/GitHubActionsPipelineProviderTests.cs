@@ -141,6 +141,56 @@ public class GitHubActionsPipelineProviderTests
         GitHubActionsPipelineProvider.MapJobState(status, conclusion).Should().Be(expected);
     }
 
+    // --- GetJobLogsAsync Tests (REQ-4.1) ---
+
+    [Fact]
+    public async Task GetJobLogsAsync_PassesCorrectJobIdToOctokitApi()
+    {
+        const long expectedJobId = 42;
+        const string expectedLogs = "Build output line 1\nBuild output line 2";
+
+        _mockJobs.Setup(j => j.GetLogs("owner", "repo", expectedJobId))
+            .ReturnsAsync(expectedLogs);
+
+        var result = await _provider.GetJobLogsAsync(expectedJobId, CancellationToken.None);
+
+        result.Should().Be(expectedLogs);
+        _mockJobs.Verify(j => j.GetLogs("owner", "repo", expectedJobId), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetJobLogsAsync_ApiError_ReturnsNull()
+    {
+        _mockJobs.Setup(j => j.GetLogs("owner", "repo", It.IsAny<long>()))
+            .ThrowsAsync(new ApiException("Not Found", System.Net.HttpStatusCode.NotFound));
+
+        var result = await _provider.GetJobLogsAsync(99, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task EnrichFailedJobsWithLogs_DelegatesToGetJobLogsAsync()
+    {
+        const long failedJobId = 100;
+        const string logContent = "Error: compilation failed";
+
+        // Set up a completed/failed run so WaitForCompletionAsync triggers enrichment
+        var run = CreateWorkflowRun(1, "abc123", WorkflowRunStatus.Completed, WorkflowRunConclusion.Failure);
+        SetupWorkflowRuns(new[] { run });
+        SetupJobs(1, new[] { CreateJob("build", WorkflowJobStatus.Completed, WorkflowJobConclusion.Failure, failedJobId) });
+
+        _mockJobs.Setup(j => j.GetLogs("owner", "repo", failedJobId))
+            .ReturnsAsync(logContent);
+
+        var result = await _provider.WaitForCompletionAsync("main", "abc123", TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        result.State.Should().Be(PipelineRunState.Failed);
+        result.Jobs.Should().HaveCount(1);
+        result.Jobs[0].LogContent.Should().Be(logContent);
+        _mockJobs.Verify(j => j.GetLogs("owner", "repo", failedJobId), Times.Once);
+    }
+
     // --- Helpers ---
 
     private void SetupWorkflowRuns(IReadOnlyList<WorkflowRun> runs)
@@ -196,10 +246,10 @@ public class GitHubActionsPipelineProviderTests
             headRepositoryId: 0);
     }
 
-    private static WorkflowJob CreateJob(string name, WorkflowJobStatus status, WorkflowJobConclusion? conclusion)
+    private static WorkflowJob CreateJob(string name, WorkflowJobStatus status, WorkflowJobConclusion? conclusion, long id = 1)
     {
         return new WorkflowJob(
-            id: 1,
+            id: id,
             runId: 1,
             runUrl: "",
             nodeId: "node",

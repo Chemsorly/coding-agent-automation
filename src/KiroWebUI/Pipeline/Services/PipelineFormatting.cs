@@ -151,66 +151,6 @@ public static partial class PipelineFormatting
     }
 
     /// <summary>
-    /// Builds a list of file changes by comparing the current branch HEAD against the base branch.
-    /// If the committed diff is empty, falls back to comparing the base branch against the
-    /// working directory to capture uncommitted changes (e.g. before the pipeline commits).
-    /// Falls back to an empty list if the diff cannot be computed.
-    /// </summary>
-    public static IReadOnlyList<FileChangeSummary> GetFileChanges(string workspacePath, string baseBranch)
-    {
-        try
-        {
-            using var repo = new LibGit2Sharp.Repository(workspacePath);
-            var baseBranchRef = repo.Branches[$"origin/{baseBranch}"]
-                ?? repo.Branches[baseBranch];
-            if (baseBranchRef == null)
-                return Array.Empty<FileChangeSummary>();
-
-            var baseCommit = baseBranchRef.Tip;
-            var headCommit = repo.Head.Tip;
-            var diff = repo.Diff.Compare<LibGit2Sharp.TreeChanges>(baseCommit.Tree, headCommit.Tree);
-
-            var changes = new List<FileChangeSummary>();
-            foreach (var entry in diff)
-            {
-                var status = entry.Status switch
-                {
-                    LibGit2Sharp.ChangeKind.Added => "Added",
-                    LibGit2Sharp.ChangeKind.Deleted => "Deleted",
-                    LibGit2Sharp.ChangeKind.Renamed => "Renamed",
-                    _ => "Modified"
-                };
-                changes.Add(new FileChangeSummary(status, entry.Path));
-            }
-
-            // If no committed changes yet, check the working directory against the base branch.
-            // This captures files the agent has written but not yet committed.
-            if (changes.Count == 0)
-            {
-                var workingDiff = repo.Diff.Compare<LibGit2Sharp.TreeChanges>(
-                    baseCommit.Tree, LibGit2Sharp.DiffTargets.WorkingDirectory);
-                foreach (var entry in workingDiff)
-                {
-                    var status = entry.Status switch
-                    {
-                        LibGit2Sharp.ChangeKind.Added => "Added",
-                        LibGit2Sharp.ChangeKind.Deleted => "Deleted",
-                        LibGit2Sharp.ChangeKind.Renamed => "Renamed",
-                        _ => "Modified"
-                    };
-                    changes.Add(new FileChangeSummary(status, entry.Path));
-                }
-            }
-
-            return changes;
-        }
-        catch
-        {
-            return Array.Empty<FileChangeSummary>();
-        }
-    }
-
-    /// <summary>
     /// Generates a commit message in conventional format.
     /// </summary>
     public static string GenerateCommitMessage(string title, string issueNumber)

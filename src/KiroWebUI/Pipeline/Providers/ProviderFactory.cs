@@ -16,25 +16,21 @@ public class ProviderFactory : IProviderFactory
     private readonly Dictionary<string, Func<ProviderConfig, IRepositoryProvider>> _repoFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Func<ProviderConfig, IAgentProvider>> _agentFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Func<ProviderConfig, IPipelineProvider>> _pipelineFactories = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, GitHubAppAuthService> _authServiceCache = new(StringComparer.Ordinal);
+    private readonly PipelineConfiguration _pipelineConfig;
 
-    public ProviderFactory(IKiroCliOrchestrator orchestrator)
+    public ProviderFactory(IKiroCliOrchestrator orchestrator, PipelineConfiguration pipelineConfig)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
+        ArgumentNullException.ThrowIfNull(pipelineConfig);
+
+        _pipelineConfig = pipelineConfig;
 
         // Register built-in providers
         RegisterIssueProvider("GitHub", config =>
         {
             ValidateRequiredSettings(config, "apiUrl", "clientId", "installationId", "privateKeyBase64", "owner", "repo");
-            if (!long.TryParse(config.Settings["installationId"], out var installationId))
-                throw new ArgumentException(
-                    $"Provider '{config.DisplayName}' (type: {config.ProviderType}) has invalid installationId: '{config.Settings["installationId"]}'. Expected a numeric value.",
-                    nameof(config));
-            var authService = new GitHubAppAuthService(
-                config.Settings["clientId"],
-                installationId,
-                config.Settings["privateKeyBase64"],
-                config.Settings["apiUrl"],
-                Serilog.Log.Logger);
+            var authService = GetOrCreateAuthService(config);
             return new GitHubIssueProvider(
                 config.Settings["apiUrl"],
                 authService.GetTokenAsync,
@@ -45,16 +41,7 @@ public class ProviderFactory : IProviderFactory
         RegisterRepositoryProvider("GitHub", config =>
         {
             ValidateRequiredSettings(config, "apiUrl", "clientId", "installationId", "privateKeyBase64", "owner", "repo", "baseBranch");
-            if (!long.TryParse(config.Settings["installationId"], out var installationId))
-                throw new ArgumentException(
-                    $"Provider '{config.DisplayName}' (type: {config.ProviderType}) has invalid installationId: '{config.Settings["installationId"]}'. Expected a numeric value.",
-                    nameof(config));
-            var authService = new GitHubAppAuthService(
-                config.Settings["clientId"],
-                installationId,
-                config.Settings["privateKeyBase64"],
-                config.Settings["apiUrl"],
-                Serilog.Log.Logger);
+            var authService = GetOrCreateAuthService(config);
             return new GitHubRepositoryProvider(
                 config.Settings["apiUrl"],
                 authService.GetTokenAsync,
@@ -63,29 +50,18 @@ public class ProviderFactory : IProviderFactory
                 config.Settings["baseBranch"]);
         });
 
-        RegisterAgentProvider("KiroCli", _ => new KiroCliAgentProvider(orchestrator));
+        RegisterAgentProvider("KiroCli", _ => new KiroCliAgentProvider(orchestrator, Serilog.Log.Logger));
 
         RegisterPipelineProvider("GitHub", config =>
         {
             ValidateRequiredSettings(config, "apiUrl", "clientId", "installationId", "privateKeyBase64", "owner", "repo");
-            if (!long.TryParse(config.Settings["installationId"], out var installationId))
-                throw new ArgumentException(
-                    $"Provider '{config.DisplayName}' (type: {config.ProviderType}) has invalid installationId: '{config.Settings["installationId"]}'. Expected a numeric value.",
-                    nameof(config));
-            var authService = new GitHubAppAuthService(
-                config.Settings["clientId"],
-                installationId,
-                config.Settings["privateKeyBase64"],
-                config.Settings["apiUrl"],
-                Serilog.Log.Logger);
-            var pollInterval = TimeSpan.FromSeconds(
-                int.TryParse(config.Settings.GetValueOrDefault("pollIntervalSeconds", "30"), out var s) ? s : 30);
+            var authService = GetOrCreateAuthService(config);
             return new GitHubActionsPipelineProvider(
                 config.Settings["apiUrl"],
                 authService.GetTokenAsync,
                 config.Settings["owner"],
                 config.Settings["repo"],
-                pollInterval);
+                _pipelineConfig.ExternalCiPollInterval);
         });
     }
 
@@ -147,5 +123,34 @@ public class ProviderFactory : IProviderFactory
             throw new ArgumentException(
                 $"Provider '{config.DisplayName}' (type: {config.ProviderType}) is missing required settings: {string.Join(", ", missingKeys)}",
                 nameof(config));
+    }
+
+    /// <summary>
+    /// Returns a cached <see cref="GitHubAppAuthService"/> for the given config's
+    /// clientId + installationId composite key, creating one if it doesn't exist yet.
+    /// This ensures multiple providers sharing the same GitHub App installation
+    /// reuse a single auth service with a single token cache.
+    /// </summary>
+    internal GitHubAppAuthService GetOrCreateAuthService(ProviderConfig config)
+    {
+        if (!long.TryParse(config.Settings["installationId"], out var installationId))
+            throw new ArgumentException(
+                $"Provider '{config.DisplayName}' (type: {config.ProviderType}) has invalid installationId: '{config.Settings["installationId"]}'. Expected a numeric value.",
+                nameof(config));
+
+        var cacheKey = $"{config.Settings["clientId"]}:{installationId}";
+
+        if (_authServiceCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
+        var authService = new GitHubAppAuthService(
+            config.Settings["clientId"],
+            installationId,
+            config.Settings["privateKeyBase64"],
+            config.Settings["apiUrl"],
+            Serilog.Log.Logger);
+
+        _authServiceCache[cacheKey] = authService;
+        return authService;
     }
 }

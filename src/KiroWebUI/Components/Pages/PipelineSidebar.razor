@@ -112,7 +112,7 @@
                                     {
                                         <div class="qg-line @(cov.Passed ? "qg-pass" : "qg-fail")">
                                             @(cov.Passed ? "✅" : "❌") Coverage
-                                            <span class="qg-sub">@(cov.CoveragePercent.HasValue ? $"{cov.CoveragePercent.Value:F1}%" : "N/A")</span>
+                                            <span class="qg-sub">@(cov.CoveragePercent.HasValue ? $"{cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%" : "N/A")</span>
                                         </div>
                                     }
                                     @if (qr.SecurityScan is { } sec)
@@ -148,7 +148,7 @@
                                                 var h = history[i];
                                                 var covPct = h.Coverage?.CoveragePercent;
                                                 <div class="qg-history-item">
-                                                    #@(i + 1): @(h.AllPassed ? "Passed ✅" : covPct.HasValue ? $"Coverage {covPct.Value:F1}% ❌" : "Failed ❌")
+                                                    #@(i + 1): @(h.AllPassed ? "Passed ✅" : covPct.HasValue ? $"Coverage {covPct.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}% ❌" : "Failed ❌")
                                                 </div>
                                             }
                                         </div>

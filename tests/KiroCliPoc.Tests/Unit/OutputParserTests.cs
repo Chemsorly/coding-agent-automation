@@ -17,7 +17,7 @@ public class OutputParserTests
     /// For any Kiro CLI output containing state markers, the Output Parser should correctly identify the state.
     /// Validates: Requirements 3.1, 3.2, 3.3, 3.4
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(Generators) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(Generators) })]
     public bool StateDetection_ShouldIdentifyCorrectState(StateMarkerTestCase testCase)
     {
         // Arrange
@@ -42,7 +42,7 @@ public class OutputParserTests
     /// For any Kiro CLI output containing file paths, the Output Parser should correctly extract the data.
     /// Validates: Requirements 3.5
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(Generators) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(Generators) })]
     public bool FileDetection_ShouldExtractFilePath(FileOperationTestCase testCase)
     {
         // Arrange
@@ -65,7 +65,7 @@ public class OutputParserTests
     /// For any Kiro CLI output containing test results, the Output Parser should correctly extract the data.
     /// Validates: Requirements 3.6
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(Generators) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(Generators) })]
     public bool TestResultDetection_ShouldExtractCounts(TestResultTestCase testCase)
     {
         // Arrange

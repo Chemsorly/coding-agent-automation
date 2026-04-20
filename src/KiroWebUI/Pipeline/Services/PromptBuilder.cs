@@ -86,6 +86,7 @@ public static class PromptBuilder
         // Action instructions — concise, high-impact
         sb.AppendLine("Implement the following issue. Write the code — do not just analyze or plan. Keep your analysis brief and focus on making changes.");
         sb.AppendLine("If a file write is rejected, retry it immediately — it will succeed on the second attempt.");
+        sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). The pipeline handles all version control operations. Read-only git commands (git log, git diff, git status, git show) are fine.");
         sb.AppendLine();
 
         sb.AppendLine($"# Issue: {issue.Title}");
@@ -134,6 +135,8 @@ public static class PromptBuilder
         var sb = new StringBuilder();
 
         sb.AppendLine(reviewInstructions);
+        sb.AppendLine();
+        sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). The pipeline handles all version control operations. Read-only git commands are fine.");
         sb.AppendLine();
         sb.AppendLine("Below is the original issue for reference. Review the changes against these requirements.");
         sb.AppendLine();

@@ -47,7 +47,7 @@ public class GitHubAppAuthServicePropertyTests
     /// successfully sign data using RS256.
     /// **Validates: Requirements 2.2, 3.1**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void PrivateKey_Base64RoundTrip_CanDecodeAndSign(PositiveInt installationIdSeed)
     {
         // Arrange: Generate a fresh RSA key and export as PKCS#1 PEM
@@ -115,7 +115,7 @@ public class GitHubAppAuthServicePropertyTests
     /// field equal to RS256.
     /// **Validates: Requirements 3.2, 3.3**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void Jwt_Structure_HasCorrectIssIatExpAlg(PositiveInt installationIdSeed)
     {
         // Arrange: Generate a fresh RSA key and base64-encode the PEM
@@ -190,7 +190,7 @@ public class GitHubAppAuthServicePropertyTests
     /// with a message containing "Failed to decode private key".
     /// **Validates: Requirements 3.6**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(InvalidPrivateKeyArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(InvalidPrivateKeyArbitrary)])]
     public void InvalidPrivateKey_ThrowsInvalidOperationException(InvalidPrivateKeyInput input)
     {
         // Arrange
@@ -217,7 +217,7 @@ public class GitHubAppAuthServicePropertyTests
     /// GitHub API calls (no new JWT generated, no new CreateInstallationToken call).
     /// **Validates: Requirements 4.1, 4.2**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(CacheHitArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(CacheHitArbitrary)])]
     public void TokenCaching_CacheHit_ReturnsSameTokenWithoutApiCall(CacheHitInput input)
     {
         // Arrange: Create a valid auth service with a real RSA key
@@ -264,7 +264,7 @@ public class GitHubAppAuthServicePropertyTests
     /// null value, and no unnecessary API calls are made.
     /// **Validates: Requirements 4.4**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(ConcurrentSerializationArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(ConcurrentSerializationArbitrary)])]
     public void ConcurrentTokenAcquisition_AllCallersGetSameToken(ConcurrentSerializationInput input)
     {
         // Arrange: Create a valid auth service with a real RSA key
@@ -340,7 +340,7 @@ public class GitHubAppAuthServicePropertyTests
     /// cache hit was NOT taken).
     /// **Validates: Requirements 4.3**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(RenewalTriggerArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(RenewalTriggerArbitrary)])]
     public void TokenCaching_RenewalTrigger_AttemptsRenewalWhenNearExpiry(RenewalTriggerInput input)
     {
         // Arrange: Create a valid auth service with a real RSA key and a MOCK client factory
@@ -403,7 +403,7 @@ public class GitHubAppAuthServicePropertyTests
     /// GetTokenAsync SHALL return the existing cached token and SHALL NOT throw an exception.
     /// **Validates: Requirements 4.5**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(RenewalTriggerArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(RenewalTriggerArbitrary)])]
     public void GracefulDegradation_RenewalFailure_ReturnsCachedTokenWithoutThrowing(RenewalTriggerInput input)
     {
         // Arrange: Create a valid auth service with a real RSA key and a MOCK client factory

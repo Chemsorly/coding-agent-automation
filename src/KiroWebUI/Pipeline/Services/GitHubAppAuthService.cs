@@ -3,6 +3,7 @@ using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using Octokit;
 using KiroWebUI.Pipeline.Interfaces;
+using KiroWebUI.Pipeline.Providers;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -96,7 +97,7 @@ public sealed class GitHubAppAuthService : IGitHubAppAuthService
     private static IGitHubClient DefaultClientFactory(string jwt, Uri apiUri)
     {
         return new GitHubClient(
-            new ProductHeaderValue("KiroWebUI-Pipeline"),
+            GitHubClientProvider.AppProductHeader,
             apiUri)
         {
             Credentials = new Credentials(jwt, AuthenticationType.Bearer)

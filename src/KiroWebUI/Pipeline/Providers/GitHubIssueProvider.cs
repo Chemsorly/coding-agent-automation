@@ -11,9 +11,7 @@ namespace KiroWebUI.Pipeline.Providers;
 /// </summary>
 public class GitHubIssueProvider : IIssueProvider
 {
-    private readonly IGitHubClient? _client;
-    private readonly string? _apiUrl;
-    private readonly Func<CancellationToken, Task<string>>? _tokenProvider;
+    private readonly GitHubClientProvider _clientProvider;
     private readonly string _owner;
     private readonly string _repo;
 
@@ -29,14 +27,9 @@ public class GitHubIssueProvider : IIssueProvider
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(repo);
 
+        _clientProvider = new GitHubClientProvider(apiUrl, token);
         _owner = owner;
         _repo = repo;
-
-        var productHeader = new ProductHeaderValue("KiroWebUI-Pipeline");
-        _client = new GitHubClient(productHeader, new Uri(apiUrl))
-        {
-            Credentials = new Credentials(token)
-        };
     }
 
     /// <summary>
@@ -50,8 +43,7 @@ public class GitHubIssueProvider : IIssueProvider
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(repo);
 
-        _apiUrl = apiUrl;
-        _tokenProvider = tokenProvider;
+        _clientProvider = new GitHubClientProvider(apiUrl, tokenProvider);
         _owner = owner;
         _repo = repo;
     }
@@ -65,7 +57,7 @@ public class GitHubIssueProvider : IIssueProvider
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(repo);
 
-        _client = client;
+        _clientProvider = new GitHubClientProvider(client);
         _owner = owner;
         _repo = repo;
     }
@@ -82,7 +74,8 @@ public class GitHubIssueProvider : IIssueProvider
         return MapToIssueDetail(issue);
     }
 
-    public async Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize, CancellationToken ct)
+    public async Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize,
+        IReadOnlyList<string>? labels, CancellationToken ct)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
@@ -92,6 +85,12 @@ public class GitHubIssueProvider : IIssueProvider
         {
             State = ItemStateFilter.Open
         };
+
+        if (labels is { Count: > 0 })
+        {
+            foreach (var label in labels)
+                request.Labels.Add(label);
+        }
 
         var apiOptions = new ApiOptions
         {
@@ -123,26 +122,11 @@ public class GitHubIssueProvider : IIssueProvider
         };
     }
 
-    /// <summary>
-    /// Returns a GitHubClient configured with a current token.
-    /// If a token provider is set, calls it to get a fresh token.
-    /// Otherwise, returns the static client.
-    /// </summary>
-    private async Task<IGitHubClient> GetClientAsync(CancellationToken ct)
-    {
-        if (_tokenProvider is not null)
-        {
-            var token = await _tokenProvider(ct);
-            return new GitHubClient(
-                new ProductHeaderValue("KiroWebUI-Pipeline"),
-                new Uri(_apiUrl!))
-            {
-                Credentials = new Credentials(token)
-            };
-        }
+    public Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize, CancellationToken ct)
+        => ListOpenIssuesAsync(page, pageSize, labels: null, ct);
 
-        return _client!;
-    }
+    private Task<IGitHubClient> GetClientAsync(CancellationToken ct)
+        => _clientProvider.GetClientAsync(ct);
 
     private static IssueDetail MapToIssueDetail(Issue issue)
     {
@@ -152,8 +136,7 @@ public class GitHubIssueProvider : IIssueProvider
             Title = issue.Title ?? string.Empty,
             Description = issue.Body ?? string.Empty,
             Labels = issue.Labels?.Select(l => l.Name).ToList().AsReadOnly()
-                ?? (IReadOnlyList<string>)Array.Empty<string>(),
-            AcceptanceCriteria = Array.Empty<string>()
+                ?? (IReadOnlyList<string>)Array.Empty<string>()
         };
     }
 
@@ -167,6 +150,22 @@ public class GitHubIssueProvider : IIssueProvider
 
         var client = await GetClientAsync(ct);
         await client.Issue.Comment.Create(_owner, _repo, issueNumber, body);
+    }
+
+    public async Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(commentId);
+        ArgumentNullException.ThrowIfNull(body);
+
+        if (!int.TryParse(issueIdentifier, out _))
+            throw new ArgumentException($"Invalid issue identifier: '{issueIdentifier}'. Expected a numeric issue number.", nameof(issueIdentifier));
+
+        if (!int.TryParse(commentId, out var commentIdParsed))
+            throw new ArgumentException($"Invalid comment identifier: '{commentId}'. Expected a numeric comment ID.", nameof(commentId));
+
+        var client = await GetClientAsync(ct);
+        await client.Issue.Comment.Update(_owner, _repo, commentIdParsed, body);
     }
 
     public async Task<IReadOnlyList<Models.IssueComment>> ListCommentsAsync(string identifier, CancellationToken ct)
@@ -189,6 +188,45 @@ public class GitHubIssueProvider : IIssueProvider
             })
             .ToList()
             .AsReadOnly();
+    }
+
+    /// <inheritdoc />
+    public async Task AddLabelsAsync(string identifier, IReadOnlyList<string> labels, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(labels);
+
+        if (!int.TryParse(identifier, out var issueNumber))
+            throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
+
+        var client = await GetClientAsync(ct);
+        await client.Issue.Labels.AddToIssue(_owner, _repo, issueNumber, labels.ToArray());
+    }
+
+    /// <inheritdoc />
+    public async Task CloseIssueAsync(string identifier, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(identifier);
+
+        if (!int.TryParse(identifier, out var issueNumber))
+            throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
+
+        var client = await GetClientAsync(ct);
+        await client.Issue.Update(_owner, _repo, issueNumber, new IssueUpdate { State = ItemState.Closed });
+    }
+
+    /// <inheritdoc />
+    public async Task ValidateAsync(CancellationToken ct)
+    {
+        var client = await GetClientAsync(ct);
+        await client.Repository.Get(_owner, _repo);
+    }
+
+    /// <inheritdoc />
+    public ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return ValueTask.CompletedTask;
     }
 
     private static IssueSummary MapToIssueSummary(Issue issue)

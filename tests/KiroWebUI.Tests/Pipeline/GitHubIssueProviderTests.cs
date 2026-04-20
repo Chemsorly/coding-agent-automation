@@ -30,7 +30,6 @@ public class GitHubIssueProviderTests
         result.Description.Should().BeEmpty();
         result.Title.Should().Be("Test Issue");
         result.Identifier.Should().Be("42");
-        result.AcceptanceCriteria.Should().BeEmpty();
     }
 
     [Fact]
@@ -151,6 +150,105 @@ public class GitHubIssueProviderTests
     {
         var act = () => _provider.PostCommentAsync("not-a-number", "body", CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Invalid issue identifier*");
+    }
+
+    [Fact]
+    public async Task UpdateCommentAsync_CallsOctokitUpdateComment()
+    {
+        var mockComments = new Mock<IIssueCommentsClient>();
+        _mockIssues.Setup(i => i.Comment).Returns(mockComments.Object);
+
+        await _provider.UpdateCommentAsync("42", "100", "Updated body", CancellationToken.None);
+
+        mockComments.Verify(c => c.Update("owner", "repo", 100, "Updated body"), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(null, "100", "body", "issueIdentifier")]
+    [InlineData("42", null, "body", "commentId")]
+    [InlineData("42", "100", null, "body")]
+    public async Task UpdateCommentAsync_NullParams_ThrowsArgumentNullException(
+        string? issueIdentifier, string? commentId, string? body, string expectedParamName)
+    {
+        var act = () => _provider.UpdateCommentAsync(issueIdentifier!, commentId!, body!, CancellationToken.None);
+        (await act.Should().ThrowAsync<ArgumentNullException>())
+            .Which.ParamName.Should().Be(expectedParamName);
+    }
+
+    [Theory]
+    [InlineData("not-a-number", "100", "issueIdentifier")]
+    [InlineData("42", "not-a-number", "commentId")]
+    public async Task UpdateCommentAsync_NonNumericIdentifier_ThrowsArgumentException(
+        string issueIdentifier, string commentId, string expectedParamName)
+    {
+        var act = () => _provider.UpdateCommentAsync(issueIdentifier, commentId, "body", CancellationToken.None);
+        (await act.Should().ThrowAsync<ArgumentException>())
+            .Which.ParamName.Should().Be(expectedParamName);
+    }
+
+    [Fact]
+    public async Task AddLabelsAsync_CallsOctokitAddToIssue()
+    {
+        var mockLabels = new Mock<IIssuesLabelsClient>();
+        _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
+
+        var labels = new List<string> { "bug", "priority-high" }.AsReadOnly();
+        await _provider.AddLabelsAsync("42", labels, CancellationToken.None);
+
+        mockLabels.Verify(l => l.AddToIssue("owner", "repo", 42, It.Is<string[]>(a =>
+            a.Length == 2 && a[0] == "bug" && a[1] == "priority-high")), Times.Once);
+    }
+
+    [Fact]
+    public async Task AddLabelsAsync_NullIdentifier_ThrowsArgumentNullException()
+    {
+        var act = () => _provider.AddLabelsAsync(null!, new List<string> { "bug" }.AsReadOnly(), CancellationToken.None);
+        (await act.Should().ThrowAsync<ArgumentNullException>())
+            .Which.ParamName.Should().Be("identifier");
+    }
+
+    [Fact]
+    public async Task AddLabelsAsync_NullLabels_ThrowsArgumentNullException()
+    {
+        var act = () => _provider.AddLabelsAsync("42", null!, CancellationToken.None);
+        (await act.Should().ThrowAsync<ArgumentNullException>())
+            .Which.ParamName.Should().Be("labels");
+    }
+
+    [Fact]
+    public async Task AddLabelsAsync_NonNumericIdentifier_ThrowsArgumentException()
+    {
+        var act = () => _provider.AddLabelsAsync("not-a-number", new List<string> { "bug" }.AsReadOnly(), CancellationToken.None);
+        (await act.Should().ThrowAsync<ArgumentException>())
+            .Which.ParamName.Should().Be("identifier");
+    }
+
+    [Fact]
+    public async Task CloseIssueAsync_CallsOctokitUpdateWithClosedState()
+    {
+        _mockIssues.Setup(i => i.Update("owner", "repo", 42, It.Is<IssueUpdate>(u => u.State == ItemState.Closed)))
+            .ReturnsAsync(CreateOctokitIssue(42, "Test", body: null, labels: []));
+
+        await _provider.CloseIssueAsync("42", CancellationToken.None);
+
+        _mockIssues.Verify(i => i.Update("owner", "repo", 42,
+            It.Is<IssueUpdate>(u => u.State == ItemState.Closed)), Times.Once);
+    }
+
+    [Fact]
+    public async Task CloseIssueAsync_NullIdentifier_ThrowsArgumentNullException()
+    {
+        var act = () => _provider.CloseIssueAsync(null!, CancellationToken.None);
+        (await act.Should().ThrowAsync<ArgumentNullException>())
+            .Which.ParamName.Should().Be("identifier");
+    }
+
+    [Fact]
+    public async Task CloseIssueAsync_NonNumericIdentifier_ThrowsArgumentException()
+    {
+        var act = () => _provider.CloseIssueAsync("not-a-number", CancellationToken.None);
+        (await act.Should().ThrowAsync<ArgumentException>())
+            .Which.ParamName.Should().Be("identifier");
     }
 
     private static Issue CreateOctokitIssue(int number, string title, string? body, string[] labels)

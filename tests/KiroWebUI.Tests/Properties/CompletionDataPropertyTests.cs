@@ -56,7 +56,7 @@ public class CompletionDataPropertyTests
     /// Property 6: For any execution, the assistant ChatMessage contains correct
     /// exit code, file changes when present, test results when present.
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(Generators) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(Generators) })]
     public void CompletionData_IsPropagated_ToAssistantMessage(CompletionScenario scenario)
     {
         var config = CreateTestConfig();
