@@ -5,7 +5,8 @@
 # =============================================================================
 
 # Stage 1: Build
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+# Pinned to 10.0.200 feature band to match global.json (rollForward: latestPatch)
+FROM mcr.microsoft.com/dotnet/sdk:10.0.200 AS build
 WORKDIR /src
 
 # Copy solution and project files first for layer caching
