@@ -43,7 +43,9 @@ public class JsonConfigurationStoreTests : IDisposable
             AgentTimeout = TimeSpan.FromMinutes(45),
             MinCoverageThreshold = 90.0,
             SecurityScanEnabled = true,
-            WorkspaceBaseDirectory = "/tmp/workspaces"
+            WorkspaceBaseDirectory = "/tmp/workspaces",
+            CleanupSuccessfulWorkspaces = false,
+            FailedWorkspaceRetentionDays = 14
         };
 
         await _store.SavePipelineConfigAsync(original, CancellationToken.None);
@@ -54,6 +56,8 @@ public class JsonConfigurationStoreTests : IDisposable
         Assert.Equal(original.MinCoverageThreshold, loaded.MinCoverageThreshold);
         Assert.Equal(original.SecurityScanEnabled, loaded.SecurityScanEnabled);
         Assert.Equal(original.WorkspaceBaseDirectory, loaded.WorkspaceBaseDirectory);
+        Assert.Equal(original.CleanupSuccessfulWorkspaces, loaded.CleanupSuccessfulWorkspaces);
+        Assert.Equal(original.FailedWorkspaceRetentionDays, loaded.FailedWorkspaceRetentionDays);
     }
 
     [Fact]
