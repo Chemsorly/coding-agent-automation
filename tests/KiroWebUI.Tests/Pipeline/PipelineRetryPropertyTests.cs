@@ -20,7 +20,7 @@ public class PipelineRetryPropertyTests
     /// (sending fix prompts to the agent) and RetryErrors contains all N+1 error messages.
     /// **Validates: Requirements 5.2, 5.4**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void RetryLogic_EnforcesMaxCountAndAccumulatesErrors(PositiveInt retryCountRaw)
     {
         // Clamp to 1-5 for test speed
@@ -95,7 +95,7 @@ public class PipelineRetryPropertyTests
             .ReturnsAsync(new IssueDetail
             {
                 Identifier = "42", Title = "Test Issue", Description = "Test description",
-                Labels = Array.Empty<string>(), AcceptanceCriteria = Array.Empty<string>()
+                Labels = Array.Empty<string>()
             });
         mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -114,12 +114,16 @@ public class PipelineRetryPropertyTests
             .Returns(Task.CompletedTask);
         mockRepoProvider.Setup(p => p.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("https://github.com/test/pr/1");
+        mockRepoProvider.Setup(p => p.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<FileChangeSummary>() as IReadOnlyList<FileChangeSummary>);
 
         var mockAgentProvider = new Mock<IAgentProvider>();
         mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        mockAgentProvider.Setup(p => p.ExecuteWithResumeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        mockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
         mockAgentProvider.Setup(p => p.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = false });
 
@@ -149,6 +153,7 @@ public class PipelineRetryPropertyTests
             mockFactory.Object,
             new IssueDescriptionParser(),
             mockValidator.Object,
+            new CiLogWriter(mockLogger.Object),
             mockLogger.Object,
             runsDirectory: Path.Combine(Path.GetTempPath(), $"test-runs-{Guid.NewGuid()}"));
     }

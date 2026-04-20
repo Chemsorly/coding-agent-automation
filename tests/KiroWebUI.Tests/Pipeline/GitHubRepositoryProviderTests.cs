@@ -1,3 +1,4 @@
+using System.Reflection;
 using AwesomeAssertions;
 using KiroWebUI.Pipeline.Models;
 using KiroWebUI.Pipeline.Providers;
@@ -16,14 +17,14 @@ public class GitHubRepositoryProviderTests
     [InlineData("multiple   spaces", "3", "feature/auto-3-multiple-spaces")]
     public void GenerateBranchName_WithSpecialCharacters_ProducesValidSlug(string title, string number, string expected)
     {
-        var result = GitHubRepositoryProvider.GenerateBranchName(number, title);
+        var result = PipelineFormatting.GenerateBranchName(number, title);
         result.Should().Be(expected);
     }
 
     [Fact]
     public void GenerateBranchName_WithEmptyTitle_OmitsSlug()
     {
-        var result = GitHubRepositoryProvider.GenerateBranchName("42", "");
+        var result = PipelineFormatting.GenerateBranchName("42", "");
         result.Should().Be("feature/auto-42");
     }
 
@@ -31,7 +32,7 @@ public class GitHubRepositoryProviderTests
     public void GenerateBranchName_WithLongTitle_TruncatesToMaxLength()
     {
         var longTitle = new string('a', 200);
-        var result = GitHubRepositoryProvider.GenerateBranchName("42", longTitle);
+        var result = PipelineFormatting.GenerateBranchName("42", longTitle);
         result.Length.Should().BeLessThanOrEqualTo(100);
         result.Should().StartWith("feature/auto-42-");
         result.Should().NotEndWith("-");
@@ -53,7 +54,7 @@ public class GitHubRepositoryProviderTests
     {
         // Spaces become hyphens in the slug; truncation mid-slug could leave a trailing hyphen
         var title = string.Join(" ", Enumerable.Repeat("word", 50));
-        var result = GitHubRepositoryProvider.GenerateBranchName("1", title);
+        var result = PipelineFormatting.GenerateBranchName("1", title);
         result.Length.Should().BeLessThanOrEqualTo(100);
         result.Should().NotEndWith("-");
         result.Should().NotContain("--");
@@ -68,7 +69,7 @@ public class GitHubRepositoryProviderTests
             new("Modified", "src/Existing.cs")
         };
 
-        var body = GitHubRepositoryProvider.GeneratePrBody(
+        var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "42",
             testsPassed: 10,
             testsFailed: 2,
@@ -101,7 +102,7 @@ public class GitHubRepositoryProviderTests
     [Fact]
     public void GeneratePrBody_WithNullCoverage_ShowsNotAvailable()
     {
-        var body = GitHubRepositoryProvider.GeneratePrBody(
+        var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1",
             testsPassed: 5,
             testsFailed: 0,
@@ -118,7 +119,7 @@ public class GitHubRepositoryProviderTests
     [Fact]
     public void GeneratePrBody_DraftPr_IncludesWarning()
     {
-        var body = GitHubRepositoryProvider.GeneratePrBody(
+        var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "10",
             testsPassed: 3,
             testsFailed: 5,
@@ -144,7 +145,7 @@ public class GitHubRepositoryProviderTests
             new() { Id = "2", Body = "Also update the docs", Author = "bob", CreatedAt = new DateTime(2026, 4, 11, 9, 0, 0, DateTimeKind.Utc) },
         };
 
-        var body = GitHubRepositoryProvider.GeneratePrBody(
+        var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "42", testsPassed: 5, testsFailed: 0, testsSkipped: 0,
             coveragePercent: 90.0, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Feature", issueDescription: "Desc",
@@ -161,7 +162,7 @@ public class GitHubRepositoryProviderTests
     [Fact]
     public void GeneratePrBody_WithNoComments_OmitsInputCommentsSection()
     {
-        var body = GitHubRepositoryProvider.GeneratePrBody(
+        var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Bug", issueDescription: "Fix",
@@ -179,7 +180,7 @@ public class GitHubRepositoryProviderTests
             new() { Id = "2", Body = "## 🤖 Agent Analysis\n\nPlanned approach...", Author = "bot", CreatedAt = DateTime.UtcNow },
         };
 
-        var body = GitHubRepositoryProvider.GeneratePrBody(
+        var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "5", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Test", issueDescription: "Desc",
@@ -200,7 +201,7 @@ public class GitHubRepositoryProviderTests
             new() { Id = "1", Body = longBody, Author = "alice", CreatedAt = DateTime.UtcNow },
         };
 
-        var body = GitHubRepositoryProvider.GeneratePrBody(
+        var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 0, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "T", issueDescription: "D",
@@ -213,7 +214,33 @@ public class GitHubRepositoryProviderTests
     [Fact]
     public void GenerateCommitMessage_FollowsConventionalFormat()
     {
-        var msg = GitHubRepositoryProvider.GenerateCommitMessage("Add login page", "15");
+        var msg = PipelineFormatting.GenerateCommitMessage("Add login page", "15");
         msg.Should().Be("feat: Add login page (#15)\n\nAutomated implementation via pipeline");
+    }
+
+    // --- REQ-2.6: Vestigial static helpers removed ---
+
+    [Theory]
+    [InlineData("GenerateBranchName")]
+    [InlineData("GeneratePrTitle")]
+    [InlineData("GeneratePrBody")]
+    [InlineData("GenerateCommitMessage")]
+    public void GitHubRepositoryProvider_DoesNotContainStaticWrapperMethod(string methodName)
+    {
+        var methods = typeof(GitHubRepositoryProvider)
+            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
+
+        methods.Should().NotContain(m => m.Name == methodName,
+            $"GitHubRepositoryProvider should not contain '{methodName}' — it was moved to PipelineFormatting (REQ-2.6)");
+    }
+
+    [Fact]
+    public void GitHubRepositoryProvider_DoesNotContainNonAlphanumericPattern()
+    {
+        var fields = typeof(GitHubRepositoryProvider)
+            .GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
+
+        fields.Should().NotContain(f => f.Name.Contains("NonAlphanumeric", StringComparison.OrdinalIgnoreCase),
+            "GitHubRepositoryProvider should not contain NonAlphanumericPattern — it was a duplicate of PipelineFormatting (REQ-2.6)");
     }
 }

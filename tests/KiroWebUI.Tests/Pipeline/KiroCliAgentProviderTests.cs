@@ -9,16 +9,127 @@ namespace KiroWebUI.Tests.Pipeline;
 public class KiroCliAgentProviderTests
 {
     private readonly Mock<IKiroCliOrchestrator> _mockOrchestrator;
+    private readonly Mock<Serilog.ILogger> _mockLogger;
     private readonly KiroCliAgentProvider _provider;
 
     public KiroCliAgentProviderTests()
     {
         _mockOrchestrator = new Mock<IKiroCliOrchestrator>();
-        _provider = new KiroCliAgentProvider(_mockOrchestrator.Object);
+        _mockLogger = new Mock<Serilog.ILogger>();
+        _provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object);
+    }
+
+    // --- EnsureSessionAsync tests ---
+
+    [Fact]
+    public async Task EnsureSessionAsync_FirstCall_SendsWarmUpPrompt()
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                KiroCliAgentProvider.WarmUpPrompt,
+                It.IsAny<string>(), false,
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(0);
+
+        await _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+
+        _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
+            KiroCliAgentProvider.WarmUpPrompt,
+            "/workspace", false,
+            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
     }
 
     [Fact]
-    public async Task ExecuteAsync_CallsOrchestratorWithUseResumeFalse()
+    public async Task EnsureSessionAsync_SubsequentCallSamePath_NoOps()
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(0);
+
+        await _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+        await _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+
+        _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task EnsureSessionAsync_DifferentPaths_CallsForEach()
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(0);
+
+        await _provider.EnsureSessionAsync("/workspace-a", CancellationToken.None);
+        await _provider.EnsureSessionAsync("/workspace-b", CancellationToken.None);
+
+        _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task EnsureSessionAsync_Failure_LogsWarningAndDoesNotThrow()
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("agent crashed"));
+
+        var act = () => _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        _mockLogger.Verify(l => l.Warning(
+            It.IsAny<Exception>(),
+            It.IsAny<string>(),
+            It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task EnsureSessionAsync_Failure_DoesNotMarkSessionEstablished()
+    {
+        _mockOrchestrator
+            .SetupSequence(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("agent crashed"))
+            .ReturnsAsync(0);
+
+        // First call fails
+        await _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+
+        // Second call should retry (not no-op) because session was not established
+        await _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+
+        _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task EnsureSessionAsync_OperationCanceled_Rethrows()
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var act = () => _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    // --- ExecuteAsync tests ---
+
+    [Fact]
+    public async Task ExecuteAsync_DefaultUseResume_CallsOrchestratorWithUseResumeFalse()
     {
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
@@ -37,7 +148,7 @@ public class KiroCliAgentProviderTests
     }
 
     [Fact]
-    public async Task ExecuteWithResumeAsync_CallsOrchestratorWithUseResumeTrue()
+    public async Task ExecuteAsync_UseResumeTrue_CallsOrchestratorWithUseResumeTrue()
     {
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
@@ -45,8 +156,8 @@ public class KiroCliAgentProviderTests
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(0);
 
-        var result = await _provider.ExecuteWithResumeAsync(
-            "follow up", "/workspace", TimeSpan.FromMinutes(5), CancellationToken.None);
+        var request = new AgentRequest { Prompt = "follow up", WorkspacePath = "/workspace", UseResume = true };
+        var result = await _provider.ExecuteAsync(request, CancellationToken.None);
 
         result.ExitCode.Should().Be(0);
         _mockOrchestrator.Verify(o => o.ExecutePromptAsync(

@@ -1,4 +1,5 @@
 using Octokit;
+using KiroWebUI.Pipeline.Providers;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -161,7 +162,7 @@ public class GitHubValidationService
     private static GitHubClient CreateClient(string apiUrl, string token)
     {
         var client = new GitHubClient(
-            new ProductHeaderValue("KiroWebUI-Pipeline"),
+            GitHubClientProvider.AppProductHeader,
             new Uri(apiUrl))
         {
             Credentials = new Credentials(token)

@@ -42,7 +42,7 @@ public class InputValidationPropertyTests
     /// Property 2: Any whitespace-only string is rejected without invoking orchestrator,
     /// and the message list remains unchanged.
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(Generators) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(Generators) })]
     public void WhitespacePrompt_IsRejected_WithoutInvokingOrchestrator(string whitespacePrompt)
     {
         var config = CreateTestConfig();

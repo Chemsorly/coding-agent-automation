@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, 'feature/auto-**']
+    branches: [main, 'feature/**']
   pull_request:
     branches: [main]
 
@@ -23,7 +23,7 @@ jobs:
       - name: Setup .NET 10
         uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.2xx'
 
       - name: Cache NuGet packages
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5

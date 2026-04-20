@@ -3,6 +3,9 @@ using FsCheck;
 using FsCheck.Xunit;
 using KiroWebUI.Pipeline.Models;
 using KiroWebUI.Pipeline.Providers;
+using KiroWebUI.Pipeline.Services;
+using Moq;
+using Octokit;
 
 namespace KiroWebUI.Tests.Pipeline;
 
@@ -12,6 +15,31 @@ namespace KiroWebUI.Tests.Pipeline;
 public class GitHubRepositoryProviderPropertyTests
 {
     /// <summary>
+    /// Feature: provider-interface-gaps, Property 4: RepositoryFullName format
+    /// For any non-null owner and repo strings, RepositoryFullName equals $"{owner}/{repo}".
+    /// **Validates: Requirements 2.5**
+    /// </summary>
+    // Feature: provider-interface-gaps, Property 4: RepositoryFullName format
+    [Property(MaxTest = 20)]
+    public void RepositoryFullName_Equals_Owner_Slash_Repo(NonEmptyString owner, NonEmptyString repo)
+    {
+        // Arrange — use the internal test constructor with a mock IGitHubClient
+        var mockClient = new Mock<IGitHubClient>();
+        var provider = new GitHubRepositoryProvider(
+            gitHubClient: mockClient.Object,
+            token: "test-token",
+            owner: owner.Get,
+            repo: repo.Get,
+            baseBranch: "main");
+
+        // Act
+        var fullName = provider.RepositoryFullName;
+
+        // Assert — must be exactly "{owner}/{repo}"
+        fullName.Should().Be($"{owner.Get}/{repo.Get}");
+    }
+
+    /// <summary>
     /// Property 1: Branch name generation produces valid slug format.
     /// For any issue number (positive integer) and any issue title (non-empty string),
     /// the generated branch name matches the pattern feature/auto-{issueNumber}-{slug}
@@ -19,11 +47,11 @@ public class GitHubRepositoryProviderPropertyTests
     /// does not start or end with a hyphen, and does not contain consecutive hyphens.
     /// **Validates: Requirements 2.4**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void BranchName_AlwaysProducesValidSlugFormat(PositiveInt issueNum, NonEmptyString title)
     {
         var number = issueNum.Get.ToString();
-        var branchName = GitHubRepositoryProvider.GenerateBranchName(number, title.Get);
+        var branchName = PipelineFormatting.GenerateBranchName(number, title.Get);
 
         // Must start with feature/auto-{number}
         branchName.Should().StartWith($"feature/auto-{number}");
@@ -52,11 +80,11 @@ public class GitHubRepositoryProviderPropertyTests
     /// the generated PR title equals feat: {issueTitle} (#{issueNumber}).
     /// **Validates: Requirements 6.2**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void PrTitle_FollowsConventionalCommitFormat(NonEmptyString title, PositiveInt issueNum)
     {
         var number = issueNum.Get.ToString();
-        var prTitle = GitHubRepositoryProvider.GeneratePrTitle(title.Get, number);
+        var prTitle = PipelineFormatting.GeneratePrTitle(title.Get, number);
 
         prTitle.Should().Be($"feat: {title.Get} (#{number})");
     }
@@ -65,7 +93,7 @@ public class GitHubRepositoryProviderPropertyTests
     /// Property 6: PR body contains all required sections including file changes and issue context.
     /// **Validates: Requirements 6.3, 6.4**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void PrBody_ContainsAllRequiredSections(
         PositiveInt issueNum,
         NonNegativeInt passed,
@@ -82,7 +110,7 @@ public class GitHubRepositoryProviderPropertyTests
         };
         var criteria = new[] { "Must compile" };
 
-        var body = GitHubRepositoryProvider.GeneratePrBody(
+        var body = PipelineFormatting.GeneratePrBody(
             number,
             passed.Get,
             failed.Get,

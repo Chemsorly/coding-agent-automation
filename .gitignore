@@ -62,6 +62,7 @@ nunit-*.xml
 
 # Pipeline provider configs (contain tokens/credentials at runtime)
 config/pipeline/
+config/kiro-cli-data/
 
 # GitHub App credentials (private key)
 config/github-app-credentials.json

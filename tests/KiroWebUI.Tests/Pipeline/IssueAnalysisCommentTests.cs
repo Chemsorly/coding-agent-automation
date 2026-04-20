@@ -14,8 +14,7 @@ public class IssueAnalysisCommentTests
             Identifier = "1",
             Title = "Add login page",
             Description = "## Requirements\nBuild a login page\n## Acceptance Criteria\n- [ ] Has username field\n- [ ] Has password field",
-            Labels = new[] { "feature" },
-            AcceptanceCriteria = Array.Empty<string>()
+            Labels = new[] { "feature" }
         };
         var parsed = new IssueDescriptionParser().Parse(issue.Description);
 
@@ -35,8 +34,7 @@ public class IssueAnalysisCommentTests
             Identifier = "2",
             Title = "Fix bug",
             Description = "Something is broken",
-            Labels = Array.Empty<string>(),
-            AcceptanceCriteria = Array.Empty<string>()
+            Labels = Array.Empty<string>()
         };
         var parsed = new IssueDescriptionParser().Parse(issue.Description);
 

@@ -124,7 +124,7 @@
     {
         if (qr?.Coverage is not { } cov) return "—";
         if (!cov.CoveragePercent.HasValue) return cov.Passed ? "✅ —" : "❌ —";
-        return $"{(cov.Passed ? "✅" : "❌")} {cov.CoveragePercent.Value:F1}%";
+        return $"{(cov.Passed ? "✅" : "❌")} {cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%";
     }
 
     /// <summary>

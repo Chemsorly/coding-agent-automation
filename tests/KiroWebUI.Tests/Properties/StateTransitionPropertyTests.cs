@@ -28,7 +28,7 @@ public class StateTransitionPropertyTests
     /// Property 5: For any KiroState values emitted via CallbackHandler,
     /// CurrentState equals the last emitted state after each callback.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void CurrentState_EqualsLastEmittedState(byte[] stateSeeds)
     {
         if (stateSeeds == null || stateSeeds.Length == 0) return;

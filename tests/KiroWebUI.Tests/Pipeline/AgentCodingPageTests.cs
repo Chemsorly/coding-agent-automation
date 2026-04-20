@@ -40,6 +40,7 @@ public class AgentCodingPageTests
             _mockFactory.Object,
             new IssueDescriptionParser(),
             _mockValidator.Object,
+            new CiLogWriter(_mockLogger.Object),
             _mockLogger.Object,
             runsDirectory: Path.Combine(Path.GetTempPath(), $"test-runs-{Guid.NewGuid()}"));
     }
@@ -68,7 +69,7 @@ public class AgentCodingPageTests
             .ReturnsAsync(new IssueDetail
             {
                 Identifier = "42", Title = "Test Issue", Description = "Test description",
-                Labels = Array.Empty<string>(), AcceptanceCriteria = Array.Empty<string>()
+                Labels = Array.Empty<string>()
             });
         _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<IssueSummary>
@@ -91,11 +92,13 @@ public class AgentCodingPageTests
         _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
         _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>())).ReturnsAsync("https://github.com/test/pr/1");
+        _mockRepoProvider.Setup(p => p.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<FileChangeSummary>() as IReadOnlyList<FileChangeSummary>);
 
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        _mockAgentProvider.Setup(p => p.ExecuteWithResumeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        _mockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = false });
 
@@ -305,10 +308,10 @@ public class AgentCodingPageTests
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
 
         // NOW override the mock to hold the agent execution so we can observe the intermediate state.
-        // This must happen AFTER StartPipelineAsync/ApproveAnalysisAsync which also call ExecuteWithResumeAsync.
+        // This must happen AFTER StartPipelineAsync/ApproveAnalysisAsync which also call ExecuteAsync.
         var agentTcs = new TaskCompletionSource<AgentResult>();
-        _mockAgentProvider.Setup(p => p.ExecuteWithResumeAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan>(),
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.UseResume),
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns(agentTcs.Task);
 
