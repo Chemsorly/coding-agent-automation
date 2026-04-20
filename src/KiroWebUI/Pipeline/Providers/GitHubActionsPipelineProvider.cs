@@ -10,13 +10,14 @@ namespace KiroWebUI.Pipeline.Providers;
 /// </summary>
 public class GitHubActionsPipelineProvider : IPipelineProvider
 {
-    private readonly string? _apiUrl;
-    private readonly Func<CancellationToken, Task<string>>? _tokenProvider;
-    private readonly IGitHubClient? _client;
+    private readonly GitHubClientProvider _clientProvider;
     private readonly string _owner;
     private readonly string _repo;
     private readonly TimeSpan _pollInterval;
     private readonly Serilog.ILogger _logger;
+
+    /// <inheritdoc />
+    public PipelineProviderType ProviderType => PipelineProviderType.GitHubActions;
 
     /// <summary>
     /// Creates a provider with a token provider delegate (for GitHub App auth).
@@ -34,8 +35,7 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(repo);
 
-        _apiUrl = apiUrl;
-        _tokenProvider = tokenProvider;
+        _clientProvider = new GitHubClientProvider(apiUrl, tokenProvider);
         _owner = owner;
         _repo = repo;
         _pollInterval = pollInterval;
@@ -58,14 +58,11 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(repo);
 
+        _clientProvider = new GitHubClientProvider(apiUrl, token);
         _owner = owner;
         _repo = repo;
         _pollInterval = pollInterval;
         _logger = logger ?? Serilog.Log.Logger;
-        _client = new GitHubClient(new ProductHeaderValue("KiroWebUI-Pipeline"), new Uri(apiUrl))
-        {
-            Credentials = new Credentials(token)
-        };
     }
 
     /// <summary>
@@ -82,7 +79,7 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(repo);
 
-        _client = client;
+        _clientProvider = new GitHubClientProvider(client);
         _owner = owner;
         _repo = repo;
         _pollInterval = pollInterval;
@@ -184,7 +181,7 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
                     // Automatically fetch logs for failed jobs so callers get actionable diagnostics
                     if (status.State == PipelineRunState.Failed)
                     {
-                        await EnrichFailedJobsWithLogsAsync(status, linkedCt);
+                        status = await EnrichFailedJobsWithLogsAsync(status, linkedCt);
                     }
 
                     return status;
@@ -206,54 +203,99 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         }
     }
 
+    /// <inheritdoc />
+    public async Task<string?> GetJobLogsAsync(long jobId, CancellationToken ct)
+    {
+        try
+        {
+            var client = await GetClientAsync(ct);
+            var rawLog = await client.Actions.Workflows.Jobs.GetLogs(_owner, _repo, jobId);
+            return string.IsNullOrEmpty(rawLog) ? null : rawLog;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to fetch logs for job (id={JobId})", jobId);
+            return null;
+        }
+    }
+
     /// <summary>
     /// Fetches full log content from the GitHub Actions API for each failed job
-    /// and populates <see cref="PipelineJobResult.LogContent"/>.
+    /// and returns a new <see cref="PipelineRunStatus"/> with enriched jobs.
+    /// Delegates to <see cref="GetJobLogsAsync"/> per job.
     /// Failures are logged and swallowed — missing logs should never block the pipeline.
     /// </summary>
-    private async Task EnrichFailedJobsWithLogsAsync(
+    private async Task<PipelineRunStatus> EnrichFailedJobsWithLogsAsync(
         PipelineRunStatus status, CancellationToken ct)
     {
-        var failedJobs = status.Jobs.Where(j => j.State == PipelineRunState.Failed && j.JobId > 0).ToList();
-        if (failedJobs.Count == 0)
-            return;
+        var failedJobIds = status.Jobs
+            .Where(j => j.State == PipelineRunState.Failed && j.JobId > 0)
+            .Select(j => j.JobId)
+            .ToHashSet();
 
-        var client = await GetClientAsync(ct);
+        if (failedJobIds.Count == 0)
+            return status;
 
-        foreach (var job in failedJobs)
+        var logsByJobId = new Dictionary<long, string>();
+        foreach (var jobId in failedJobIds)
         {
-            try
+            var logContent = await GetJobLogsAsync(jobId, ct);
+            if (logContent is not null)
             {
-                var rawLog = await client.Actions.Workflows.Jobs.GetLogs(_owner, _repo, job.JobId);
-                if (!string.IsNullOrEmpty(rawLog))
+                logsByJobId[jobId] = logContent;
+                _logger.Debug("Fetched {Length} chars of logs for failed job (id={JobId})",
+                    logContent.Length, jobId);
+            }
+        }
+
+        if (logsByJobId.Count == 0)
+            return status;
+
+        // Rebuild jobs list with LogContent set via init
+        var enrichedJobs = status.Jobs.Select(job =>
+        {
+            if (logsByJobId.TryGetValue(job.JobId, out var content))
+            {
+                return new PipelineJobResult
                 {
-                    job.LogContent = rawLog;
-                    _logger.Debug("Fetched {Length} chars of logs for failed job '{JobName}' (id={JobId})",
-                        rawLog.Length, job.Name, job.JobId);
-                }
+                    Name = job.Name,
+                    State = job.State,
+                    FailureReason = job.FailureReason,
+                    LogUrl = job.LogUrl,
+                    JobId = job.JobId,
+                    LogContent = content
+                };
             }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to fetch logs for job '{JobName}' (id={JobId})", job.Name, job.JobId);
-            }
-        }
-    }
+            return job;
+        }).ToList();
 
-    private async Task<IGitHubClient> GetClientAsync(CancellationToken ct)
-    {
-        if (_tokenProvider is not null)
+        return new PipelineRunStatus
         {
-            var token = await _tokenProvider(ct);
-            return new GitHubClient(
-                new ProductHeaderValue("KiroWebUI-Pipeline"),
-                new Uri(_apiUrl!))
-            {
-                Credentials = new Credentials(token)
-            };
-        }
-
-        return _client!;
+            State = status.State,
+            Jobs = enrichedJobs,
+            Url = status.Url,
+            StartedAt = status.StartedAt,
+            CompletedAt = status.CompletedAt,
+            CommitSha = status.CommitSha
+        };
     }
+
+    /// <inheritdoc />
+    public async Task ValidateAsync(CancellationToken ct)
+    {
+        var client = await GetClientAsync(ct);
+        await client.Repository.Get(_owner, _repo);
+    }
+
+    /// <inheritdoc />
+    public ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return ValueTask.CompletedTask;
+    }
+
+    private Task<IGitHubClient> GetClientAsync(CancellationToken ct)
+        => _clientProvider.GetClientAsync(ct);
 
     internal static PipelineRunState MapJobState(WorkflowJobStatus status, WorkflowJobConclusion? conclusion)
     {

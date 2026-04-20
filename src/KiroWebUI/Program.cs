@@ -18,7 +18,11 @@ builder.Services.AddSingleton(config);
 builder.Services.AddScoped<KiroExecutionService>();
 
 // Pipeline — Configuration Store
-builder.Services.AddSingleton<IConfigurationStore>(sp => new JsonConfigurationStore("config/pipeline"));
+var configStore = new JsonConfigurationStore("config/pipeline");
+builder.Services.AddSingleton<IConfigurationStore>(configStore);
+
+// Load pipeline config eagerly (before DI container is built) to avoid sync-over-async deadlocks
+var pipelineConfig = await configStore.LoadPipelineConfigAsync(CancellationToken.None);
 
 // Pipeline — IKiroCliOrchestrator (needed by ProviderFactory for KiroCliAgentProvider)
 builder.Services.AddSingleton<IKiroCliOrchestrator>(sp =>
@@ -29,7 +33,11 @@ builder.Services.AddSingleton<IKiroCliOrchestrator>(sp =>
 });
 
 // Pipeline — Provider Factory (creates provider instances from ProviderConfig at runtime)
-builder.Services.AddSingleton<IProviderFactory, ProviderFactory>();
+builder.Services.AddSingleton<IProviderFactory>(sp =>
+{
+    var orchestrator = sp.GetRequiredService<IKiroCliOrchestrator>();
+    return new ProviderFactory(orchestrator, pipelineConfig);
+});
 
 // Pipeline — Services
 builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
@@ -37,9 +45,11 @@ builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
     sp.GetRequiredService<IProviderFactory>(),
     sp.GetRequiredService<IssueDescriptionParser>(),
     sp.GetRequiredService<IQualityGateValidator>(),
+    sp.GetRequiredService<CiLogWriter>(),
     Serilog.Log.Logger));
 builder.Services.AddTransient<IQualityGateValidator>(sp => new QualityGateValidator(Serilog.Log.Logger));
 builder.Services.AddTransient<IssueDescriptionParser>();
+builder.Services.AddSingleton(sp => new CiLogWriter(Serilog.Log.Logger));
 builder.Services.AddTransient<GitHubValidationService>();
 
 // Configure Serilog

@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using LibGit2Sharp;
 using Octokit;
 using KiroWebUI.Pipeline.Interfaces;
@@ -12,17 +11,20 @@ namespace KiroWebUI.Pipeline.Providers;
 /// Supports both static token authentication (backward compatible) and
 /// dynamic token provider delegate (for GitHub App auth).
 /// </summary>
-public partial class GitHubRepositoryProvider : IRepositoryProvider
+public class GitHubRepositoryProvider : IRepositoryProvider
 {
-    private readonly string _apiUrl;
-    private readonly string? _token;
-    private readonly Func<CancellationToken, Task<string>>? _tokenProvider;
+    private readonly GitHubClientProvider _clientProvider;
     private readonly string _owner;
     private readonly string _repo;
     private readonly string _baseBranch;
-    private readonly IGitHubClient? _gitHubClient;
 
     public RepositoryProviderType ProviderType => RepositoryProviderType.GitHub;
+
+    /// <inheritdoc />
+    public string BaseBranch => _baseBranch;
+
+    /// <inheritdoc />
+    public string RepositoryFullName => $"{_owner}/{_repo}";
 
     /// <summary>
     /// Creates a provider with a static token (backward compatible).
@@ -35,18 +37,10 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
         ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(baseBranch);
 
-        _apiUrl = apiUrl;
-        _token = token;
+        _clientProvider = new GitHubClientProvider(apiUrl, token);
         _owner = owner;
         _repo = repo;
         _baseBranch = baseBranch;
-
-        _gitHubClient = new GitHubClient(
-            new Octokit.ProductHeaderValue("KiroWebUI-Pipeline"),
-            new Uri(apiUrl))
-        {
-            Credentials = new Octokit.Credentials(token)
-        };
     }
 
     /// <summary>
@@ -61,8 +55,7 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
         ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(baseBranch);
 
-        _apiUrl = apiUrl;
-        _tokenProvider = tokenProvider;
+        _clientProvider = new GitHubClientProvider(apiUrl, tokenProvider);
         _owner = owner;
         _repo = repo;
         _baseBranch = baseBranch;
@@ -79,12 +72,10 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
         ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(baseBranch);
 
-        _apiUrl = string.Empty;
-        _token = token;
+        _clientProvider = new GitHubClientProvider(gitHubClient, token);
         _owner = owner;
         _repo = repo;
         _baseBranch = baseBranch;
-        _gitHubClient = gitHubClient;
     }
 
     public Task CloneAsync(string workspacePath, CancellationToken ct)
@@ -96,7 +87,7 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
             var token = await GetTokenAsync(ct);
 
             // Derive clone URL: api.github.com → github.com, or GHE api base → GHE base
-            var cloneBaseUrl = _apiUrl.Replace("api.github.com", "github.com", StringComparison.OrdinalIgnoreCase);
+            var cloneBaseUrl = (_clientProvider.ApiUrl ?? string.Empty).Replace("api.github.com", "github.com", StringComparison.OrdinalIgnoreCase);
             // For GHE: https://github.example.com/api/v3 → https://github.example.com
             if (cloneBaseUrl.EndsWith("/api/v3", StringComparison.OrdinalIgnoreCase))
                 cloneBaseUrl = cloneBaseUrl[..^"/api/v3".Length];
@@ -140,6 +131,31 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
         return Task.Run(() =>
         {
             using var repo = new Repository(workspacePath);
+
+            // Stage all changes from the working directory. We first retrieve status
+            // to find all modified/new/deleted files, then stage them individually.
+            // This is more reliable than Commands.Stage(repo, "*") when the index
+            // has been modified externally (e.g., by the agent's CLI git add).
+            var preStatus = repo.RetrieveStatus(new StatusOptions
+            {
+                DetectRenamesInIndex = false,
+                DetectRenamesInWorkDir = false
+            });
+
+            foreach (var entry in preStatus)
+            {
+                // Stage any file that has working directory changes (new, modified, deleted)
+                if (entry.State.HasFlag(FileStatus.NewInWorkdir)
+                    || entry.State.HasFlag(FileStatus.ModifiedInWorkdir)
+                    || entry.State.HasFlag(FileStatus.DeletedFromWorkdir)
+                    || entry.State.HasFlag(FileStatus.RenamedInWorkdir)
+                    || entry.State.HasFlag(FileStatus.TypeChangeInWorkdir))
+                {
+                    Commands.Stage(repo, entry.FilePath);
+                }
+            }
+
+            // Also run the broad stage to catch anything the per-file approach missed
             Commands.Stage(repo, "*");
 
             // Enforce blacklist: unstage any staged files matching blacklisted path prefixes
@@ -215,83 +231,126 @@ public partial class GitHubRepositoryProvider : IRepositoryProvider
         return pr.HtmlUrl;
     }
 
+    /// <inheritdoc />
+    public Task<string> GetHeadCommitShaAsync(string workspacePath, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(workspacePath);
+
+        return Task.Run(() =>
+        {
+            using var repo = new Repository(workspacePath);
+            return repo.Head.Tip.Sha;
+        }, ct);
+    }
+
+    /// <inheritdoc />
+    public Task<bool> HasCommitsAheadAsync(string workspacePath, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(workspacePath);
+
+        return Task.Run(() =>
+        {
+            try
+            {
+                using var repo = new Repository(workspacePath);
+                var head = repo.Head.Tip;
+                var baseBranchRef = repo.Branches[$"origin/{_baseBranch}"]
+                    ?? repo.Branches[_baseBranch];
+                if (baseBranchRef == null) return true; // Can't determine — assume there are changes
+                var mergeBase = repo.ObjectDatabase.FindMergeBase(head, baseBranchRef.Tip);
+                return mergeBase == null || mergeBase.Sha != head.Sha;
+            }
+            catch
+            {
+                return true; // On error, assume there are changes and let PR creation decide
+            }
+        }, ct);
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<FileChangeSummary>> GetFileChangesAsync(string workspacePath, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(workspacePath);
+
+        return Task.Run(() =>
+        {
+            try
+            {
+                using var repo = new Repository(workspacePath);
+                var baseBranchRef = repo.Branches[$"origin/{_baseBranch}"]
+                    ?? repo.Branches[_baseBranch];
+                if (baseBranchRef == null)
+                    return (IReadOnlyList<FileChangeSummary>)Array.Empty<FileChangeSummary>();
+
+                var baseCommit = baseBranchRef.Tip;
+                var headCommit = repo.Head.Tip;
+                var diff = repo.Diff.Compare<TreeChanges>(baseCommit.Tree, headCommit.Tree);
+
+                var changes = new List<FileChangeSummary>();
+                foreach (var entry in diff)
+                {
+                    var status = entry.Status switch
+                    {
+                        ChangeKind.Added => "Added",
+                        ChangeKind.Deleted => "Deleted",
+                        ChangeKind.Renamed => "Renamed",
+                        _ => "Modified"
+                    };
+                    changes.Add(new FileChangeSummary(status, entry.Path));
+                }
+
+                // If no committed changes yet, check the working directory against the base branch.
+                // This captures files the agent has written but not yet committed.
+                if (changes.Count == 0)
+                {
+                    var workingDiff = repo.Diff.Compare<TreeChanges>(
+                        baseCommit.Tree, DiffTargets.WorkingDirectory);
+                    foreach (var entry in workingDiff)
+                    {
+                        var status = entry.Status switch
+                        {
+                            ChangeKind.Added => "Added",
+                            ChangeKind.Deleted => "Deleted",
+                            ChangeKind.Renamed => "Renamed",
+                            _ => "Modified"
+                        };
+                        changes.Add(new FileChangeSummary(status, entry.Path));
+                    }
+                }
+
+                return (IReadOnlyList<FileChangeSummary>)changes;
+            }
+            catch
+            {
+                return (IReadOnlyList<FileChangeSummary>)Array.Empty<FileChangeSummary>();
+            }
+        }, ct);
+    }
+
+    /// <inheritdoc />
+    public async Task ValidateAsync(CancellationToken ct)
+    {
+        var client = await GetClientAsync(ct);
+        await client.Repository.Get(_owner, _repo);
+    }
+
+    /// <inheritdoc />
+    public ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return ValueTask.CompletedTask;
+    }
+
     /// <summary>
     /// Returns a current token, either from the static field or by calling the token provider.
     /// </summary>
-    private async Task<string> GetTokenAsync(CancellationToken ct)
-    {
-        if (_tokenProvider is not null)
-            return await _tokenProvider(ct);
-
-        return _token!;
-    }
+    private Task<string> GetTokenAsync(CancellationToken ct)
+        => _clientProvider.GetTokenAsync(ct);
 
     /// <summary>
     /// Returns a GitHubClient configured with a current token.
-    /// If a token provider is set, calls it to get a fresh token and creates a new client.
-    /// Otherwise, returns the static client.
     /// </summary>
-    private async Task<IGitHubClient> GetClientAsync(CancellationToken ct)
-    {
-        if (_tokenProvider is not null)
-        {
-            var token = await _tokenProvider(ct);
-            return new GitHubClient(
-                new Octokit.ProductHeaderValue("KiroWebUI-Pipeline"),
-                new Uri(_apiUrl))
-            {
-                Credentials = new Octokit.Credentials(token)
-            };
-        }
+    private Task<IGitHubClient> GetClientAsync(CancellationToken ct)
+        => _clientProvider.GetClientAsync(ct);
 
-        return _gitHubClient!;
-    }
-
-    // --- Static helper methods — delegate to PipelineFormatting for shared use ---
-
-    /// <summary>
-    /// Generates a branch name from issue number and title.
-    /// Delegates to PipelineFormatting.GenerateBranchName.
-    /// </summary>
-    internal static string GenerateBranchName(string issueNumber, string title)
-        => Services.PipelineFormatting.GenerateBranchName(issueNumber, title);
-
-    /// <summary>
-    /// Generates a PR title in conventional commit format.
-    /// Delegates to PipelineFormatting.GeneratePrTitle.
-    /// </summary>
-    internal static string GeneratePrTitle(string issueTitle, string issueNumber)
-        => Services.PipelineFormatting.GeneratePrTitle(issueTitle, issueNumber);
-
-    /// <summary>
-    /// Generates a PR body with all required sections.
-    /// Delegates to PipelineFormatting.GeneratePrBody.
-    /// </summary>
-    internal static string GeneratePrBody(
-        string issueNumber,
-        int testsPassed,
-        int testsFailed,
-        int testsSkipped,
-        double? coveragePercent,
-        IReadOnlyList<FileChangeSummary> fileChanges,
-        string issueTitle,
-        string issueDescription,
-        IReadOnlyList<string> acceptanceCriteria,
-        bool isDraft = false,
-        IReadOnlyList<Models.IssueComment>? comments = null,
-        IReadOnlyList<string>? blacklistedFilesDetected = null)
-        => Services.PipelineFormatting.GeneratePrBody(
-            issueNumber, testsPassed, testsFailed, testsSkipped,
-            coveragePercent, fileChanges, issueTitle, issueDescription,
-            acceptanceCriteria, isDraft, comments, blacklistedFilesDetected);
-
-    /// <summary>
-    /// Generates a commit message in conventional format.
-    /// Delegates to PipelineFormatting.GenerateCommitMessage.
-    /// </summary>
-    internal static string GenerateCommitMessage(string title, string issueNumber)
-        => Services.PipelineFormatting.GenerateCommitMessage(title, issueNumber);
-
-    [GeneratedRegex(@"[^a-z0-9]+")]
-    private static partial Regex NonAlphanumericPattern();
 }

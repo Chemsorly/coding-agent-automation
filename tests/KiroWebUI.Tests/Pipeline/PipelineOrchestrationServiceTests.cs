@@ -37,6 +37,7 @@ public class PipelineOrchestrationServiceTests
             _mockFactory.Object,
             new IssueDescriptionParser(),
             _mockValidator.Object,
+            new CiLogWriter(_mockLogger.Object),
             _mockLogger.Object,
             runsDirectory: Path.Combine(Path.GetTempPath(), $"test-runs-{Guid.NewGuid()}"));
     }
@@ -65,7 +66,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new IssueDetail
             {
                 Identifier = "42", Title = "Test Issue", Description = "Test description",
-                Labels = Array.Empty<string>(), AcceptanceCriteria = Array.Empty<string>()
+                Labels = Array.Empty<string>()
             });
         _mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -76,11 +77,13 @@ public class PipelineOrchestrationServiceTests
         _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
         _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>())).ReturnsAsync("https://github.com/test/pr/1");
+        _mockRepoProvider.Setup(p => p.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<FileChangeSummary>() as IReadOnlyList<FileChangeSummary>);
 
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        _mockAgentProvider.Setup(p => p.ExecuteWithResumeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        _mockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = false });
 
@@ -161,7 +164,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new IssueDetail
             {
                 Identifier = "42", Title = "", Description = "Some description",
-                Labels = Array.Empty<string>(), AcceptanceCriteria = Array.Empty<string>()
+                Labels = Array.Empty<string>()
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
@@ -178,7 +181,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new IssueDetail
             {
                 Identifier = "42", Title = "Valid Title", Description = "",
-                Labels = Array.Empty<string>(), AcceptanceCriteria = Array.Empty<string>()
+                Labels = Array.Empty<string>()
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
@@ -258,20 +261,17 @@ public class PipelineOrchestrationServiceTests
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
-        // Warm-up prompt should have been called via ExecuteAsync
+        // Warm-up should have been called via EnsureSessionAsync
         _mockAgentProvider.Verify(
-            p => p.ExecuteAsync(
-                It.Is<AgentRequest>(r => r.Prompt.Contains("Briefly describe the project structure")),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<Action<string>?>()),
+            p => p.EnsureSessionAsync(
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()),
             Times.Once);
 
-        // Analysis should have been called via ExecuteWithResumeAsync (resumes the warm-up session)
+        // Analysis should have been called via ExecuteAsync with UseResume = true
         _mockAgentProvider.Verify(
-            p => p.ExecuteWithResumeAsync(
-                It.Is<string>(s => s.Contains("Analyze the codebase")),
-                It.IsAny<string>(),
-                It.IsAny<TimeSpan>(),
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<Action<string>?>()),
             Times.Once);
@@ -321,12 +321,10 @@ public class PipelineOrchestrationServiceTests
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
-        // Should have fallen back to running fresh analysis via warm-up + resume
+        // Should have fallen back to running fresh analysis via EnsureSessionAsync + ExecuteAsync with UseResume
         _mockAgentProvider.Verify(
-            p => p.ExecuteWithResumeAsync(
-                It.Is<string>(s => s.Contains("Analyze the codebase")),
-                It.IsAny<string>(),
-                It.IsAny<TimeSpan>(),
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<Action<string>?>()),
             Times.Once);
@@ -351,12 +349,10 @@ public class PipelineOrchestrationServiceTests
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
         run.ReviewIterationsCompleted.Should().Be(1);
 
-        // Verify the review prompt was sent via ExecuteWithResumeAsync
+        // Verify the review prompt was sent via ExecuteAsync with UseResume = true
         _mockAgentProvider.Verify(
-            p => p.ExecuteWithResumeAsync(
-                It.Is<string>(s => s.Contains("sub-agent")),
-                It.IsAny<string>(),
-                It.IsAny<TimeSpan>(),
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("sub-agent") && r.UseResume),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<Action<string>?>()),
             Times.AtLeastOnce);
@@ -414,9 +410,8 @@ public class PipelineOrchestrationServiceTests
         //   2. ApproveAnalysisAsync → review iteration 1 → callCount=2 (succeeds)
         //   3. ApproveAnalysisAsync → review iteration 2 → callCount=3 (throws)
         var callCount = 0;
-        _mockAgentProvider.Setup(p => p.ExecuteWithResumeAsync(
-                It.Is<string>(s => s.Contains("sub-agent")),
-                It.IsAny<string>(), It.IsAny<TimeSpan>(),
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("sub-agent") && r.UseResume),
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(() =>
             {
@@ -450,10 +445,8 @@ public class PipelineOrchestrationServiceTests
         await _service.ApproveAnalysisAsync(CancellationToken.None);
 
         _mockAgentProvider.Verify(
-            p => p.ExecuteWithResumeAsync(
-                It.Is<string>(s => s.Contains(customPrompt) && s.Contains("Test Issue")),
-                It.IsAny<string>(),
-                It.IsAny<TimeSpan>(),
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains(customPrompt) && r.Prompt.Contains("Test Issue") && r.UseResume),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<Action<string>?>()),
             Times.Once);
@@ -662,5 +655,468 @@ public class PipelineOrchestrationServiceTests
     {
         var config = new PipelineConfiguration();
         config.AutonomousMode.Should().BeFalse();
+    }
+
+    // --- Stall detection via GetHealthStatus (REQ-1.2) ---
+
+    [Fact]
+    public async Task StallMonitor_StaleLastOutputTime_AddsSystemChatWarning()
+    {
+        // Arrange — short stall + poll intervals so the monitor fires quickly
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                StallWarningInterval = TimeSpan.FromMilliseconds(100),
+                StallPollInterval = TimeSpan.FromMilliseconds(200),
+                AgentTimeout = TimeSpan.FromMinutes(5)
+            });
+
+        // GetHealthStatus returns a stale LastOutputTime (far in the past)
+        _mockAgentProvider.Setup(p => p.GetHealthStatus())
+            .Returns(new AgentHealthStatus
+            {
+                IsExecuting = true,
+                ProcessId = 12345,
+                IsProcessAlive = true,
+                LastOutputTime = DateTime.UtcNow.AddMinutes(-5)
+            });
+
+        // Hold the agent execution with a TaskCompletionSource so the stall monitor has time to fire
+        var agentTcs = new TaskCompletionSource<AgentResult>();
+
+        // First ExecuteAsync call is the analysis (in StartPipelineAsync) — let it complete immediately
+        // Second ExecuteAsync call is the code generation (in ApproveAnalysisAsync) — hold it
+        var callCount = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, ct, onLine) =>
+            {
+                callCount++;
+                if (callCount <= 1)
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                // Second call: block until we release it
+                return agentTcs.Task;
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+
+        // Act — approve analysis (starts stall monitor + blocked agent execution)
+        var approveTask = _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        // Wait for the stall monitor to poll and detect the stale output
+        await Task.Delay(TimeSpan.FromSeconds(1));
+
+        // Release the agent execution
+        agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        await approveTask;
+
+        // Assert — a system chat message about stall should have been added
+        var systemMessages = run.ChatHistory
+            .Where(c => c.Role == ChatRole.System)
+            .Select(c => c.Content)
+            .ToList();
+
+        systemMessages.Should().Contain(msg => msg.Contains("No agent output for"));
+    }
+
+    [Fact]
+    public async Task StallMonitor_ProcessDead_AddsSystemChatError()
+    {
+        // Arrange — short poll interval for fast test
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                StallWarningInterval = TimeSpan.FromMilliseconds(100),
+                StallPollInterval = TimeSpan.FromMilliseconds(200),
+                AgentTimeout = TimeSpan.FromMinutes(5)
+            });
+
+        // GetHealthStatus returns IsProcessAlive = false (process died)
+        _mockAgentProvider.Setup(p => p.GetHealthStatus())
+            .Returns(new AgentHealthStatus
+            {
+                IsExecuting = true,
+                ProcessId = 99999,
+                IsProcessAlive = false,
+                LastOutputTime = DateTime.UtcNow
+            });
+
+        // Hold the agent execution so the stall monitor has time to detect the dead process
+        var agentTcs = new TaskCompletionSource<AgentResult>();
+        var callCount = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, ct, onLine) =>
+            {
+                callCount++;
+                if (callCount <= 1)
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                return agentTcs.Task;
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+
+        // Act — approve analysis (starts stall monitor + blocked agent execution)
+        var approveTask = _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        // Wait for the stall monitor to poll and detect the dead process
+        await Task.Delay(TimeSpan.FromSeconds(1));
+
+        // Release the agent execution
+        agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        await approveTask;
+
+        // Assert — a system chat message about dead process should have been added
+        var systemMessages = run.ChatHistory
+            .Where(c => c.Role == ChatRole.System)
+            .Select(c => c.Content)
+            .ToList();
+
+        systemMessages.Should().Contain(msg => msg.Contains("Agent process is no longer alive") && msg.Contains("99999"));
+    }
+
+    // --- Provider validation at pipeline start (REQ-5.2) ---
+
+    [Fact]
+    public async Task StartPipeline_ValidatesAllProvidersBeforeClone()
+    {
+        // Arrange — track the order of ValidateAsync and CloneAsync calls
+        var callOrder = new List<string>();
+
+        _mockIssueProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("IssueProvider.ValidateAsync"))
+            .Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("RepoProvider.ValidateAsync"))
+            .Returns(Task.CompletedTask);
+        _mockAgentProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("AgentProvider.ValidateAsync"))
+            .Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("RepoProvider.CloneAsync"))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+        // Assert — all three providers validated, and all validations happen before clone
+        callOrder.Should().Contain("IssueProvider.ValidateAsync");
+        callOrder.Should().Contain("RepoProvider.ValidateAsync");
+        callOrder.Should().Contain("AgentProvider.ValidateAsync");
+
+        var lastValidateIndex = Math.Max(
+            Math.Max(callOrder.IndexOf("IssueProvider.ValidateAsync"),
+                     callOrder.IndexOf("RepoProvider.ValidateAsync")),
+            callOrder.IndexOf("AgentProvider.ValidateAsync"));
+        var cloneIndex = callOrder.IndexOf("RepoProvider.CloneAsync");
+
+        cloneIndex.Should().BeGreaterThan(lastValidateIndex,
+            "all provider validations must complete before CloneAsync is called");
+    }
+
+    [Theory]
+    [InlineData("Issue")]
+    [InlineData("Repository")]
+    [InlineData("Agent")]
+    public async Task StartPipeline_WhenProviderValidationFails_FailsWithClearErrorNamingProvider(string providerKind)
+    {
+        // Arrange — make the specified provider's ValidateAsync throw
+        var failureMessage = $"Invalid credentials for {providerKind}";
+
+        switch (providerKind)
+        {
+            case "Issue":
+                _mockIssueProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new HttpRequestException(failureMessage));
+                break;
+            case "Repository":
+                _mockRepoProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new HttpRequestException(failureMessage));
+                break;
+            case "Agent":
+                _mockAgentProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new HttpRequestException(failureMessage));
+                break;
+        }
+
+        // Act
+        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+        // Assert — pipeline fails with InvalidOperationException naming the provider
+        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+        ex.Which.Message.Should().Contain(providerKind.ToLower() switch
+        {
+            "issue" => "Issue provider",
+            "repository" => "Repository provider",
+            "agent" => "Agent provider",
+            _ => providerKind
+        });
+        ex.Which.Message.Should().Contain("validation failed");
+        ex.Which.Message.Should().Contain(failureMessage);
+
+        // The pipeline run should be in Failed state
+        _service.ActiveRun!.CurrentStep.Should().Be(PipelineStep.Failed);
+
+        // CloneAsync should NOT have been called
+        _mockRepoProvider.Verify(
+            p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenExternalCiDisabled_SkipsPipelineProviderValidation()
+    {
+        // Arrange — external CI disabled (default), pipeline provider should not be created or validated
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                ExternalCiEnabled = false
+            });
+
+        var mockPipelineProvider = new Mock<IPipelineProvider>();
+        _mockFactory.Setup(f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockPipelineProvider.Object);
+
+        // Act
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+        // Assert — pipeline provider was never created or validated
+        _mockFactory.Verify(
+            f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>()),
+            Times.Never);
+        mockPipelineProvider.Verify(
+            p => p.ValidateAsync(It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Pipeline should proceed normally (not failed)
+        run.CurrentStep.Should().NotBe(PipelineStep.Failed);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenExternalCiEnabled_ValidatesPipelineProvider()
+    {
+        // Arrange — external CI enabled with a pipeline provider configured
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                ExternalCiEnabled = true
+            });
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "pipeline-1", Kind = ProviderKind.Pipeline, ProviderType = "GitHubActions", DisplayName = "CI" }
+            });
+
+        var mockPipelineProvider = new Mock<IPipelineProvider>();
+        mockPipelineProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockFactory.Setup(f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockPipelineProvider.Object);
+
+        // Act
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+        // Assert — pipeline provider was validated
+        mockPipelineProvider.Verify(
+            p => p.ValidateAsync(It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Pipeline should proceed normally
+        run.CurrentStep.Should().NotBe(PipelineStep.Failed);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenPipelineProviderValidationFails_FailsWithClearError()
+    {
+        // Arrange — external CI enabled, pipeline provider validation fails
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                ExternalCiEnabled = true
+            });
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "pipeline-1", Kind = ProviderKind.Pipeline, ProviderType = "GitHubActions", DisplayName = "CI" }
+            });
+
+        var mockPipelineProvider = new Mock<IPipelineProvider>();
+        mockPipelineProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("GitHub API returned 401"));
+        _mockFactory.Setup(f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockPipelineProvider.Object);
+
+        // Act
+        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+
+        // Assert — pipeline fails with clear error naming the pipeline provider
+        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+        ex.Which.Message.Should().Contain("Pipeline provider");
+        ex.Which.Message.Should().Contain("validation failed");
+        ex.Which.Message.Should().Contain("GitHub API returned 401");
+
+        _service.ActiveRun!.CurrentStep.Should().Be(PipelineStep.Failed);
+    }
+
+    [Fact]
+    public async Task StallMonitor_WarningResetsAfterEachWarning()
+    {
+        // Arrange — short intervals so we can get multiple warnings quickly
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                StallWarningInterval = TimeSpan.FromMilliseconds(100),
+                StallPollInterval = TimeSpan.FromMilliseconds(200),
+                AgentTimeout = TimeSpan.FromMinutes(5)
+            });
+
+        // GetHealthStatus returns a stale LastOutputTime
+        _mockAgentProvider.Setup(p => p.GetHealthStatus())
+            .Returns(new AgentHealthStatus
+            {
+                IsExecuting = true,
+                ProcessId = 12345,
+                IsProcessAlive = true,
+                LastOutputTime = DateTime.UtcNow.AddMinutes(-10)
+            });
+
+        // Hold the agent execution long enough for multiple stall monitor polls
+        var agentTcs = new TaskCompletionSource<AgentResult>();
+        var callCount = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, ct, onLine) =>
+            {
+                callCount++;
+                if (callCount <= 1)
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                return agentTcs.Task;
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
+
+        // Act — approve analysis (starts stall monitor + blocked agent execution)
+        var approveTask = _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        // Wait long enough for at least 2 poll cycles to fire warnings
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        // Release the agent execution
+        agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        await approveTask;
+
+        // Assert — multiple stall warnings should have been added (at least 2)
+        var stallWarnings = run.ChatHistory
+            .Where(c => c.Role == ChatRole.System && c.Content.Contains("No agent output for"))
+            .ToList();
+
+        stallWarnings.Should().HaveCountGreaterThanOrEqualTo(2,
+            "the stall warning should reset after each warning and fire again on the next poll cycle");
+    }
+
+    // --- Provider disposal before new creation (REQ-5.3) ---
+
+    [Fact]
+    public async Task StartPipeline_DisposesPreviousProvidersBeforeCreatingNewOnes()
+    {
+        // Arrange — run a first pipeline to establish "previous" providers
+        var firstIssueProvider = new Mock<IIssueProvider>();
+        var firstRepoProvider = new Mock<IRepositoryProvider>();
+        var firstAgentProvider = new Mock<IAgentProvider>();
+
+        // Set up the first set of providers with default behavior
+        firstIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = Array.Empty<string>() });
+        firstIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
+        firstIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        firstRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        firstRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
+        firstRepoProvider.Setup(p => p.RepositoryFullName).Returns("owner/repo");
+        firstRepoProvider.Setup(p => p.BaseBranch).Returns("main");
+        firstRepoProvider.Setup(p => p.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        firstRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<FileChangeSummary>() as IReadOnlyList<FileChangeSummary>);
+        firstAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        firstAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        firstAgentProvider.Setup(p => p.GetHealthStatus()).Returns(new AgentHealthStatus { IsExecuting = false });
+
+        _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(firstIssueProvider.Object);
+        _mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>())).Returns(firstRepoProvider.Object);
+        _mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>())).Returns(firstAgentProvider.Object);
+
+        // Run first pipeline and cancel it so we can start a second one
+        var run1 = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.CancelPipelineAsync();
+
+        // Track disposal and creation order for the second pipeline
+        var callOrder = new List<string>();
+
+        firstIssueProvider.Setup(p => p.DisposeAsync())
+            .Callback(() => callOrder.Add("Dispose:Issue"))
+            .Returns(ValueTask.CompletedTask);
+        firstRepoProvider.Setup(p => p.DisposeAsync())
+            .Callback(() => callOrder.Add("Dispose:Repository"))
+            .Returns(ValueTask.CompletedTask);
+        firstAgentProvider.Setup(p => p.DisposeAsync())
+            .Callback(() => callOrder.Add("Dispose:Agent"))
+            .Returns(ValueTask.CompletedTask);
+
+        // Set up second set of providers
+        var secondIssueProvider = new Mock<IIssueProvider>();
+        secondIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail { Identifier = "99", Title = "Test2", Description = "Desc2", Labels = Array.Empty<string>() });
+        secondIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
+        secondIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var secondRepoProvider = new Mock<IRepositoryProvider>();
+        secondRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        secondRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-99-test");
+        secondRepoProvider.Setup(p => p.RepositoryFullName).Returns("owner/repo");
+        secondRepoProvider.Setup(p => p.BaseBranch).Returns("main");
+        secondRepoProvider.Setup(p => p.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        secondRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<FileChangeSummary>() as IReadOnlyList<FileChangeSummary>);
+
+        var secondAgentProvider = new Mock<IAgentProvider>();
+        secondAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        secondAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        secondAgentProvider.Setup(p => p.GetHealthStatus()).Returns(new AgentHealthStatus { IsExecuting = false });
+
+        _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Callback(() => callOrder.Add("Create:Issue"))
+            .Returns(secondIssueProvider.Object);
+        _mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Callback(() => callOrder.Add("Create:Repository"))
+            .Returns(secondRepoProvider.Object);
+        _mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>()))
+            .Callback(() => callOrder.Add("Create:Agent"))
+            .Returns(secondAgentProvider.Object);
+
+        // Act — start second pipeline (should dispose first providers, then create new ones)
+        var run2 = await _service.StartPipelineAsync("issue-1", "repo-1", "99", CancellationToken.None);
+
+        // Assert — all disposals happened before any creation
+        var lastDisposeIndex = new[] { "Dispose:Issue", "Dispose:Repository", "Dispose:Agent" }
+            .Select(d => callOrder.IndexOf(d))
+            .Max();
+        var firstCreateIndex = new[] { "Create:Issue", "Create:Repository", "Create:Agent" }
+            .Select(c => callOrder.IndexOf(c))
+            .Min();
+
+        callOrder.Should().Contain("Dispose:Issue");
+        callOrder.Should().Contain("Dispose:Repository");
+        callOrder.Should().Contain("Dispose:Agent");
+        firstCreateIndex.Should().BeGreaterThan(lastDisposeIndex,
+            "all previous providers must be disposed before new ones are created (REQ-5.3)");
     }
 }

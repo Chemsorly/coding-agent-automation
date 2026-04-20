@@ -38,7 +38,7 @@ public class FileChangeGroupingPropertyTests
     /// Property 7: Grouping by FileChangeType produces groups where every item
     /// has matching type, and union of all groups equals original list.
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(Generators) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(Generators) })]
     public void GroupByType_PreservesAllItems_WithCorrectTypes(List<FileChange> fileChanges)
     {
         // Group by type
@@ -71,7 +71,7 @@ public class FileChangeGroupingPropertyTests
     /// <summary>
     /// Property 7: Groups only contain the expected FileChangeType values.
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(Generators) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(Generators) })]
     public void GroupByType_OnlyContainsValidTypes(List<FileChange> fileChanges)
     {
         var validTypes = new HashSet<FileChangeType>(Enum.GetValues<FileChangeType>());

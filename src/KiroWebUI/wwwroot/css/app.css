@@ -192,6 +192,8 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 .btn-delete:hover { background: var(--error); color: white; }
 .btn-add { padding: 8px 16px; border: 1px dashed var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; width: 100%; }
 .btn-add:hover { border-color: var(--accent); color: var(--accent-light); }
+.btn-revert { padding: 4px 10px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.8rem; text-decoration: underline; margin-top: 4px; }
+.btn-revert:hover { color: var(--accent-light); }
 
 /* ===== Agent Coding Page ===== */
 .agent-coding-page { display: flex; flex-direction: column; height: 100%; overflow-y: auto; }

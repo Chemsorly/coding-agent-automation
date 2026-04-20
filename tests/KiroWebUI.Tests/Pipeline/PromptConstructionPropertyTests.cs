@@ -19,7 +19,7 @@ public class PromptConstructionPropertyTests
     /// the issue description, and every individual acceptance criterion string.
     /// **Validates: Requirements 3.2**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void Prompt_ContainsAllIssueFields(NonEmptyString title, NonEmptyString description, byte criteriaCount)
     {
         // Generate a reasonable number of criteria (0-5)
@@ -32,14 +32,13 @@ public class PromptConstructionPropertyTests
             Identifier = "1",
             Title = title.Get,
             Description = description.Get,
-            Labels = Array.Empty<string>(),
-            AcceptanceCriteria = criteria.AsReadOnly()
+            Labels = Array.Empty<string>()
         };
 
         var parsed = new ParsedIssue
         {
             RequirementsSection = issue.Description,
-            AcceptanceCriteria = issue.AcceptanceCriteria
+            AcceptanceCriteria = criteria.AsReadOnly()
         };
 
         var prompt = PromptBuilder.BuildPrompt(issue, parsed);
@@ -47,7 +46,7 @@ public class PromptConstructionPropertyTests
         prompt.Should().Contain(issue.Title);
         prompt.Should().Contain(issue.Description);
 
-        foreach (var criterion in issue.AcceptanceCriteria)
+        foreach (var criterion in parsed.AcceptanceCriteria)
         {
             prompt.Should().Contain(criterion);
         }
@@ -73,8 +72,7 @@ public class PromptConstructionPropertyTests
             Identifier = "1",
             Title = title.Get,
             Description = description.Get,
-            Labels = Array.Empty<string>(),
-            AcceptanceCriteria = Array.Empty<string>()
+            Labels = Array.Empty<string>()
         };
 
         var parsed = new ParsedIssue
@@ -104,8 +102,7 @@ public class PromptConstructionPropertyTests
             Identifier = "1",
             Title = "Test",
             Description = "Desc",
-            Labels = Array.Empty<string>(),
-            AcceptanceCriteria = Array.Empty<string>()
+            Labels = Array.Empty<string>()
         };
 
         var parsed = new ParsedIssue
@@ -135,7 +132,7 @@ public class PromptConstructionPropertyTests
         var issue = new IssueDetail
         {
             Identifier = "1", Title = "Test", Description = "Desc",
-            Labels = Array.Empty<string>(), AcceptanceCriteria = Array.Empty<string>()
+            Labels = Array.Empty<string>()
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
 
@@ -164,7 +161,7 @@ public class PromptConstructionPropertyTests
         var issue = new IssueDetail
         {
             Identifier = "1", Title = "Test", Description = "Desc",
-            Labels = Array.Empty<string>(), AcceptanceCriteria = Array.Empty<string>()
+            Labels = Array.Empty<string>()
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
 

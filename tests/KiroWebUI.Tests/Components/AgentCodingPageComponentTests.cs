@@ -34,6 +34,7 @@ public class AgentCodingPageComponentTests : BunitContext
             _mockFactory.Object,
             new IssueDescriptionParser(),
             mockValidator.Object,
+            new CiLogWriter(mockLogger.Object),
             mockLogger.Object,
             runsDirectory: Path.Combine(Path.GetTempPath(), $"test-runs-{Guid.NewGuid()}"));
 

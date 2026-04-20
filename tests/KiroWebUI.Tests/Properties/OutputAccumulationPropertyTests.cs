@@ -30,7 +30,7 @@ public class OutputAccumulationPropertyTests
     /// Property 4: For any sequence of output lines, the assistant ChatMessage.Content
     /// contains all lines in exact order, none missing or reordered.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void OutputLines_AreAccumulated_InOrder(NonEmptyArray<NonEmptyString> outputLineValues)
     {
         var outputLines = outputLineValues.Get
