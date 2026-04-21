@@ -41,6 +41,10 @@
                         {
                             <div class="step-detail">@Run.RepositoryName</div>
                         }
+                        else if (step == PipelineStep.Created && !string.IsNullOrEmpty(Run.ModelName))
+                        {
+                            <div class="step-detail">Model: @Run.ModelName</div>
+                        }
                         else if (step == PipelineStep.CreatingBranch && !string.IsNullOrEmpty(Run.BranchName))
                         {
                             <div class="step-detail step-detail-mono">@Truncate(Run.BranchName, 36)</div>
@@ -310,6 +314,7 @@
     /// </summary>
     private bool HasDetails(PipelineStep step) => step switch
     {
+        PipelineStep.Created => !string.IsNullOrEmpty(Run.ModelName),
         PipelineStep.CloningRepository => !string.IsNullOrEmpty(Run.RepositoryName),
         PipelineStep.CreatingBranch => !string.IsNullOrEmpty(Run.BranchName),
         PipelineStep.AnalyzingCode => true,

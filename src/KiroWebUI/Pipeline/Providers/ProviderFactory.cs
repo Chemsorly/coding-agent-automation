@@ -50,7 +50,12 @@ public class ProviderFactory : IProviderFactory
                 config.Settings["baseBranch"]);
         });
 
-        RegisterAgentProvider("KiroCli", _ => new KiroCliAgentProvider(orchestrator, Serilog.Log.Logger));
+        RegisterAgentProvider("KiroCli", config =>
+        {
+            var model = config.Settings.GetValueOrDefault("model");
+            var executablePath = config.Settings.GetValueOrDefault("executablePath", "/home/ubuntu/.local/bin/kiro-cli");
+            return new KiroCliAgentProvider(orchestrator, Serilog.Log.Logger, model, executablePath);
+        });
 
         RegisterPipelineProvider("GitHub", config =>
         {

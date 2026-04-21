@@ -10,4 +10,7 @@ public sealed class PipelineRunSummary
     public DateTime? CompletedAt { get; init; }
     public int RetryCount { get; init; }
     public string? PullRequestUrl { get; init; }
+
+    /// <summary>Model configured for the agent provider used in this run.</summary>
+    public string? ModelName { get; init; }
 }

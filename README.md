@@ -235,7 +235,7 @@ The KiroWebUI application provides a web-based interface for the automated devel
 ```powershell
 docker build -f webUI.Dockerfile -t kiro-webui:latest .
 
-docker run -it --rm -p 5000:5000 -v ${PWD}:/workspace -v ${PWD}/config/kiro-cli-data:/home/ubuntu/.local/share/kiro-cli -v "$env:USERPROFILE\.aws:/home/ubuntu/.aws" -v "$env:USERPROFILE\.kiro\settings:/home/ubuntu/.kiro/settings" -v ${PWD}/config/pipeline:/app/config/pipeline kiro-webui:latest 2>&1 | Tee-Object -FilePath .kiro/debug.log
+docker run -it --rm -p 5000:5000 -v ${PWD}/config/kiro-cli-data:/home/ubuntu/.local/share/kiro-cli -v "$env:USERPROFILE\.aws:/home/ubuntu/.aws" -v "$env:USERPROFILE\.kiro\settings:/home/ubuntu/.kiro/settings" -v ${PWD}/config/pipeline:/app/config/pipeline kiro-webui:latest 2>&1 | Tee-Object -FilePath .kiro/debug.log
 
 
 ```
@@ -244,13 +244,14 @@ docker run -it --rm -p 5000:5000 -v ${PWD}:/workspace -v ${PWD}/config/kiro-cli-
 
 | Mount | Container Path | Purpose |
 |-------|---------------|---------|
-| Workspace | `/workspace` | Target repo for the agent to operate on |
-| Kiro CLI auth | `/home/ubuntu/.local/share/kiro-cli` | Kiro CLI login tokens (use named volume `kiro-cli-data` to persist across runs) |
+| Kiro CLI auth | `/home/ubuntu/.local/share/kiro-cli` | Kiro CLI login tokens (persists auth across container restarts) |
 | AWS SSO | `/home/ubuntu/.aws` | AWS SSO cache and config for Kiro CLI auth |
 | Kiro settings | `/home/ubuntu/.kiro/settings` | MCP and CLI settings |
-| Pipeline config | `/app/config/pipeline` | Provider configs and pipeline settings (use named volume `kiro-pipeline-config` to persist across restarts) |
+| Pipeline config | `/app/config/pipeline` | Provider configs and pipeline settings (persists across restarts) |
 
 The pipeline config volume is important — without it, any providers you configure in the Settings page will be lost when the container restarts.
+
+Workspaces are created inside the container at `/app/workspaces/` (configurable via `WorkspaceBaseDirectory` in pipeline config). The pipeline clones a fresh copy of the repository for each run, so no workspace volume mount is needed. Successful workspaces are cleaned up automatically; failed ones are retained based on the `FailedWorkspaceRetentionDays` setting.
 
 ### First-Time Setup
 

@@ -11,10 +11,12 @@ namespace KiroWebUI.Pipeline.Providers;
 /// Follows the same invocation pattern as KiroExecutionService.
 /// The agent provider does NOT construct prompts — it receives pre-built prompts from the orchestrator.
 /// </summary>
-public class KiroCliAgentProvider : IAgentProvider
+public partial class KiroCliAgentProvider : IAgentProvider
 {
     private readonly IKiroCliOrchestrator _orchestrator;
     private readonly ILogger _logger;
+    private readonly string? _model;
+    private readonly string _executablePath;
     private readonly HashSet<string> _establishedSessions = new(StringComparer.OrdinalIgnoreCase);
 
     internal const string WarmUpPrompt =
@@ -22,11 +24,16 @@ public class KiroCliAgentProvider : IAgentProvider
 
     public AgentProviderType ProviderType => AgentProviderType.KiroCli;
 
-    public KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger = null)
+    /// <summary>The model configured for this agent provider, or null/auto for default.</summary>
+    public string? Model => _model;
+
+    public KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger = null, string? model = null, string executablePath = "/home/ubuntu/.local/bin/kiro-cli")
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         _orchestrator = orchestrator;
         _logger = logger ?? Log.Logger;
+        _model = model;
+        _executablePath = executablePath;
     }
 
     /// <inheritdoc />
@@ -38,6 +45,9 @@ public class KiroCliAgentProvider : IAgentProvider
 
         if (_establishedSessions.Contains(normalizedPath))
             return;
+
+        // Set model before first invocation if a specific model is configured
+        await ApplyModelSettingAsync(ct);
 
         try
         {
@@ -90,6 +100,49 @@ public class KiroCliAgentProvider : IAgentProvider
 
     /// <inheritdoc />
     public Task ValidateAsync(CancellationToken ct) => Task.CompletedTask;
+
+    /// <summary>
+    /// Runs <c>kiro-cli settings chat.defaultModel "model"</c> if a specific (non-auto) model is configured.
+    /// </summary>
+    internal async Task ApplyModelSettingAsync(CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(_model) || _model.Equals("auto", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        if (!ModelNamePattern().IsMatch(_model))
+        {
+            _logger.Warning("Invalid model name rejected: {Model}", _model);
+            return;
+        }
+
+        _logger.Information("Setting Kiro CLI model to {Model}", _model);
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = _executablePath,
+            Arguments = $"settings chat.defaultModel \"{_model}\"",
+            RedirectStandardOutput = false,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = System.Diagnostics.Process.Start(psi);
+        if (process == null)
+        {
+            _logger.Warning("Failed to start kiro-cli settings process");
+            return;
+        }
+
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct);
+        var stderr = await stderrTask;
+        if (process.ExitCode != 0)
+            _logger.Warning("kiro-cli settings exited with code {ExitCode}: {Error}", process.ExitCode, stderr);
+    }
+
+    /// <summary>Pattern for valid model names: alphanumeric, dots, hyphens, underscores.</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9._-]+$")]
+    private static partial System.Text.RegularExpressions.Regex ModelNamePattern();
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()

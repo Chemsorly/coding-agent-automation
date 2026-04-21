@@ -67,7 +67,8 @@ public static partial class PipelineFormatting
         IReadOnlyList<string> acceptanceCriteria,
         bool isDraft = false,
         IReadOnlyList<IssueComment>? comments = null,
-        IReadOnlyList<string>? blacklistedFilesDetected = null)
+        IReadOnlyList<string>? blacklistedFilesDetected = null,
+        string? modelName = null)
     {
         var sb = new StringBuilder();
 
@@ -145,7 +146,10 @@ public static partial class PipelineFormatting
         }
 
         sb.AppendLine("---");
-        sb.AppendLine("*Automated implementation via pipeline*");
+        if (!string.IsNullOrEmpty(modelName))
+            sb.AppendLine($"*Model: {modelName} · Automated implementation via pipeline*");
+        else
+            sb.AppendLine("*Automated implementation via pipeline*");
 
         return sb.ToString().TrimEnd();
     }

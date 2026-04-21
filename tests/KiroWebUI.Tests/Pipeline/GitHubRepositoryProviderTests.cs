@@ -243,4 +243,42 @@ public class GitHubRepositoryProviderTests
         fields.Should().NotContain(f => f.Name.Contains("NonAlphanumeric", StringComparison.OrdinalIgnoreCase),
             "GitHubRepositoryProvider should not contain NonAlphanumericPattern — it was a duplicate of PipelineFormatting (REQ-2.6)");
     }
+
+    // --- Model in PR body tests ---
+
+    [Fact]
+    public void GeneratePrBody_WithModelName_IncludesModelInFooter()
+    {
+        var body = PipelineFormatting.GeneratePrBody(
+            issueNumber: "42",
+            testsPassed: 5,
+            testsFailed: 0,
+            testsSkipped: 0,
+            coveragePercent: 90.0,
+            fileChanges: Array.Empty<FileChangeSummary>(),
+            issueTitle: "Test",
+            issueDescription: "Test desc.",
+            acceptanceCriteria: Array.Empty<string>(),
+            modelName: "claude-sonnet-4.6");
+
+        body.Should().Contain("Model: claude-sonnet-4.6");
+    }
+
+    [Fact]
+    public void GeneratePrBody_WithoutModelName_UsesDefaultFooter()
+    {
+        var body = PipelineFormatting.GeneratePrBody(
+            issueNumber: "42",
+            testsPassed: 5,
+            testsFailed: 0,
+            testsSkipped: 0,
+            coveragePercent: 90.0,
+            fileChanges: Array.Empty<FileChangeSummary>(),
+            issueTitle: "Test",
+            issueDescription: "Test desc.",
+            acceptanceCriteria: Array.Empty<string>());
+
+        body.Should().Contain("Automated implementation via pipeline");
+        body.Should().NotContain("Model:");
+    }
 }
