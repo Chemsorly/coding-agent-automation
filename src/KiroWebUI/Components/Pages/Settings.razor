@@ -319,7 +319,7 @@
                                 {
                                     <select @bind="_agentForm.Model">
                                         <option value="auto">auto — Use CLI default (1.0x)</option>
-                                        @foreach (var m in _agentAvailableModels)
+                                        @foreach (var m in _agentAvailableModels.Where(m => !m.ModelId.Equals("auto", StringComparison.OrdinalIgnoreCase)))
                                         {
                                             <option value="@m.ModelId">@m.ModelId — @m.Description (@(m.RateMultiplier)x)</option>
                                         }
