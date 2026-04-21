@@ -121,7 +121,7 @@ public class PipelineOrchestrationServiceTests
                 }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.ModelName.Should().Be("claude-sonnet-4.6");
     }
 
@@ -138,7 +138,7 @@ public class PipelineOrchestrationServiceTests
                 }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.ModelName.Should().Be("auto");
     }
 
@@ -269,7 +269,7 @@ public class PipelineOrchestrationServiceTests
                 }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.CancelPipelineAsync();
 
         var history = _service.GetRunHistory();
