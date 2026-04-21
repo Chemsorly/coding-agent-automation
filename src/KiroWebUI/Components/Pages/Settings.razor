@@ -277,7 +277,7 @@
                         <div class="provider-info">
                             <strong>@p.DisplayName</strong>
                             <span class="provider-type">@p.ProviderType</span>
-                            <span class="provider-detail">@p.Settings.GetValueOrDefault("executablePath", "") · @(p.Settings.GetValueOrDefault("timeout", "30"))min</span>
+                            <span class="provider-detail">@p.Settings.GetValueOrDefault("executablePath", "") · @(p.Settings.GetValueOrDefault("timeout", "30"))min · model: @(p.Settings.GetValueOrDefault("model", "auto"))</span>
                         </div>
                         <div class="provider-actions">
                             <button class="btn-edit" @onclick="() => EditAgentProvider(p)">Edit</button>
@@ -311,6 +311,29 @@
                             <label>Agent Name</label>
                             <input type="text" @bind="_agentForm.AgentName" placeholder="default" />
                         </div>
+                        <div class="form-group">
+                            <label>Model</label>
+                            <div class="input-with-action">
+                                @if (_agentAvailableModels.Count > 0)
+                                {
+                                    <select @bind="_agentForm.Model">
+                                        <option value="auto">auto — Use CLI default (1.0x)</option>
+                                        @foreach (var m in _agentAvailableModels)
+                                        {
+                                            <option value="@m.ModelId">@m.ModelId — @m.Description (@(m.RateMultiplier)x)</option>
+                                        }
+                                    </select>
+                                }
+                                else
+                                {
+                                    <input type="text" @bind="_agentForm.Model" placeholder="auto" />
+                                }
+                                <button class="btn-edit" @onclick="FetchAgentModels" disabled="@_agentLoadingModels">
+                                    @(_agentLoadingModels ? "Loading..." : "Fetch Models")
+                                </button>
+                            </div>
+                            <span class="form-hint">Select a model or leave as "auto" for default. Click "Fetch Models" to query available models from the CLI.</span>
+                        </div>
                         <div class="form-buttons">
                             <button class="btn-save" @onclick="SaveAgentProvider">Save</button>
                             <button class="btn-cancel" @onclick="() => _showAgentForm = false">Cancel</button>
@@ -329,6 +352,7 @@
                             <li><strong>Executable Path</strong> — full path to the kiro-cli binary (e.g. <code>/home/ubuntu/.local/bin/kiro-cli</code>)</li>
                             <li><strong>Timeout</strong> — max minutes per agent invocation before it's killed</li>
                             <li><strong>Agent Name</strong> — leave as <code>default</code> unless you have a custom agent configured</li>
+                            <li><strong>Model</strong> — the LLM model to use. <code>auto</code> uses the CLI default. Click "Fetch Models" to see available options with cost multipliers</li>
                         </ul>
                         <p class="help-tip">💡 Auth tokens are stored in <code>~/.local/share/kiro-cli/</code> and persist across runs when using a Docker volume.</p>
                     </div>
@@ -588,6 +612,8 @@
     private bool _showAgentForm;
     private ProviderConfig? _editingAgentProvider;
     private AgentProviderForm _agentForm = new();
+    private List<AgentModelInfo> _agentAvailableModels = new();
+    private bool _agentLoadingModels;
 
     // Pipeline provider form
     private bool _showPipelineProviderForm;
@@ -885,6 +911,7 @@
     {
         _editingAgentProvider = null;
         _agentForm = new AgentProviderForm();
+        _agentAvailableModels.Clear();
         _showAgentForm = true;
     }
 
@@ -897,8 +924,10 @@
             DisplayName = p.DisplayName,
             ExecutablePath = p.Settings.GetValueOrDefault("executablePath", ""),
             TimeoutMinutes = int.TryParse(p.Settings.GetValueOrDefault("timeout", "30"), out var t) ? t : 30,
-            AgentName = p.Settings.GetValueOrDefault("agentName", "")
+            AgentName = p.Settings.GetValueOrDefault("agentName", ""),
+            Model = p.Settings.GetValueOrDefault("model", "auto")
         };
+        _agentAvailableModels.Clear();
         _showAgentForm = true;
     }
 
@@ -907,6 +936,15 @@
         if (string.IsNullOrWhiteSpace(_agentForm.DisplayName))
         {
             ShowStatus("Display Name is required.", isError: true);
+            return;
+        }
+
+        // Normalize empty/whitespace model to "auto"; validate format for non-auto values
+        var model = string.IsNullOrWhiteSpace(_agentForm.Model) ? "auto" : _agentForm.Model.Trim();
+        if (!model.Equals("auto", StringComparison.OrdinalIgnoreCase)
+            && !System.Text.RegularExpressions.Regex.IsMatch(model, @"^[a-zA-Z0-9._-]+$"))
+        {
+            ShowStatus("Model name contains invalid characters. Only letters, numbers, dots, hyphens, and underscores are allowed.", isError: true);
             return;
         }
 
@@ -920,7 +958,8 @@
             {
                 ["executablePath"] = _agentForm.ExecutablePath,
                 ["timeout"] = _agentForm.TimeoutMinutes.ToString(),
-                ["agentName"] = _agentForm.AgentName
+                ["agentName"] = _agentForm.AgentName,
+                ["model"] = model
             }
         };
 
@@ -1223,6 +1262,82 @@
         _pipelineLoadingRepos = false;
     }
 
+    // --- Fetch Agent Models ---
+    private async Task FetchAgentModels()
+    {
+        if (string.IsNullOrWhiteSpace(_agentForm.ExecutablePath))
+        {
+            ShowStatus("Enter the Executable Path first.", isError: true);
+            return;
+        }
+
+        _agentLoadingModels = true;
+        StateHasChanged();
+
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = _agentForm.ExecutablePath,
+                Arguments = "chat --list-models --format json",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process == null)
+            {
+                ShowStatus("Failed to start kiro-cli process.", isError: true);
+                return;
+            }
+
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
+            var output = await stdoutTask;
+            await process.WaitForExitAsync(timeoutCts.Token);
+            var stderr = await stderrTask;
+
+            if (process.ExitCode != 0)
+            {
+                ShowStatus($"kiro-cli exited with code {process.ExitCode}: {stderr}", isError: true);
+                return;
+            }
+
+            using var doc = System.Text.Json.JsonDocument.Parse(output);
+            var models = new List<AgentModelInfo>();
+            if (doc.RootElement.TryGetProperty("models", out var modelsArray))
+            {
+                foreach (var m in modelsArray.EnumerateArray())
+                {
+                    models.Add(new AgentModelInfo
+                    {
+                        ModelId = m.GetProperty("model_id").GetString() ?? "",
+                        Description = m.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "",
+                        RateMultiplier = m.TryGetProperty("rate_multiplier", out var r) ? r.GetDouble() : 1.0
+                    });
+                }
+            }
+
+            _agentAvailableModels = models;
+            // Keep current selection if it's "auto" or matches a fetched model; otherwise reset to "auto"
+            if (_agentForm.Model != "auto" && models.Count > 0 && !models.Any(m => m.ModelId == _agentForm.Model))
+                _agentForm.Model = "auto";
+
+            ShowStatus($"{models.Count} model(s) loaded.");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Failed to fetch models: {ex.Message}", isError: true);
+        }
+        finally
+        {
+            _agentLoadingModels = false;
+        }
+    }
+
     // --- Delete ---
     private async Task DeleteProvider(string id, ProviderKind kind)
     {
@@ -1315,6 +1430,7 @@
         public string ExecutablePath { get; set; } = "/home/ubuntu/.local/bin/kiro-cli";
         public int TimeoutMinutes { get; set; } = 30;
         public string AgentName { get; set; } = "default";
+        public string Model { get; set; } = "auto";
     }
 
     private class PipelineConfigForm
@@ -1342,5 +1458,12 @@
         public string PrivateKeyBase64 { get; set; } = "";
         public string Owner { get; set; } = "";
         public string Repo { get; set; } = "";
+    }
+
+    private class AgentModelInfo
+    {
+        public string ModelId { get; set; } = "";
+        public string Description { get; set; } = "";
+        public double RateMultiplier { get; set; } = 1.0;
     }
 }

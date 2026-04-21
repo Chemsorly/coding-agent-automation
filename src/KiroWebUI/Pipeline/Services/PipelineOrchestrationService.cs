@@ -123,6 +123,7 @@ public class PipelineOrchestrationService : IDisposable
             _activeAgentProvider = _providerFactory.CreateAgentProvider(agentProviderConfig);
 
             // Create the pipeline run
+            var configuredModel = agentProviderConfig.Settings.GetValueOrDefault("model", "auto");
             var run = new PipelineRun
             {
                 RunId = Guid.NewGuid().ToString(),
@@ -132,9 +133,11 @@ public class PipelineOrchestrationService : IDisposable
                 RepoProviderConfigId = repoProviderId,
                 StartedAt = DateTime.UtcNow,
                 CurrentStep = PipelineStep.Created,
-                RepositoryName = _activeRepoProvider.RepositoryFullName
+                RepositoryName = _activeRepoProvider.RepositoryFullName,
+                ModelName = configuredModel
             };
             ActiveRun = run;
+            _logger.Information("Pipeline {RunId} using model {Model}", run.RunId, configuredModel);
 
             // Create pipeline provider if external CI is enabled
             _activePipelineProvider = null;
@@ -1117,7 +1120,8 @@ public class PipelineOrchestrationService : IDisposable
                 run.IssueIdentifier, testsPassed, testsFailed, testsSkipped,
                 coverage, fileChanges, issueTitle, issueDescription,
                 acceptanceCriteria, isDraft, _activeIssueComments,
-                run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null);
+                run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
+                run.ModelName);
 
             var prInfo = new PullRequestInfo
             {
@@ -1275,7 +1279,8 @@ public class PipelineOrchestrationService : IDisposable
             StartedAt = run.StartedAt,
             CompletedAt = run.CompletedAt,
             RetryCount = run.RetryCount,
-            PullRequestUrl = run.PullRequestUrl
+            PullRequestUrl = run.PullRequestUrl,
+            ModelName = run.ModelName
         };
         _runHistory.Insert(0, summary);
         PersistRunSummary(summary);

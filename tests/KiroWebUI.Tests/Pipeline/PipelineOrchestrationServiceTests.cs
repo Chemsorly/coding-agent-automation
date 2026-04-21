@@ -105,6 +105,42 @@ public class PipelineOrchestrationServiceTests
             .WithMessage("*already in progress*");
     }
 
+    // --- Model metadata tests ---
+
+    [Fact]
+    public async Task StartPipeline_RecordsModelFromAgentProviderConfig()
+    {
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new()
+                {
+                    Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test",
+                    Settings = new Dictionary<string, string> { ["model"] = "claude-sonnet-4.6" }
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        run.ModelName.Should().Be("claude-sonnet-4.6");
+    }
+
+    [Fact]
+    public async Task StartPipeline_WithoutModelInConfig_DefaultsToAuto()
+    {
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new()
+                {
+                    Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test",
+                    Settings = new Dictionary<string, string>()
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        run.ModelName.Should().Be("auto");
+    }
+
     [Fact]
     public async Task CancelPipeline_DuringWaitingForAnalysisApproval_TransitionsToCancelled()
     {
@@ -217,6 +253,27 @@ public class PipelineOrchestrationServiceTests
         history[0].FinalStep.Should().Be(PipelineStep.Completed);
         history[0].PullRequestUrl.Should().NotBeNullOrEmpty();
         history[0].IssueIdentifier.Should().Be("42");
+    }
+
+    [Fact]
+    public async Task RunHistory_IncludesModelName()
+    {
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new()
+                {
+                    Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test",
+                    Settings = new Dictionary<string, string> { ["model"] = "claude-opus-4.6" }
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.CancelPipelineAsync();
+
+        var history = _service.GetRunHistory();
+        history.Should().HaveCount(1);
+        history[0].ModelName.Should().Be("claude-opus-4.6");
     }
 
     [Fact]

@@ -15,6 +15,10 @@
             {
                 <span> · Repo: @Run.RepositoryName</span>
             }
+            @if (!string.IsNullOrEmpty(Run.ModelName))
+            {
+                <span> · Model: @Run.ModelName</span>
+            }
         </div>
         @if (!string.IsNullOrEmpty(Run.BranchName))
         {

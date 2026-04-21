@@ -102,4 +102,47 @@ public class ProviderFactoryTests
         actualInterval.Should().Be(TimeSpan.FromSeconds(30),
             "default ExternalCiPollInterval should be 30 seconds");
     }
+
+    // --- Model passthrough tests ---
+
+    [Fact]
+    public void CreateAgentProvider_WithModelInConfig_PassesModelToProvider()
+    {
+        var pipelineConfig = new PipelineConfiguration();
+        var factory = new ProviderFactory(MockOrchestrator.Object, pipelineConfig);
+
+        var providerConfig = new ProviderConfig
+        {
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Test Agent",
+            Settings = new Dictionary<string, string>
+            {
+                ["model"] = "claude-sonnet-4.6",
+                ["executablePath"] = "/usr/bin/kiro-cli"
+            }
+        };
+
+        var provider = factory.CreateAgentProvider(providerConfig);
+        provider.Should().BeOfType<KiroCliAgentProvider>();
+        ((KiroCliAgentProvider)provider).Model.Should().Be("claude-sonnet-4.6");
+    }
+
+    [Fact]
+    public void CreateAgentProvider_WithoutModelInConfig_ModelIsNull()
+    {
+        var pipelineConfig = new PipelineConfiguration();
+        var factory = new ProviderFactory(MockOrchestrator.Object, pipelineConfig);
+
+        var providerConfig = new ProviderConfig
+        {
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Test Agent",
+            Settings = new Dictionary<string, string>()
+        };
+
+        var provider = factory.CreateAgentProvider(providerConfig);
+        ((KiroCliAgentProvider)provider).Model.Should().BeNull();
+    }
 }

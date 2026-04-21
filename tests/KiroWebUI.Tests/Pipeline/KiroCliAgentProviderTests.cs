@@ -204,4 +204,65 @@ public class KiroCliAgentProviderTests
         result.ExitCode.Should().Be(1);
         result.Success.Should().BeFalse();
     }
+
+    // --- Model configuration tests ---
+
+    [Fact]
+    public void Model_WhenNotProvided_ReturnsNull()
+    {
+        var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object);
+        provider.Model.Should().BeNull();
+    }
+
+    [Fact]
+    public void Model_WhenProvided_ReturnsConfiguredValue()
+    {
+        var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object, model: "claude-sonnet-4.6");
+        provider.Model.Should().Be("claude-sonnet-4.6");
+    }
+
+    [Fact]
+    public async Task ApplyModelSettingAsync_WhenModelIsNull_DoesNothing()
+    {
+        var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object, model: null);
+        // Should not throw — no process started
+        await provider.ApplyModelSettingAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ApplyModelSettingAsync_WhenModelIsAuto_DoesNothing()
+    {
+        var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object, model: "auto");
+        // Should not throw — no process started
+        await provider.ApplyModelSettingAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ApplyModelSettingAsync_WhenModelIsAutoUpperCase_DoesNothing()
+    {
+        var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object, model: "Auto");
+        await provider.ApplyModelSettingAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ApplyModelSettingAsync_WhenModelContainsInvalidChars_RejectsAndLogs()
+    {
+        var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object, model: "foo\" && rm -rf /");
+        await provider.ApplyModelSettingAsync(CancellationToken.None);
+
+        _mockLogger.Verify(l => l.Warning(
+            "Invalid model name rejected: {Model}",
+            "foo\" && rm -rf /"), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApplyModelSettingAsync_WhenModelContainsSpaces_RejectsAndLogs()
+    {
+        var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object, model: "model with spaces");
+        await provider.ApplyModelSettingAsync(CancellationToken.None);
+
+        _mockLogger.Verify(l => l.Warning(
+            "Invalid model name rejected: {Model}",
+            "model with spaces"), Times.Once);
+    }
 }

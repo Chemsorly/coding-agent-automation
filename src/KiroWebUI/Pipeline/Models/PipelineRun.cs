@@ -68,4 +68,7 @@ public sealed class PipelineRun
 
     /// <summary>Files excluded from the commit due to blacklist rules (from GIT-04).</summary>
     public IReadOnlyList<string> BlacklistedFilesDetected { get; set; } = Array.Empty<string>();
+
+    /// <summary>Model configured for the agent provider used in this run (e.g. "auto", "claude-sonnet-4.6").</summary>
+    public string? ModelName { get; set; }
 }

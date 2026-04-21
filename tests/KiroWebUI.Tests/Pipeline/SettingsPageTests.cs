@@ -178,6 +178,34 @@ public class SettingsPageTests
     }
 
     [Fact]
+    public async Task AddAgentProvider_WithModel_SavesModelInSettings()
+    {
+        ProviderConfig? savedConfig = null;
+        _mockStore.Setup(s => s.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .Callback<ProviderConfig, CancellationToken>((c, _) => savedConfig = c)
+            .Returns(Task.CompletedTask);
+
+        var config = new ProviderConfig
+        {
+            Id = Guid.NewGuid().ToString(),
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Kiro CLI Agent",
+            Settings = new Dictionary<string, string>
+            {
+                ["executablePath"] = "/root/.local/bin/kiro-cli",
+                ["timeout"] = "30",
+                ["agentName"] = "default",
+                ["model"] = "claude-sonnet-4.6"
+            }
+        };
+        await _mockStore.Object.SaveProviderConfigAsync(config, CancellationToken.None);
+
+        savedConfig.Should().NotBeNull();
+        savedConfig!.Settings.Should().ContainKey("model").WhoseValue.Should().Be("claude-sonnet-4.6");
+    }
+
+    [Fact]
     public async Task EditProvider_PreservesIdOnSave()
     {
         // Arrange — simulate editing an existing provider (Settings page reuses the existing Id)
