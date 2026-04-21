@@ -83,11 +83,13 @@ public class PipelineOrchestrationService : IDisposable
     /// Rejects if a pipeline is already running.
     /// </summary>
     public async Task<PipelineRun> StartPipelineAsync(
-        string issueProviderId, string repoProviderId, string issueIdentifier, CancellationToken ct)
+        string issueProviderId, string repoProviderId, string issueIdentifier,
+        string agentProviderId, CancellationToken ct, string? pipelineProviderId = null)
     {
         ArgumentNullException.ThrowIfNull(issueProviderId);
         ArgumentNullException.ThrowIfNull(repoProviderId);
         ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(agentProviderId);
 
         if (IsRunning)
             throw new InvalidOperationException("A pipeline run is already in progress.");
@@ -107,11 +109,8 @@ public class PipelineOrchestrationService : IDisposable
             var issueProviderConfig = await ResolveProviderConfigAsync(issueProviderId, ProviderKind.Issue, linkedCt);
             var repoProviderConfig = await ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, linkedCt);
 
-            // Resolve agent provider (first configured agent provider)
-            var agentConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Agent, linkedCt);
-            if (agentConfigs.Count == 0)
-                throw new InvalidOperationException("No agent provider configured. Add one in Settings.");
-            var agentProviderConfig = agentConfigs[0];
+            // Resolve agent provider by explicit ID
+            var agentProviderConfig = await ResolveProviderConfigAsync(agentProviderId, ProviderKind.Agent, linkedCt);
 
             // Dispose previous provider instances before creating new ones (REQ-5.3)
             await DisposePreviousProvidersAsync();
@@ -143,10 +142,21 @@ public class PipelineOrchestrationService : IDisposable
             _activePipelineProvider = null;
             if (_activeConfig.ExternalCiEnabled)
             {
-                var pipelineConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, linkedCt);
-                if (pipelineConfigs.Count > 0)
+                ProviderConfig? pipelineProviderConfig = null;
+                if (!string.IsNullOrEmpty(pipelineProviderId))
                 {
-                    _activePipelineProvider = _providerFactory.CreatePipelineProvider(pipelineConfigs[0]);
+                    pipelineProviderConfig = await ResolveProviderConfigAsync(pipelineProviderId, ProviderKind.Pipeline, linkedCt);
+                }
+                else
+                {
+                    var pipelineConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, linkedCt);
+                    if (pipelineConfigs.Count > 0)
+                        pipelineProviderConfig = pipelineConfigs[0];
+                }
+
+                if (pipelineProviderConfig is not null)
+                {
+                    _activePipelineProvider = _providerFactory.CreatePipelineProvider(pipelineProviderConfig);
                     _logger.Information("Pipeline {RunId} external CI provider configured", run.RunId);
                 }
                 else

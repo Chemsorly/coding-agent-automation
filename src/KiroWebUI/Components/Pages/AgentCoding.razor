@@ -43,135 +43,247 @@
                                      OnBackToIssues="BackToIssues" />
                 }
 
-                <!-- Issue Selection View -->
+                <!-- Issue Selection + Pipeline Setup (two-column) -->
                 @if (activeRun is null || hasFinishedRun)
                 {
                     @if (!_showCompletionOnly)
                     {
-                        <div class="issue-selection">
-                            <h2>Select an Issue</h2>
-                            <div class="form-group">
-                                <label>Issue Provider</label>
-                                <select @bind="_selectedIssueProviderId" @bind:after="OnIssueProviderChanged">
-                                    <option value="">-- Select Provider --</option>
-                                    @foreach (var p in _issueProviders)
-                                    {
-                                        <option value="@p.Id">@p.DisplayName</option>
-                                    }
-                                </select>
-                            </div>
+                        <div class="pipeline-setup-layout">
+                            <!-- Left: Browse Issues -->
+                            <div class="pipeline-setup-issues">
+                              <div class="pipeline-setup-card">
+                                <div class="config-category">
+                                    <div class="config-category-title">Browse Issues</div>
+                                    <div class="form-group">
+                                        <label>Issue Provider</label>
+                                        <select @bind="_selectedIssueProviderId" @bind:after="OnIssueProviderChanged">
+                                            <option value="">-- Select Provider --</option>
+                                            @foreach (var p in _issueProviders)
+                                            {
+                                                <option value="@p.Id">@p.DisplayName (@p.ProviderType: @p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", ""))</option>
+                                            }
+                                        </select>
+                                    </div>
+                                </div>
 
-                            @if (_loadingIssues)
-                            {
-                                <div class="loading-text">Loading issues...</div>
-                            }
-
-                            @if (_issues.Count > 0)
-                            {
-                                @if (_availableLabels.Count > 0)
+                                @if (_loadingIssues)
                                 {
-                                    <div class="label-filter">
-                                        <div class="label-filter-header">
-                                            <span class="label-filter-title">Filter by labels:</span>
+                                    <div class="loading-text">Loading issues...</div>
+                                }
+
+                                @if (_issues.Count > 0)
+                                {
+                                    @if (_availableLabels.Count > 0)
+                                    {
+                                        <div class="label-filter">
+                                            <div class="label-filter-header">
+                                                <span class="label-filter-title">Filter by labels:</span>
+                                                @if (_selectedLabels.Count > 0)
+                                                {
+                                                    <button class="label-clear-btn" @onclick="ClearLabelFilter">Clear all</button>
+                                                }
+                                            </div>
                                             @if (_selectedLabels.Count > 0)
                                             {
-                                                <button class="label-clear-btn" @onclick="ClearLabelFilter">Clear all</button>
+                                                <div class="label-active-filters">
+                                                    @foreach (var label in _selectedLabels.OrderBy(l => l))
+                                                    {
+                                                        <button class="label-chip label-chip-active"
+                                                                aria-label="Remove filter: @label"
+                                                                @onclick="() => ToggleLabel(label)">@label ✕</button>
+                                                    }
+                                                </div>
                                             }
-                                        </div>
-                                        @if (_selectedLabels.Count > 0)
-                                        {
-                                            <div class="label-active-filters">
-                                                @foreach (var label in _selectedLabels.OrderBy(l => l))
+                                            <div class="label-chip-list">
+                                                @foreach (var label in _availableLabels)
                                                 {
-                                                    <button class="label-chip label-chip-active"
-                                                            aria-label="Remove filter: @label"
-                                                            @onclick="() => ToggleLabel(label)">@label ✕</button>
+                                                    <button class="label-chip @(_selectedLabels.Contains(label) ? "label-chip-selected" : "")"
+                                                            aria-pressed="@(_selectedLabels.Contains(label) ? "true" : "false")"
+                                                            @onclick="() => ToggleLabel(label)">@label</button>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+
+                                    @if (_selectedLabels.Count > 0)
+                                    {
+                                        <div class="label-filter-count" aria-live="polite">Showing @FilteredIssues.Count of @_issues.Count issues</div>
+                                    }
+
+                                    <div class="issue-list">
+                                        @foreach (var issue in FilteredIssues)
+                                        {
+                                            <div class="issue-card @(_selectedIssueId == issue.Identifier ? "issue-selected" : "")"
+                                                 @onclick="() => SelectIssue(issue.Identifier)">
+                                                <span class="issue-id">#@issue.Identifier</span>
+                                                <span class="issue-title">@issue.Title</span>
+                                                @if (issue.Labels.Count > 0)
+                                                {
+                                                    <div class="issue-labels">
+                                                        @foreach (var label in issue.Labels)
+                                                        {
+                                                            <span class="issue-label">@label</span>
+                                                        }
+                                                    </div>
                                                 }
                                             </div>
                                         }
-                                        <div class="label-chip-list">
-                                            @foreach (var label in _availableLabels)
-                                            {
-                                                <button class="label-chip @(_selectedLabels.Contains(label) ? "label-chip-selected" : "")"
-                                                        aria-pressed="@(_selectedLabels.Contains(label) ? "true" : "false")"
-                                                        @onclick="() => ToggleLabel(label)">@label</button>
-                                            }
-                                        </div>
+                                    </div>
+
+                                    <div class="issue-pagination">
+                                        <button class="btn-page" disabled="@(_currentPage <= 1)" @onclick="PreviousPage">← Previous</button>
+                                        <span class="page-indicator">Page @_currentPage</span>
+                                        <button class="btn-page" disabled="@(!_hasMoreIssues)" @onclick="NextPage">Next →</button>
                                     </div>
                                 }
 
-                                @if (_selectedLabels.Count > 0)
+                                @if (_loadingIssueDetail)
                                 {
-                                    <div class="label-filter-count" aria-live="polite">Showing @FilteredIssues.Count of @_issues.Count issues</div>
+                                    <div class="loading-text">Loading issue details...</div>
                                 }
 
-                                <div class="issue-list">
-                                    @foreach (var issue in FilteredIssues)
-                                    {
-                                        <div class="issue-card @(_selectedIssueId == issue.Identifier ? "issue-selected" : "")"
-                                             @onclick="() => SelectIssue(issue.Identifier)">
-                                            <span class="issue-id">#@issue.Identifier</span>
-                                            <span class="issue-title">@issue.Title</span>
-                                            @if (issue.Labels.Count > 0)
-                                            {
-                                                <div class="issue-labels">
-                                                    @foreach (var label in issue.Labels)
+                                @if (_selectedIssueDetail != null)
+                                {
+                                    <div class="issue-detail-panel">
+                                        <h3>#@_selectedIssueDetail.Identifier @_selectedIssueDetail.Title</h3>
+                                        <pre class="issue-description">@_selectedIssueDetail.Description</pre>
+                                        @if (_selectedIssueDetail.Labels.Count > 0)
+                                        {
+                                            <div class="issue-labels">
+                                                @foreach (var label in _selectedIssueDetail.Labels)
+                                                {
+                                                    <span class="issue-label">@label</span>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                              </div>
+                            </div>
+
+                            <!-- Right: Pipeline Setup (sticky) -->
+                            <div class="pipeline-setup-panel">
+                                <div class="pipeline-setup-card">
+                                    <div class="config-category">
+                                        <div class="config-category-title">Providers</div>
+                                        <div class="form-group">
+                                            <label>Repository Provider</label>
+                                            <select @bind="_selectedRepoProviderId">
+                                                <option value="">-- Select Repository --</option>
+                                                @foreach (var p in _repoProviders)
+                                                {
+                                                    <option value="@p.Id">@p.DisplayName (@p.ProviderType: @p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "") → @p.Settings.GetValueOrDefault("baseBranch", "main"))</option>
+                                                }
+                                            </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Agent Provider</label>
+                                            <select @bind="_selectedAgentProviderId">
+                                                <option value="">-- Select Agent --</option>
+                                                @foreach (var p in _agentProviders)
+                                                {
+                                                    <option value="@p.Id">@p.DisplayName (@p.ProviderType: @p.Settings.GetValueOrDefault("executablePath", ""))</option>
+                                                }
+                                            </select>
+                                        </div>
+                                        @if (_pipelineProviders.Count > 0)
+                                        {
+                                            <div class="form-group">
+                                                <label>Pipeline Provider (CI)</label>
+                                                <select @bind="_selectedPipelineProviderId">
+                                                    <option value="">-- None --</option>
+                                                    @foreach (var p in _pipelineProviders)
                                                     {
-                                                        <span class="issue-label">@label</span>
+                                                        <option value="@p.Id">@p.DisplayName (@p.ProviderType: @p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", ""))</option>
+                                                    }
+                                                </select>
+                                            </div>
+                                        }
+                                    </div>
+
+                                    @if (!string.IsNullOrEmpty(_selectedIssueId) && _selectedIssueDetail != null)
+                                    {
+                                        <div class="config-category">
+                                            <div class="config-category-title">Selected Issue</div>
+                                            <div class="pipeline-selected-issue">
+                                                <strong>#@_selectedIssueDetail.Identifier</strong> @_selectedIssueDetail.Title
+                                                @if (_selectedIssueDetail.Labels.Count > 0)
+                                                {
+                                                    <div class="issue-labels" style="margin-top: 6px;">
+                                                        @foreach (var label in _selectedIssueDetail.Labels)
+                                                        {
+                                                            <span class="issue-label">@label</span>
+                                                        }
+                                                    </div>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+
+                                    <button class="btn-save pipeline-start-btn" @onclick="StartPipeline"
+                                            disabled="@(!CanStartPipeline)">
+                                        🚀 Start Pipeline
+                                    </button>
+
+                                    @if (!CanStartPipeline && !string.IsNullOrEmpty(_selectedIssueProviderId))
+                                    {
+                                        <div class="pipeline-setup-hint">
+                                            @if (string.IsNullOrEmpty(_selectedIssueId))
+                                            {
+                                                <span>Select an issue to continue</span>
+                                            }
+                                            else if (string.IsNullOrEmpty(_selectedRepoProviderId))
+                                            {
+                                                <span>Select a repository provider</span>
+                                            }
+                                            else if (string.IsNullOrEmpty(_selectedAgentProviderId))
+                                            {
+                                                <span>Select an agent provider</span>
+                                            }
+                                        </div>
+                                    }
+
+                                    <!-- Run History -->
+                                    @{
+                                        var history = PipelineService.GetRunHistory();
+                                    }
+                                    @if (history.Count > 0)
+                                    {
+                                        <div class="config-category" style="margin-top: 8px;">
+                                            <div class="config-category-title run-history-toggle-title" @onclick="() => _historyExpanded = !_historyExpanded" role="button" tabindex="0">
+                                                <span>Run History</span>
+                                                <span class="run-history-count">@history.Count</span>
+                                                <span class="run-history-toggle">@(_historyExpanded ? "▾" : "▸")</span>
+                                            </div>
+                                            @if (_historyExpanded)
+                                            {
+                                                <div class="history-list">
+                                                    @foreach (var h in history)
+                                                    {
+                                                        <div class="history-card">
+                                                            <div class="history-info">
+                                                                <span class="history-title">#@h.IssueIdentifier @Truncate(h.IssueTitle, 40)</span>
+                                                                <span class="step-badge step-@h.FinalStep.ToString().ToLowerInvariant()">@h.FinalStep</span>
+                                                            </div>
+                                                            <div class="history-meta">
+                                                                <span>@h.StartedAt.ToLocalTime().ToString("g")</span>
+                                                                @if (h.CompletedAt.HasValue)
+                                                                {
+                                                                    <span>@((h.CompletedAt.Value - h.StartedAt).ToString(@"hh\:mm\:ss"))</span>
+                                                                }
+                                                                @if (!string.IsNullOrEmpty(h.PullRequestUrl))
+                                                                {
+                                                                    <a href="@h.PullRequestUrl" target="_blank" rel="noopener noreferrer">PR</a>
+                                                                }
+                                                            </div>
+                                                        </div>
                                                     }
                                                 </div>
                                             }
                                         </div>
                                     }
                                 </div>
-
-                                <div class="issue-pagination">
-                                    <button class="btn-page" disabled="@(_currentPage <= 1)" @onclick="PreviousPage">← Previous</button>
-                                    <span class="page-indicator">Page @_currentPage</span>
-                                    <button class="btn-page" disabled="@(!_hasMoreIssues)" @onclick="NextPage">Next →</button>
-                                </div>
-                            }
-
-                            @if (_loadingIssueDetail)
-                            {
-                                <div class="loading-text">Loading issue details...</div>
-                            }
-
-                            @if (_selectedIssueDetail != null)
-                            {
-                                <div class="issue-detail-panel">
-                                    <h3>#@_selectedIssueDetail.Identifier @_selectedIssueDetail.Title</h3>
-                                    <pre class="issue-description">@_selectedIssueDetail.Description</pre>
-                                    @if (_selectedIssueDetail.Labels.Count > 0)
-                                    {
-                                        <div class="issue-labels">
-                                            @foreach (var label in _selectedIssueDetail.Labels)
-                                            {
-                                                <span class="issue-label">@label</span>
-                                            }
-                                        </div>
-                                    }
-                                </div>
-                            }
-
-                            @if (!string.IsNullOrEmpty(_selectedIssueId))
-                            {
-                                <div class="form-group">
-                                    <label>Repository Provider</label>
-                                    <select @bind="_selectedRepoProviderId">
-                                        <option value="">-- Select Repository --</option>
-                                        @foreach (var p in _repoProviders)
-                                        {
-                                            <option value="@p.Id">@p.DisplayName (@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "") → @p.Settings.GetValueOrDefault("baseBranch", "main"))</option>
-                                        }
-                                    </select>
-                                </div>
-
-                                <button class="btn-save" @onclick="StartPipeline"
-                                        disabled="@(string.IsNullOrEmpty(_selectedRepoProviderId))">
-                                    🚀 Start Pipeline
-                                </button>
-                            }
+                            </div>
                         </div>
                     }
                 }
@@ -275,59 +387,13 @@
                              OnCancel="CancelPipeline" MaxRetries="@_maxRetries" />
         }
     </div>
-
-    <!-- Run History Panel -->
-    <div class="run-history">
-        <div class="run-history-header" @onclick="() => _historyExpanded = !_historyExpanded" role="button" tabindex="0">
-            <span class="run-history-toggle">@(_historyExpanded ? "▾" : "▸")</span>
-            <h2>Run History</h2>
-            @{
-                var history = PipelineService.GetRunHistory();
-            }
-            @if (history.Count > 0)
-            {
-                <span class="run-history-count">@history.Count</span>
-            }
-        </div>
-        @if (_historyExpanded)
-        {
-            @if (history.Count == 0)
-            {
-                <p class="no-history">No pipeline runs yet.</p>
-            }
-            else
-            {
-                <div class="history-list">
-                    @foreach (var h in history)
-                    {
-                        <div class="history-card">
-                            <div class="history-info">
-                                <span class="history-id">@h.RunId[..8]</span>
-                                <span class="history-title">#@h.IssueIdentifier @h.IssueTitle</span>
-                                <span class="step-badge step-@h.FinalStep.ToString().ToLowerInvariant()">@h.FinalStep</span>
-                            </div>
-                            <div class="history-meta">
-                                <span>@h.StartedAt.ToLocalTime().ToString("g")</span>
-                                @if (h.CompletedAt.HasValue)
-                                {
-                                    <span>Duration: @((h.CompletedAt.Value - h.StartedAt).ToString(@"hh\:mm\:ss"))</span>
-                                }
-                                @if (!string.IsNullOrEmpty(h.PullRequestUrl))
-                                {
-                                    <a href="@h.PullRequestUrl" target="_blank" rel="noopener noreferrer">PR</a>
-                                }
-                            </div>
-                        </div>
-                    }
-                </div>
-            }
-        }
-    </div>
 </div>
 
 @code {
     private List<ProviderConfig> _issueProviders = new();
     private List<ProviderConfig> _repoProviders = new();
+    private List<ProviderConfig> _agentProviders = new();
+    private List<ProviderConfig> _pipelineProviders = new();
     private List<IssueSummary> _issues = new();
     private List<string> _availableLabels = new();
     private HashSet<string> _selectedLabels = new();
@@ -340,6 +406,8 @@
     private string _selectedIssueProviderId = "";
     private string _selectedIssueId = "";
     private string _selectedRepoProviderId = "";
+    private string _selectedAgentProviderId = "";
+    private string _selectedPipelineProviderId = "";
     private string? _errorMessage;
     private bool _loadingIssues;
     private bool _showCompletionOnly;
@@ -351,6 +419,12 @@
     private int _currentPage = 1;
     private int _issuePageSize = 25;
     private bool _hasMoreIssues;
+
+    private bool CanStartPipeline =>
+        !string.IsNullOrEmpty(_selectedIssueProviderId)
+        && !string.IsNullOrEmpty(_selectedIssueId)
+        && !string.IsNullOrEmpty(_selectedRepoProviderId)
+        && !string.IsNullOrEmpty(_selectedAgentProviderId);
 
     private IReadOnlyList<IssueSummary> FilteredIssues =>
         _filteredIssuesCache ??= _selectedLabels.Count == 0
@@ -392,10 +466,17 @@
         {
             _issueProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
             _repoProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
+            _agentProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None)).ToList();
+            _pipelineProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
 
             var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
             _maxRetries = config.MaxRetries;
             _issuePageSize = Math.Clamp(config.IssuePageSize, 1, 100);
+
+            // Auto-select if only one provider of each type
+            if (_repoProviders.Count == 1) _selectedRepoProviderId = _repoProviders[0].Id;
+            if (_agentProviders.Count == 1) _selectedAgentProviderId = _agentProviders[0].Id;
+            if (_pipelineProviders.Count == 1) _selectedPipelineProviderId = _pipelineProviders[0].Id;
         }
         catch (Exception ex)
         {
@@ -559,10 +640,9 @@
             return;
         }
 
-        if (string.IsNullOrEmpty(_selectedIssueProviderId) || string.IsNullOrEmpty(_selectedRepoProviderId)
-            || string.IsNullOrEmpty(_selectedIssueId))
+        if (!CanStartPipeline)
         {
-            _errorMessage = "Please select an issue provider, issue, and repository provider.";
+            _errorMessage = "Please select an issue, repository provider, and agent provider.";
             return;
         }
 
@@ -577,7 +657,8 @@
                 {
                     await PipelineService.StartPipelineAsync(
                         _selectedIssueProviderId, _selectedRepoProviderId,
-                        _selectedIssueId, CancellationToken.None);
+                        _selectedIssueId, _selectedAgentProviderId, CancellationToken.None,
+                        pipelineProviderId: string.IsNullOrEmpty(_selectedPipelineProviderId) ? null : _selectedPipelineProviderId);
                 }
                 catch (Exception ex)
                 {
@@ -699,4 +780,7 @@
         PipelineService.OnChange -= HandleStateChanged;
         PipelineService.OnOutputLine -= HandleOutputLine;
     }
+
+    private static string Truncate(string text, int maxLength) =>
+        text.Length <= maxLength ? text : text[..maxLength] + "…";
 }

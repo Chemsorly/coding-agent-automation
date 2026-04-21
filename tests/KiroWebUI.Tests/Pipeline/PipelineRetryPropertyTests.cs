@@ -5,6 +5,7 @@ using Moq;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
 using KiroWebUI.Pipeline.Services;
+using KiroWebUI.Tests.Helpers;
 
 namespace KiroWebUI.Tests.Pipeline;
 
@@ -34,7 +35,7 @@ public class PipelineRetryPropertyTests
         var service = CreateServiceWithFailingQualityGates(maxRetries, errorMessages);
 
         // Start the pipeline — should reach WaitingForAnalysisApproval
-        var run = service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None)
+        var run = service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None)
             .GetAwaiter().GetResult();
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
@@ -72,7 +73,9 @@ public class PipelineRetryPropertyTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 MaxRetries = maxRetries,
-                WorkspaceBaseDirectory = Path.GetTempPath()
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                SelfReviewEnabled = false
             });
         mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>

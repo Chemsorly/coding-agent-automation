@@ -3,6 +3,7 @@ using Moq;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
 using KiroWebUI.Pipeline.Services;
+using KiroWebUI.Tests.Helpers;
 
 namespace KiroWebUI.Tests.Pipeline;
 
@@ -45,7 +46,7 @@ public class PipelineOrchestrationServiceTests
     private void SetupDefaultMocks()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() });
+            .ReturnsAsync(TestPipelineConfig.NonAutonomous());
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
@@ -96,11 +97,11 @@ public class PipelineOrchestrationServiceTests
     public async Task StartPipeline_WhenAlreadyRunning_ThrowsInvalidOperationException()
     {
         // Start first pipeline — now pauses at WaitingForAnalysisApproval
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
         // Attempt to start second pipeline — should throw
-        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "99", CancellationToken.None);
+        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "99", "agent-1", CancellationToken.None);
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*already in progress*");
     }
@@ -144,7 +145,7 @@ public class PipelineOrchestrationServiceTests
     [Fact]
     public async Task CancelPipeline_DuringWaitingForAnalysisApproval_TransitionsToCancelled()
     {
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
         await _service.CancelPipelineAsync();
@@ -159,7 +160,7 @@ public class PipelineOrchestrationServiceTests
     [Fact]
     public async Task ApproveAnalysis_TransitionsToWaitingForChat()
     {
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
         await _service.ApproveAnalysisAsync(CancellationToken.None);
@@ -178,7 +179,7 @@ public class PipelineOrchestrationServiceTests
     [Fact]
     public async Task CancelPipeline_DuringWaitingForChat_TransitionsToCancelled()
     {
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
         await _service.ApproveAnalysisAsync(CancellationToken.None);
@@ -203,7 +204,7 @@ public class PipelineOrchestrationServiceTests
                 Labels = Array.Empty<string>()
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Be("insufficient issue information");
@@ -220,7 +221,7 @@ public class PipelineOrchestrationServiceTests
                 Labels = Array.Empty<string>()
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Be("insufficient issue information");
@@ -236,7 +237,7 @@ public class PipelineOrchestrationServiceTests
                 Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
         await _service.ApproveAnalysisAsync(CancellationToken.None);
@@ -282,7 +283,7 @@ public class PipelineOrchestrationServiceTests
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Connection refused"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("Failed to fetch issue");
@@ -292,7 +293,7 @@ public class PipelineOrchestrationServiceTests
     [Fact]
     public async Task StartPipeline_PostsAnalysisCommentOnIssue()
     {
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
         _mockIssueProvider.Verify(
@@ -306,7 +307,7 @@ public class PipelineOrchestrationServiceTests
         _mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("API error"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
     }
@@ -314,7 +315,7 @@ public class PipelineOrchestrationServiceTests
     [Fact]
     public async Task StartPipeline_AnalyzesCodeBeforePostingComment()
     {
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
@@ -349,7 +350,7 @@ public class PipelineOrchestrationServiceTests
                 }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
         run.AnalysisContent.Should().Contain("Previous analysis content here.");
@@ -374,7 +375,7 @@ public class PipelineOrchestrationServiceTests
         _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("API error"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
@@ -394,11 +395,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
                 SelfReviewEnabled = true,
                 SelfReviewMaxIterations = 1
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
         await _service.ApproveAnalysisAsync(CancellationToken.None);
@@ -422,10 +424,11 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
                 SelfReviewEnabled = false
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
@@ -439,11 +442,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
                 SelfReviewEnabled = true,
                 SelfReviewMaxIterations = 3
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
@@ -457,6 +461,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
                 SelfReviewEnabled = true,
                 SelfReviewMaxIterations = 3
             });
@@ -478,7 +483,7 @@ public class PipelineOrchestrationServiceTests
                 return new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() };
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
@@ -493,12 +498,13 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
                 SelfReviewEnabled = true,
                 SelfReviewMaxIterations = 1,
                 SelfReviewPrompt = customPrompt
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
 
         _mockAgentProvider.Verify(
@@ -513,10 +519,10 @@ public class PipelineOrchestrationServiceTests
     public void SelfReviewDefaults_AreCorrect()
     {
         var config = new PipelineConfiguration();
-        config.SelfReviewEnabled.Should().BeFalse();
+        config.SelfReviewEnabled.Should().BeTrue();
         config.SelfReviewMaxIterations.Should().Be(1);
         config.SelfReviewPrompt.Should().Contain("sub-agent");
-        config.AutonomousMode.Should().BeFalse();
+        config.AutonomousMode.Should().BeTrue();
     }
 
     // --- Blacklist enforcement (GIT-04) ---
@@ -537,7 +543,7 @@ public class PipelineOrchestrationServiceTests
                 Tests = new GateResult { GateName = "Tests", Passed = true }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
 
         // Act
@@ -557,6 +563,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
                 BlacklistMode = BlacklistMode.Fail
             });
 
@@ -572,7 +579,7 @@ public class PipelineOrchestrationServiceTests
                 Tests = new GateResult { GateName = "Tests", Passed = true }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
 
         // Act
@@ -602,7 +609,7 @@ public class PipelineOrchestrationServiceTests
                 Tests = new GateResult { GateName = "Tests", Passed = true }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
 
         // Act
@@ -631,7 +638,7 @@ public class PipelineOrchestrationServiceTests
                 Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // In autonomous mode, StartPipelineAsync should run all the way to Completed
         run.CurrentStep.Should().Be(PipelineStep.Completed);
@@ -658,7 +665,7 @@ public class PipelineOrchestrationServiceTests
                 Tests = new GateResult { GateName = "Tests", Passed = false, Details = "2 tests failed" }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Should exhaust retries and create a draft PR → Failed
         run.CurrentStep.Should().Be(PipelineStep.Failed);
@@ -691,7 +698,7 @@ public class PipelineOrchestrationServiceTests
                 transitions.Add(_service.ActiveRun.CurrentStep);
         };
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Should pass through both pause points without stopping
         transitions.Should().ContainInOrder(
@@ -708,10 +715,10 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
-    public void AutonomousMode_DefaultsToFalse()
+    public void AutonomousMode_DefaultsToTrue()
     {
         var config = new PipelineConfiguration();
-        config.AutonomousMode.Should().BeFalse();
+        config.AutonomousMode.Should().BeTrue();
     }
 
     [Fact]
@@ -751,7 +758,7 @@ public class PipelineOrchestrationServiceTests
                     Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
                 });
 
-            var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+            var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
             run.CurrentStep.Should().Be(PipelineStep.Completed);
             // Workspace directory should have been deleted
@@ -788,7 +795,7 @@ public class PipelineOrchestrationServiceTests
                     Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
                 });
 
-            var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+            var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
             run.CurrentStep.Should().Be(PipelineStep.Completed);
             // Workspace directory should still exist
@@ -1089,7 +1096,7 @@ public class PipelineOrchestrationServiceTests
                     Tests = new GateResult { GateName = "Tests", Passed = false, Details = "Tests failed" }
                 });
 
-            var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+            var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
             run.CurrentStep.Should().Be(PipelineStep.Failed);
             run.IsDraftPr.Should().BeTrue();
@@ -1114,6 +1121,8 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                SelfReviewEnabled = false,
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
                 AgentTimeout = TimeSpan.FromMinutes(5)
@@ -1145,7 +1154,7 @@ public class PipelineOrchestrationServiceTests
                 return agentTcs.Task;
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
         // Act — approve analysis (starts stall monitor + blocked agent execution)
@@ -1175,6 +1184,8 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                SelfReviewEnabled = false,
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
                 AgentTimeout = TimeSpan.FromMinutes(5)
@@ -1202,7 +1213,7 @@ public class PipelineOrchestrationServiceTests
                 return agentTcs.Task;
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
         // Act — approve analysis (starts stall monitor + blocked agent execution)
@@ -1246,7 +1257,7 @@ public class PipelineOrchestrationServiceTests
             .Returns(Task.CompletedTask);
 
         // Act
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Assert — all three providers validated, and all validations happen before clone
         callOrder.Should().Contain("IssueProvider.ValidateAsync");
@@ -1289,7 +1300,7 @@ public class PipelineOrchestrationServiceTests
         }
 
         // Act
-        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Assert — pipeline fails with InvalidOperationException naming the provider
         var ex = await act.Should().ThrowAsync<InvalidOperationException>();
@@ -1320,6 +1331,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
                 ExternalCiEnabled = false
             });
 
@@ -1328,7 +1340,7 @@ public class PipelineOrchestrationServiceTests
             .Returns(mockPipelineProvider.Object);
 
         // Act
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Assert — pipeline provider was never created or validated
         _mockFactory.Verify(
@@ -1350,6 +1362,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
                 ExternalCiEnabled = true
             });
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
@@ -1365,7 +1378,7 @@ public class PipelineOrchestrationServiceTests
             .Returns(mockPipelineProvider.Object);
 
         // Act
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Assert — pipeline provider was validated
         mockPipelineProvider.Verify(
@@ -1384,6 +1397,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
                 ExternalCiEnabled = true
             });
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
@@ -1399,7 +1413,7 @@ public class PipelineOrchestrationServiceTests
             .Returns(mockPipelineProvider.Object);
 
         // Act
-        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Assert — pipeline fails with clear error naming the pipeline provider
         var ex = await act.Should().ThrowAsync<InvalidOperationException>();
@@ -1418,6 +1432,8 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                SelfReviewEnabled = false,
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
                 AgentTimeout = TimeSpan.FromMinutes(5)
@@ -1445,7 +1461,7 @@ public class PipelineOrchestrationServiceTests
                 return agentTcs.Task;
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
         // Act — approve analysis (starts stall monitor + blocked agent execution)
@@ -1500,7 +1516,7 @@ public class PipelineOrchestrationServiceTests
         _mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>())).Returns(firstAgentProvider.Object);
 
         // Run first pipeline and cancel it so we can start a second one
-        var run1 = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run1 = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.CancelPipelineAsync();
 
         // Track disposal and creation order for the second pipeline
@@ -1550,7 +1566,7 @@ public class PipelineOrchestrationServiceTests
             .Returns(secondAgentProvider.Object);
 
         // Act — start second pipeline (should dispose first providers, then create new ones)
-        var run2 = await _service.StartPipelineAsync("issue-1", "repo-1", "99", CancellationToken.None);
+        var run2 = await _service.StartPipelineAsync("issue-1", "repo-1", "99", "agent-1", CancellationToken.None);
 
         // Assert — all disposals happened before any creation
         var lastDisposeIndex = new[] { "Dispose:Issue", "Dispose:Repository", "Dispose:Agent" }

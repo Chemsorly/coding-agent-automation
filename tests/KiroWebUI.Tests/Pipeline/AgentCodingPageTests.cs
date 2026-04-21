@@ -3,6 +3,7 @@ using Moq;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
 using KiroWebUI.Pipeline.Services;
+using KiroWebUI.Tests.Helpers;
 
 namespace KiroWebUI.Tests.Pipeline;
 
@@ -48,7 +49,7 @@ public class AgentCodingPageTests
     private void SetupDefaultMocks()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() });
+            .ReturnsAsync(TestPipelineConfig.NonAutonomous());
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
@@ -121,7 +122,7 @@ public class AgentCodingPageTests
     public async Task AfterStartPipeline_ActiveRunExists_ShowsAnalysisApprovalView()
     {
         // After starting a pipeline, ActiveRun is set and the page shows analysis approval
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         _service.ActiveRun.Should().NotBeNull();
         // Pipeline pauses at WaitingForAnalysisApproval for user review
@@ -132,7 +133,7 @@ public class AgentCodingPageTests
     public async Task WaitingForChat_PageShowsChatPanel()
     {
         // When step is WaitingForChat, the page renders the chat panel view
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
 
         await _service.ApproveAnalysisAsync(CancellationToken.None);
@@ -145,7 +146,7 @@ public class AgentCodingPageTests
     public async Task AfterCancel_ShowsCompletionView()
     {
         // After cancellation, the page shows the completion view with "Back to Issues" button
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.CancelPipelineAsync();
 
         run.CurrentStep.Should().Be(PipelineStep.Cancelled);
@@ -163,7 +164,7 @@ public class AgentCodingPageTests
                 Tests = new GateResult { GateName = "Tests", Passed = true }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
         await _service.ProceedToQualityGatesAsync(CancellationToken.None);
 
@@ -184,7 +185,7 @@ public class AgentCodingPageTests
                 Tests = new GateResult { GateName = "Tests", Passed = false, Details = "2 tests failed" }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
         await _service.ProceedToQualityGatesAsync(CancellationToken.None);
 
@@ -203,13 +204,13 @@ public class AgentCodingPageTests
     {
         // Simulates: user selects an issue while a pipeline is already active
         // The page checks PipelineService.IsRunning and sets _errorMessage
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         _service.IsRunning.Should().BeTrue();
 
         // The page's StartPipeline method checks IsRunning first:
         //   if (PipelineService.IsRunning) { _errorMessage = "A pipeline run is already in progress."; return; }
         // The service also throws if called directly:
-        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "99", CancellationToken.None);
+        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "99", "agent-1", CancellationToken.None);
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*already in progress*");
     }
@@ -219,7 +220,7 @@ public class AgentCodingPageTests
     {
         // Validates the page's guard logic: when IsRunning is true, the page sets an error message
         // and does NOT call StartPipelineAsync
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Replicate the page's guard logic
         string? errorMessage = null;
@@ -238,7 +239,7 @@ public class AgentCodingPageTests
     {
         // The page's SendChatMessage checks: if (string.IsNullOrWhiteSpace(_chatInput) || _isSending) return;
         // This validates that empty/whitespace inputs are rejected before reaching the service
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
 
@@ -260,7 +261,7 @@ public class AgentCodingPageTests
     public async Task SendChatMessage_WhitespaceOnly_IsIgnoredByPageGuard()
     {
         // Whitespace-only input is also rejected by the page guard
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
         var chatCountBefore = run.ChatHistory.Count;
 
@@ -278,7 +279,7 @@ public class AgentCodingPageTests
     public async Task SendChatMessage_ValidInput_AddsToHistory()
     {
         // Contrast: a valid non-empty message does get sent
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
         var chatCountBefore = run.ChatHistory.Count;
 
@@ -303,7 +304,7 @@ public class AgentCodingPageTests
         // We validate this by checking that the service transitions to GeneratingCode
         // during SendChatMessageAsync (which is when _isSending would be true).
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
 
@@ -338,7 +339,7 @@ public class AgentCodingPageTests
         _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
             .Returns(gateTcs.Task);
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
 
@@ -427,7 +428,7 @@ public class AgentCodingPageTests
         int changeCount = 0;
         _service.OnChange += () => changeCount++;
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None);
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         changeCount.Should().BeGreaterThan(0, "OnChange should fire during pipeline step transitions");
     }

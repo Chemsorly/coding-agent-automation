@@ -152,7 +152,7 @@ public class SettingsPageComponentTests : BunitContext
         Assert.Contains("Max Retries", component.Markup);
         Assert.Contains("Agent Timeout", component.Markup);
         Assert.Contains("Min Coverage Threshold", component.Markup);
-        Assert.Contains("Security Scan Enabled", component.Markup);
+        Assert.DoesNotContain("Security Scan Enabled", component.Markup);
         Assert.Contains("Save Pipeline Configuration", component.Markup);
     }
 
