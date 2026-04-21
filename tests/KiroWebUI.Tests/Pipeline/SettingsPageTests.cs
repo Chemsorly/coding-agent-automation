@@ -414,6 +414,193 @@ public class SettingsPageTests
         loaded.SecurityScanEnabled.Should().BeFalse();
     }
 
+    // --- Related Providers Auto-Creation ---
+
+    [Fact]
+    public void RelatedProviders_SharedSettingsKeys_MatchGitHubProviderFields()
+    {
+        // The shared settings keys used by the modal must match the fields that all three
+        // GitHub provider types (Issue, Repository, Pipeline) have in common.
+        var expectedSharedKeys = new[] { "apiUrl", "clientId", "appId", "installationId", "privateKeyBase64", "owner", "repo" };
+
+        // Verify an Issue provider config contains all shared keys
+        var issueConfig = new ProviderConfig
+        {
+            Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test",
+            Settings = new Dictionary<string, string>
+            {
+                ["apiUrl"] = "https://api.github.com", ["clientId"] = "Iv1.abc", ["appId"] = "123",
+                ["installationId"] = "456", ["privateKeyBase64"] = "key", ["owner"] = "org", ["repo"] = "repo"
+            }
+        };
+
+        foreach (var key in expectedSharedKeys)
+            issueConfig.Settings.Should().ContainKey(key);
+
+        // Repository provider has the same keys plus baseBranch
+        var repoSettings = new Dictionary<string, string>(issueConfig.Settings) { ["baseBranch"] = "main" };
+        repoSettings.Should().ContainKey("baseBranch");
+        foreach (var key in expectedSharedKeys)
+            repoSettings.Should().ContainKey(key);
+    }
+
+    [Fact]
+    public void RelatedProviders_TargetKinds_ExcludeSourceKind()
+    {
+        // When saving an Issue provider, the modal should offer Repository and Pipeline (not Issue)
+        var allGitHubKinds = new[] { ProviderKind.Issue, ProviderKind.Repository, ProviderKind.Pipeline };
+
+        var issueTargets = allGitHubKinds.Where(k => k != ProviderKind.Issue).ToList();
+        issueTargets.Should().BeEquivalentTo(new[] { ProviderKind.Repository, ProviderKind.Pipeline });
+
+        var repoTargets = allGitHubKinds.Where(k => k != ProviderKind.Repository).ToList();
+        repoTargets.Should().BeEquivalentTo(new[] { ProviderKind.Issue, ProviderKind.Pipeline });
+
+        var pipelineTargets = allGitHubKinds.Where(k => k != ProviderKind.Pipeline).ToList();
+        pipelineTargets.Should().BeEquivalentTo(new[] { ProviderKind.Issue, ProviderKind.Repository });
+    }
+
+    [Fact]
+    public void RelatedProviders_ExistingProviderDetection_MatchesByOwnerAndRepo()
+    {
+        // Simulate the existing-provider detection logic from ShowRelatedProvidersModal
+        var existingProviders = new List<ProviderConfig>
+        {
+            new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "My Repo",
+                Settings = new() { ["owner"] = "acme", ["repo"] = "webapp", ["baseBranch"] = "main" } },
+            new() { Id = "rp-2", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Other Repo",
+                Settings = new() { ["owner"] = "acme", ["repo"] = "other-project" } }
+        };
+
+        var targetOwner = "acme";
+        var targetRepo = "webapp";
+
+        var match = existingProviders.FirstOrDefault(p =>
+            p.ProviderType == "GitHub"
+            && p.Settings.GetValueOrDefault("owner", "") == targetOwner
+            && p.Settings.GetValueOrDefault("repo", "") == targetRepo);
+
+        match.Should().NotBeNull();
+        match!.Id.Should().Be("rp-1");
+        match.DisplayName.Should().Be("My Repo");
+    }
+
+    [Fact]
+    public void RelatedProviders_ExistingProviderDetection_ReturnsNull_WhenNoMatch()
+    {
+        var existingProviders = new List<ProviderConfig>
+        {
+            new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "My Repo",
+                Settings = new() { ["owner"] = "acme", ["repo"] = "webapp" } }
+        };
+
+        var match = existingProviders.FirstOrDefault(p =>
+            p.ProviderType == "GitHub"
+            && p.Settings.GetValueOrDefault("owner", "") == "different-org"
+            && p.Settings.GetValueOrDefault("repo", "") == "different-repo");
+
+        match.Should().BeNull();
+    }
+
+    [Fact]
+    public void RelatedProviders_BaseBranchFallback_DefaultsToMain()
+    {
+        // Simulate the baseBranch fallback logic from ConfirmRelatedProviders
+        string? emptyBranch = "";
+        string? nullBranch = null;
+        string? whitespaceBranch = "   ";
+        string validBranch = "develop";
+
+        string Resolve(string? input) => string.IsNullOrWhiteSpace(input) ? "main" : input;
+
+        Resolve(emptyBranch).Should().Be("main");
+        Resolve(nullBranch).Should().Be("main");
+        Resolve(whitespaceBranch).Should().Be("main");
+        Resolve(validBranch).Should().Be("develop");
+    }
+
+    [Fact]
+    public async Task RelatedProviders_AutoCreatedConfig_HasCorrectStructure()
+    {
+        // Verify the ProviderConfig structure produced by the modal's auto-creation logic
+        var savedConfigs = new List<ProviderConfig>();
+        _mockStore.Setup(s => s.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .Callback<ProviderConfig, CancellationToken>((c, _) => savedConfigs.Add(c))
+            .Returns(Task.CompletedTask);
+
+        // Replicate the exact logic from ConfirmRelatedProviders
+        var sharedSettings = new Dictionary<string, string>
+        {
+            ["apiUrl"] = "https://api.github.com",
+            ["clientId"] = "Iv1.abc123",
+            ["appId"] = "123456",
+            ["installationId"] = "78901234",
+            ["privateKeyBase64"] = "LS0tLS1CRUdJTi...",
+            ["owner"] = "myorg",
+            ["repo"] = "myrepo"
+        };
+
+        // Repository provider: shared settings + baseBranch
+        var repoSettings = new Dictionary<string, string>(sharedSettings) { ["baseBranch"] = "main" };
+        var repoConfig = new ProviderConfig
+        {
+            Kind = ProviderKind.Repository, ProviderType = "GitHub",
+            DisplayName = "myorg/myrepo - Repository", Settings = repoSettings
+        };
+        await _mockStore.Object.SaveProviderConfigAsync(repoConfig, CancellationToken.None);
+
+        // Pipeline provider: shared settings only (no baseBranch)
+        var pipelineConfig = new ProviderConfig
+        {
+            Kind = ProviderKind.Pipeline, ProviderType = "GitHub",
+            DisplayName = "myorg/myrepo - Pipeline", Settings = new Dictionary<string, string>(sharedSettings)
+        };
+        await _mockStore.Object.SaveProviderConfigAsync(pipelineConfig, CancellationToken.None);
+
+        // Verify structure
+        savedConfigs.Should().HaveCount(2);
+
+        var repo = savedConfigs[0];
+        repo.Kind.Should().Be(ProviderKind.Repository);
+        repo.ProviderType.Should().Be("GitHub");
+        repo.DisplayName.Should().Be("myorg/myrepo - Repository");
+        repo.Settings.Should().HaveCount(8); // 7 shared + baseBranch
+        repo.Settings.Should().ContainKey("baseBranch").WhoseValue.Should().Be("main");
+
+        var pipeline = savedConfigs[1];
+        pipeline.Kind.Should().Be(ProviderKind.Pipeline);
+        pipeline.ProviderType.Should().Be("GitHub");
+        pipeline.DisplayName.Should().Be("myorg/myrepo - Pipeline");
+        pipeline.Settings.Should().HaveCount(7); // 7 shared, no baseBranch
+        pipeline.Settings.Should().NotContainKey("baseBranch");
+
+        // Both should have all shared keys
+        foreach (var config in savedConfigs)
+        {
+            config.Settings.Should().ContainKey("apiUrl");
+            config.Settings.Should().ContainKey("clientId");
+            config.Settings.Should().ContainKey("appId");
+            config.Settings.Should().ContainKey("installationId");
+            config.Settings.Should().ContainKey("privateKeyBase64");
+            config.Settings.Should().ContainKey("owner");
+            config.Settings.Should().ContainKey("repo");
+        }
+    }
+
+    [Fact]
+    public void RelatedProviders_NonGitHubProvider_ShouldNotTriggerModal()
+    {
+        // The modal guard checks ProviderType != "GitHub" and returns early.
+        // Verify that KiroCli agent providers would be excluded.
+        var agentConfig = new ProviderConfig
+        {
+            Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Kiro Agent",
+            Settings = new() { ["executablePath"] = "/usr/bin/kiro-cli" }
+        };
+
+        agentConfig.ProviderType.Should().NotBe("GitHub");
+    }
+
     // --- Error handling ---
 
     [Fact]

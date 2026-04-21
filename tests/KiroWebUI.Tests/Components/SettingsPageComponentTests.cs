@@ -31,6 +31,8 @@ public class SettingsPageComponentTests : BunitContext
             .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
     }
@@ -207,5 +209,78 @@ public class SettingsPageComponentTests : BunitContext
 
         Assert.Contains("Failed to load settings", component.Markup);
         Assert.Contains("Store unavailable", component.Markup);
+    }
+
+    [Fact]
+    public void Settings_RelatedProvidersModal_NotVisibleByDefault()
+    {
+        var component = Render<Settings>();
+
+        Assert.DoesNotContain("Create Related Providers", component.Markup);
+        Assert.DoesNotContain("modal-overlay", component.Markup);
+    }
+
+    [Fact]
+    public void Settings_RelatedProvidersModal_NotVisibleBeforeProviderSave()
+    {
+        // The modal should not appear until a GitHub provider is successfully saved.
+        // Since GitHubValidator is a real instance that will reject invalid credentials,
+        // we verify the modal remains hidden when the page loads with existing providers.
+        var component = Render<Settings>();
+
+        Assert.Contains("Issue Providers", component.Markup);
+        Assert.Contains("Repository Providers", component.Markup);
+        Assert.Contains("Pipeline Providers", component.Markup);
+        Assert.DoesNotContain("modal-overlay", component.Markup);
+        Assert.DoesNotContain("Create Related Providers", component.Markup);
+    }
+
+    [Fact]
+    public void Settings_RelatedProvidersModal_RendersExistingProviders_InProviderList()
+    {
+        // Verify that existing providers for the same owner/repo are displayed in the provider list,
+        // which is a prerequisite for the modal's existing-provider detection to work correctly.
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "My Issues",
+                    Settings = new() { ["owner"] = "acme", ["repo"] = "webapp" } }
+            });
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "My Repo",
+                    Settings = new() { ["owner"] = "acme", ["repo"] = "webapp", ["baseBranch"] = "main" } }
+            });
+
+        var component = Render<Settings>();
+
+        Assert.Contains("My Issues", component.Markup);
+        Assert.Contains("My Repo", component.Markup);
+    }
+
+    [Fact]
+    public void Settings_ModalMarkup_HasAccessibilityAttributes()
+    {
+        // Verify the modal markup includes proper ARIA attributes by checking the source file.
+        // Use the test assembly location to find the source file relative to the project root.
+        var testDir = AppContext.BaseDirectory;
+        // Navigate from bin/Debug/net10.0 up to the solution root, then to the source file
+        var solutionRoot = Path.GetFullPath(Path.Combine(testDir, "..", "..", "..", "..", ".."));
+        var razorPath = Path.Combine(solutionRoot, "src", "KiroWebUI", "Components", "Pages", "Settings.razor");
+
+        // Skip if source file not available (e.g., in CI with only binaries)
+        if (!File.Exists(razorPath))
+        {
+            Assert.Fail($"Source file not found at {razorPath}. Skipping accessibility attribute check.");
+            return;
+        }
+
+        var razorContent = File.ReadAllText(razorPath);
+
+        Assert.Contains("role=\"dialog\"", razorContent);
+        Assert.Contains("aria-modal=\"true\"", razorContent);
+        Assert.Contains("aria-labelledby=\"related-providers-title\"", razorContent);
+        Assert.Contains("HandleModalKeyDown", razorContent);
     }
 }
