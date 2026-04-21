@@ -59,10 +59,6 @@
                             <input type="text" @bind="_issueForm.ClientId" placeholder="Iv1.abc123..." />
                         </div>
                         <div class="form-group">
-                            <label>App ID</label>
-                            <input type="text" @bind="_issueForm.AppId" placeholder="123456" />
-                        </div>
-                        <div class="form-group">
                             <label>Installation ID</label>
                             <input type="text" @bind="_issueForm.InstallationId" placeholder="78901234" />
                         </div>
@@ -125,7 +121,6 @@
                         <p class="help-heading">Fields:</p>
                         <ul>
                             <li><strong>Client ID</strong> — from the App's General settings page (e.g. <code>Iv1.abc123...</code>)</li>
-                            <li><strong>App ID</strong> — numeric ID from the App's settings page</li>
                             <li><strong>Installation ID</strong> — from the installation URL (<code>github.com/settings/installations/{'{'}id{'}'}</code>)</li>
                             <li><strong>Private Key</strong> — upload the .pem file downloaded from the App's settings</li>
                             <li><strong>API URL</strong> — use <code>https://api.github.com</code> for github.com, or your GitHub Enterprise URL</li>
@@ -179,10 +174,6 @@
                         <div class="form-group">
                             <label>Client ID</label>
                             <input type="text" @bind="_repoForm.ClientId" placeholder="Iv1.abc123..." />
-                        </div>
-                        <div class="form-group">
-                            <label>App ID</label>
-                            <input type="text" @bind="_repoForm.AppId" placeholder="123456" />
                         </div>
                         <div class="form-group">
                             <label>Installation ID</label>
@@ -252,7 +243,6 @@
                         <p class="help-heading">Fields:</p>
                         <ul>
                             <li><strong>Client ID</strong> — from the App's General settings page (e.g. <code>Iv1.abc123...</code>)</li>
-                            <li><strong>App ID</strong> — numeric ID from the App's settings page</li>
                             <li><strong>Installation ID</strong> — from the installation URL (<code>github.com/settings/installations/{'{'}id{'}'}</code>)</li>
                             <li><strong>Private Key</strong> — upload the .pem file downloaded from the App's settings</li>
                             <li><strong>API URL</strong> — use <code>https://api.github.com</code> for github.com, or your GitHub Enterprise URL</li>
@@ -708,7 +698,6 @@
             DisplayName = p.DisplayName,
             ApiUrl = p.Settings.GetValueOrDefault("apiUrl", ""),
             ClientId = p.Settings.GetValueOrDefault("clientId", ""),
-            AppId = p.Settings.GetValueOrDefault("appId", ""),
             InstallationId = p.Settings.GetValueOrDefault("installationId", ""),
             PrivateKeyBase64 = p.Settings.GetValueOrDefault("privateKeyBase64", ""),
             Owner = p.Settings.GetValueOrDefault("owner", ""),
@@ -780,7 +769,6 @@
             {
                 ["apiUrl"] = _issueForm.ApiUrl,
                 ["clientId"] = _issueForm.ClientId,
-                ["appId"] = _issueForm.AppId,
                 ["installationId"] = _issueForm.InstallationId,
                 ["privateKeyBase64"] = _issueForm.PrivateKeyBase64,
                 ["owner"] = _issueForm.Owner,
@@ -827,7 +815,6 @@
             DisplayName = p.DisplayName,
             ApiUrl = p.Settings.GetValueOrDefault("apiUrl", ""),
             ClientId = p.Settings.GetValueOrDefault("clientId", ""),
-            AppId = p.Settings.GetValueOrDefault("appId", ""),
             InstallationId = p.Settings.GetValueOrDefault("installationId", ""),
             PrivateKeyBase64 = p.Settings.GetValueOrDefault("privateKeyBase64", ""),
             Owner = p.Settings.GetValueOrDefault("owner", ""),
@@ -900,7 +887,6 @@
             {
                 ["apiUrl"] = _repoForm.ApiUrl,
                 ["clientId"] = _repoForm.ClientId,
-                ["appId"] = _repoForm.AppId,
                 ["installationId"] = _repoForm.InstallationId,
                 ["privateKeyBase64"] = _repoForm.PrivateKeyBase64,
                 ["owner"] = _repoForm.Owner,
@@ -1424,7 +1410,6 @@
         public string DisplayName { get; set; } = "";
         public string ApiUrl { get; set; } = "https://api.github.com";
         public string ClientId { get; set; } = "";
-        public string AppId { get; set; } = "";
         public string InstallationId { get; set; } = "";
         public string PrivateKeyBase64 { get; set; } = "";
         public string Owner { get; set; } = "";
@@ -1437,7 +1422,6 @@
         public string DisplayName { get; set; } = "";
         public string ApiUrl { get; set; } = "https://api.github.com";
         public string ClientId { get; set; } = "";
-        public string AppId { get; set; } = "";
         public string InstallationId { get; set; } = "";
         public string PrivateKeyBase64 { get; set; } = "";
         public string Owner { get; set; } = "";
