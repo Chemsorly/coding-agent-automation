@@ -63,6 +63,8 @@ public class AgentCodingPageComponentTests : BunitContext
             {
                 new() { Id = "ap-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Kiro Agent" }
             });
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() });
 
@@ -97,7 +99,7 @@ public class AgentCodingPageComponentTests : BunitContext
     {
         var component = Render<AgentCoding>();
 
-        Assert.Contains("Select an Issue", component.Markup);
+        Assert.Contains("Browse Issues", component.Markup);
         Assert.Contains("Issue Provider", component.Markup);
     }
 
@@ -115,22 +117,20 @@ public class AgentCodingPageComponentTests : BunitContext
     {
         var component = Render<AgentCoding>();
 
-        Assert.Contains("Run History", component.Markup);
-
-        // Run history is collapsed by default — expand it to see content
-        var header = component.Find(".run-history-header");
-        header.Click();
-
-        Assert.Contains("No pipeline runs yet", component.Markup);
+        // Run history only appears in the pipeline setup panel when there are history items.
+        // With no history, the section is not rendered at all.
+        Assert.DoesNotContain("Run History", component.Markup);
     }
 
     [Fact]
-    public void AgentCoding_StartPipelineButton_NotVisible_WhenNoIssueSelected()
+    public void AgentCoding_StartPipelineButton_IsDisabled_WhenNoIssueSelected()
     {
         var component = Render<AgentCoding>();
 
-        // Start Pipeline button should not be visible until an issue is selected
-        Assert.DoesNotContain("Start Pipeline", component.Markup);
+        // Start Pipeline button is always visible but disabled until all providers and issue are selected
+        Assert.Contains("Start Pipeline", component.Markup);
+        var btn = component.Find(".pipeline-start-btn");
+        Assert.True(btn.HasAttribute("disabled"));
     }
 
     [Fact]

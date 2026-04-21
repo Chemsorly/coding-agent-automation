@@ -4,6 +4,7 @@ using Moq;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
 using KiroWebUI.Pipeline.Services;
+using KiroWebUI.Tests.Helpers;
 
 namespace KiroWebUI.Tests.Pipeline;
 
@@ -31,7 +32,7 @@ public class PipelineStateTransitionPropertyTests
         };
 
         // Start the pipeline
-        var run = service.StartPipelineAsync("issue-1", "repo-1", "42", CancellationToken.None)
+        var run = service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None)
             .GetAwaiter().GetResult();
 
         // After start, should be in WaitingForAnalysisApproval
@@ -80,7 +81,7 @@ public class PipelineStateTransitionPropertyTests
     {
         var mockConfigStore = new Mock<IConfigurationStore>();
         mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() });
+            .ReturnsAsync(TestPipelineConfig.NonAutonomous());
         mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {

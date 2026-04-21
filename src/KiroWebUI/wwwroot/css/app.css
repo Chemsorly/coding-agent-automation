@@ -20,6 +20,8 @@
 }
 
 html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; }
 
 /* Layout */
 .app-layout { display: flex; height: 100vh; }
@@ -136,7 +138,11 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 .settings-page { display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
 .settings-header { padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
 .settings-header h1 { font-size: 1.25rem; font-weight: 600; }
-.settings-sections { padding: 20px; display: flex; flex-direction: column; gap: 24px; max-width: 800px; }
+.settings-columns { padding: 20px; display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; }
+.settings-col-providers { display: flex; flex-direction: column; gap: 24px; }
+.settings-col-pipeline { display: flex; flex-direction: column; gap: 24px; }
+.settings-col-pipeline .settings-section { position: sticky; top: 0; max-height: calc(100vh - 80px); overflow-y: auto; }
+@media (max-width: 1024px) { .settings-columns { grid-template-columns: 1fr; } }
 .settings-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
 .settings-section h2 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: var(--accent-light); }
 .settings-status { padding: 8px 14px; border-radius: var(--radius); font-size: 0.85rem; margin: 12px 20px 0; }
@@ -176,7 +182,7 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 }
 .form-group input:focus, .form-group select:focus { border-color: var(--accent); }
 .form-checkbox label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.85rem; color: var(--text); }
-.form-checkbox input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+.form-checkbox input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); flex-shrink: 0; }
 .form-buttons { display: flex; gap: 8px; margin-top: 4px; }
 .input-with-action { display: flex; gap: 6px; align-items: center; }
 .input-with-action input { flex: 1; }
@@ -193,7 +199,37 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 .btn-add { padding: 8px 16px; border: 1px dashed var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; width: 100%; }
 .btn-add:hover { border-color: var(--accent); color: var(--accent-light); }
 .btn-revert { padding: 4px 10px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.8rem; text-decoration: underline; margin-top: 4px; }
-.btn-revert:hover { color: var(--accent-light); }
+.btn-revert:hover:not(:disabled) { color: var(--accent-light); }
+.btn-revert:disabled { opacity: 0.35; cursor: not-allowed; text-decoration: none; }
+
+.form-hint-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; border-radius: 50%; background: var(--surface-alt);
+    color: var(--text-muted); font-size: 0.7rem; font-weight: 700; cursor: help;
+    border: 1px solid var(--border); flex-shrink: 0; position: relative;
+}
+.form-hint-icon:hover { background: var(--accent); color: white; border-color: var(--accent); }
+.form-hint-icon[title] { /* tooltip via native title attribute */ }
+.label-with-hint { display: flex; align-items: center; gap: 6px; }
+.label-with-hint label { margin: 0; }
+.form-checkbox { display: flex; flex-direction: row; align-items: center; gap: 6px; }
+.form-group.form-checkbox { flex-direction: row; }
+.config-category { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.config-category:last-child { margin-bottom: 0; }
+.config-category-title {
+    font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+    color: #b0b0c0; padding-bottom: 8px; margin-bottom: 2px;
+    border-bottom: 1px solid var(--border);
+}
+.config-sub-fields { margin-left: 24px; padding-left: 12px; border-left: 2px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+.provider-form textarea {
+    width: 100%; resize: vertical; padding: 8px 12px; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--surface); color: var(--text);
+    font-size: 0.85rem; font-family: 'Cascadia Code', 'Fira Code', monospace; outline: none;
+}
+.provider-form textarea:focus { border-color: var(--accent); }
+.pipeline-form-actions { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
+.disabled-label { opacity: 0.5; cursor: not-allowed; }
 
 /* ===== Agent Coding Page ===== */
 .agent-coding-page { display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
@@ -212,6 +248,21 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 .step-badge.step-runningqualitygates { background: #3a2a1a; color: var(--warning); }
 
 /* Issue Selection */
+/* Pipeline Setup — two-column layout for issue browsing + provider selection */
+.pipeline-setup-layout { display: grid; grid-template-columns: 1.2fr 1fr; gap: 20px; height: 100%; }
+.pipeline-setup-issues { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+.pipeline-setup-panel { position: sticky; top: 0; align-self: start; }
+.pipeline-setup-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px; display: flex; flex-direction: column; gap: 12px;
+}
+.pipeline-selected-issue { font-size: 0.85rem; color: var(--text); line-height: 1.4; }
+.pipeline-start-btn { width: 100%; padding: 12px 16px; font-size: 0.95rem; }
+.pipeline-setup-hint { font-size: 0.8rem; color: var(--text-muted); text-align: center; }
+.run-history-toggle-title { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.run-history-toggle-title:hover { color: var(--text); }
+@media (max-width: 900px) { .pipeline-setup-layout { grid-template-columns: 1fr; } .pipeline-setup-panel { position: static; } }
+
 .issue-selection { display: flex; flex-direction: column; gap: 14px; }
 .issue-selection h2 { font-size: 1rem; font-weight: 600; color: var(--accent-light); }
 .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 8px 0; }
@@ -226,7 +277,7 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 .issue-card.issue-selected { border-color: var(--accent); background: var(--surface-alt); }
 .issue-id { font-size: 0.8rem; color: var(--text-muted); font-weight: 600; min-width: 50px; }
 .issue-title { font-size: 0.9rem; color: var(--text); flex: 1; }
-.issue-detail-panel { padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-top: 8px; }
+.issue-detail-panel { padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-top: 8px; max-height: 300px; overflow-y: auto; }
 .issue-detail-panel h3 { font-size: 0.9rem; font-weight: 600; color: var(--text); margin: 0 0 8px 0; }
 .issue-description { font-size: 0.82rem; color: var(--text-muted); white-space: pre-wrap; word-wrap: break-word; max-height: 200px; overflow-y: auto; margin: 0; padding: 8px; background: var(--bg); border-radius: var(--radius); }
 .issue-labels { display: flex; gap: 4px; flex-basis: 100%; }
@@ -389,8 +440,8 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 .run-history-count { font-size: 0.7rem; color: var(--text-muted); background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; margin-left: 2px; }
 .no-history { font-size: 0.85rem; color: var(--text-muted); margin-top: 8px; }
 .history-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 30vh; overflow-y: auto; }
-.history-card { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); }
-.history-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.history-card { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); }
+.history-info { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
 .history-id { font-size: 0.75rem; color: var(--text-muted); font-family: monospace; }
 .history-title { font-size: 0.85rem; color: var(--text); flex: 1; }
 .history-meta { display: flex; gap: 12px; font-size: 0.75rem; color: var(--text-muted); }

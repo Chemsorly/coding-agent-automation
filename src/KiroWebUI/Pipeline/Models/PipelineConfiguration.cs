@@ -25,7 +25,7 @@ public sealed class PipelineConfiguration
     public double MinCoverageThreshold { get; init; } = 80.0;
     public bool SecurityScanEnabled { get; init; } = false;
     public string WorkspaceBaseDirectory { get; init; } = "./workspaces";
-    public bool SelfReviewEnabled { get; init; } = false;
+    public bool SelfReviewEnabled { get; init; } = true;
     public int SelfReviewMaxIterations { get; init; } = 1;
     public string SelfReviewPrompt { get; init; } = DefaultSelfReviewPrompt;
     public bool ExternalCiEnabled { get; init; } = false;
@@ -45,7 +45,7 @@ public sealed class PipelineConfiguration
     /// When enabled, the pipeline skips the analysis approval and chat interaction pauses,
     /// proceeding directly to quality gates and PR creation.
     /// </summary>
-    public bool AutonomousMode { get; init; } = false;
+    public bool AutonomousMode { get; init; } = true;
     public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".kiro", ".github" };
     public BlacklistMode BlacklistMode { get; init; } = BlacklistMode.WarnAndExclude;
 

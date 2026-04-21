@@ -16,7 +16,8 @@
         <div class="settings-status @(_isError ? "status-error" : "status-success")">@_statusMessage</div>
     }
 
-    <div class="settings-sections">
+    <div class="settings-columns">
+        <div class="settings-col-providers">
         <!-- Issue Providers Section -->
         <section class="settings-section">
             <h2>Issue Providers</h2>
@@ -448,103 +449,125 @@
                 <button class="btn-add" @onclick="ShowAddPipelineProvider">+ Add Pipeline Provider</button>
             }
         </section>
+        </div><!-- end settings-col-providers -->
 
+        <div class="settings-col-pipeline">
         <!-- Pipeline Configuration Section -->
         <section class="settings-section">
             <h2>Pipeline Configuration</h2>
             <div class="provider-form">
-                <div class="form-group form-checkbox">
-                    <label>
-                        <input type="checkbox" @bind="_pipelineConfig.AutonomousMode" />
-                        Autonomous Mode
-                    </label>
-                    <span class="form-hint">Skip analysis approval and chat interaction — proceed directly to quality gates and PR creation</span>
-                </div>
-                <div class="form-group">
-                    <label>Max Retries</label>
-                    <input type="number" @bind="_pipelineConfig.MaxRetries" min="0" max="10" />
-                </div>
-                <div class="form-group">
-                    <label>Agent Timeout (minutes)</label>
-                    <input type="number" @bind="_agentTimeoutMinutes" min="1" />
-                </div>
-                <div class="form-group">
-                    <label>Min Coverage Threshold (%)</label>
-                    <input type="number" @bind="_pipelineConfig.MinCoverageThreshold" min="0" max="100" step="0.1" />
-                </div>
-                <div class="form-group form-checkbox">
-                    <label>
-                        <input type="checkbox" @bind="_pipelineConfig.SecurityScanEnabled" />
-                        Security Scan Enabled
-                    </label>
-                </div>
-                <div class="form-group form-checkbox">
-                    <label>
-                        <input type="checkbox" @bind="_pipelineConfig.SelfReviewEnabled" />
-                        Agent Self-Review Enabled
-                    </label>
-                </div>
-                @if (_pipelineConfig.SelfReviewEnabled)
-                {
-                    <div class="form-group">
-                        <label>Max Review Iterations</label>
-                        <input type="number" @bind="_pipelineConfig.SelfReviewMaxIterations" min="1" max="5" />
+
+                <!-- General -->
+                <div class="config-category">
+                    <div class="config-category-title">General</div>
+                    <div class="form-group form-checkbox">
+                        <label>
+                            <input type="checkbox" @bind="_pipelineConfig.AutonomousMode" />
+                            Autonomous Mode
+                            <span class="form-hint-icon" aria-hidden="true" title="Skip analysis approval and chat interaction — proceed directly to quality gates and PR creation">?</span>
+                        </label>
                     </div>
                     <div class="form-group">
-                        <label>Review Prompt</label>
-                        <textarea @bind="_pipelineConfig.SelfReviewPrompt" rows="4" style="width:100%;"></textarea>
-                        @if (_pipelineConfig.SelfReviewPrompt != PipelineConfiguration.DefaultSelfReviewPrompt)
-                        {
-                            <button type="button" class="btn-revert" @onclick="() => _pipelineConfig.SelfReviewPrompt = PipelineConfiguration.DefaultSelfReviewPrompt">Revert to default</button>
-                        }
-                    </div>
-                }
-                <div class="form-group form-checkbox">
-                    <label>
-                        <input type="checkbox" @bind="_pipelineConfig.ExternalCiEnabled" />
-                        External CI Quality Gate
-                    </label>
-                </div>
-                @if (_pipelineConfig.ExternalCiEnabled)
-                {
-                    <div class="form-group">
-                        <label>CI Timeout (minutes)</label>
-                        <input type="number" @bind="_externalCiTimeoutMinutes" min="1" max="60" />
+                        <label>Max Retries</label>
+                        <input type="number" @bind="_pipelineConfig.MaxRetries" min="0" max="10" />
                     </div>
                     <div class="form-group">
-                        <label>CI Poll Interval (seconds)</label>
-                        <input type="number" @bind="_externalCiPollIntervalSeconds" min="10" max="300" />
+                        <label>Agent Timeout (minutes)</label>
+                        <input type="number" @bind="_agentTimeoutMinutes" min="1" />
                     </div>
-                }
-                <div class="form-group">
-                    <label>Blacklisted Paths (comma-separated prefixes)</label>
-                    <input type="text" @bind="_blacklistedPathsText" placeholder=".kiro, .github" />
-                    <span class="form-hint">Files under these paths are excluded from agent commits (e.g. <code>.kiro, .github</code>)</span>
                 </div>
-                <div class="form-group">
-                    <label>Blacklist Mode</label>
-                    <select @bind="_pipelineConfig.BlacklistMode">
-                        <option value="@BlacklistMode.WarnAndExclude">Warn &amp; Exclude (unstage and continue)</option>
-                        <option value="@BlacklistMode.Fail">Fail (stop pipeline on violation)</option>
-                    </select>
+
+                <!-- Quality Gates -->
+                <div class="config-category">
+                    <div class="config-category-title">Quality Gates</div>
+                    <div class="form-group">
+                        <label>Min Coverage Threshold (%)</label>
+                        <input type="number" @bind="_pipelineConfig.MinCoverageThreshold" min="0" max="100" step="0.1" />
+                    </div>
+                    <div class="form-group form-checkbox">
+                        <label>
+                            <input type="checkbox" @bind="_pipelineConfig.SelfReviewEnabled" />
+                            Agent Self-Review Enabled
+                        </label>
+                    </div>
+                    @if (_pipelineConfig.SelfReviewEnabled)
+                    {
+                        <div class="config-sub-fields">
+                            <div class="form-group">
+                                <label>Max Review Iterations</label>
+                                <input type="number" @bind="_pipelineConfig.SelfReviewMaxIterations" min="1" max="5" />
+                            </div>
+                            <div class="form-group">
+                                <label>Review Prompt</label>
+                                <textarea @bind="_pipelineConfig.SelfReviewPrompt" rows="4"></textarea>
+                                <button type="button" class="btn-revert" disabled="@(_pipelineConfig.SelfReviewPrompt == PipelineConfiguration.DefaultSelfReviewPrompt)" @onclick="() => _pipelineConfig.SelfReviewPrompt = PipelineConfiguration.DefaultSelfReviewPrompt">Reset to default</button>
+                            </div>
+                        </div>
+                    }
+                    <div class="form-group form-checkbox">
+                        <label class="@(_pipelineProviders.Count == 0 ? "disabled-label" : "")">
+                            <input type="checkbox" @bind="_pipelineConfig.ExternalCiEnabled" disabled="@(_pipelineProviders.Count == 0)" />
+                            External CI Quality Gate
+                            @if (_pipelineProviders.Count == 0)
+                            {
+                                <span class="form-hint-icon" aria-hidden="true" title="Configure a Pipeline Provider first to enable this option">?</span>
+                            }
+                        </label>
+                    </div>
+                    @if (_pipelineConfig.ExternalCiEnabled)
+                    {
+                        <div class="config-sub-fields">
+                            <div class="form-group">
+                                <label>CI Timeout (minutes)</label>
+                                <input type="number" @bind="_externalCiTimeoutMinutes" min="1" max="60" />
+                            </div>
+                            <div class="form-group">
+                                <label>CI Poll Interval (seconds)</label>
+                                <input type="number" @bind="_externalCiPollIntervalSeconds" min="10" max="300" />
+                            </div>
+                        </div>
+                    }
                 </div>
-                <div class="form-group form-checkbox">
-                    <label>
-                        <input type="checkbox" @bind="_pipelineConfig.CleanupSuccessfulWorkspaces" />
-                        Delete Workspace After Successful PR
-                    </label>
-                    <span class="form-hint">Automatically remove workspace folders after a non-draft PR is created</span>
+
+                <!-- Security & Cleanup -->
+                <div class="config-category">
+                    <div class="config-category-title">Security &amp; Cleanup</div>
+                    <div class="form-group">
+                        <div class="label-with-hint">
+                            <label>Blacklisted Paths</label>
+                            <span class="form-hint-icon" aria-hidden="true" title="Comma-separated path prefixes excluded from agent commits (e.g. .kiro, .github)">?</span>
+                        </div>
+                        <input type="text" @bind="_blacklistedPathsText" placeholder=".kiro, .github" />
+                    </div>
+                    <div class="form-group">
+                        <label>Blacklist Mode</label>
+                        <select @bind="_pipelineConfig.BlacklistMode">
+                            <option value="@BlacklistMode.WarnAndExclude">Warn &amp; Exclude (unstage and continue)</option>
+                            <option value="@BlacklistMode.Fail">Fail (stop pipeline on violation)</option>
+                        </select>
+                    </div>
+                    <div class="form-group form-checkbox">
+                        <label>
+                            <input type="checkbox" @bind="_pipelineConfig.CleanupSuccessfulWorkspaces" />
+                            Delete Workspace After Successful PR
+                            <span class="form-hint-icon" aria-hidden="true" title="Automatically remove workspace folders after a non-draft PR is created">?</span>
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <div class="label-with-hint">
+                            <label>Failed Run Workspace Retention (days)</label>
+                            <span class="form-hint-icon" aria-hidden="true" title="Days to keep workspaces for failed/cancelled runs. 0 = delete immediately, -1 = keep forever">?</span>
+                        </div>
+                        <input type="number" @bind="_pipelineConfig.FailedWorkspaceRetentionDays" min="-1" />
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Failed Run Workspace Retention (days)</label>
-                    <input type="number" @bind="_pipelineConfig.FailedWorkspaceRetentionDays" min="-1" />
-                    <span class="form-hint">Days to keep workspaces for failed/cancelled runs. 0 = delete immediately, -1 = keep forever</span>
-                </div>
-                <div class="form-buttons">
+
+                <div class="pipeline-form-actions">
                     <button class="btn-save" @onclick="SavePipelineConfig">Save Pipeline Configuration</button>
                 </div>
             </div>
         </section>
+        </div><!-- end settings-col-pipeline -->
     </div>
 </div>
 
@@ -620,7 +643,6 @@
                 AutonomousMode = config.AutonomousMode,
                 MaxRetries = config.MaxRetries,
                 MinCoverageThreshold = config.MinCoverageThreshold,
-                SecurityScanEnabled = config.SecurityScanEnabled,
                 SelfReviewEnabled = config.SelfReviewEnabled,
                 SelfReviewMaxIterations = config.SelfReviewMaxIterations,
                 SelfReviewPrompt = config.SelfReviewPrompt,
@@ -1247,7 +1269,7 @@
             MaxRetries = _pipelineConfig.MaxRetries,
             AgentTimeout = TimeSpan.FromMinutes(_agentTimeoutMinutes),
             MinCoverageThreshold = _pipelineConfig.MinCoverageThreshold,
-            SecurityScanEnabled = _pipelineConfig.SecurityScanEnabled,
+            SecurityScanEnabled = false,
             SelfReviewEnabled = _pipelineConfig.SelfReviewEnabled,
             SelfReviewMaxIterations = _pipelineConfig.SelfReviewMaxIterations,
             SelfReviewPrompt = _pipelineConfig.SelfReviewPrompt,
@@ -1319,11 +1341,10 @@
 
     private class PipelineConfigForm
     {
-        public bool AutonomousMode { get; set; }
+        public bool AutonomousMode { get; set; } = true;
         public int MaxRetries { get; set; } = 3;
         public double MinCoverageThreshold { get; set; } = 80.0;
-        public bool SecurityScanEnabled { get; set; }
-        public bool SelfReviewEnabled { get; set; }
+        public bool SelfReviewEnabled { get; set; } = true;
         public int SelfReviewMaxIterations { get; set; } = 1;
         public string SelfReviewPrompt { get; set; } = PipelineConfiguration.DefaultSelfReviewPrompt;
         public bool ExternalCiEnabled { get; set; }
