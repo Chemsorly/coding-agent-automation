@@ -406,6 +406,10 @@
                             <input type="text" @bind="_pipelineProviderForm.ClientId" placeholder="Iv1.abc123..." />
                         </div>
                         <div class="form-group">
+                            <label>App ID</label>
+                            <input type="text" @bind="_pipelineProviderForm.AppId" placeholder="123456" />
+                        </div>
+                        <div class="form-group">
                             <label>Installation ID</label>
                             <input type="text" @bind="_pipelineProviderForm.InstallationId" placeholder="78901234" />
                         </div>
@@ -594,6 +598,50 @@
         </div><!-- end settings-col-pipeline -->
     </div>
 </div>
+
+@if (_showRelatedProvidersModal)
+{
+    <div class="modal-overlay" @onclick="DismissRelatedProvidersModal" @onkeydown="HandleModalKeyDown">
+        <div class="modal-card" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-labelledby="related-providers-title">
+            <h3 id="related-providers-title">Create Related Providers</h3>
+            <p class="modal-description">
+                The same GitHub App credentials can be used for other provider types.
+                Select which providers to create for <strong>@_relatedModalOwner/@_relatedModalRepo</strong>:
+            </p>
+            <p class="modal-hint">Note: providers are created using the already-validated credentials. Verify that your GitHub App has the required permissions for each provider type.</p>
+            @foreach (var item in _relatedModalItems)
+            {
+                <div class="form-group form-checkbox">
+                    <label>
+                        <input type="checkbox" @bind="item.Selected" />
+                        @item.Kind Provider
+                        @if (item.Existing != null)
+                        {
+                            <span class="modal-existing-badge">exists — will update "@item.Existing.DisplayName"</span>
+                        }
+                    </label>
+                </div>
+                @if (item.Kind == ProviderKind.Repository && item.Selected)
+                {
+                    <div class="form-group config-sub-fields">
+                        <label>Base Branch</label>
+                        <input type="text" @bind="_relatedModalBaseBranch" placeholder="main" />
+                    </div>
+                }
+            }
+            @if (!string.IsNullOrEmpty(_relatedModalStatus))
+            {
+                <div class="settings-status @(_relatedModalIsError ? "status-error" : "status-success")">@_relatedModalStatus</div>
+            }
+            <div class="form-buttons">
+                <button class="btn-save" @onclick="ConfirmRelatedProviders" disabled="@(_relatedModalSaving || !_relatedModalItems.Any(i => i.Selected))">
+                    @(_relatedModalSaving ? "Saving..." : "Create Selected")
+                </button>
+                <button class="btn-cancel" @onclick="DismissRelatedProvidersModal">Skip</button>
+            </div>
+        </div>
+    </div>
+}
 
 @code {
     private List<ProviderConfig> _issueProviders = new();
@@ -796,6 +844,7 @@
             _issueValidationMessage = null;
             await LoadAllData();
             ShowStatus($"Issue provider saved. {message}");
+            ShowRelatedProvidersModal(config);
         }
         catch (Exception ex)
         {
@@ -917,6 +966,7 @@
             _repoValidationMessage = null;
             await LoadAllData();
             ShowStatus($"Repository provider saved. {message}");
+            ShowRelatedProvidersModal(config);
         }
         catch (Exception ex)
         {
@@ -1018,6 +1068,7 @@
             DisplayName = p.DisplayName,
             ApiUrl = p.Settings.GetValueOrDefault("apiUrl", ""),
             ClientId = p.Settings.GetValueOrDefault("clientId", ""),
+            AppId = p.Settings.GetValueOrDefault("appId", ""),
             InstallationId = p.Settings.GetValueOrDefault("installationId", ""),
             PrivateKeyBase64 = p.Settings.GetValueOrDefault("privateKeyBase64", ""),
             Owner = p.Settings.GetValueOrDefault("owner", ""),
@@ -1107,6 +1158,7 @@
             {
                 ["apiUrl"] = _pipelineProviderForm.ApiUrl,
                 ["clientId"] = _pipelineProviderForm.ClientId,
+                ["appId"] = _pipelineProviderForm.AppId,
                 ["installationId"] = _pipelineProviderForm.InstallationId,
                 ["privateKeyBase64"] = _pipelineProviderForm.PrivateKeyBase64,
                 ["owner"] = _pipelineProviderForm.Owner,
@@ -1122,6 +1174,7 @@
             _pipelineValidationMessage = null;
             await LoadAllData();
             ShowStatus($"Pipeline provider saved. {message} {actionsMsg}");
+            ShowRelatedProvidersModal(config);
         }
         catch (Exception ex)
         {
@@ -1417,6 +1470,120 @@
         _isError = isError;
     }
 
+    // --- Related Providers Modal ---
+    private bool _showRelatedProvidersModal;
+    private string _relatedModalOwner = "";
+    private string _relatedModalRepo = "";
+    private string _relatedModalBaseBranch = "main";
+    private List<RelatedProviderItem> _relatedModalItems = new();
+    private Dictionary<string, string> _relatedModalSharedSettings = new();
+    private string? _relatedModalStatus;
+    private bool _relatedModalIsError;
+    private bool _relatedModalSaving;
+
+    private static readonly string[] SharedGitHubSettingKeys = ["apiUrl", "clientId", "appId", "installationId", "privateKeyBase64", "owner", "repo"];
+
+    private void ShowRelatedProvidersModal(ProviderConfig savedConfig)
+    {
+        if (savedConfig.ProviderType != "GitHub") return;
+
+        var sourceKind = savedConfig.Kind;
+        var targetKinds = new[] { ProviderKind.Issue, ProviderKind.Repository, ProviderKind.Pipeline }
+            .Where(k => k != sourceKind).ToList();
+
+        _relatedModalOwner = savedConfig.Settings.GetValueOrDefault("owner", "");
+        _relatedModalRepo = savedConfig.Settings.GetValueOrDefault("repo", "");
+        _relatedModalBaseBranch = "main";
+        _relatedModalSharedSettings = SharedGitHubSettingKeys
+            .Where(k => savedConfig.Settings.ContainsKey(k))
+            .ToDictionary(k => k, k => savedConfig.Settings[k]);
+        _relatedModalStatus = null;
+        _relatedModalIsError = false;
+        _relatedModalSaving = false;
+
+        _relatedModalItems = new();
+        foreach (var kind in targetKinds)
+        {
+            var existingList = kind switch
+            {
+                ProviderKind.Issue => _issueProviders,
+                ProviderKind.Repository => _repoProviders,
+                ProviderKind.Pipeline => _pipelineProviders,
+                _ => new List<ProviderConfig>()
+            };
+            var existing = existingList.FirstOrDefault(p =>
+                p.ProviderType == "GitHub"
+                && p.Settings.GetValueOrDefault("owner", "") == _relatedModalOwner
+                && p.Settings.GetValueOrDefault("repo", "") == _relatedModalRepo);
+
+            _relatedModalItems.Add(new RelatedProviderItem { Kind = kind, Selected = true, Existing = existing });
+        }
+
+        _showRelatedProvidersModal = true;
+    }
+
+    private void DismissRelatedProvidersModal()
+    {
+        _showRelatedProvidersModal = false;
+    }
+
+    private void HandleModalKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") DismissRelatedProvidersModal();
+    }
+
+    private async Task ConfirmRelatedProviders()
+    {
+        _relatedModalSaving = true;
+        _relatedModalStatus = null;
+        StateHasChanged();
+
+        try
+        {
+            var created = 0;
+            var updated = 0;
+            foreach (var item in _relatedModalItems.Where(i => i.Selected).ToList())
+            {
+                var settings = new Dictionary<string, string>(_relatedModalSharedSettings);
+                if (item.Kind == ProviderKind.Repository)
+                    settings["baseBranch"] = string.IsNullOrWhiteSpace(_relatedModalBaseBranch) ? "main" : _relatedModalBaseBranch;
+
+                var config = new ProviderConfig
+                {
+                    Id = item.Existing?.Id ?? Guid.NewGuid().ToString(),
+                    Kind = item.Kind,
+                    ProviderType = "GitHub",
+                    DisplayName = item.Existing?.DisplayName ?? $"{_relatedModalOwner}/{_relatedModalRepo} - {item.Kind}",
+                    Settings = settings
+                };
+
+                await ConfigStore.SaveProviderConfigAsync(config, CancellationToken.None);
+                item.Selected = false; // Mark as done so retry won't duplicate
+                if (item.Existing != null) updated++; else created++;
+            }
+
+            await LoadAllData();
+            _showRelatedProvidersModal = false;
+            ShowStatus($"Related providers: {created} created, {updated} updated.");
+        }
+        catch (Exception ex)
+        {
+            _relatedModalStatus = $"Failed: {ex.Message}";
+            _relatedModalIsError = true;
+        }
+        finally
+        {
+            _relatedModalSaving = false;
+        }
+    }
+
+    private class RelatedProviderItem
+    {
+        public ProviderKind Kind { get; set; }
+        public bool Selected { get; set; }
+        public ProviderConfig? Existing { get; set; }
+    }
+
     // --- Form models ---
     private class IssueProviderForm
     {
@@ -1475,6 +1642,7 @@
         public string DisplayName { get; set; } = "";
         public string ApiUrl { get; set; } = "https://api.github.com";
         public string ClientId { get; set; } = "";
+        public string AppId { get; set; } = "";
         public string InstallationId { get; set; } = "";
         public string PrivateKeyBase64 { get; set; } = "";
         public string Owner { get; set; } = "";
