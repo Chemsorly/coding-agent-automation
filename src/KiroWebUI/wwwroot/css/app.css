@@ -455,3 +455,24 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .history-meta { display: flex; gap: 12px; font-size: 0.75rem; color: var(--text-muted); }
 .history-meta a { color: var(--accent-light); text-decoration: none; }
 .history-meta a:hover { text-decoration: underline; }
+
+/* About Page */
+.about-page { display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
+.about-header { padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.about-header h1 { font-size: 1.25rem; font-weight: 600; }
+.about-content { padding: 20px; display: flex; flex-direction: column; gap: 16px; max-width: 700px; }
+.about-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.about-section h2 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: var(--accent-light); }
+.about-oneliner { font-size: 0.95rem; color: var(--text-muted); margin-bottom: 8px; }
+.about-description { font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; }
+.about-info-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 0.85rem; }
+.about-label { color: var(--text-muted); }
+.about-value { color: var(--text); font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.82rem; }
+.about-success { color: var(--success); }
+.about-error { color: var(--error); }
+.about-muted { font-size: 0.85rem; color: var(--text-muted); }
+.about-links { display: flex; flex-direction: column; gap: 8px; }
+.about-links a { color: var(--accent-light); text-decoration: none; font-size: 0.85rem; }
+.about-links a:hover { text-decoration: underline; }
+.about-badges { display: flex; flex-wrap: wrap; gap: 8px; }
+.tech-badge { font-size: 0.72rem; padding: 3px 10px; background: var(--surface-alt); border: 1px solid var(--border); border-radius: 12px; color: var(--text-muted); }
