@@ -405,7 +405,7 @@ public class PipelineOrchestrationService : IDisposable
 
                 try
                 {
-                    var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(issue, parsed, issueComments);
+                    var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(_activeConfig.AnalysisPrompt, issue, parsed, issueComments);
                     var analysisRequest = new AgentRequest
                     {
                         Prompt = analysisPrompt,
@@ -507,7 +507,7 @@ public class PipelineOrchestrationService : IDisposable
             TransitionTo(run, PipelineStep.GeneratingCode);
             try
             {
-                var prompt = PromptBuilder.BuildPrompt(_activeIssue!, _activeParsedIssue!, _activeIssueComments);
+                var prompt = PromptBuilder.BuildPrompt(_activeConfig!.ImplementationPrompt, _activeIssue!, _activeParsedIssue!, _activeIssueComments);
 
                 // Stall monitor: periodically poll GetHealthStatus() to detect silence or process death
                 var stallCts = CancellationTokenSource.CreateLinkedTokenSource(linkedCt);

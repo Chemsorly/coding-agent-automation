@@ -381,6 +381,8 @@ public class SettingsPageTests
         savedConfig.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
         savedConfig.AutonomousMode.Should().BeTrue();
         savedConfig.SelfReviewEnabled.Should().BeTrue();
+        savedConfig.AnalysisPrompt.Should().Be(PipelineConfiguration.DefaultAnalysisPrompt);
+        savedConfig.ImplementationPrompt.Should().Be(PipelineConfiguration.DefaultImplementationPrompt);
     }
 
     [Fact]
@@ -400,7 +402,9 @@ public class SettingsPageTests
             MaxRetries = 10,
             AgentTimeout = TimeSpan.FromMinutes(120),
             MinCoverageThreshold = 50.0,
-            SecurityScanEnabled = false
+            SecurityScanEnabled = false,
+            AnalysisPrompt = "Custom analysis",
+            ImplementationPrompt = "Custom implementation"
         };
         await _mockStore.Object.SavePipelineConfigAsync(original, CancellationToken.None);
 
@@ -412,6 +416,8 @@ public class SettingsPageTests
         loaded.AgentTimeout.Should().Be(TimeSpan.FromMinutes(120));
         loaded.MinCoverageThreshold.Should().Be(50.0);
         loaded.SecurityScanEnabled.Should().BeFalse();
+        loaded.AnalysisPrompt.Should().Be("Custom analysis");
+        loaded.ImplementationPrompt.Should().Be("Custom implementation");
     }
 
     // --- Related Providers Auto-Creation ---

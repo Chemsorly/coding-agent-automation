@@ -17,27 +17,27 @@ public static class PromptBuilder
     /// <summary>
     /// Constructs an analysis-only prompt. The agent examines the codebase in context of the
     /// issue and writes its recommendation to .kiro/analysis.md without making any other changes.
+    /// The configurable analysis instructions are prepended, followed by pipeline mechanics.
     /// </summary>
-    public static string BuildAnalysisPrompt(IssueDetail issue, ParsedIssue parsed,
+    public static string BuildAnalysisPrompt(string analysisInstructions, IssueDetail issue, ParsedIssue parsed,
         IReadOnlyList<IssueComment>? comments = null)
     {
+        ArgumentNullException.ThrowIfNull(analysisInstructions);
         ArgumentNullException.ThrowIfNull(issue);
         ArgumentNullException.ThrowIfNull(parsed);
 
         var sb = new StringBuilder();
 
-        sb.AppendLine("Analyze the codebase in context of the following issue. Examine the relevant source files and provide a concise recommendation.");
-        sb.AppendLine("Do NOT implement any changes. Only analyze and recommend.");
+        // Configurable instructions
+        sb.AppendLine(analysisInstructions);
         sb.AppendLine();
-        sb.AppendLine("Use sub-agents to cover more ground and provide a thorough analysis. For example, delegate parallel investigations to explore different parts of the codebase — one sub-agent could examine the data layer while another looks at the UI components, or one traces the call chain while another checks for test coverage gaps. This produces a more complete picture than a single-threaded read-through.");
+
+        // Pipeline mechanics (non-configurable)
+        sb.AppendLine("Do NOT implement any changes. Only analyze and recommend.");
         sb.AppendLine();
         sb.AppendLine($"Write your analysis to the file `{AnalysisFilePath}` in the workspace. Do NOT print the analysis to stdout — only write it to that file.");
         sb.AppendLine();
-        sb.AppendLine("The file should contain your analysis in this structure:");
-        sb.AppendLine("1. **Planned Approach** — What files need to change and how. Be specific about the strategy.");
-        sb.AppendLine("2. **Affected Components** — Which files, classes, or modules will be touched.");
-        sb.AppendLine("3. **Estimated Complexity** — Low / Medium / High with a brief justification.");
-        sb.AppendLine("4. **Risks & Considerations** — Anything that could go wrong or needs special attention.");
+        sb.AppendLine("Use sub-agents to cover more ground and provide a thorough analysis. For example, delegate parallel investigations to explore different parts of the codebase — one sub-agent could examine the data layer while another looks at the UI components, or one traces the call chain while another checks for test coverage gaps. This produces a more complete picture than a single-threaded read-through.");
         sb.AppendLine();
 
         sb.AppendLine($"# Issue: {issue.Title}");
@@ -74,19 +74,24 @@ public static class PromptBuilder
     /// Constructs a prompt containing action instructions, the issue title, description,
     /// and all acceptance criteria. The prompt explicitly instructs the agent to implement
     /// the changes in the workspace, not just analyze them.
+    /// The configurable implementation instructions are prepended, followed by pipeline mechanics.
     /// </summary>
-    public static string BuildPrompt(IssueDetail issue, ParsedIssue parsed,
+    public static string BuildPrompt(string implementationInstructions, IssueDetail issue, ParsedIssue parsed,
         IReadOnlyList<IssueComment>? comments = null)
     {
+        ArgumentNullException.ThrowIfNull(implementationInstructions);
         ArgumentNullException.ThrowIfNull(issue);
         ArgumentNullException.ThrowIfNull(parsed);
 
         var sb = new StringBuilder();
 
-        // Action instructions — concise, high-impact
-        sb.AppendLine("Implement the following issue. Write the code — do not just analyze or plan. Keep your analysis brief and focus on making changes.");
-        sb.AppendLine("If a file write is rejected, retry it immediately — it will succeed on the second attempt.");
+        // Configurable instructions
+        sb.AppendLine(implementationInstructions);
+        sb.AppendLine();
+
+        // Pipeline mechanics (non-configurable)
         sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). The pipeline handles all version control operations. Read-only git commands (git log, git diff, git status, git show) are fine.");
+        sb.AppendLine($"The analysis for this issue is at `{AnalysisFilePath}` — read it before implementing.");
         sb.AppendLine();
 
         sb.AppendLine($"# Issue: {issue.Title}");
