@@ -12,6 +12,9 @@ namespace KiroWebUI.Tests.Pipeline;
 /// </summary>
 public class PromptConstructionPropertyTests
 {
+    private static readonly string DefaultImpl = PipelineConfiguration.DefaultImplementationPrompt;
+    private static readonly string DefaultAnalysis = PipelineConfiguration.DefaultAnalysisPrompt;
+
     /// <summary>
     /// Property 2: Prompt construction includes all issue fields.
     /// For any valid IssueDetail (with non-empty title, non-empty description,
@@ -41,7 +44,7 @@ public class PromptConstructionPropertyTests
             AcceptanceCriteria = criteria.AsReadOnly()
         };
 
-        var prompt = PromptBuilder.BuildPrompt(issue, parsed);
+        var prompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed);
 
         prompt.Should().Contain(issue.Title);
         prompt.Should().Contain(issue.Description);
@@ -81,7 +84,7 @@ public class PromptConstructionPropertyTests
             AcceptanceCriteria = Array.Empty<string>()
         };
 
-        var prompt = PromptBuilder.BuildPrompt(issue, parsed, comments);
+        var prompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed, comments);
 
         prompt.Should().Contain("## Comments");
         foreach (var comment in comments)
@@ -111,7 +114,7 @@ public class PromptConstructionPropertyTests
             AcceptanceCriteria = Array.Empty<string>()
         };
 
-        var prompt = PromptBuilder.BuildPrompt(issue, parsed);
+        var prompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed);
 
         prompt.Should().NotContain("## Comments");
     }
@@ -136,7 +139,7 @@ public class PromptConstructionPropertyTests
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
 
-        var prompt = PromptBuilder.BuildPrompt(issue, parsed, comments);
+        var prompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed, comments);
 
         prompt.Should().Contain("@alice");
         prompt.Should().Contain("@bob");
@@ -165,12 +168,100 @@ public class PromptConstructionPropertyTests
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
 
-        var prompt = PromptBuilder.BuildPrompt(issue, parsed, comments);
+        var prompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed, comments);
 
         // First 5 should be excluded, last 10 included
         for (var i = 0; i < 5; i++)
             prompt.Should().NotContain($"Unique-comment-body-{i:D3}");
         for (var i = 5; i < 15; i++)
             prompt.Should().Contain($"Unique-comment-body-{i:D3}");
+    }
+
+    // --- BuildAnalysisPrompt tests ---
+
+    /// <summary>
+    /// Analysis prompt contains the configurable instructions and all issue fields.
+    /// </summary>
+    [Fact]
+    public void AnalysisPrompt_ContainsConfigurableInstructionsAndIssueFields()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "42", Title = "Add caching layer", Description = "We need Redis caching",
+            Labels = Array.Empty<string>()
+        };
+        var parsed = new ParsedIssue
+        {
+            RequirementsSection = "We need Redis caching",
+            AcceptanceCriteria = new[] { "Cache hit rate > 90%" }.ToList().AsReadOnly()
+        };
+
+        var prompt = PromptBuilder.BuildAnalysisPrompt(DefaultAnalysis, issue, parsed);
+
+        prompt.Should().Contain("Planned Approach");
+        prompt.Should().Contain("Test Coverage");
+        prompt.Should().Contain("Add caching layer");
+        prompt.Should().Contain("We need Redis caching");
+        prompt.Should().Contain("Cache hit rate > 90%");
+    }
+
+    /// <summary>
+    /// Analysis prompt always includes pipeline mechanics regardless of configurable text.
+    /// </summary>
+    [Fact]
+    public void AnalysisPrompt_IncludesPipelineMechanics()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "1", Title = "Test", Description = "Desc",
+            Labels = Array.Empty<string>()
+        };
+        var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
+
+        var prompt = PromptBuilder.BuildAnalysisPrompt("Custom analysis instructions", issue, parsed);
+
+        prompt.Should().Contain("Custom analysis instructions");
+        prompt.Should().Contain("Do NOT implement any changes");
+        prompt.Should().Contain(PromptBuilder.AnalysisFilePath);
+        prompt.Should().Contain("sub-agents");
+    }
+
+    /// <summary>
+    /// Implementation prompt includes pipeline mechanics (git prohibition, analysis reference).
+    /// </summary>
+    [Fact]
+    public void ImplementationPrompt_IncludesPipelineMechanics()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "1", Title = "Test", Description = "Desc",
+            Labels = Array.Empty<string>()
+        };
+        var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
+
+        var prompt = PromptBuilder.BuildPrompt("Custom impl instructions", issue, parsed);
+
+        prompt.Should().Contain("Custom impl instructions");
+        prompt.Should().Contain("Do NOT run git write commands");
+        prompt.Should().Contain(PromptBuilder.AnalysisFilePath);
+        prompt.Should().Contain("Implement these changes now.");
+    }
+
+    /// <summary>
+    /// Implementation prompt no longer contains the file-write-retry workaround.
+    /// </summary>
+    [Fact]
+    public void ImplementationPrompt_DoesNotContainFileWriteRetryWorkaround()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "1", Title = "Test", Description = "Desc",
+            Labels = Array.Empty<string>()
+        };
+        var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
+
+        var prompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed);
+
+        prompt.Should().NotContain("file write is rejected");
     }
 }

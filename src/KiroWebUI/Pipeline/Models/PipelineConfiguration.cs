@@ -19,6 +19,23 @@ public sealed class PipelineConfiguration
         "The sub-agent should check for: correctness against acceptance criteria, code quality and " +
         "project conventions, unhandled edge cases, and security gaps. Fix any issues the review finds.";
 
+    public const string DefaultAnalysisPrompt =
+        "Analyze the codebase in context of the following issue. Read the issue carefully, " +
+        "then explore the relevant source files to understand the current architecture and identify what needs to change.\n\n" +
+        "Your analysis should cover:\n" +
+        "1. **Planned Approach** — What files need to change and how. Be specific about the strategy.\n" +
+        "2. **Affected Components** — Which files, classes, or modules will be touched.\n" +
+        "3. **Test Coverage** — What existing tests cover the affected code, and what new tests will be needed.\n" +
+        "4. **Risks & Considerations** — Breaking changes, edge cases, backward compatibility, or anything that needs special attention.";
+
+    public const string DefaultImplementationPrompt =
+        "Implement the following issue. Write the code — do not just analyze or plan.\n\n" +
+        "Follow this approach:\n" +
+        "1. **Understand** — Read the analysis and the issue. Explore relevant files before making changes.\n" +
+        "2. **Implement** — Make focused, minimal changes. Fix root causes, not symptoms. Maintain the existing code style and conventions.\n" +
+        "3. **Verify** — Run the project's build, linter, and tests. If a command fails, fix the issue and re-run to confirm.\n\n" +
+        "Keep working until the implementation is complete. If something fails, diagnose and fix it rather than stopping.";
+
     public int MaxRetries { get; init; } = 3;
     public int IssuePageSize { get; init; } = 25;
     public TimeSpan AgentTimeout { get; init; } = TimeSpan.FromMinutes(30);
@@ -28,6 +45,8 @@ public sealed class PipelineConfiguration
     public bool SelfReviewEnabled { get; init; } = true;
     public int SelfReviewMaxIterations { get; init; } = 1;
     public string SelfReviewPrompt { get; init; } = DefaultSelfReviewPrompt;
+    public string AnalysisPrompt { get; init; } = DefaultAnalysisPrompt;
+    public string ImplementationPrompt { get; init; } = DefaultImplementationPrompt;
     public bool ExternalCiEnabled { get; init; } = false;
     public TimeSpan ExternalCiTimeout { get; init; } = TimeSpan.FromMinutes(15);
     public TimeSpan ExternalCiPollInterval { get; init; } = TimeSpan.FromSeconds(30);

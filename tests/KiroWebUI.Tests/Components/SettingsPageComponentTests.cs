@@ -159,6 +159,18 @@ public class SettingsPageComponentTests : BunitContext
     }
 
     [Fact]
+    public void Settings_PipelineConfigSection_ShowsPromptTextareas()
+    {
+        var component = Render<Settings>();
+
+        Assert.Contains("Analysis Prompt", component.Markup);
+        Assert.Contains("Implementation Prompt", component.Markup);
+        // Verify reset buttons are rendered (disabled when at default)
+        var revertButtons = component.FindAll(".btn-revert");
+        Assert.True(revertButtons.Count >= 2, "Expected at least 2 reset-to-default buttons for prompt fields");
+    }
+
+    [Fact]
     public void Settings_ClickCancelOnForm_HidesForm()
     {
         var component = Render<Settings>();

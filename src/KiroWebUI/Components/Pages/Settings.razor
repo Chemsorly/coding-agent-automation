@@ -495,6 +495,21 @@
                     </div>
                 </div>
 
+                <!-- Prompts -->
+                <div class="config-category">
+                    <div class="config-category-title">Prompts</div>
+                    <div class="form-group">
+                        <label>Analysis Prompt</label>
+                        <textarea @bind="_pipelineConfig.AnalysisPrompt" rows="6"></textarea>
+                        <button type="button" class="btn-revert" disabled="@(_pipelineConfig.AnalysisPrompt == PipelineConfiguration.DefaultAnalysisPrompt)" @onclick="() => _pipelineConfig.AnalysisPrompt = PipelineConfiguration.DefaultAnalysisPrompt">Reset to default</button>
+                    </div>
+                    <div class="form-group">
+                        <label>Implementation Prompt</label>
+                        <textarea @bind="_pipelineConfig.ImplementationPrompt" rows="6"></textarea>
+                        <button type="button" class="btn-revert" disabled="@(_pipelineConfig.ImplementationPrompt == PipelineConfiguration.DefaultImplementationPrompt)" @onclick="() => _pipelineConfig.ImplementationPrompt = PipelineConfiguration.DefaultImplementationPrompt">Reset to default</button>
+                    </div>
+                </div>
+
                 <!-- Quality Gates -->
                 <div class="config-category">
                     <div class="config-category-title">Quality Gates</div>
@@ -710,6 +725,8 @@
                 SelfReviewEnabled = config.SelfReviewEnabled,
                 SelfReviewMaxIterations = config.SelfReviewMaxIterations,
                 SelfReviewPrompt = config.SelfReviewPrompt,
+                AnalysisPrompt = config.AnalysisPrompt,
+                ImplementationPrompt = config.ImplementationPrompt,
                 ExternalCiEnabled = config.ExternalCiEnabled,
                 BlacklistMode = config.BlacklistMode,
                 CleanupSuccessfulWorkspaces = config.CleanupSuccessfulWorkspaces,
@@ -1427,6 +1444,8 @@
             SelfReviewEnabled = _pipelineConfig.SelfReviewEnabled,
             SelfReviewMaxIterations = _pipelineConfig.SelfReviewMaxIterations,
             SelfReviewPrompt = _pipelineConfig.SelfReviewPrompt,
+            AnalysisPrompt = _pipelineConfig.AnalysisPrompt,
+            ImplementationPrompt = _pipelineConfig.ImplementationPrompt,
             ExternalCiEnabled = _pipelineConfig.ExternalCiEnabled,
             ExternalCiTimeout = TimeSpan.FromMinutes(_externalCiTimeoutMinutes),
             ExternalCiPollInterval = TimeSpan.FromSeconds(_externalCiPollIntervalSeconds),
@@ -1614,6 +1633,8 @@
         public bool SelfReviewEnabled { get; set; } = true;
         public int SelfReviewMaxIterations { get; set; } = 1;
         public string SelfReviewPrompt { get; set; } = PipelineConfiguration.DefaultSelfReviewPrompt;
+        public string AnalysisPrompt { get; set; } = PipelineConfiguration.DefaultAnalysisPrompt;
+        public string ImplementationPrompt { get; set; } = PipelineConfiguration.DefaultImplementationPrompt;
         public bool ExternalCiEnabled { get; set; }
         public BlacklistMode BlacklistMode { get; set; } = BlacklistMode.WarnAndExclude;
         public bool CleanupSuccessfulWorkspaces { get; set; } = true;

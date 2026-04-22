@@ -45,7 +45,9 @@ public class JsonConfigurationStoreTests : IDisposable
             SecurityScanEnabled = true,
             WorkspaceBaseDirectory = "/tmp/workspaces",
             CleanupSuccessfulWorkspaces = false,
-            FailedWorkspaceRetentionDays = 14
+            FailedWorkspaceRetentionDays = 14,
+            AnalysisPrompt = "Custom analysis prompt",
+            ImplementationPrompt = "Custom implementation prompt"
         };
 
         await _store.SavePipelineConfigAsync(original, CancellationToken.None);
@@ -58,6 +60,8 @@ public class JsonConfigurationStoreTests : IDisposable
         Assert.Equal(original.WorkspaceBaseDirectory, loaded.WorkspaceBaseDirectory);
         Assert.Equal(original.CleanupSuccessfulWorkspaces, loaded.CleanupSuccessfulWorkspaces);
         Assert.Equal(original.FailedWorkspaceRetentionDays, loaded.FailedWorkspaceRetentionDays);
+        Assert.Equal(original.AnalysisPrompt, loaded.AnalysisPrompt);
+        Assert.Equal(original.ImplementationPrompt, loaded.ImplementationPrompt);
     }
 
     [Fact]
