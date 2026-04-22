@@ -1,0 +1,121 @@
+@page "/about"
+@rendermode InteractiveServer
+@using KiroWebUI.Pipeline.Models
+@using KiroWebUI.Pipeline.Services
+@using System.Reflection
+@using System.Runtime.InteropServices
+@inject PipelineOrchestrationService PipelineService
+
+<div class="about-page">
+    <header class="about-header">
+        <h1>About</h1>
+    </header>
+
+    <div class="about-content">
+        <section class="about-section">
+            <h2>Kiro Web UI</h2>
+            <p class="about-oneliner">Automated development pipeline powered by coding agents</p>
+            <p class="about-description">
+                This application orchestrates an end-to-end development pipeline: it picks up issues from your
+                tracker, clones the repository, runs a coding agent to generate changes, validates them through
+                quality gates, and opens a pull request — all without manual intervention.
+            </p>
+        </section>
+
+        <section class="about-section">
+            <h2>Version Info</h2>
+            <div class="about-info-grid">
+                <span class="about-label">App Version</span>
+                <span class="about-value">@_appVersion</span>
+                <span class="about-label">.NET Runtime</span>
+                <span class="about-value">@_runtimeVersion</span>
+            </div>
+        </section>
+
+        <section class="about-section">
+            <h2>Pipeline Stats</h2>
+            @if (_totalRuns == 0)
+            {
+                <p class="about-muted">No pipeline runs yet.</p>
+            }
+            else
+            {
+                <div class="about-info-grid">
+                    <span class="about-label">Total Runs</span>
+                    <span class="about-value">@_totalRuns</span>
+                    <span class="about-label">Successful</span>
+                    <span class="about-value about-success">@_successCount</span>
+                    <span class="about-label">Failed</span>
+                    <span class="about-value about-error">@_failedCount</span>
+                    <span class="about-label">Cancelled</span>
+                    <span class="about-value">@_cancelledCount</span>
+                    <span class="about-label">Avg Duration</span>
+                    <span class="about-value">@_avgDuration</span>
+                    <span class="about-label">Last Run</span>
+                    <span class="about-value">@_lastRun</span>
+                </div>
+            }
+        </section>
+
+        <section class="about-section">
+            <h2>Links</h2>
+            <div class="about-links">
+                <a href="https://github.com/Chemsorly/coding-agent-automation" target="_blank" rel="noopener noreferrer">GitHub Repository <span aria-hidden="true">↗</span></a>
+                <a href="https://kiro.dev/docs/cli/" target="_blank" rel="noopener noreferrer">Kiro CLI Docs <span aria-hidden="true">↗</span></a>
+            </div>
+        </section>
+
+        <section class="about-section">
+            <h2>Tech Stack</h2>
+            <div class="about-badges">
+                <span class="tech-badge">.NET 10</span>
+                <span class="tech-badge">Blazor Server</span>
+                <span class="tech-badge">Kiro CLI</span>
+                <span class="tech-badge">Docker</span>
+            </div>
+        </section>
+    </div>
+</div>
+
+@code {
+    private string _appVersion = "";
+    private string _runtimeVersion = "";
+    private int _totalRuns;
+    private int _successCount;
+    private int _failedCount;
+    private int _cancelledCount;
+    private string _avgDuration = "";
+    private string _lastRun = "";
+
+    protected override void OnInitialized()
+    {
+        _appVersion = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+            ?? "unknown";
+        _runtimeVersion = RuntimeInformation.FrameworkDescription;
+
+        var history = PipelineService.GetRunHistory();
+        _totalRuns = history.Count;
+        _successCount = history.Count(r => r.FinalStep == PipelineStep.Completed);
+        _failedCount = history.Count(r => r.FinalStep == PipelineStep.Failed);
+        _cancelledCount = history.Count(r => r.FinalStep == PipelineStep.Cancelled);
+
+        var durations = history
+            .Where(r => r.CompletedAt.HasValue)
+            .Select(r => r.CompletedAt!.Value - r.StartedAt)
+            .ToList();
+        var avg = durations.Count > 0
+            ? TimeSpan.FromSeconds(durations.Average(d => d.TotalSeconds))
+            : (TimeSpan?)null;
+        _avgDuration = avg.HasValue
+            ? (avg.Value.TotalHours >= 24
+                ? $"{(int)avg.Value.TotalDays}d {avg.Value:hh\\:mm\\:ss}"
+                : avg.Value.ToString(@"hh\:mm\:ss"))
+            : "—";
+
+        _lastRun = history.Count > 0
+            ? history[0].StartedAt.ToString("yyyy-MM-dd HH:mm UTC")
+            : "—";
+    }
+}
