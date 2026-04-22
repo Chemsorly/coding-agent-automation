@@ -6,7 +6,7 @@
 
 # Stage 1: Build
 # Pinned to 10.0.200 feature band to match global.json (rollForward: latestPatch)
-FROM mcr.microsoft.com/dotnet/sdk:10.0.200 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.203 AS build
 WORKDIR /src
 
 # Copy solution and project files first for layer caching
@@ -24,7 +24,7 @@ RUN dotnet publish src/KiroWebUI/KiroWebUI.csproj -c Release -o /app/publish
 
 # Stage 2: Runtime (ASP.NET for Blazor Server)
 # Pinned to 10.0.200 feature band to match global.json (rollForward: latestPatch)
-FROM mcr.microsoft.com/dotnet/sdk:10.0.200 AS runtime
+FROM mcr.microsoft.com/dotnet/sdk:10.0.203 AS runtime
 
 # Install dependencies for Kiro CLI (curl, unzip, ca-certificates)
 RUN apt-get update && \
