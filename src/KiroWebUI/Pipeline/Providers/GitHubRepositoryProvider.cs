@@ -18,6 +18,15 @@ public class GitHubRepositoryProvider : IRepositoryProvider
     private readonly string _repo;
     private readonly string _baseBranch;
 
+    static GitHubRepositoryProvider()
+    {
+        // Disable libgit2's directory ownership validation. In Docker containers,
+        // cloned workspace directories often have ownership mismatches (CVE-2022-24765
+        // mitigation). Without this, Commands.Stage() silently fails.
+        // See: https://github.com/libgit2/libgit2sharp/issues/2058
+        //      https://stackoverflow.com/questions/76366963
+        GlobalSettings.SetOwnerValidation(false);
+    }
     public RepositoryProviderType ProviderType => RepositoryProviderType.GitHub;
 
     /// <inheritdoc />
@@ -132,54 +141,67 @@ public class GitHubRepositoryProvider : IRepositoryProvider
         {
             using var repo = new Repository(workspacePath);
 
-            // Stage all changes from the working directory. We first retrieve status
-            // to find all modified/new/deleted files, then stage them individually.
-            // This is more reliable than Commands.Stage(repo, "*") when the index
-            // has been modified externally (e.g., by the agent's CLI git add).
+            // Retrieve status — this reloads the on-disk index per libgit2sharp docs.
             var preStatus = repo.RetrieveStatus(new StatusOptions
             {
                 DetectRenamesInIndex = false,
                 DetectRenamesInWorkDir = false
             });
 
+            // Diagnostic: log every entry and its state so we can trace staging issues
             foreach (var entry in preStatus)
             {
-                // Stage any file that has working directory changes (new, modified, deleted)
+                Serilog.Log.Debug("CommitAllAsync status: {FilePath} = {State}", entry.FilePath, entry.State);
+            }
+
+            // Stage workdir changes using repo.Index.Add() + repo.Index.Write().
+            // This is the pattern from the libgit2sharp wiki (git-add, git-commit)
+            // and is more reliable than Commands.Stage() which can silently fail.
+            var stagedAny = false;
+            foreach (var entry in preStatus)
+            {
                 if (entry.State.HasFlag(FileStatus.NewInWorkdir)
                     || entry.State.HasFlag(FileStatus.ModifiedInWorkdir)
                     || entry.State.HasFlag(FileStatus.DeletedFromWorkdir)
                     || entry.State.HasFlag(FileStatus.RenamedInWorkdir)
                     || entry.State.HasFlag(FileStatus.TypeChangeInWorkdir))
                 {
-                    Commands.Stage(repo, entry.FilePath);
+                    Serilog.Log.Debug("CommitAllAsync staging workdir file via Index.Add: {FilePath}", entry.FilePath);
+                    repo.Index.Add(entry.FilePath);
+                    stagedAny = true;
                 }
             }
 
-            // Also run the broad stage to catch anything the per-file approach missed
-            Commands.Stage(repo, "*");
+            if (stagedAny)
+                repo.Index.Write();
 
-            // Enforce blacklist: unstage any staged files matching blacklisted path prefixes
+            // Enforce blacklist: unstage any staged files matching blacklisted path prefixes.
+            // Use Diff.Compare against the index to reliably detect staged changes,
+            // since RepositoryStatus.Staged can miss NewInIndex files.
             var unstaged = new List<string>();
             if (blacklistedPaths is { Count: > 0 })
             {
-                var status = repo.RetrieveStatus();
-                var stagedFiles = status.Staged
-                    .Select(e => e.FilePath)
-                    .ToList();
-
-                foreach (var filePath in stagedFiles)
+                var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
+                foreach (var change in indexChanges)
                 {
-                    if (Services.PipelineFormatting.IsPathBlacklisted(filePath, blacklistedPaths))
+                    if (Services.PipelineFormatting.IsPathBlacklisted(change.Path, blacklistedPaths))
                     {
-                        Commands.Unstage(repo, filePath);
-                        unstaged.Add(filePath.Replace('\\', '/'));
+                        Commands.Unstage(repo, change.Path);
+                        unstaged.Add(change.Path.Replace('\\', '/'));
                     }
                 }
             }
 
-            // Check if there are any staged changes left after blacklist filtering
-            var finalStatus = repo.RetrieveStatus();
-            if (finalStatus.Staged.Count() == 0)
+            // Use Diff.Compare to reliably detect staged changes (index vs HEAD).
+            // RepositoryStatus.Staged does not include NewInIndex files.
+            var stagedChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
+            Serilog.Log.Debug("CommitAllAsync final staged count (via Diff): {Count}", stagedChanges.Count);
+            foreach (var change in stagedChanges)
+            {
+                Serilog.Log.Debug("CommitAllAsync final staged: {FilePath} = {Status}", change.Path, change.Status);
+            }
+
+            if (stagedChanges.Count == 0)
                 throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
 
             var signature = new Signature("KiroWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);

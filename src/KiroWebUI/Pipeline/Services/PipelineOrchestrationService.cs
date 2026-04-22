@@ -406,6 +406,7 @@ public class PipelineOrchestrationService : IDisposable
                 try
                 {
                     var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(_activeConfig.AnalysisPrompt, issue, parsed, issueComments);
+                    _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
                     var analysisRequest = new AgentRequest
                     {
                         Prompt = analysisPrompt,
@@ -508,6 +509,7 @@ public class PipelineOrchestrationService : IDisposable
             try
             {
                 var prompt = PromptBuilder.BuildPrompt(_activeConfig!.ImplementationPrompt, _activeIssue!, _activeParsedIssue!, _activeIssueComments);
+                _logger.Debug("Pipeline {RunId} implementation prompt:\n{Prompt}", run.RunId, prompt);
 
                 // Stall monitor: periodically poll GetHealthStatus() to detect silence or process death
                 var stallCts = CancellationTokenSource.CreateLinkedTokenSource(linkedCt);
@@ -669,6 +671,7 @@ public class PipelineOrchestrationService : IDisposable
                             _activeIssue!,
                             _activeParsedIssue!,
                             _activeIssueComments);
+                        _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, reviewPrompt);
 
                         var reviewResult = await _activeAgentProvider!.ExecuteAsync(
                             new AgentRequest
@@ -760,6 +763,7 @@ public class PipelineOrchestrationService : IDisposable
 
         // Add user message to chat history
         run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.User, Content = message });
+        _logger.Debug("Pipeline {RunId} chat prompt:\n{Prompt}", run.RunId, message);
         NotifyChange();
 
         // Transition to GeneratingCode
