@@ -224,6 +224,14 @@ public class GitHubIssueProvider : IIssueProvider
     }
 
     /// <inheritdoc />
+    public async Task<bool> HasAgentLabelsAsync(CancellationToken ct)
+    {
+        var client = await GetClientAsync(ct);
+        var repoLabels = await client.Issue.Labels.GetAllForRepository(_owner, _repo);
+        var repoLabelNames = repoLabels.Select(l => l.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return AgentLabels.All.All(name => repoLabelNames.Contains(name));
+    }
+
     public async Task EnsureAgentLabelsAsync(CancellationToken ct)
     {
         var client = await GetClientAsync(ct);

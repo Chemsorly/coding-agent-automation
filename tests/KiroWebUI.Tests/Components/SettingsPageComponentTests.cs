@@ -300,7 +300,7 @@ public class SettingsPageComponentTests : BunitContext
     }
 
     [Fact]
-    public void Settings_IssueProviderCard_ShowsConfigureLabelsButton()
+    public void Settings_IssueProviderCard_DoesNotShowConfigureLabelsButton()
     {
         _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
@@ -311,51 +311,23 @@ public class SettingsPageComponentTests : BunitContext
 
         var component = Render<Settings>();
 
-        Assert.Contains("Configure Labels", component.Markup);
-        Assert.NotNull(component.Find(".btn-configure"));
+        Assert.DoesNotContain("Configure Labels", component.Markup);
     }
 
     [Fact]
-    public async Task Settings_ConfigureLabelsButton_ShowsSuccessMessage()
+    public void Settings_ConfigureLabelsModal_HasAccessibilityAttributes()
     {
-        var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider.Setup(p => p.EnsureAgentLabelsAsync(It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockIssueProvider.Object);
+        var razorPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..",
+            "src", "KiroWebUI", "Components", "Pages", "Settings.razor");
+        if (!File.Exists(razorPath))
+        {
+            Assert.Fail($"Source file not found at {razorPath}. Skipping accessibility attribute check.");
+            return;
+        }
 
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>
-            {
-                new() { Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "My Issues",
-                    Settings = new Dictionary<string, string> { ["owner"] = "org", ["repo"] = "repo" } }
-            });
+        var razorContent = File.ReadAllText(razorPath);
 
-        var component = Render<Settings>();
-        var button = component.Find(".btn-configure");
-        await button.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
-
-        Assert.Contains("Agent labels configured successfully", component.Markup);
-    }
-
-    [Fact]
-    public async Task Settings_ConfigureLabelsButton_ShowsErrorOnFailure()
-    {
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Throws(new InvalidOperationException("Insufficient permissions"));
-
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>
-            {
-                new() { Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "My Issues",
-                    Settings = new Dictionary<string, string> { ["owner"] = "org", ["repo"] = "repo" } }
-            });
-
-        var component = Render<Settings>();
-        var button = component.Find(".btn-configure");
-        await button.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
-
-        Assert.Contains("Failed to configure labels", component.Markup);
-        Assert.Contains("Insufficient permissions", component.Markup);
+        Assert.Contains("aria-labelledby=\"configure-labels-title\"", razorContent);
+        Assert.Contains("HandleConfigureLabelsKeyDown", razorContent);
     }
 }

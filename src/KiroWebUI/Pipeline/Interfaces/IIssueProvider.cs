@@ -49,6 +49,11 @@ public interface IIssueProvider : IAsyncDisposable
         => AddLabelsAsync(identifier, new[] { label }, ct);
 
     /// <summary>
+    /// Checks whether all agent status labels already exist in the repository.
+    /// </summary>
+    Task<bool> HasAgentLabelsAsync(CancellationToken ct);
+
+    /// <summary>
     /// Ensures the agent status labels exist in the repository. Creates any that are missing.
     /// Idempotent — safe to call multiple times.
     /// </summary>

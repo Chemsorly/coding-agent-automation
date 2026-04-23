@@ -32,22 +32,9 @@
                             <span class="provider-detail">@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "")</span>
                         </div>
                         <div class="provider-actions">
-                            @{ var configState = _configureStates.GetValueOrDefault(p.Id); }
-                            @if (configState?.IsLoading == true)
-                            {
-                                <button class="btn-configure" disabled>Configuring…</button>
-                            }
-                            else
-                            {
-                                <button class="btn-configure" @onclick="() => ConfigureIssueProvider(p)">Configure Labels</button>
-                            }
                             <button class="btn-edit" @onclick="() => EditIssueProvider(p)">Edit</button>
                             <button class="btn-delete" @onclick="() => DeleteProvider(p.Id, ProviderKind.Issue)">Delete</button>
                         </div>
-                        @if (configState?.Message is not null)
-                        {
-                            <div class="provider-configure-result @(configState.IsError ? "status-error" : "status-success")">@configState.Message</div>
-                        }
                     </div>
                 }
             </div>
@@ -646,6 +633,29 @@
     </div>
 </div>
 
+@if (_showConfigureLabelsModal)
+{
+    <div class="modal-overlay" @onclick="DismissConfigureLabelsModal" @onkeydown="HandleConfigureLabelsKeyDown">
+        <div class="modal-card" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-labelledby="configure-labels-title">
+            <h3 id="configure-labels-title">Repository Setup</h3>
+            <p class="modal-description">
+                Looks like this repository hasn't been set up for the coding agent yet. Should I configure it for you?
+                <span class="form-hint-icon" aria-hidden="true" title="This will create the following labels in your GitHub repository: agent:next, agent:in-progress, agent:error, and agent:needs-refinement. These labels are used by the pipeline to track issue status during automated coding runs.">?</span>
+            </p>
+            @if (!string.IsNullOrEmpty(_configureLabelsStatus))
+            {
+                <div class="settings-status @(_configureLabelsIsError ? "status-error" : "status-success")">@_configureLabelsStatus</div>
+            }
+            <div class="form-buttons">
+                <button class="btn-save" @onclick="ConfirmConfigureLabels" disabled="@_configureLabelsWorking">
+                    @(_configureLabelsWorking ? "Configuring..." : "Yes, configure")
+                </button>
+                <button class="btn-cancel" @onclick="DismissConfigureLabelsModal">Skip</button>
+            </div>
+        </div>
+    </div>
+}
+
 @if (_showRelatedProvidersModal)
 {
     <div class="modal-overlay" @onclick="DismissRelatedProvidersModal" @onkeydown="HandleModalKeyDown">
@@ -662,10 +672,6 @@
                     <label>
                         <input type="checkbox" @bind="item.Selected" />
                         @item.Kind Provider
-                        @if (item.Existing != null)
-                        {
-                            <span class="modal-existing-badge">exists — will update "@item.Existing.DisplayName"</span>
-                        }
                     </label>
                 </div>
                 @if (item.Kind == ProviderKind.Repository && item.Selected)
@@ -724,6 +730,13 @@
         public string? Message { get; set; }
         public bool IsError { get; set; }
     }
+
+    // Configure Labels modal state
+    private bool _showConfigureLabelsModal;
+    private bool _configureLabelsWorking;
+    private string? _configureLabelsStatus;
+    private bool _configureLabelsIsError;
+    private ProviderConfig? _configureLabelsProviderConfig;
 
     // Repo provider form
     private bool _showRepoForm;
@@ -905,7 +918,31 @@
             _issueValidationMessage = null;
             await LoadAllData();
             ShowStatus($"Issue provider saved. {message}");
-            ShowRelatedProvidersModal(config);
+
+            // Check if agent labels are already configured
+            var hasLabels = false;
+            try
+            {
+                await using var provider = ProviderFactory.CreateIssueProvider(config);
+                hasLabels = await provider.HasAgentLabelsAsync(CancellationToken.None);
+            }
+            catch
+            {
+                // If check fails, assume labels are missing
+            }
+
+            if (!hasLabels)
+            {
+                _configureLabelsProviderConfig = config;
+                _configureLabelsStatus = null;
+                _configureLabelsIsError = false;
+                _configureLabelsWorking = false;
+                _showConfigureLabelsModal = true;
+            }
+            else
+            {
+                ShowRelatedProvidersModal(config);
+            }
         }
         catch (Exception ex)
         {
@@ -917,27 +954,49 @@
         }
     }
 
-    private async Task ConfigureIssueProvider(ProviderConfig config)
+    private void DismissConfigureLabelsModal()
     {
-        var state = new ConfigureProviderState { IsLoading = true };
-        _configureStates[config.Id] = state;
+        _showConfigureLabelsModal = false;
+        if (_configureLabelsProviderConfig is not null)
+        {
+            ShowRelatedProvidersModal(_configureLabelsProviderConfig);
+        }
+    }
+
+    private void HandleConfigureLabelsKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") DismissConfigureLabelsModal();
+    }
+
+    private async Task ConfirmConfigureLabels()
+    {
+        if (_configureLabelsProviderConfig is null) return;
+
+        _configureLabelsWorking = true;
+        _configureLabelsStatus = null;
         StateHasChanged();
 
         try
         {
-            await using var provider = ProviderFactory.CreateIssueProvider(config);
+            await using var provider = ProviderFactory.CreateIssueProvider(_configureLabelsProviderConfig);
             await provider.EnsureAgentLabelsAsync(CancellationToken.None);
-            state.Message = "Agent labels configured successfully.";
-            state.IsError = false;
+            _configureLabelsStatus = "Agent labels configured successfully.";
+            _configureLabelsIsError = false;
+
+            // Auto-dismiss after short delay and proceed to related providers
+            StateHasChanged();
+            await Task.Delay(1200);
+            _showConfigureLabelsModal = false;
+            ShowRelatedProvidersModal(_configureLabelsProviderConfig);
         }
         catch (Exception ex)
         {
-            state.Message = $"Failed to configure labels: {ex.Message}";
-            state.IsError = true;
+            _configureLabelsStatus = $"Failed to configure labels: {ex.Message}";
+            _configureLabelsIsError = true;
         }
         finally
         {
-            state.IsLoading = false;
+            _configureLabelsWorking = false;
             StateHasChanged();
         }
     }
@@ -1617,8 +1676,15 @@
                 && p.Settings.GetValueOrDefault("owner", "") == _relatedModalOwner
                 && p.Settings.GetValueOrDefault("repo", "") == _relatedModalRepo);
 
-            _relatedModalItems.Add(new RelatedProviderItem { Kind = kind, Selected = true, Existing = existing });
+            // Only offer to create providers that don't already exist
+            if (existing is null)
+            {
+                _relatedModalItems.Add(new RelatedProviderItem { Kind = kind, Selected = true, Existing = null });
+            }
         }
+
+        // Skip the modal entirely if all related providers already exist
+        if (_relatedModalItems.Count == 0) return;
 
         _showRelatedProvidersModal = true;
     }
@@ -1642,7 +1708,6 @@
         try
         {
             var created = 0;
-            var updated = 0;
             foreach (var item in _relatedModalItems.Where(i => i.Selected).ToList())
             {
                 var settings = new Dictionary<string, string>(_relatedModalSharedSettings);
@@ -1651,21 +1716,21 @@
 
                 var config = new ProviderConfig
                 {
-                    Id = item.Existing?.Id ?? Guid.NewGuid().ToString(),
+                    Id = Guid.NewGuid().ToString(),
                     Kind = item.Kind,
                     ProviderType = "GitHub",
-                    DisplayName = item.Existing?.DisplayName ?? $"{_relatedModalOwner}/{_relatedModalRepo} - {item.Kind}",
+                    DisplayName = $"{_relatedModalOwner}/{_relatedModalRepo} - {item.Kind}",
                     Settings = settings
                 };
 
                 await ConfigStore.SaveProviderConfigAsync(config, CancellationToken.None);
                 item.Selected = false; // Mark as done so retry won't duplicate
-                if (item.Existing != null) updated++; else created++;
+                created++;
             }
 
             await LoadAllData();
             _showRelatedProvidersModal = false;
-            ShowStatus($"Related providers: {created} created, {updated} updated.");
+            ShowStatus($"Related providers: {created} created.");
         }
         catch (Exception ex)
         {
