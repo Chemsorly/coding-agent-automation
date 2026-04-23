@@ -25,9 +25,12 @@ public static class TestPipelineConfig
         MinCoverageThreshold = 80.0,
         SecurityScanEnabled = false,
         WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
-        SelfReviewEnabled = false,
-        SelfReviewMaxIterations = 1,
-        SelfReviewPrompt = PipelineConfiguration.DefaultSelfReviewPrompt,
+        CodeReview = new CodeReviewConfiguration
+        {
+            Enabled = false,
+            MaxIterations = 1,
+            Prompt = PipelineConfiguration.DefaultCodeReviewPrompt,
+        },
         ExternalCiEnabled = false,
         ExternalCiTimeout = TimeSpan.FromMinutes(15),
         ExternalCiPollInterval = TimeSpan.FromSeconds(30),
@@ -53,9 +56,12 @@ public static class TestPipelineConfig
         MinCoverageThreshold = 80.0,
         SecurityScanEnabled = false,
         WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
-        SelfReviewEnabled = true,
-        SelfReviewMaxIterations = 1,
-        SelfReviewPrompt = PipelineConfiguration.DefaultSelfReviewPrompt,
+        CodeReview = new CodeReviewConfiguration
+        {
+            Enabled = true,
+            MaxIterations = 1,
+            Prompt = PipelineConfiguration.DefaultCodeReviewPrompt,
+        },
         ExternalCiEnabled = false,
         ExternalCiTimeout = TimeSpan.FromMinutes(15),
         ExternalCiPollInterval = TimeSpan.FromSeconds(30),

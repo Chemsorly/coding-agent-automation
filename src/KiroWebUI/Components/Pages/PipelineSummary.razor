@@ -138,7 +138,7 @@
     {
         if (!string.IsNullOrEmpty(Run.PullRequestUrl)) return PipelineStep.CreatingPullRequest;
         if (Run.LatestQualityReport is not null) return PipelineStep.RunningQualityGates;
-        if (Run.ReviewIterationsCompleted > 0) return PipelineStep.ReviewingCode;
+        if (Run.CodeReviewIterationsCompleted > 0) return PipelineStep.ReviewingCode;
         if (Run.ApprovalTimestamp.HasValue) return PipelineStep.GeneratingCode;
         if (Run.AnalysisContent is not null) return PipelineStep.PostingAnalysis;
         if (!string.IsNullOrEmpty(Run.BranchName)) return PipelineStep.CreatingBranch;

@@ -519,21 +519,21 @@
                     </div>
                     <div class="form-group form-checkbox">
                         <label>
-                            <input type="checkbox" @bind="_pipelineConfig.SelfReviewEnabled" />
-                            Agent Self-Review Enabled
+                            <input type="checkbox" @bind="_pipelineConfig.CodeReviewEnabled" />
+                            Agent Code Review Enabled
                         </label>
                     </div>
-                    @if (_pipelineConfig.SelfReviewEnabled)
+                    @if (_pipelineConfig.CodeReviewEnabled)
                     {
                         <div class="config-sub-fields">
                             <div class="form-group">
                                 <label>Max Review Iterations</label>
-                                <input type="number" @bind="_pipelineConfig.SelfReviewMaxIterations" min="1" max="5" />
+                                <input type="number" @bind="_pipelineConfig.CodeReviewMaxIterations" min="1" max="5" />
                             </div>
                             <div class="form-group">
                                 <label>Review Prompt</label>
-                                <textarea @bind="_pipelineConfig.SelfReviewPrompt" rows="4"></textarea>
-                                <button type="button" class="btn-revert" disabled="@(_pipelineConfig.SelfReviewPrompt == PipelineConfiguration.DefaultSelfReviewPrompt)" @onclick="() => _pipelineConfig.SelfReviewPrompt = PipelineConfiguration.DefaultSelfReviewPrompt">Reset to default</button>
+                                <textarea @bind="_pipelineConfig.CodeReviewPrompt" rows="4"></textarea>
+                                <button type="button" class="btn-revert" disabled="@(_pipelineConfig.CodeReviewPrompt == PipelineConfiguration.DefaultCodeReviewPrompt)" @onclick="() => _pipelineConfig.CodeReviewPrompt = PipelineConfiguration.DefaultCodeReviewPrompt">Reset to default</button>
                             </div>
                         </div>
                     }
@@ -722,9 +722,9 @@
                 AutonomousMode = config.AutonomousMode,
                 MaxRetries = config.MaxRetries,
                 MinCoverageThreshold = config.MinCoverageThreshold,
-                SelfReviewEnabled = config.SelfReviewEnabled,
-                SelfReviewMaxIterations = config.SelfReviewMaxIterations,
-                SelfReviewPrompt = config.SelfReviewPrompt,
+                CodeReviewEnabled = config.CodeReview.Enabled,
+                CodeReviewMaxIterations = config.CodeReview.MaxIterations,
+                CodeReviewPrompt = config.CodeReview.Prompt,
                 AnalysisPrompt = config.AnalysisPrompt,
                 ImplementationPrompt = config.ImplementationPrompt,
                 ExternalCiEnabled = config.ExternalCiEnabled,
@@ -1441,9 +1441,12 @@
             AgentTimeout = TimeSpan.FromMinutes(_agentTimeoutMinutes),
             MinCoverageThreshold = _pipelineConfig.MinCoverageThreshold,
             SecurityScanEnabled = false,
-            SelfReviewEnabled = _pipelineConfig.SelfReviewEnabled,
-            SelfReviewMaxIterations = _pipelineConfig.SelfReviewMaxIterations,
-            SelfReviewPrompt = _pipelineConfig.SelfReviewPrompt,
+            CodeReview = new CodeReviewConfiguration
+            {
+                Enabled = _pipelineConfig.CodeReviewEnabled,
+                MaxIterations = _pipelineConfig.CodeReviewMaxIterations,
+                Prompt = _pipelineConfig.CodeReviewPrompt,
+            },
             AnalysisPrompt = _pipelineConfig.AnalysisPrompt,
             ImplementationPrompt = _pipelineConfig.ImplementationPrompt,
             ExternalCiEnabled = _pipelineConfig.ExternalCiEnabled,
@@ -1630,9 +1633,9 @@
         public bool AutonomousMode { get; set; } = true;
         public int MaxRetries { get; set; } = 3;
         public double MinCoverageThreshold { get; set; } = 80.0;
-        public bool SelfReviewEnabled { get; set; } = true;
-        public int SelfReviewMaxIterations { get; set; } = 1;
-        public string SelfReviewPrompt { get; set; } = PipelineConfiguration.DefaultSelfReviewPrompt;
+        public bool CodeReviewEnabled { get; set; } = true;
+        public int CodeReviewMaxIterations { get; set; } = 1;
+        public string CodeReviewPrompt { get; set; } = PipelineConfiguration.DefaultCodeReviewPrompt;
         public string AnalysisPrompt { get; set; } = PipelineConfiguration.DefaultAnalysisPrompt;
         public string ImplementationPrompt { get; set; } = PipelineConfiguration.DefaultImplementationPrompt;
         public bool ExternalCiEnabled { get; set; }
