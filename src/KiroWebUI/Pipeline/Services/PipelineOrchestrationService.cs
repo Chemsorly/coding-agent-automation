@@ -648,6 +648,43 @@ public class PipelineOrchestrationService : IDisposable
             // Code review step (if enabled)
             if (_activeConfig!.CodeReview.Enabled && _activeConfig.CodeReview.MaxIterations > 0)
             {
+                // Determine risk tier before running review
+                var changedFiles = !string.IsNullOrEmpty(run.WorkspacePath)
+                    ? await _activeRepoProvider!.GetFileChangesAsync(run.WorkspacePath, CancellationToken.None)
+                    : (IReadOnlyList<FileChangeSummary>)Array.Empty<FileChangeSummary>();
+                var changedPaths = changedFiles.Select(f => f.Path).ToArray();
+                var totalLines = run.LinesAdded + run.LinesRemoved;
+
+                var tier = RiskTierClassifier.Classify(
+                    _activeConfig.CodeReview.RiskTiers,
+                    run.FilesChangedCount,
+                    totalLines,
+                    changedPaths);
+                run.CodeReviewTier = tier;
+
+                var matchedSecPaths = RiskTierClassifier.GetMatchedSecurityPaths(
+                    _activeConfig.CodeReview.RiskTiers?.SecurityPaths, changedPaths);
+                _logger.Information(
+                    "Pipeline {RunId} code review tier: {Tier} ({FileCount} files, {LineCount} lines{SecurityPaths})",
+                    run.RunId, tier, run.FilesChangedCount, totalLines,
+                    matchedSecPaths.Count > 0 ? $", security paths: {string.Join(", ", matchedSecPaths)}" : "");
+                NotifyChange();
+
+                if (tier == RiskTierClassifier.Skip)
+                {
+                    _logger.Information(
+                        "Code review skipped: {FileCount} files, {LineCount} lines (below threshold)",
+                        run.FilesChangedCount, totalLines);
+                    TransitionTo(run, PipelineStep.ReviewingCode);
+                    run.ChatHistory.Enqueue(new ChatEntry
+                    {
+                        Role = ChatRole.System,
+                        Content = $"Code review skipped: {run.FilesChangedCount} files, {totalLines} lines (below threshold)"
+                    });
+                    NotifyChange();
+                }
+                else
+                {
                 run.CodeReviewIterationsTotal = _activeConfig.CodeReview.MaxIterations;
                 for (var i = 0; i < _activeConfig.CodeReview.MaxIterations; i++)
                 {
@@ -787,6 +824,7 @@ public class PipelineOrchestrationService : IDisposable
                 }
 
                 run.CodeReviewIterationInProgress = 0;
+                } // end else (not skipped)
             }
 
             // Transition to WaitingForChat (or auto-proceed in autonomous mode)
@@ -1380,8 +1418,10 @@ public class PipelineOrchestrationService : IDisposable
             if (string.IsNullOrEmpty(run.WorkspacePath)) return;
             var changes = await _activeRepoProvider!.GetFileChangesAsync(run.WorkspacePath, CancellationToken.None);
             run.FilesChangedCount = changes.Count;
-            // Approximate line stats from change count (detailed stats would require git diff --numstat)
-            _logger.Debug("Pipeline {RunId} file changes: {Count} files", run.RunId, changes.Count);
+            run.LinesAdded = changes.Sum(c => c.LinesAdded);
+            run.LinesRemoved = changes.Sum(c => c.LinesDeleted);
+            _logger.Debug("Pipeline {RunId} file changes: {Count} files, +{Added} -{Removed} lines",
+                run.RunId, changes.Count, run.LinesAdded, run.LinesRemoved);
         }
         catch (Exception ex)
         {

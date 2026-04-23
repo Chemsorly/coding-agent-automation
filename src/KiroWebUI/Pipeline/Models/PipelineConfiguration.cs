@@ -24,6 +24,34 @@ public sealed class CodeReviewConfiguration
     /// When null/empty, falls back to single-pass behavior (review prompt does both find and fix).
     /// </summary>
     public string? FixPrompt { get; init; }
+
+    /// <summary>
+    /// When set, enables risk-based tiering that can skip review for small changes
+    /// or force full review for security-sensitive paths. When null, all changes
+    /// get standard review (current behavior).
+    /// </summary>
+    public CodeReviewRiskTiers? RiskTiers { get; init; }
+}
+
+/// <summary>
+/// Configuration for risk-based code review tiering.
+/// </summary>
+public sealed class CodeReviewRiskTiers
+{
+    /// <summary>Skip review entirely when diff is below these thresholds.</summary>
+    public RiskThreshold? Skip { get; init; }
+
+    /// <summary>Paths that always trigger full review regardless of diff size.</summary>
+    public IReadOnlyList<string>? SecurityPaths { get; init; }
+}
+
+/// <summary>
+/// Threshold for skipping code review on small diffs.
+/// </summary>
+public sealed class RiskThreshold
+{
+    public int MaxFiles { get; init; } = 5;
+    public int MaxLines { get; init; } = 30;
 }
 
 public sealed class PipelineConfiguration
