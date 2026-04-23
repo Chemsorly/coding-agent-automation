@@ -133,6 +133,15 @@ public class GitHubRepositoryProvider : IRepositoryProvider
 
     public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message,
         IReadOnlyList<string>? blacklistedPaths, CancellationToken ct)
+        => CommitAllAsync(workspacePath, message, blacklistedPaths, allowEmpty: false, ct);
+
+    /// <summary>
+    /// Stages all changes, unstages blacklisted paths, and commits.
+    /// When <paramref name="allowEmpty"/> is true, creates an empty commit if no files changed
+    /// (useful for triggering CI re-runs after retry fixes that didn't change files).
+    /// </summary>
+    public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message,
+        IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(workspacePath);
         ArgumentNullException.ThrowIfNull(message);
@@ -201,7 +210,7 @@ public class GitHubRepositoryProvider : IRepositoryProvider
                 Serilog.Log.Debug("CommitAllAsync final staged: {FilePath} = {Status}", change.Path, change.Status);
             }
 
-            if (stagedChanges.Count == 0)
+            if (stagedChanges.Count == 0 && !allowEmpty)
                 throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
 
             var signature = new Signature("KiroWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);

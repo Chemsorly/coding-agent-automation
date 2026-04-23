@@ -1059,10 +1059,110 @@ public class PipelineOrchestrationService : IDisposable
                 var fixPrompt = $"The quality gates failed. Please fix the following issues:\n{errorSummary}\n\nDo NOT run git write commands (git add, git commit, git push, etc.). The pipeline handles version control automatically.";
                 await SendChatMessageAsync(fixPrompt, linkedCt);
 
-                // Re-run quality gates
+                // Re-run local quality gates
                 TransitionTo(run, PipelineStep.RunningQualityGates);
                 report = await _qualityGateValidator.ValidateAsync(
                     run.WorkspacePath!, _activeConfig!, linkedCt);
+
+                // If local gates passed and external CI is enabled, commit + push to trigger CI
+                if (report.Compilation.Passed && report.Tests.Passed
+                    && (report.Coverage?.Passed ?? true) && (report.SecurityScan?.Passed ?? true)
+                    && _activeConfig!.ExternalCiEnabled && _activePipelineProvider != null)
+                {
+                    GateResult? retryCiGate = null;
+                    try
+                    {
+                        // Commit the agent's fixes and push to trigger CI via push event
+                        try
+                        {
+                            var retryCommitMessage = PipelineFormatting.GenerateCommitMessage(
+                                run.IssueTitle, run.IssueIdentifier);
+                            var blacklisted = await _activeRepoProvider!.CommitAllAsync(
+                                run.WorkspacePath!, retryCommitMessage, _activeConfig!.BlacklistedPaths, linkedCt);
+                            if (RecordBlacklistedFiles(run, blacklisted))
+                                return; // Fail mode — pipeline already transitioned to Failed
+                        }
+                        catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
+                        {
+                            // Agent may not have changed files (e.g. flaky test fix was a no-op).
+                            // Create an empty commit to trigger CI via push event.
+                            _logger.Information("Pipeline {RunId} no changes after retry fix, creating empty commit to trigger CI",
+                                run.RunId);
+                            await _activeRepoProvider!.CommitAllAsync(
+                                run.WorkspacePath!,
+                                $"chore: trigger CI re-run for {run.IssueIdentifier} (retry {run.RetryCount})",
+                                _activeConfig!.BlacklistedPaths, allowEmpty: true, linkedCt);
+                        }
+
+                        await _activeRepoProvider!.PushBranchAsync(run.WorkspacePath!, run.BranchName!, linkedCt);
+                        _logger.Information("Pipeline {RunId} pushed retry fixes on branch {BranchName} for CI validation",
+                            run.RunId, run.BranchName);
+
+                        string? commitSha = null;
+                        try
+                        {
+                            commitSha = await _activeRepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, linkedCt);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA on retry", run.RunId);
+                        }
+
+                        var ciStatus = await _activePipelineProvider.WaitForCompletionAsync(
+                            run.BranchName!, commitSha, _activeConfig.ExternalCiTimeout, linkedCt);
+
+                        var ciPassed = ciStatus.State == PipelineRunState.Passed;
+
+                        IReadOnlyDictionary<long, string>? ciLogPaths = null;
+                        if (!ciPassed && run.WorkspacePath != null)
+                        {
+                            ciLogPaths = _ciLogWriter.WriteJobLogs(ciStatus, run.WorkspacePath, run.RunId);
+                        }
+
+                        retryCiGate = new GateResult
+                        {
+                            GateName = "External CI",
+                            Passed = ciPassed,
+                            Details = ciPassed
+                                ? $"CI passed. {ciStatus.Jobs.Count} job(s) completed."
+                                : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
+                        };
+                    }
+                    catch (OperationCanceledException) when (!linkedCt.IsCancellationRequested)
+                    {
+                        retryCiGate = new GateResult
+                        {
+                            GateName = "External CI",
+                            Passed = false,
+                            Details = $"External CI timed out after {_activeConfig.ExternalCiTimeout}"
+                        };
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw; // Pipeline cancellation — propagate
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex, "Pipeline {RunId} external CI check failed on retry, treating as gate failure", run.RunId);
+                        retryCiGate = new GateResult
+                        {
+                            GateName = "External CI",
+                            Passed = false,
+                            Details = $"External CI error: {ex.Message}"
+                        };
+                    }
+
+                    // Rebuild report with external CI result
+                    report = new QualityGateReport
+                    {
+                        Compilation = report.Compilation,
+                        Tests = report.Tests,
+                        Coverage = report.Coverage,
+                        SecurityScan = report.SecurityScan,
+                        ExternalCi = retryCiGate
+                    };
+                }
+
                 run.LatestQualityReport = report;
                 run.QualityGateHistory.Enqueue(report);
 
