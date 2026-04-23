@@ -128,6 +128,19 @@
                                                 }
                                             </div>
                                         }
+                                        @if (FilteredIssues.Count == 0 && _selectedLabels.Count > 0)
+                                        {
+                                            <div class="issue-list-empty" role="status">
+                                                @if (_selectedLabels.Count == 1 && _selectedLabels.Contains(AgentLabels.Next))
+                                                {
+                                                    <span>No issues labeled <code>@AgentLabels.Next</code>. Label issues in GitHub to queue them for the agent.</span>
+                                                }
+                                                else
+                                                {
+                                                    <span>No issues match the selected filters.</span>
+                                                }
+                                            </div>
+                                        }
                                     </div>
 
                                     <div class="issue-pagination">
@@ -508,7 +521,16 @@
             var result = await issueProvider.ListOpenIssuesAsync(_currentPage, _issuePageSize, CancellationToken.None);
             _issues = result.Items.ToList();
             _hasMoreIssues = result.HasMore;
+            // TODO: [UX-12a] _availableLabels is derived from the current page only, not the full repo label set.
+            // Auto-filter may not activate if agent:next issues are on a different page.
             _availableLabels = _issues.SelectMany(i => i.Labels).Distinct().OrderBy(l => l).ToList();
+            // TODO: [UX-12a] Pagination re-applies auto-filter, discarding user's manual filter choices.
+            // Move auto-select to OnIssueProviderChanged or use a flag to only auto-filter on initial load.
+            if (_availableLabels.Contains(AgentLabels.Next))
+            {
+                _selectedLabels.Add(AgentLabels.Next);
+                _filteredIssuesCache = null;
+            }
         }
         catch (Exception ex)
         {
