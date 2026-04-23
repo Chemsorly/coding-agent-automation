@@ -731,6 +731,9 @@ public class PipelineOrchestrationService : IDisposable
                                 if (iterationFindings.Length > 0)
                                     iterationFindings.AppendLine($"--- Agent: {agent.Name} ---");
                                 iterationFindings.AppendLine(fullReviewText);
+
+                                // Store per-agent findings (latest iteration wins)
+                                run.CodeReviewAgentFindings[agent.Name] = fullReviewText;
                             }
 
                             _logger.Information(
@@ -750,18 +753,8 @@ public class PipelineOrchestrationService : IDisposable
                         // Update agents-run tracking
                         run.CodeReviewAgentsRun = agentsRun;
 
-                        // Accumulate raw findings
+                        // Accumulate combined findings text for the fix prompt
                         var iterationFindingsText = iterationFindings.ToString();
-                        if (!string.IsNullOrEmpty(iterationFindingsText))
-                        {
-                            const int maxRawFindingsLength = 10_000;
-                            var newFindings = run.CodeReviewRawFindings is null
-                                ? iterationFindingsText
-                                : $"{run.CodeReviewRawFindings}{Environment.NewLine}--- Iteration {i + 1} ---{Environment.NewLine}{iterationFindingsText}";
-                            run.CodeReviewRawFindings = newFindings.Length > maxRawFindingsLength
-                                ? newFindings[..maxRawFindingsLength]
-                                : newFindings;
-                        }
 
                         run.CodeReviewIterationsCompleted++;
 
@@ -1280,7 +1273,9 @@ public class PipelineOrchestrationService : IDisposable
                     run.CodeReviewCriticalCount,
                     run.CodeReviewWarningCount,
                     run.CodeReviewSuggestionCount,
-                    run.CodeReviewRawFindings)
+                    run.CodeReviewAgentFindings
+                        .Select(kv => new AgentFindings(kv.Key, kv.Value))
+                        .ToArray())
                 : null;
 
             var prBody = PipelineFormatting.GeneratePrBody(

@@ -303,7 +303,7 @@ public class GitHubRepositoryProviderTests
         var summary = new CodeReviewSummary(
             AgentsRun: new[] { "Correctness" },
             CriticalCount: 0, WarningCount: 0, SuggestionCount: 0,
-            RawFindings: null);
+            AgentFindings: Array.Empty<AgentFindings>());
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
@@ -322,7 +322,7 @@ public class GitHubRepositoryProviderTests
         var summary = new CodeReviewSummary(
             AgentsRun: new[] { "Correctness", "DotNetSpecialist" },
             CriticalCount: 1, WarningCount: 2, SuggestionCount: 3,
-            RawFindings: "[1] [CRITICAL] Null ref");
+            AgentFindings: new[] { new AgentFindings("Correctness", "[1] [CRITICAL] Null ref") });
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
@@ -340,7 +340,7 @@ public class GitHubRepositoryProviderTests
         var summary = new CodeReviewSummary(
             AgentsRun: new[] { "Correctness" },
             CriticalCount: 2, WarningCount: 3, SuggestionCount: 1,
-            RawFindings: "[1] [CRITICAL] Issue");
+            AgentFindings: new[] { new AgentFindings("Correctness", "[1] [CRITICAL] Issue") });
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
@@ -355,13 +355,17 @@ public class GitHubRepositoryProviderTests
     }
 
     [Fact]
-    public void GeneratePrBody_CodeReviewWithFindings_RawFindingsInCollapsibleBlock()
+    public void GeneratePrBody_CodeReviewWithFindings_PerAgentCollapsibleBlocks()
     {
         var findings = "[1] [CRITICAL] Null dereference\n[2] [WARNING] Resource not disposed";
         var summary = new CodeReviewSummary(
-            AgentsRun: new[] { "Correctness" },
+            AgentsRun: new[] { "Correctness", "DotNetSpecialist" },
             CriticalCount: 1, WarningCount: 1, SuggestionCount: 0,
-            RawFindings: findings);
+            AgentFindings: new[]
+            {
+                new AgentFindings("Correctness", findings),
+                new AgentFindings("DotNetSpecialist", "[1] [WARNING] Missing using statement")
+            });
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
@@ -371,19 +375,21 @@ public class GitHubRepositoryProviderTests
             codeReviewSummary: summary);
 
         body.Should().Contain("<details>");
-        body.Should().Contain("<summary>Raw findings</summary>");
+        body.Should().Contain("<summary>Correctness</summary>");
         body.Should().Contain(findings);
+        body.Should().Contain("<summary>DotNetSpecialist</summary>");
+        body.Should().Contain("[1] [WARNING] Missing using statement");
         body.Should().Contain("</details>");
     }
 
     [Fact]
-    public void GeneratePrBody_CodeReviewRawFindings_TruncatedAt2000Chars()
+    public void GeneratePrBody_CodeReviewAgentFindings_TruncatedAt10000Chars()
     {
-        var longFindings = new string('x', 3000);
+        var longFindings = new string('x', 12_000);
         var summary = new CodeReviewSummary(
             AgentsRun: new[] { "Correctness" },
             CriticalCount: 1, WarningCount: 0, SuggestionCount: 0,
-            RawFindings: longFindings);
+            AgentFindings: new[] { new AgentFindings("Correctness", longFindings) });
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
@@ -402,7 +408,7 @@ public class GitHubRepositoryProviderTests
         var summary = new CodeReviewSummary(
             AgentsRun: new[] { "Correctness" },
             CriticalCount: 0, WarningCount: 2, SuggestionCount: 0,
-            RawFindings: "[1] [WARNING] Issue");
+            AgentFindings: new[] { new AgentFindings("Correctness", "[1] [WARNING] Issue") });
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
@@ -422,7 +428,7 @@ public class GitHubRepositoryProviderTests
         var summary = new CodeReviewSummary(
             AgentsRun: Array.Empty<string>(),
             CriticalCount: 1, WarningCount: 0, SuggestionCount: 0,
-            RawFindings: "[1] [CRITICAL] Issue");
+            AgentFindings: new[] { new AgentFindings("Review", "[1] [CRITICAL] Issue") });
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,

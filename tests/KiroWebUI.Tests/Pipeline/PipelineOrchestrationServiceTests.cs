@@ -578,7 +578,7 @@ public class PipelineOrchestrationServiceTests
         run.CodeReviewCriticalCount.Should().Be(2);
         run.CodeReviewWarningCount.Should().Be(1);
         run.CodeReviewSuggestionCount.Should().Be(3);
-        run.CodeReviewRawFindings.Should().NotBeNullOrEmpty();
+        run.CodeReviewAgentFindings.Should().NotBeEmpty();
     }
 
     // --- Blacklist enforcement ---

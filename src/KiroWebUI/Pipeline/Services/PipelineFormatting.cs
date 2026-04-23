@@ -192,7 +192,7 @@ public static partial class PipelineFormatting
         sb.AppendLine();
 
         if (summary.CriticalCount == 0 && summary.WarningCount == 0 && summary.SuggestionCount == 0
-            && string.IsNullOrEmpty(summary.RawFindings))
+            && summary.AgentFindings.Count == 0)
         {
             sb.AppendLine("Code review: no findings");
             sb.AppendLine();
@@ -213,13 +213,17 @@ public static partial class PipelineFormatting
             sb.AppendLine($"| SUGGESTION | {summary.SuggestionCount} | Reported only |");
         sb.AppendLine();
 
-        if (!string.IsNullOrEmpty(summary.RawFindings))
+        const int maxFindingsPerAgent = 10_000;
+        foreach (var agent in summary.AgentFindings)
         {
-            var truncated = summary.RawFindings.Length > 2000
-                ? summary.RawFindings[..2000] + "…"
-                : summary.RawFindings;
+            if (string.IsNullOrEmpty(agent.Findings))
+                continue;
+
+            var truncated = agent.Findings.Length > maxFindingsPerAgent
+                ? agent.Findings[..maxFindingsPerAgent] + "…"
+                : agent.Findings;
             sb.AppendLine("<details>");
-            sb.AppendLine("<summary>Raw findings</summary>");
+            sb.AppendLine($"<summary>{agent.AgentName}</summary>");
             sb.AppendLine();
             sb.AppendLine(truncated);
             sb.AppendLine();

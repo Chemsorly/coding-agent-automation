@@ -39,8 +39,8 @@ public sealed class PipelineRun
     /// <summary>Number of [SUGGESTION] findings detected across all review iterations. Use Interlocked for thread-safe updates.</summary>
     public int CodeReviewSuggestionCount;
 
-    /// <summary>Raw findings text from the review step, for inclusion in PR descriptions.</summary>
-    public string? CodeReviewRawFindings { get; set; }
+    /// <summary>Per-agent findings accumulated across all review iterations.</summary>
+    public Dictionary<string, string> CodeReviewAgentFindings { get; } = new();
 
     /// <summary>Thread-safe collections — mutated by orchestration service while UI reads via OnChange.</summary>
     public ConcurrentBag<string> RetryErrors { get; init; } = new();
