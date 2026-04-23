@@ -81,18 +81,29 @@
                         else if (step == PipelineStep.ReviewingCode)
                         {
                             <div class="step-detail-box">
-                                @if (state == StepState.Active && Run.CodeReviewIterationInProgress > 0)
+                                @if (Run.CodeReviewTier == "skip")
                                 {
-                                    <div>🔍 Iteration @Run.CodeReviewIterationInProgress/@Run.CodeReviewIterationsTotal</div>
-                                    <div class="step-detail-sub">Agent is reviewing &amp; fixing code</div>
+                                    <div>⏭ Review skipped (below threshold)</div>
                                 }
-                                else if (Run.CodeReviewIterationsCompleted > 0)
+                                else
                                 {
-                                    <div>@Run.CodeReviewIterationsCompleted/@Run.CodeReviewIterationsTotal iteration(s) done</div>
-                                }
-                                @if (Run.CodeReviewCriticalCount > 0 || Run.CodeReviewWarningCount > 0 || Run.CodeReviewSuggestionCount > 0)
-                                {
-                                    <div class="step-detail-sub">🔴 @Run.CodeReviewCriticalCount critical · 🟡 @Run.CodeReviewWarningCount warning · 🔵 @Run.CodeReviewSuggestionCount suggestion</div>
+                                    @if (!string.IsNullOrEmpty(Run.CodeReviewTier))
+                                    {
+                                        <div class="step-detail-sub">Tier: @(Run.CodeReviewTier == "full" ? "Full 🔒" : "Standard")</div>
+                                    }
+                                    @if (state == StepState.Active && Run.CodeReviewIterationInProgress > 0)
+                                    {
+                                        <div>🔍 Iteration @Run.CodeReviewIterationInProgress/@Run.CodeReviewIterationsTotal</div>
+                                        <div class="step-detail-sub">Agent is reviewing &amp; fixing code</div>
+                                    }
+                                    else if (Run.CodeReviewIterationsCompleted > 0)
+                                    {
+                                        <div>@Run.CodeReviewIterationsCompleted/@Run.CodeReviewIterationsTotal iteration(s) done</div>
+                                    }
+                                    @if (Run.CodeReviewCriticalCount > 0 || Run.CodeReviewWarningCount > 0 || Run.CodeReviewSuggestionCount > 0)
+                                    {
+                                        <div class="step-detail-sub">🔴 @Run.CodeReviewCriticalCount critical · 🟡 @Run.CodeReviewWarningCount warning · 🔵 @Run.CodeReviewSuggestionCount suggestion</div>
+                                    }
                                 }
                             </div>
                         }
@@ -324,7 +335,7 @@
         PipelineStep.AnalyzingCode => true,
         PipelineStep.WaitingForAnalysisApproval => Run.ApprovalTimestamp.HasValue,
         PipelineStep.GeneratingCode => Run.FilesChangedCount > 0 || Run.LinesAdded > 0 || Run.LinesRemoved > 0,
-        PipelineStep.ReviewingCode => Run.CodeReviewIterationsCompleted > 0,
+        PipelineStep.ReviewingCode => Run.CodeReviewIterationsCompleted > 0 || Run.CodeReviewTier != null,
         PipelineStep.RunningQualityGates => Run.LatestQualityReport != null,
         PipelineStep.CreatingPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
         _ => false

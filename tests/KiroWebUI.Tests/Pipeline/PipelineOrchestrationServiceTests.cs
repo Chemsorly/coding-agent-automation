@@ -1763,4 +1763,152 @@ public class PipelineOrchestrationServiceTests
         firstCreateIndex.Should().BeGreaterThan(lastDisposeIndex,
             "all previous providers must be disposed before new ones are created (REQ-5.3)");
     }
+
+    // --- Risk Tier Tests ---
+
+    [Fact]
+    public async Task ApproveAnalysis_WithRiskTierSkip_SkipsReviewLoop()
+    {
+        // Small diff with risk tiers configured → skip
+        _mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new FileChangeSummary("Modified", "src/Foo.cs", 5, 2) });
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 3,
+                    RiskTiers = new CodeReviewRiskTiers
+                    {
+                        Skip = new RiskThreshold { MaxFiles = 5, MaxLines = 30 }
+                    }
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CodeReviewTier.Should().Be("skip");
+        run.CodeReviewIterationsCompleted.Should().Be(0);
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithRiskTierStandard_RunsReview()
+    {
+        // Large diff with risk tiers → standard
+        var files = Enumerable.Range(0, 10)
+            .Select(i => new FileChangeSummary("Modified", $"src/File{i}.cs", 20, 10))
+            .ToArray();
+        _mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(files);
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    RiskTiers = new CodeReviewRiskTiers
+                    {
+                        Skip = new RiskThreshold { MaxFiles = 5, MaxLines = 30 }
+                    }
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CodeReviewTier.Should().Be("standard");
+        run.CodeReviewIterationsCompleted.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithSecurityPathMatch_ReturnsFull()
+    {
+        _mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new FileChangeSummary("Modified", "src/auth/handler.cs", 2, 1) });
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    RiskTiers = new CodeReviewRiskTiers
+                    {
+                        Skip = new RiskThreshold { MaxFiles = 100, MaxLines = 1000 },
+                        SecurityPaths = ["auth/", "crypto/"]
+                    }
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CodeReviewTier.Should().Be("full");
+        run.CodeReviewIterationsCompleted.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithNullRiskTiers_ReturnsStandard()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    RiskTiers = null
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CodeReviewTier.Should().Be("standard");
+        run.CodeReviewIterationsCompleted.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithRiskTierSkip_LogsSkipReason()
+    {
+        _mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new FileChangeSummary("Modified", "src/Foo.cs", 3, 1) });
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    RiskTiers = new CodeReviewRiskTiers
+                    {
+                        Skip = new RiskThreshold { MaxFiles = 5, MaxLines = 30 }
+                    }
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        // Verify skip was logged via chat history
+        run.ChatHistory.Should().Contain(e => e.Content.Contains("Code review skipped"));
+    }
 }

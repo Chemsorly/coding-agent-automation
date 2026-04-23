@@ -315,20 +315,8 @@ public class GitHubRepositoryProvider : IRepositoryProvider
 
                 var baseCommit = baseBranchRef.Tip;
                 var headCommit = repo.Head.Tip;
-                var diff = repo.Diff.Compare<TreeChanges>(baseCommit.Tree, headCommit.Tree);
 
-                var changes = new List<FileChangeSummary>();
-                foreach (var entry in diff)
-                {
-                    var status = entry.Status switch
-                    {
-                        ChangeKind.Added => "Added",
-                        ChangeKind.Deleted => "Deleted",
-                        ChangeKind.Renamed => "Renamed",
-                        _ => "Modified"
-                    };
-                    changes.Add(new FileChangeSummary(status, entry.Path));
-                }
+                var changes = CollectChangesWithLineStats(repo, baseCommit.Tree, headCommit.Tree);
 
                 // If no committed changes yet, check the working directory against the base branch.
                 // This captures files the agent has written but not yet committed.
@@ -338,13 +326,7 @@ public class GitHubRepositoryProvider : IRepositoryProvider
                         baseCommit.Tree, DiffTargets.WorkingDirectory);
                     foreach (var entry in workingDiff)
                     {
-                        var status = entry.Status switch
-                        {
-                            ChangeKind.Added => "Added",
-                            ChangeKind.Deleted => "Deleted",
-                            ChangeKind.Renamed => "Renamed",
-                            _ => "Modified"
-                        };
+                        var status = MapChangeKind(entry.Status);
                         changes.Add(new FileChangeSummary(status, entry.Path));
                     }
                 }
@@ -357,6 +339,40 @@ public class GitHubRepositoryProvider : IRepositoryProvider
             }
         }, ct);
     }
+
+    private static List<FileChangeSummary> CollectChangesWithLineStats(
+        IRepository repo, Tree baseTree, Tree headTree)
+    {
+        var changes = new List<FileChangeSummary>();
+        try
+        {
+            using var patch = repo.Diff.Compare<Patch>(baseTree, headTree);
+            foreach (var entry in patch)
+            {
+                var status = MapChangeKind(entry.Status);
+                changes.Add(new FileChangeSummary(status, entry.Path, entry.LinesAdded, entry.LinesDeleted));
+            }
+        }
+        catch
+        {
+            // Fall back to TreeChanges if Patch fails (e.g. binary files)
+            var diff = repo.Diff.Compare<TreeChanges>(baseTree, headTree);
+            foreach (var entry in diff)
+            {
+                var status = MapChangeKind(entry.Status);
+                changes.Add(new FileChangeSummary(status, entry.Path));
+            }
+        }
+        return changes;
+    }
+
+    private static string MapChangeKind(ChangeKind kind) => kind switch
+    {
+        ChangeKind.Added => "Added",
+        ChangeKind.Deleted => "Deleted",
+        ChangeKind.Renamed => "Renamed",
+        _ => "Modified"
+    };
 
     /// <inheritdoc />
     public async Task ValidateAsync(CancellationToken ct)
