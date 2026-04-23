@@ -144,7 +144,7 @@
         if (!string.IsNullOrEmpty(Run.PullRequestUrl)) return PipelineStep.CreatingPullRequest;
         if (Run.LatestQualityReport is not null) return PipelineStep.RunningQualityGates;
         if (Run.CodeReviewIterationsCompleted > 0) return PipelineStep.ReviewingCode;
-        if (Run.ApprovalTimestamp.HasValue) return PipelineStep.GeneratingCode;
+        if (Run.FilesChangedCount > 0 || Run.ChatHistory.Count > 0) return PipelineStep.GeneratingCode;
         if (Run.AnalysisContent is not null) return PipelineStep.PostingAnalysis;
         if (!string.IsNullOrEmpty(Run.BranchName)) return PipelineStep.CreatingBranch;
         if (!string.IsNullOrEmpty(Run.WorkspacePath)) return PipelineStep.CloningRepository;
@@ -158,7 +158,6 @@
         PipelineStep.CreatingBranch => "Creating Branch",
         PipelineStep.AnalyzingCode => "Analyzing Code",
         PipelineStep.PostingAnalysis => "Posting Analysis",
-        PipelineStep.WaitingForAnalysisApproval => "Waiting for Approval",
         PipelineStep.GeneratingCode => "Generating Code",
         PipelineStep.ReviewingCode => "Reviewing Code",
         PipelineStep.RunningQualityGates => "Running Quality Gates",

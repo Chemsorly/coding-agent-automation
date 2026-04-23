@@ -9,7 +9,7 @@ namespace KiroWebUI.Tests.Pipeline;
 
 /// <summary>
 /// Unit tests for AgentCoding page logic.
-/// Tests view switching, concurrent start rejection, empty chat submission, and button disabled states
+/// Tests view switching, concurrent start rejection, and button disabled states
 /// via the same operations the AgentCoding page performs against PipelineOrchestrationService and mocked providers.
 /// Since bunit is not available, these tests validate the page's behavioral logic through its dependencies.
 /// </summary>
@@ -119,44 +119,9 @@ public class AgentCodingPageTests
     }
 
     [Fact]
-    public async Task AfterStartPipeline_ActiveRunExists_ShowsAnalysisApprovalView()
+    public async Task AfterStartPipeline_WithPassingGates_RunCompletes()
     {
-        // After starting a pipeline, ActiveRun is set and the page shows analysis approval
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-
-        _service.ActiveRun.Should().NotBeNull();
-        // Pipeline pauses at WaitingForAnalysisApproval for user review
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
-    }
-
-    [Fact]
-    public async Task WaitingForChat_PageShowsChatPanel()
-    {
-        // When step is WaitingForChat, the page renders the chat panel view
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
-
-        await _service.ApproveAnalysisAsync(CancellationToken.None);
-
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
-        _service.IsRunning.Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task AfterCancel_ShowsCompletionView()
-    {
-        // After cancellation, the page shows the completion view with "Back to Issues" button
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        await _service.CancelPipelineAsync();
-
-        run.CurrentStep.Should().Be(PipelineStep.Cancelled);
-        _service.IsRunning.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task AfterQualityGatesPass_ShowsCompletionWithPrLink()
-    {
-        // When quality gates pass and PR is created, the page shows completion with PR link
+        // Pipeline now runs end-to-end: start → analyze → generate → quality gates → PR → completed
         _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
@@ -165,8 +130,44 @@ public class AgentCodingPageTests
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        await _service.ApproveAnalysisAsync(CancellationToken.None);
-        await _service.ProceedToQualityGatesAsync(CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.PullRequestUrl.Should().NotBeNullOrEmpty();
+        _service.IsRunning.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task AfterCancel_ShowsCompletionView()
+    {
+        // Use a blocking agent to allow cancellation mid-pipeline
+        var agentTcs = new TaskCompletionSource<AgentResult>();
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns(agentTcs.Task);
+
+        var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Cancel while agent is running
+        await _service.CancelPipelineAsync();
+        agentTcs.SetCanceled();
+
+        try { await startTask; } catch { /* expected */ }
+
+        _service.ActiveRun!.CurrentStep.Should().Be(PipelineStep.Cancelled);
+        _service.IsRunning.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task AfterQualityGatesPass_ShowsCompletionWithPrLink()
+    {
+        // When quality gates pass, PR is created and pipeline completes
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                Tests = new GateResult { GateName = "Tests", Passed = true }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.PullRequestUrl.Should().NotBeNullOrEmpty();
@@ -186,8 +187,6 @@ public class AgentCodingPageTests
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        await _service.ApproveAnalysisAsync(CancellationToken.None);
-        await _service.ProceedToQualityGatesAsync(CancellationToken.None);
 
         // Auto-retry exhausted all retries (default MaxRetries=3), created draft PR, marked Failed
         run.CurrentStep.Should().Be(PipelineStep.Failed);
@@ -197,30 +196,44 @@ public class AgentCodingPageTests
         run.RetryErrors.Should().HaveCount(4); // initial + 3 retries
     }
 
-    // --- Requirement 10.6: Concurrent start rejection ---
+    // --- Concurrent start rejection ---
 
     [Fact]
     public async Task StartPipeline_WhileAlreadyRunning_RejectsWithMessage()
     {
-        // Simulates: user selects an issue while a pipeline is already active
-        // The page checks PipelineService.IsRunning and sets _errorMessage
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        // Use a blocking agent to keep the pipeline running
+        var agentTcs = new TaskCompletionSource<AgentResult>();
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns(agentTcs.Task);
+
+        var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         _service.IsRunning.Should().BeTrue();
 
-        // The page's StartPipeline method checks IsRunning first:
-        //   if (PipelineService.IsRunning) { _errorMessage = "A pipeline run is already in progress."; return; }
-        // The service also throws if called directly:
+        // The service throws if called while already running
         var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "99", "agent-1", CancellationToken.None);
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*already in progress*");
+
+        // Cleanup
+        agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                Tests = new GateResult { GateName = "Tests", Passed = true }
+            });
+        await startTask;
     }
 
     [Fact]
     public async Task StartPipeline_PageGuard_ChecksIsRunningBeforeCalling()
     {
-        // Validates the page's guard logic: when IsRunning is true, the page sets an error message
-        // and does NOT call StartPipelineAsync
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        // Use a blocking agent to keep the pipeline running
+        var agentTcs = new TaskCompletionSource<AgentResult>();
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns(agentTcs.Task);
+
+        var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Replicate the page's guard logic
         string? errorMessage = null;
@@ -230,135 +243,64 @@ public class AgentCodingPageTests
         }
 
         errorMessage.Should().Be("A pipeline run is already in progress.");
-    }
 
-    // --- Requirement 7.5: Empty chat submission ignored ---
-
-    [Fact]
-    public async Task SendChatMessage_EmptyString_IsIgnoredByPageGuard()
-    {
-        // The page's SendChatMessage checks: if (string.IsNullOrWhiteSpace(_chatInput) || _isSending) return;
-        // This validates that empty/whitespace inputs are rejected before reaching the service
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        await _service.ApproveAnalysisAsync(CancellationToken.None);
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
-
-        var chatCountBefore = run.ChatHistory.Count;
-
-        // Replicate the page's guard: empty string
-        string chatInput = "";
-        bool isSending = false;
-        if (!string.IsNullOrWhiteSpace(chatInput) || isSending)
-        {
-            // Would call SendChatMessageAsync — but guard prevents it
-            await _service.SendChatMessageAsync(chatInput, CancellationToken.None);
-        }
-
-        run.ChatHistory.Count.Should().Be(chatCountBefore, "empty input should not add to chat history");
-    }
-
-    [Fact]
-    public async Task SendChatMessage_WhitespaceOnly_IsIgnoredByPageGuard()
-    {
-        // Whitespace-only input is also rejected by the page guard
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        await _service.ApproveAnalysisAsync(CancellationToken.None);
-        var chatCountBefore = run.ChatHistory.Count;
-
-        string chatInput = "   \t  ";
-        bool isSending = false;
-        if (!string.IsNullOrWhiteSpace(chatInput) || isSending)
-        {
-            await _service.SendChatMessageAsync(chatInput, CancellationToken.None);
-        }
-
-        run.ChatHistory.Count.Should().Be(chatCountBefore, "whitespace-only input should not add to chat history");
-    }
-
-    [Fact]
-    public async Task SendChatMessage_ValidInput_AddsToHistory()
-    {
-        // Contrast: a valid non-empty message does get sent
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        await _service.ApproveAnalysisAsync(CancellationToken.None);
-        var chatCountBefore = run.ChatHistory.Count;
-
-        string chatInput = "fix the tests";
-        bool isSending = false;
-        if (!string.IsNullOrWhiteSpace(chatInput) || isSending)
-        {
-            await _service.SendChatMessageAsync(chatInput, CancellationToken.None);
-        }
-
-        run.ChatHistory.Count.Should().BeGreaterThan(chatCountBefore);
-        run.ChatHistory.Should().Contain(e => e.Role == ChatRole.User && e.Content == "fix the tests");
-    }
-
-    // --- Requirement 7.4: Button disabled states during agent execution ---
-
-    [Fact]
-    public async Task DuringAgentExecution_IsSendingFlag_DisablesInputAndProceed()
-    {
-        // The page sets _isSending = true before calling SendChatMessageAsync,
-        // which disables the text input and "Proceed to Quality Gates" button.
-        // We validate this by checking that the service transitions to GeneratingCode
-        // during SendChatMessageAsync (which is when _isSending would be true).
-
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        await _service.ApproveAnalysisAsync(CancellationToken.None);
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
-
-        // NOW override the mock to hold the agent execution so we can observe the intermediate state.
-        // This must happen AFTER StartPipelineAsync/ApproveAnalysisAsync which also call ExecuteAsync.
-        var agentTcs = new TaskCompletionSource<AgentResult>();
-        _mockAgentProvider.Setup(p => p.ExecuteAsync(
-                It.Is<AgentRequest>(r => r.UseResume),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .Returns(agentTcs.Task);
-
-        // Start sending a chat message (will block on agent execution)
-        var sendTask = _service.SendChatMessageAsync("fix the tests", CancellationToken.None);
-
-        // While agent is running, the step should be GeneratingCode
-        // The page uses _isSending flag which maps to this state
-        run.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
-
-        // Complete the agent execution
+        // Cleanup
         agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        await sendTask;
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                Tests = new GateResult { GateName = "Tests", Passed = true }
+            });
+        await startTask;
+    }
 
-        // After completion, returns to WaitingForChat
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+    // --- Pipeline transitions through GeneratingCode ---
+
+    [Fact]
+    public async Task DuringAgentExecution_StepIsGeneratingCode()
+    {
+        // Block only the code generation call (second ExecuteAsync), let analysis complete
+        var agentTcs = new TaskCompletionSource<AgentResult>();
+        var callCount = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, ct, onLine) =>
+            {
+                callCount++;
+                if (callCount <= 1) return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                return agentTcs.Task;
+            });
+
+        var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await Task.Delay(200);
+
+        _service.ActiveRun!.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
+
+        agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        await startTask;
     }
 
     [Fact]
-    public async Task DuringQualityGates_IsSendingFlag_DisablesInputAndProceed()
+    public async Task DuringQualityGates_StepIsRunningQualityGates()
     {
-        // The page also sets _isSending = true during ProceedToQualityGatesAsync
+        // Block the quality gate validator so we can observe RunningQualityGates
         var gateTcs = new TaskCompletionSource<QualityGateReport>();
         _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
             .Returns(gateTcs.Task);
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        await _service.ApproveAnalysisAsync(CancellationToken.None);
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+        var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await Task.Delay(200);
 
-        // Start proceeding to quality gates (will block on validation)
-        var proceedTask = _service.ProceedToQualityGatesAsync(CancellationToken.None);
+        _service.ActiveRun!.CurrentStep.Should().Be(PipelineStep.RunningQualityGates);
 
-        // During quality gate execution, step should be RunningQualityGates
-        run.CurrentStep.Should().Be(PipelineStep.RunningQualityGates);
-
-        // Complete the quality gate validation
         gateTcs.SetResult(new QualityGateReport
         {
             Compilation = new GateResult { GateName = "Compilation", Passed = true },
             Tests = new GateResult { GateName = "Tests", Passed = true }
         });
-        await proceedTask;
+        await startTask;
 
-        // After gates pass, pipeline completes
-        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        _service.ActiveRun.CurrentStep.Should().Be(PipelineStep.Completed);
     }
 
     // --- Issue provider loading and connectivity errors ---
@@ -395,7 +337,7 @@ public class AgentCodingPageTests
     [Fact]
     public async Task FetchIssues_WhenProviderThrows_SetsErrorMessage()
     {
-        // Simulates connectivity error when loading issue list (Requirement 1.7)
+        // Simulates connectivity error when loading issue list
         _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Connection refused"));
 
@@ -425,6 +367,13 @@ public class AgentCodingPageTests
     public async Task OnChange_FiresDuringPipelineExecution()
     {
         // The page subscribes to OnChange for StateHasChanged calls
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                Tests = new GateResult { GateName = "Tests", Passed = true }
+            });
+
         int changeCount = 0;
         _service.OnChange += () => changeCount++;
 

@@ -311,73 +311,6 @@
                         </div>
                     </div>
                 }
-
-                <!-- Analysis Approval View -->
-                @if (run.CurrentStep == PipelineStep.WaitingForAnalysisApproval)
-                {
-                    <div class="analysis-approval-panel">
-                        <h2>Review Agent Analysis</h2>
-                        <p class="analysis-subtitle">The agent analyzed the codebase in context of issue <strong>#@run.IssueIdentifier @run.IssueTitle</strong>. Review the analysis before proceeding to implementation.</p>
-
-                        <div class="analysis-content" id="analysisContent">
-                            @if (!string.IsNullOrWhiteSpace(run.AnalysisContent))
-                            {
-                                <pre class="analysis-text">@run.AnalysisContent</pre>
-                            }
-                            else
-                            {
-                                <p class="analysis-fallback">Agent analysis was not available. A metadata-based analysis was posted to the issue instead.</p>
-                            }
-                        </div>
-
-                        <div class="analysis-actions">
-                            <button class="btn-save" @onclick="ApproveAnalysis">
-                                ✅ Approve &amp; Continue to Implementation
-                            </button>
-                        </div>
-                    </div>
-                }
-
-                <!-- Chat Panel View -->
-                @if (run.CurrentStep == PipelineStep.WaitingForChat)
-                {
-                    <div class="chat-panel">
-                        <h2>Chat with Agent</h2>
-
-                        <div class="chat-history" id="chatHistory">
-                            @foreach (var entry in run.ChatHistory.ToArray())
-                            {
-                                <div class="chat-entry chat-@entry.Role.ToString().ToLowerInvariant()">
-                                    <div class="chat-role">
-                                        @(entry.Role == ChatRole.User ? "You" : entry.Role == ChatRole.Agent ? "Agent" : "System")
-                                        <span class="chat-timestamp">@entry.Timestamp.ToLocalTime().ToString("h:mm tt")</span>
-                                    </div>
-                                    <pre class="chat-content">@entry.Content</pre>
-                                </div>
-                            }
-                        </div>
-
-                        <div class="chat-input-area">
-                            <div class="input-row">
-                                <input type="text"
-                                       @bind="_chatInput"
-                                       @bind:event="oninput"
-                                       @onkeydown="HandleChatKeyDown"
-                                       placeholder="Send follow-up instructions..."
-                                       disabled="@_isSending"
-                                       class="prompt-input" />
-                                <button class="send-button" @onclick="SendChatMessage" disabled="@_isSending">
-                                    @(_isSending ? "⏳" : "Send")
-                                </button>
-                            </div>
-                            <div class="chat-actions">
-                                <button class="btn-save" @onclick="ProceedToQualityGates" disabled="@_isSending">
-                                    Proceed to Quality Gates
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                }
             }
         </div>
 
@@ -411,8 +344,6 @@
     private string? _errorMessage;
     private bool _loadingIssues;
     private bool _showCompletionOnly;
-    private string _chatInput = "";
-    private bool _isSending;
     private bool _disposed;
     private Timer? _elapsedTimer;
     private int _maxRetries = 3;
@@ -516,7 +447,6 @@
                 try
                 {
                     await JS.InvokeVoidAsync("scrollToBottom", "outputPanel");
-                    await JS.InvokeVoidAsync("scrollToBottom", "chatHistory");
                     await JS.InvokeVoidAsync("scrollActiveStepIntoView", "sidebarSteps");
                 }
                 catch { }
@@ -673,85 +603,6 @@
         catch (Exception ex)
         {
             _errorMessage = $"Failed to start pipeline: {ex.Message}";
-        }
-    }
-
-    private async Task HandleChatKeyDown(KeyboardEventArgs e)
-    {
-        if (e.Key == "Enter" && !_isSending)
-        {
-            await SendChatMessage();
-        }
-    }
-
-    private async Task SendChatMessage()
-    {
-        if (string.IsNullOrWhiteSpace(_chatInput) || _isSending)
-            return;
-
-        var message = _chatInput;
-        _chatInput = "";
-        _isSending = true;
-        _errorMessage = null;
-
-        try
-        {
-            await PipelineService.SendChatMessageAsync(message, CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            _errorMessage = $"Chat error: {ex.Message}";
-        }
-        finally
-        {
-            _isSending = false;
-        }
-    }
-
-    private async Task ProceedToQualityGates()
-    {
-        _isSending = true;
-        _errorMessage = null;
-
-        try
-        {
-            await PipelineService.ProceedToQualityGatesAsync(CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            _errorMessage = $"Quality gate error: {ex.Message}";
-        }
-        finally
-        {
-            _isSending = false;
-        }
-    }
-
-    private async Task ApproveAnalysis()
-    {
-        _errorMessage = null;
-
-        try
-        {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await PipelineService.ApproveAnalysisAsync(CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    await InvokeAsync(() =>
-                    {
-                        _errorMessage = $"Pipeline failed: {ex.Message}";
-                        StateHasChanged();
-                    });
-                }
-            });
-        }
-        catch (Exception ex)
-        {
-            _errorMessage = $"Failed to approve analysis: {ex.Message}";
         }
     }
 
