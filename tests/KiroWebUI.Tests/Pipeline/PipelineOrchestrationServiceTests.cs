@@ -534,6 +534,15 @@ public class PipelineOrchestrationServiceTests
         config.CodeReview.Enabled.Should().BeTrue();
         config.CodeReview.MaxIterations.Should().Be(1);
         config.CodeReview.Prompt.Should().Contain("sub-agent");
+        config.CodeReview.Prompt.Should().Contain("CHECK FOR:");
+        config.CodeReview.Prompt.Should().Contain("DO NOT FLAG:");
+        config.CodeReview.Prompt.Should().Contain("[CRITICAL]");
+        config.CodeReview.Prompt.Should().Contain("[WARNING]");
+        config.CodeReview.Prompt.Should().Contain("[SUGGESTION]");
+        config.CodeReview.Prompt.Should().Contain("Do NOT fix anything");
+        config.CodeReview.Prompt.Should().Contain("IDisposable");
+        config.CodeReview.Prompt.Should().Contain("Async/await");
+        config.CodeReview.Prompt.Should().Contain("CancellationToken");
         config.CodeReview.FixPrompt.Should().BeNull();
         config.AutonomousMode.Should().BeTrue();
     }

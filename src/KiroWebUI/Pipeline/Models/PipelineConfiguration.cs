@@ -29,9 +29,28 @@ public sealed class CodeReviewConfiguration
 public sealed class PipelineConfiguration
 {
     public const string DefaultCodeReviewPrompt =
-        "Use a sub-agent to review the changes you just made against the original issue requirements. " +
-        "The sub-agent should check for: correctness against acceptance criteria, code quality and " +
-        "project conventions, unhandled edge cases, and security gaps. Fix any issues the review finds.";
+        "Review the changes against the original issue requirements. Use a sub-agent for the review.\n" +
+        "Output findings as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
+        "CHECK FOR:\n" +
+        "- Logic errors against acceptance criteria\n" +
+        "- Unhandled null references and exception paths\n" +
+        "- Off-by-one errors in loops and collections\n" +
+        "- Race conditions in async code\n" +
+        "- Missing input validation on public API boundaries\n" +
+        "- Edge cases not covered by the implementation\n" +
+        "- IDisposable resources not properly disposed (missing using/await using)\n" +
+        "- Async/await deadlock patterns (sync-over-async, .Result, .Wait())\n" +
+        "- CancellationToken not propagated through async call chains\n\n" +
+        "DO NOT FLAG:\n" +
+        "- Style preferences or naming conventions\n" +
+        "- Missing XML documentation comments\n" +
+        "- Theoretical risks requiring unlikely preconditions\n" +
+        "- Issues in unchanged code outside the diff\n" +
+        "- \"Consider using library X\" suggestions\n" +
+        "- Performance micro-optimizations\n" +
+        "- Missing nullable annotations on internal code\n" +
+        "- Test code conventions\n\n" +
+        "Do NOT fix anything. Only report findings.";
 
     public const string DefaultFixPrompt =
         "Review the findings above. Fix only items marked [CRITICAL]. " +
