@@ -570,30 +570,6 @@
                                 <textarea @bind="_pipelineConfig.CodeReviewFixPrompt" rows="3"></textarea>
                                 <button type="button" class="btn-revert" disabled="@(_pipelineConfig.CodeReviewFixPrompt == PipelineConfiguration.DefaultFixPrompt)" @onclick="() => _pipelineConfig.CodeReviewFixPrompt = PipelineConfiguration.DefaultFixPrompt">Reset to default</button>
                             </div>
-                            <div class="form-group form-checkbox">
-                                <label>
-                                    <input type="checkbox" @bind="_pipelineConfig.RiskTiersEnabled" />
-                                    Risk-Based Review Tiering
-                                    <span class="form-hint-icon" aria-hidden="true" title="Skip review for small changes, force full review for security-sensitive paths">?</span>
-                                </label>
-                            </div>
-                            @if (_pipelineConfig.RiskTiersEnabled)
-                            {
-                                <div class="config-sub-fields">
-                                    <div class="form-group">
-                                        <label>Skip Threshold: Max Files</label>
-                                        <input type="number" @bind="_pipelineConfig.RiskTierSkipMaxFiles" min="0" max="100" />
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Skip Threshold: Max Lines</label>
-                                        <input type="number" @bind="_pipelineConfig.RiskTierSkipMaxLines" min="0" max="1000" />
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Security Paths <span class="form-hint">(comma-separated prefixes that always trigger full review)</span></label>
-                                        <input type="text" @bind="_pipelineConfig.SecurityPathsText" placeholder="auth/, crypto/, credentials, .env, appsettings" />
-                                    </div>
-                                </div>
-                            }
                         </div>
                     }
                     <div class="form-group form-checkbox">
@@ -789,10 +765,6 @@
                 ReviewAgents = config.CodeReview.Agents is { Count: > 0 }
                     ? config.CodeReview.Agents.Select(a => new AgentFormEntry { Name = a.Name, Prompt = a.Prompt }).ToList()
                     : PipelineConfiguration.DefaultReviewAgents.Select(a => new AgentFormEntry { Name = a.Name, Prompt = a.Prompt }).ToList(),
-                RiskTiersEnabled = config.CodeReview.RiskTiers != null,
-                RiskTierSkipMaxFiles = config.CodeReview.RiskTiers?.Skip?.MaxFiles ?? 5,
-                RiskTierSkipMaxLines = config.CodeReview.RiskTiers?.Skip?.MaxLines ?? 30,
-                SecurityPathsText = config.CodeReview.RiskTiers?.SecurityPaths is { } sp ? string.Join(", ", sp) : "",
                 AnalysisPrompt = config.AnalysisPrompt,
                 ImplementationPrompt = config.ImplementationPrompt,
                 ExternalCiEnabled = config.ExternalCiEnabled,
@@ -1527,20 +1499,7 @@
                         .Select(a => new ReviewAgentConfig { Name = a.Name.Trim(), Prompt = a.Prompt.Trim() })
                         .ToArray()
                     : null,
-                RiskTiers = _pipelineConfig.RiskTiersEnabled
-                    ? new CodeReviewRiskTiers
-                    {
-                        Skip = new RiskThreshold
-                        {
-                            MaxFiles = _pipelineConfig.RiskTierSkipMaxFiles,
-                            MaxLines = _pipelineConfig.RiskTierSkipMaxLines,
-                        },
-                        SecurityPaths = _pipelineConfig.SecurityPathsText
-                            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                            .Where(s => !string.IsNullOrWhiteSpace(s))
-                            .ToArray(),
-                    }
-                    : null,
+                RiskTiers = null,
             },
             AnalysisPrompt = _pipelineConfig.AnalysisPrompt,
             ImplementationPrompt = _pipelineConfig.ImplementationPrompt,
@@ -1740,10 +1699,6 @@
         public string? CodeReviewFixPrompt { get; set; }
         public bool MultiAgentReviewEnabled { get; set; }
         public List<AgentFormEntry> ReviewAgents { get; set; } = new();
-        public bool RiskTiersEnabled { get; set; }
-        public int RiskTierSkipMaxFiles { get; set; } = 5;
-        public int RiskTierSkipMaxLines { get; set; } = 30;
-        public string SecurityPathsText { get; set; } = "";
         public string AnalysisPrompt { get; set; } = PipelineConfiguration.DefaultAnalysisPrompt;
         public string ImplementationPrompt { get; set; } = PipelineConfiguration.DefaultImplementationPrompt;
         public bool ExternalCiEnabled { get; set; }
