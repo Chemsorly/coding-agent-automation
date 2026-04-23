@@ -69,7 +69,7 @@ public static partial class PipelineFormatting
         IReadOnlyList<IssueComment>? comments = null,
         IReadOnlyList<string>? blacklistedFilesDetected = null,
         string? modelName = null,
-        string? codeReviewRawFindings = null)
+        CodeReviewSummary? codeReviewSummary = null)
     {
         var sb = new StringBuilder();
 
@@ -146,15 +146,7 @@ public static partial class PipelineFormatting
             sb.AppendLine();
         }
 
-        if (!string.IsNullOrEmpty(codeReviewRawFindings))
-        {
-            sb.AppendLine("## Code Review Findings");
-            var truncated = codeReviewRawFindings.Length > 2000
-                ? codeReviewRawFindings[..2000] + "…"
-                : codeReviewRawFindings;
-            sb.AppendLine(truncated);
-            sb.AppendLine();
-        }
+        AppendCodeReviewSection(sb, codeReviewSummary);
 
         sb.AppendLine("---");
         if (!string.IsNullOrEmpty(modelName))
@@ -189,6 +181,60 @@ public static partial class PipelineFormatting
                 return true;
         }
         return false;
+    }
+
+    private static void AppendCodeReviewSection(StringBuilder sb, CodeReviewSummary? summary)
+    {
+        if (summary is null)
+            return;
+
+        sb.AppendLine("## AI Code Review Findings");
+        sb.AppendLine();
+
+        if (string.Equals(summary.Tier, "skip", StringComparison.OrdinalIgnoreCase))
+        {
+            sb.AppendLine($"Code review skipped (small change: {summary.FilesChanged} files, {summary.LinesChanged} lines)");
+            sb.AppendLine();
+            return;
+        }
+
+        if (summary.CriticalCount == 0 && summary.WarningCount == 0 && summary.SuggestionCount == 0
+            && string.IsNullOrEmpty(summary.RawFindings))
+        {
+            sb.AppendLine("Code review: no findings");
+            sb.AppendLine();
+            return;
+        }
+
+        if (summary.AgentsRun.Count > 0)
+            sb.AppendLine($"**Agents**: {string.Join(", ", summary.AgentsRun)} | **Tier**: {summary.Tier}");
+        else
+            sb.AppendLine($"**Tier**: {summary.Tier}");
+        sb.AppendLine();
+
+        sb.AppendLine("| Severity | Count | Action |");
+        sb.AppendLine("|----------|-------|--------|");
+        if (summary.CriticalCount > 0)
+            sb.AppendLine($"| CRITICAL | {summary.CriticalCount} | Fixed |");
+        if (summary.WarningCount > 0)
+            sb.AppendLine($"| WARNING | {summary.WarningCount} | Reported (TODO comments added) |");
+        if (summary.SuggestionCount > 0)
+            sb.AppendLine($"| SUGGESTION | {summary.SuggestionCount} | Reported only |");
+        sb.AppendLine();
+
+        if (!string.IsNullOrEmpty(summary.RawFindings))
+        {
+            var truncated = summary.RawFindings.Length > 2000
+                ? summary.RawFindings[..2000] + "…"
+                : summary.RawFindings;
+            sb.AppendLine("<details>");
+            sb.AppendLine("<summary>Raw findings</summary>");
+            sb.AppendLine();
+            sb.AppendLine(truncated);
+            sb.AppendLine();
+            sb.AppendLine("</details>");
+            sb.AppendLine();
+        }
     }
 
     private static void AppendInputComments(StringBuilder sb, IReadOnlyList<IssueComment>? comments)
