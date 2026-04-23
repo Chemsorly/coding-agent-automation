@@ -694,9 +694,31 @@ public class PipelineOrchestrationService : IDisposable
                             ? string.Join(Environment.NewLine, reviewResult.OutputLines.TakeLast(10))
                             : "(no output)";
 
+                        // Parse severity counts from review output (find/fix separation)
+                        var fullReviewText = reviewResult.OutputLines.Count > 0
+                            ? string.Join(Environment.NewLine, reviewResult.OutputLines)
+                            : "";
+                        var severityCounts = SeverityParser.Parse(reviewResult.OutputLines);
+                        Interlocked.Add(ref run.CodeReviewCriticalCount, severityCounts.Critical);
+                        Interlocked.Add(ref run.CodeReviewWarningCount, severityCounts.Warning);
+                        Interlocked.Add(ref run.CodeReviewSuggestionCount, severityCounts.Suggestion);
+
+                        if (!string.IsNullOrEmpty(fullReviewText))
+                        {
+                            const int maxRawFindingsLength = 10_000;
+                            var newFindings = run.CodeReviewRawFindings is null
+                                ? fullReviewText
+                                : $"{run.CodeReviewRawFindings}{Environment.NewLine}--- Iteration {i + 1} ---{Environment.NewLine}{fullReviewText}";
+                            run.CodeReviewRawFindings = newFindings.Length > maxRawFindingsLength
+                                ? newFindings[..maxRawFindingsLength]
+                                : newFindings;
+                        }
+
                         _logger.Information(
-                            "Pipeline {RunId} code review iteration {Iteration} completed with exit code {ExitCode}. Review output: {ReviewOutput}",
-                            run.RunId, i + 1, reviewResult.ExitCode, reviewOutput);
+                            "Pipeline {RunId} code review iteration {Iteration} completed with exit code {ExitCode}. " +
+                            "CodeReviewFindings: {Critical} critical, {Warning} warning, {Suggestion} suggestion",
+                            run.RunId, i + 1, reviewResult.ExitCode,
+                            severityCounts.Critical, severityCounts.Warning, severityCounts.Suggestion);
 
                         run.ChatHistory.Enqueue(new ChatEntry
                         {
@@ -704,6 +726,46 @@ public class PipelineOrchestrationService : IDisposable
                             Content = $"[Code review {i + 1}/{_activeConfig.CodeReview.MaxIterations}] {reviewOutput}"
                         });
                         NotifyChange();
+
+                        // Fix phase: send fix prompt only when FixPrompt is configured and CRITICALs found
+                        if (!string.IsNullOrEmpty(_activeConfig.CodeReview.FixPrompt) && severityCounts.Critical > 0)
+                        {
+                            _logger.Information(
+                                "Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected, sending fix prompt",
+                                run.RunId, i + 1, severityCounts.Critical);
+
+                            var fixPrompt = PromptBuilder.BuildFixPrompt(
+                                _activeConfig.CodeReview.FixPrompt, fullReviewText);
+                            _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
+
+                            await _activeAgentProvider!.ExecuteAsync(
+                                new AgentRequest
+                                {
+                                    Prompt = fixPrompt,
+                                    WorkspacePath = run.WorkspacePath!,
+                                    Timeout = _activeConfig.AgentTimeout,
+                                    UseResume = true
+                                },
+                                linkedCt,
+                                line =>
+                                {
+                                    run.OutputLines.Enqueue(line);
+                                    OnOutputLine?.Invoke(line);
+                                });
+
+                            run.ChatHistory.Enqueue(new ChatEntry
+                            {
+                                Role = ChatRole.Agent,
+                                Content = $"[Code review fix {i + 1}/{_activeConfig.CodeReview.MaxIterations}] Applied CRITICAL fixes"
+                            });
+                            NotifyChange();
+                        }
+                        else if (!string.IsNullOrEmpty(_activeConfig.CodeReview.FixPrompt))
+                        {
+                            _logger.Information(
+                                "Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings, skipping fix prompt",
+                                run.RunId, i + 1);
+                        }
                     }
                     catch (OperationCanceledException) when (_cancellationTokenSource?.IsCancellationRequested == true)
                     {
@@ -1135,7 +1197,8 @@ public class PipelineOrchestrationService : IDisposable
                 coverage, fileChanges, issueTitle, issueDescription,
                 acceptanceCriteria, isDraft, _activeIssueComments,
                 run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
-                run.ModelName);
+                run.ModelName,
+                run.CodeReviewRawFindings);
 
             var prInfo = new PullRequestInfo
             {

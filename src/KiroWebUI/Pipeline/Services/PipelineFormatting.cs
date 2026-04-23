@@ -68,7 +68,8 @@ public static partial class PipelineFormatting
         bool isDraft = false,
         IReadOnlyList<IssueComment>? comments = null,
         IReadOnlyList<string>? blacklistedFilesDetected = null,
-        string? modelName = null)
+        string? modelName = null,
+        string? codeReviewRawFindings = null)
     {
         var sb = new StringBuilder();
 
@@ -142,6 +143,16 @@ public static partial class PipelineFormatting
             sb.AppendLine("The following agent-modified files were excluded from this commit (protected paths):");
             foreach (var file in blacklistedFilesDetected)
                 sb.AppendLine($"- `{file}`");
+            sb.AppendLine();
+        }
+
+        if (!string.IsNullOrEmpty(codeReviewRawFindings))
+        {
+            sb.AppendLine("## Code Review Findings");
+            var truncated = codeReviewRawFindings.Length > 2000
+                ? codeReviewRawFindings[..2000] + "…"
+                : codeReviewRawFindings;
+            sb.AppendLine(truncated);
             sb.AppendLine();
         }
 

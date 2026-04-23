@@ -30,6 +30,18 @@ public sealed class PipelineRun
     /// <summary>Total code review iterations configured for this run.</summary>
     public int CodeReviewIterationsTotal { get; set; }
 
+    /// <summary>Number of [CRITICAL] findings detected across all review iterations. Use Interlocked for thread-safe updates.</summary>
+    public int CodeReviewCriticalCount;
+
+    /// <summary>Number of [WARNING] findings detected across all review iterations. Use Interlocked for thread-safe updates.</summary>
+    public int CodeReviewWarningCount;
+
+    /// <summary>Number of [SUGGESTION] findings detected across all review iterations. Use Interlocked for thread-safe updates.</summary>
+    public int CodeReviewSuggestionCount;
+
+    /// <summary>Raw findings text from the review step, for inclusion in PR descriptions.</summary>
+    public string? CodeReviewRawFindings { get; set; }
+
     /// <summary>Thread-safe collections — mutated by orchestration service while UI reads via OnChange.</summary>
     public ConcurrentBag<string> RetryErrors { get; init; } = new();
     public ConcurrentQueue<ChatEntry> ChatHistory { get; init; } = new();

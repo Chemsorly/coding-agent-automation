@@ -535,6 +535,11 @@
                                 <textarea @bind="_pipelineConfig.CodeReviewPrompt" rows="4"></textarea>
                                 <button type="button" class="btn-revert" disabled="@(_pipelineConfig.CodeReviewPrompt == PipelineConfiguration.DefaultCodeReviewPrompt)" @onclick="() => _pipelineConfig.CodeReviewPrompt = PipelineConfiguration.DefaultCodeReviewPrompt">Reset to default</button>
                             </div>
+                            <div class="form-group">
+                                <label>Fix Prompt <span class="form-hint">(leave empty for single-pass review)</span></label>
+                                <textarea @bind="_pipelineConfig.CodeReviewFixPrompt" rows="3"></textarea>
+                                <button type="button" class="btn-revert" disabled="@(_pipelineConfig.CodeReviewFixPrompt == PipelineConfiguration.DefaultFixPrompt)" @onclick="() => _pipelineConfig.CodeReviewFixPrompt = PipelineConfiguration.DefaultFixPrompt">Reset to default</button>
+                            </div>
                         </div>
                     }
                     <div class="form-group form-checkbox">
@@ -725,6 +730,7 @@
                 CodeReviewEnabled = config.CodeReview.Enabled,
                 CodeReviewMaxIterations = config.CodeReview.MaxIterations,
                 CodeReviewPrompt = config.CodeReview.Prompt,
+                CodeReviewFixPrompt = config.CodeReview.FixPrompt,
                 AnalysisPrompt = config.AnalysisPrompt,
                 ImplementationPrompt = config.ImplementationPrompt,
                 ExternalCiEnabled = config.ExternalCiEnabled,
@@ -1446,6 +1452,7 @@
                 Enabled = _pipelineConfig.CodeReviewEnabled,
                 MaxIterations = _pipelineConfig.CodeReviewMaxIterations,
                 Prompt = _pipelineConfig.CodeReviewPrompt,
+                FixPrompt = _pipelineConfig.CodeReviewFixPrompt,
             },
             AnalysisPrompt = _pipelineConfig.AnalysisPrompt,
             ImplementationPrompt = _pipelineConfig.ImplementationPrompt,
@@ -1636,6 +1643,7 @@
         public bool CodeReviewEnabled { get; set; } = true;
         public int CodeReviewMaxIterations { get; set; } = 1;
         public string CodeReviewPrompt { get; set; } = PipelineConfiguration.DefaultCodeReviewPrompt;
+        public string? CodeReviewFixPrompt { get; set; }
         public string AnalysisPrompt { get; set; } = PipelineConfiguration.DefaultAnalysisPrompt;
         public string ImplementationPrompt { get; set; } = PipelineConfiguration.DefaultImplementationPrompt;
         public bool ExternalCiEnabled { get; set; }

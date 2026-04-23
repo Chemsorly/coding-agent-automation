@@ -62,6 +62,11 @@
             <span class="result-strip-sep">│</span>
             <span>Files: @Run.FilesChangedCount (+@Run.LinesAdded -@Run.LinesRemoved)</span>
             <span class="result-strip-sep">│</span>
+            @if (Run.CodeReviewCriticalCount > 0 || Run.CodeReviewWarningCount > 0 || Run.CodeReviewSuggestionCount > 0)
+            {
+                <span>Review: 🔴@(Run.CodeReviewCriticalCount) 🟡@(Run.CodeReviewWarningCount) 🔵@(Run.CodeReviewSuggestionCount)</span>
+                <span class="result-strip-sep">│</span>
+            }
             <span>Retries: @Run.RetryCount@(MaxRetries.HasValue ? $"/{MaxRetries}" : "")</span>
         </div>
     }
