@@ -12,6 +12,15 @@ public enum BlacklistMode
     Fail
 }
 
+/// <summary>
+/// Configuration for a single specialized review agent.
+/// </summary>
+public sealed class ReviewAgentConfig
+{
+    public required string Name { get; init; }
+    public required string Prompt { get; init; }
+}
+
 public sealed class CodeReviewConfiguration
 {
     public bool Enabled { get; init; } = true;
@@ -31,6 +40,13 @@ public sealed class CodeReviewConfiguration
     /// get standard review (current behavior).
     /// </summary>
     public CodeReviewRiskTiers? RiskTiers { get; init; }
+
+    /// <summary>
+    /// When populated, the review step runs each agent sequentially instead of using the
+    /// single <see cref="Prompt"/>. The second agent onwards sees previous findings via
+    /// <c>--resume</c>. When null or empty, falls back to the single <see cref="Prompt"/>.
+    /// </summary>
+    public IReadOnlyList<ReviewAgentConfig>? Agents { get; init; }
 }
 
 /// <summary>
@@ -83,6 +99,51 @@ public sealed class PipelineConfiguration
     public const string DefaultFixPrompt =
         "Review the findings above. Fix only items marked [CRITICAL]. " +
         "For [WARNING] items, add a TODO comment at the relevant location. Ignore [SUGGESTION] items.";
+
+    public const string DefaultCorrectnessReviewPrompt =
+        "Review the changes against the original issue requirements. Use a sub-agent for the review. " +
+        "Output findings as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
+        "CHECK FOR:\n" +
+        "- Logic errors against acceptance criteria\n" +
+        "- Unhandled null references and exception paths\n" +
+        "- Off-by-one errors in loops and collections\n" +
+        "- Race conditions in async code\n" +
+        "- Missing input validation on public API boundaries\n" +
+        "- Edge cases not covered by the implementation\n\n" +
+        "DO NOT FLAG:\n" +
+        "- Style preferences or naming conventions\n" +
+        "- Missing XML documentation comments\n" +
+        "- Theoretical risks requiring unlikely preconditions\n" +
+        "- Issues in unchanged code outside the diff\n" +
+        "- \"Consider using library X\" suggestions\n" +
+        "- Performance micro-optimizations\n\n" +
+        "Do NOT fix anything. Only report findings.";
+
+    public const string DefaultDotNetSpecialistReviewPrompt =
+        "Review the changes for .NET-specific issues. The previous review covered correctness — " +
+        "do not duplicate those findings. Output findings as a numbered list with severity " +
+        "[CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
+        "CHECK FOR:\n" +
+        "- IDisposable resources not properly disposed (missing using/await using)\n" +
+        "- Async/await deadlock patterns (sync-over-async, .Result, .Wait())\n" +
+        "- DI lifetime mismatches (scoped service injected into singleton)\n" +
+        "- CancellationToken not propagated through async call chains\n" +
+        "- ArgumentNullException.ThrowIfNull missing on public method parameters\n" +
+        "- Collections exposed as mutable (List<T> instead of IReadOnlyList<T>)\n\n" +
+        "DO NOT FLAG:\n" +
+        "- Business logic correctness (already covered by previous review)\n" +
+        "- Style or formatting preferences\n" +
+        "- Missing nullable annotations on internal code\n" +
+        "- Test code conventions\n" +
+        "- Suggestions to add more abstractions or interfaces\n\n" +
+        "Do NOT fix anything. Only report findings.";
+
+    /// <summary>Default review agents: Correctness + .NET Specialist.</summary>
+    public static IReadOnlyList<ReviewAgentConfig> DefaultReviewAgents { get; } = new[]
+    {
+        new ReviewAgentConfig { Name = "Correctness", Prompt = DefaultCorrectnessReviewPrompt },
+        new ReviewAgentConfig { Name = "DotNetSpecialist", Prompt = DefaultDotNetSpecialistReviewPrompt }
+    };
 
     public const string DefaultAnalysisPrompt =
         "Analyze the codebase in context of the following issue. Read the issue carefully, " +

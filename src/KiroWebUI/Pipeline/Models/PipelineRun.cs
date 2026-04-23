@@ -86,4 +86,7 @@ public sealed class PipelineRun
 
     /// <summary>Risk tier applied to code review: "skip", "standard", or "full". Null when review is disabled.</summary>
     public string? CodeReviewTier { get; set; }
+
+    /// <summary>Names of review agents that were executed during this run.</summary>
+    public IReadOnlyList<string> CodeReviewAgentsRun { get; set; } = Array.Empty<string>();
 }

@@ -1911,4 +1911,381 @@ public class PipelineOrchestrationServiceTests
         // Verify skip was logged via chat history
         run.ChatHistory.Should().Contain(e => e.Content.Contains("Code review skipped"));
     }
+
+    // --- Multi-agent code review (QG-05d) ---
+
+    [Fact]
+    public async Task ApproveAnalysis_WithMultipleAgents_RunsAllSequentially()
+    {
+        var agents = new[]
+        {
+            new ReviewAgentConfig { Name = "Correctness", Prompt = "Check correctness." },
+            new ReviewAgentConfig { Name = "DotNetSpecialist", Prompt = "Check .NET issues." }
+        };
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    Agents = agents
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CodeReviewIterationsCompleted.Should().Be(1);
+
+        // Both agent prompts should have been sent
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Check correctness.") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Once);
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Check .NET issues.") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithMultipleAgents_AggregatesSeverityCounts()
+    {
+        var agents = new[]
+        {
+            new ReviewAgentConfig { Name = "Agent1", Prompt = "Agent1 prompt" },
+            new ReviewAgentConfig { Name = "Agent2", Prompt = "Agent2 prompt" }
+        };
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    Agents = agents
+                }
+            });
+
+        // Agent1 returns 1 CRITICAL + 2 WARNING, Agent2 returns 0 CRITICAL + 1 SUGGESTION
+        var callCount = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Agent1 prompt") || r.Prompt.Contains("Agent2 prompt")),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return callCount == 1
+                    ? new AgentResult { ExitCode = 0, OutputLines = new[] { "[CRITICAL] Bug", "[WARNING] W1", "[WARNING] W2" } }
+                    : new AgentResult { ExitCode = 0, OutputLines = new[] { "[SUGGESTION] S1" } };
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CodeReviewCriticalCount.Should().Be(1);
+        run.CodeReviewWarningCount.Should().Be(2);
+        run.CodeReviewSuggestionCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithMultipleAgents_FixPromptSentOnceAfterAllAgents()
+    {
+        var agents = new[]
+        {
+            new ReviewAgentConfig { Name = "Agent1", Prompt = "Agent1 prompt" },
+            new ReviewAgentConfig { Name = "Agent2", Prompt = "Agent2 prompt" }
+        };
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    FixPrompt = PipelineConfiguration.DefaultFixPrompt,
+                    Agents = agents
+                }
+            });
+
+        // Agent1 returns CRITICAL, Agent2 returns WARNING
+        var agentCallCount = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Agent1 prompt") || r.Prompt.Contains("Agent2 prompt")),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(() =>
+            {
+                agentCallCount++;
+                return agentCallCount == 1
+                    ? new AgentResult { ExitCode = 0, OutputLines = new[] { "[CRITICAL] Bug found" } }
+                    : new AgentResult { ExitCode = 0, OutputLines = new[] { "[WARNING] Minor issue" } };
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        // Fix prompt sent exactly once, containing findings from both agents
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Fix only") && r.Prompt.Contains("[CRITICAL]") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithMultipleAgents_NoCriticals_NoFixPrompt()
+    {
+        var agents = new[]
+        {
+            new ReviewAgentConfig { Name = "Agent1", Prompt = "Agent1 prompt" },
+            new ReviewAgentConfig { Name = "Agent2", Prompt = "Agent2 prompt" }
+        };
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    FixPrompt = PipelineConfiguration.DefaultFixPrompt,
+                    Agents = agents
+                }
+            });
+
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Agent1 prompt") || r.Prompt.Contains("Agent2 prompt")),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = new[] { "[WARNING] Minor" } });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Fix only")),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithNullAgents_FallsBackToSinglePrompt()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    Prompt = "Single review prompt.",
+                    Agents = null
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CodeReviewIterationsCompleted.Should().Be(1);
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Single review prompt.") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithEmptyAgents_FallsBackToSinglePrompt()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    Prompt = "Fallback prompt.",
+                    Agents = Array.Empty<ReviewAgentConfig>()
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CodeReviewIterationsCompleted.Should().Be(1);
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Fallback prompt.") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithMultipleAgents_TracksAgentNames()
+    {
+        var agents = new[]
+        {
+            new ReviewAgentConfig { Name = "Correctness", Prompt = "Check correctness." },
+            new ReviewAgentConfig { Name = "DotNetSpecialist", Prompt = "Check .NET." }
+        };
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    Agents = agents
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "Correctness", "DotNetSpecialist" });
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithMultipleAgents_SecondAgentFails_FirstAgentCountsPreserved()
+    {
+        var agents = new[]
+        {
+            new ReviewAgentConfig { Name = "Agent1", Prompt = "Agent1 prompt" },
+            new ReviewAgentConfig { Name = "Agent2", Prompt = "Agent2 prompt" }
+        };
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    Agents = agents
+                }
+            });
+
+        var agentCallCount = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Agent1 prompt") || r.Prompt.Contains("Agent2 prompt")),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(() =>
+            {
+                agentCallCount++;
+                if (agentCallCount == 2)
+                    throw new InvalidOperationException("Agent2 crashed");
+                return new AgentResult { ExitCode = 0, OutputLines = new[] { "[CRITICAL] Bug", "[WARNING] W1" } };
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        // Agent1 counts preserved
+        run.CodeReviewCriticalCount.Should().Be(1);
+        run.CodeReviewWarningCount.Should().Be(1);
+        // Only Agent1 tracked
+        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "Agent1" });
+        // Pipeline continues
+        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithMultipleAgentsAndIterations_RunsAgentsPerIteration()
+    {
+        var agents = new[]
+        {
+            new ReviewAgentConfig { Name = "A1", Prompt = "A1 prompt" },
+            new ReviewAgentConfig { Name = "A2", Prompt = "A2 prompt" }
+        };
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 2,
+                    Agents = agents
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CodeReviewIterationsCompleted.Should().Be(2);
+
+        // Each agent called once per iteration = 2 calls each
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("A1 prompt")),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(2));
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("A2 prompt")),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(2));
+    }
+
+    [Fact]
+    public void CodeReviewDefaults_IncludeDefaultAgents()
+    {
+        var agents = PipelineConfiguration.DefaultReviewAgents;
+        agents.Should().HaveCount(2);
+        agents[0].Name.Should().Be("Correctness");
+        agents[0].Prompt.Should().Contain("Logic errors");
+        agents[0].Prompt.Should().Contain("[CRITICAL]");
+        agents[0].Prompt.Should().NotContain("IDisposable");
+        agents[1].Name.Should().Be("DotNetSpecialist");
+        agents[1].Prompt.Should().Contain("IDisposable");
+        agents[1].Prompt.Should().Contain("CancellationToken");
+        agents[1].Prompt.Should().NotContain("Logic errors");
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithNullAgents_TracksReviewFallbackName()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    Agents = null
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "Review" });
+    }
 }

@@ -701,78 +701,117 @@ public class PipelineOrchestrationService : IDisposable
                     });
                     NotifyChange();
 
+                    // Determine review agents: multi-agent or single-prompt fallback
+                    var agents = _activeConfig.CodeReview.Agents is { Count: > 0 } configuredAgents
+                        ? configuredAgents
+                        : (IReadOnlyList<ReviewAgentConfig>)new[] { new ReviewAgentConfig { Name = "Review", Prompt = _activeConfig.CodeReview.Prompt } };
+
+                    var iterationFindings = new System.Text.StringBuilder();
+                    var iterationCriticalCount = 0;
+                    var agentsRun = new List<string>();
+
                     try
                     {
-                        var reviewPrompt = PromptBuilder.BuildReviewPrompt(
-                            _activeConfig.CodeReview.Prompt,
-                            _activeIssue!,
-                            _activeParsedIssue!,
-                            _activeIssueComments);
-                        _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, reviewPrompt);
+                        for (var a = 0; a < agents.Count; a++)
+                        {
+                            var agent = agents[a];
+                            _logger.Information(
+                                "Pipeline {RunId} iteration {Iteration}: running review agent '{AgentName}' ({AgentIndex}/{AgentCount})",
+                                run.RunId, i + 1, agent.Name, a + 1, agents.Count);
 
-                        var reviewResult = await _activeAgentProvider!.ExecuteAsync(
-                            new AgentRequest
+                            run.ChatHistory.Enqueue(new ChatEntry
                             {
-                                Prompt = reviewPrompt,
-                                WorkspacePath = run.WorkspacePath!,
-                                Timeout = _activeConfig.AgentTimeout,
-                                UseResume = true
-                            },
-                            linkedCt,
-                            line =>
-                            {
-                                run.OutputLines.Enqueue(line);
-                                OnOutputLine?.Invoke(line);
+                                Role = ChatRole.System,
+                                Content = $"Review agent '{agent.Name}' ({a + 1}/{agents.Count}) starting..."
                             });
+                            NotifyChange();
 
-                        run.CodeReviewIterationsCompleted++;
+                            var reviewPrompt = PromptBuilder.BuildReviewPrompt(
+                                agent.Prompt,
+                                _activeIssue!,
+                                _activeParsedIssue!,
+                                _activeIssueComments);
+                            _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, i + 1, agent.Name, reviewPrompt);
 
-                        var reviewOutput = reviewResult.OutputLines.Count > 0
-                            ? string.Join(Environment.NewLine, reviewResult.OutputLines.TakeLast(10))
-                            : "(no output)";
+                            var reviewResult = await _activeAgentProvider!.ExecuteAsync(
+                                new AgentRequest
+                                {
+                                    Prompt = reviewPrompt,
+                                    WorkspacePath = run.WorkspacePath!,
+                                    Timeout = _activeConfig.AgentTimeout,
+                                    UseResume = true
+                                },
+                                linkedCt,
+                                line =>
+                                {
+                                    run.OutputLines.Enqueue(line);
+                                    OnOutputLine?.Invoke(line);
+                                });
 
-                        // Parse severity counts from review output (find/fix separation)
-                        var fullReviewText = reviewResult.OutputLines.Count > 0
-                            ? string.Join(Environment.NewLine, reviewResult.OutputLines)
-                            : "";
-                        var severityCounts = SeverityParser.Parse(reviewResult.OutputLines);
-                        Interlocked.Add(ref run.CodeReviewCriticalCount, severityCounts.Critical);
-                        Interlocked.Add(ref run.CodeReviewWarningCount, severityCounts.Warning);
-                        Interlocked.Add(ref run.CodeReviewSuggestionCount, severityCounts.Suggestion);
+                            agentsRun.Add(agent.Name);
 
-                        if (!string.IsNullOrEmpty(fullReviewText))
+                            var reviewOutput = reviewResult.OutputLines.Count > 0
+                                ? string.Join(Environment.NewLine, reviewResult.OutputLines.TakeLast(10))
+                                : "(no output)";
+
+                            // Parse severity counts from review output
+                            var fullReviewText = reviewResult.OutputLines.Count > 0
+                                ? string.Join(Environment.NewLine, reviewResult.OutputLines)
+                                : "";
+                            var severityCounts = SeverityParser.Parse(reviewResult.OutputLines);
+                            Interlocked.Add(ref run.CodeReviewCriticalCount, severityCounts.Critical);
+                            Interlocked.Add(ref run.CodeReviewWarningCount, severityCounts.Warning);
+                            Interlocked.Add(ref run.CodeReviewSuggestionCount, severityCounts.Suggestion);
+                            iterationCriticalCount += severityCounts.Critical;
+
+                            if (!string.IsNullOrEmpty(fullReviewText))
+                            {
+                                if (iterationFindings.Length > 0)
+                                    iterationFindings.AppendLine($"--- Agent: {agent.Name} ---");
+                                iterationFindings.AppendLine(fullReviewText);
+                            }
+
+                            _logger.Information(
+                                "Pipeline {RunId} review agent '{AgentName}' (iteration {Iteration}) completed with exit code {ExitCode}. " +
+                                "CodeReviewFindings: {Critical} critical, {Warning} warning, {Suggestion} suggestion",
+                                run.RunId, agent.Name, i + 1, reviewResult.ExitCode,
+                                severityCounts.Critical, severityCounts.Warning, severityCounts.Suggestion);
+
+                            run.ChatHistory.Enqueue(new ChatEntry
+                            {
+                                Role = ChatRole.Agent,
+                                Content = $"[Code review {i + 1}/{_activeConfig.CodeReview.MaxIterations} — {agent.Name}] {reviewOutput}"
+                            });
+                            NotifyChange();
+                        }
+
+                        // Update agents-run tracking
+                        run.CodeReviewAgentsRun = agentsRun;
+
+                        // Accumulate raw findings
+                        var iterationFindingsText = iterationFindings.ToString();
+                        if (!string.IsNullOrEmpty(iterationFindingsText))
                         {
                             const int maxRawFindingsLength = 10_000;
                             var newFindings = run.CodeReviewRawFindings is null
-                                ? fullReviewText
-                                : $"{run.CodeReviewRawFindings}{Environment.NewLine}--- Iteration {i + 1} ---{Environment.NewLine}{fullReviewText}";
+                                ? iterationFindingsText
+                                : $"{run.CodeReviewRawFindings}{Environment.NewLine}--- Iteration {i + 1} ---{Environment.NewLine}{iterationFindingsText}";
                             run.CodeReviewRawFindings = newFindings.Length > maxRawFindingsLength
                                 ? newFindings[..maxRawFindingsLength]
                                 : newFindings;
                         }
 
-                        _logger.Information(
-                            "Pipeline {RunId} code review iteration {Iteration} completed with exit code {ExitCode}. " +
-                            "CodeReviewFindings: {Critical} critical, {Warning} warning, {Suggestion} suggestion",
-                            run.RunId, i + 1, reviewResult.ExitCode,
-                            severityCounts.Critical, severityCounts.Warning, severityCounts.Suggestion);
+                        run.CodeReviewIterationsCompleted++;
 
-                        run.ChatHistory.Enqueue(new ChatEntry
-                        {
-                            Role = ChatRole.Agent,
-                            Content = $"[Code review {i + 1}/{_activeConfig.CodeReview.MaxIterations}] {reviewOutput}"
-                        });
-                        NotifyChange();
-
-                        // Fix phase: send fix prompt only when FixPrompt is configured and CRITICALs found
-                        if (!string.IsNullOrEmpty(_activeConfig.CodeReview.FixPrompt) && severityCounts.Critical > 0)
+                        // Fix phase: send fix prompt once after all agents complete (if CRITICALs found)
+                        if (!string.IsNullOrEmpty(_activeConfig.CodeReview.FixPrompt) && iterationCriticalCount > 0)
                         {
                             _logger.Information(
-                                "Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected, sending fix prompt",
-                                run.RunId, i + 1, severityCounts.Critical);
+                                "Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected across {AgentCount} agent(s), sending fix prompt",
+                                run.RunId, i + 1, iterationCriticalCount, agents.Count);
 
                             var fixPrompt = PromptBuilder.BuildFixPrompt(
-                                _activeConfig.CodeReview.FixPrompt, fullReviewText);
+                                _activeConfig.CodeReview.FixPrompt, iterationFindingsText);
                             _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
 
                             await _activeAgentProvider!.ExecuteAsync(
@@ -806,10 +845,12 @@ public class PipelineOrchestrationService : IDisposable
                     }
                     catch (OperationCanceledException) when (_cancellationTokenSource?.IsCancellationRequested == true)
                     {
+                        run.CodeReviewAgentsRun = agentsRun;
                         throw;
                     }
                     catch (Exception ex)
                     {
+                        run.CodeReviewAgentsRun = agentsRun;
                         _logger.Warning(ex,
                             "Pipeline {RunId} code review iteration {Iteration} failed, skipping remaining reviews",
                             run.RunId, i + 1);
