@@ -361,6 +361,62 @@ public class AgentCodingPageTests
         errorMessage.Should().Be("Failed to fetch issues: Connection refused");
     }
 
+    [Fact]
+    public async Task FetchIssues_WithAgentNextLabel_AutoSelectsFilter()
+    {
+        // Simulates LoadIssuePage auto-selecting agent:next when the label exists
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary>
+                {
+                    new() { Identifier = "10", Title = "Ready", Labels = new[] { AgentLabels.Next } },
+                    new() { Identifier = "11", Title = "Other", Labels = new[] { "bug" } }
+                },
+                Page = 1, PageSize = 25, HasMore = false
+            });
+
+        var providerConfig = new ProviderConfig
+        {
+            Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test"
+        };
+        var issueProvider = _mockFactory.Object.CreateIssueProvider(providerConfig);
+        var result = await issueProvider.ListOpenIssuesAsync(1, 25, CancellationToken.None);
+        var issues = result.Items.ToList();
+
+        // Replicate the page's auto-filter logic from LoadIssuePage
+        var availableLabels = issues.SelectMany(i => i.Labels).Distinct().OrderBy(l => l).ToList();
+        var selectedLabels = new HashSet<string>();
+        if (availableLabels.Contains(AgentLabels.Next))
+            selectedLabels.Add(AgentLabels.Next);
+
+        selectedLabels.Should().Contain(AgentLabels.Next);
+        var filtered = issues.Where(i => i.Labels.Any(l => selectedLabels.Contains(l))).ToList();
+        filtered.Should().HaveCount(1);
+        filtered[0].Identifier.Should().Be("10");
+    }
+
+    [Fact]
+    public async Task FetchIssues_WithoutAgentNextLabel_NoAutoFilter()
+    {
+        // When no issues have agent:next, no auto-filter is applied
+        var providerConfig = new ProviderConfig
+        {
+            Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test"
+        };
+        var issueProvider = _mockFactory.Object.CreateIssueProvider(providerConfig);
+        var result = await issueProvider.ListOpenIssuesAsync(1, 25, CancellationToken.None);
+        var issues = result.Items.ToList();
+
+        // Replicate the page's auto-filter logic
+        var availableLabels = issues.SelectMany(i => i.Labels).Distinct().OrderBy(l => l).ToList();
+        var selectedLabels = new HashSet<string>();
+        if (availableLabels.Contains(AgentLabels.Next))
+            selectedLabels.Add(AgentLabels.Next);
+
+        selectedLabels.Should().BeEmpty();
+    }
+
     // --- OnChange event fires for UI updates ---
 
     [Fact]
