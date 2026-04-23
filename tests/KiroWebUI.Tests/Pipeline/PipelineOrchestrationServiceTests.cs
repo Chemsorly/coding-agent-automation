@@ -534,10 +534,170 @@ public class PipelineOrchestrationServiceTests
         config.CodeReview.Enabled.Should().BeTrue();
         config.CodeReview.MaxIterations.Should().Be(1);
         config.CodeReview.Prompt.Should().Contain("sub-agent");
+        config.CodeReview.FixPrompt.Should().BeNull();
         config.AutonomousMode.Should().BeTrue();
     }
 
     // --- Blacklist enforcement (GIT-04) ---
+
+    [Fact]
+    public async Task ApproveAnalysis_WithFixPromptAndCriticals_SendsFixPrompt()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    FixPrompt = PipelineConfiguration.DefaultFixPrompt
+                }
+            });
+
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("sub-agent") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = new[] { "[CRITICAL] Missing null check", "[WARNING] Consider renaming" }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CodeReviewCriticalCount.Should().Be(1);
+        run.CodeReviewWarningCount.Should().Be(1);
+
+        // Verify fix prompt was sent (second ExecuteAsync call with FixPrompt content)
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("[CRITICAL]") && r.Prompt.Contains("Fix only") && r.UseResume),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithFixPromptAndNoCriticals_SkipsFixPrompt()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    FixPrompt = PipelineConfiguration.DefaultFixPrompt
+                }
+            });
+
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("sub-agent") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = new[] { "[WARNING] Consider renaming", "[SUGGESTION] Use var" }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CodeReviewCriticalCount.Should().Be(0);
+        run.CodeReviewWarningCount.Should().Be(1);
+        run.CodeReviewSuggestionCount.Should().Be(1);
+
+        // Verify fix prompt was NOT sent — only the review prompt call
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Fix only")),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_WithNullFixPrompt_SinglePassBehavior()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    FixPrompt = null
+                }
+            });
+
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("sub-agent") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = new[] { "[CRITICAL] Missing null check" }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        // Severity counts are still parsed even without FixPrompt
+        run.CodeReviewCriticalCount.Should().Be(1);
+
+        // But no fix prompt is sent — only the review call
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Fix only")),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ApproveAnalysis_SeverityCountsStoredOnRun()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AutonomousMode = false,
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1
+                }
+            });
+
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("sub-agent") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = new[]
+                {
+                    "[CRITICAL] Bug A", "[CRITICAL] Bug B",
+                    "[WARNING] Style issue",
+                    "[SUGGESTION] Rename X", "[SUGGESTION] Rename Y", "[SUGGESTION] Rename Z"
+                }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.ApproveAnalysisAsync(CancellationToken.None);
+
+        run.CodeReviewCriticalCount.Should().Be(2);
+        run.CodeReviewWarningCount.Should().Be(1);
+        run.CodeReviewSuggestionCount.Should().Be(3);
+        run.CodeReviewRawFindings.Should().NotBeNullOrEmpty();
+    }
 
     [Fact]
     public async Task ProceedToQualityGates_WarnAndExclude_PopulatesBlacklistedFilesAndCompletes()

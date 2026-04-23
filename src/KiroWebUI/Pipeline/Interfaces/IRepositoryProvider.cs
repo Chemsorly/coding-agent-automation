@@ -24,6 +24,14 @@ public interface IRepositoryProvider : IAsyncDisposable
     Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message,
         IReadOnlyList<string>? blacklistedPaths, CancellationToken ct);
 
+    /// <summary>
+    /// Stages all changes, unstages blacklisted paths, and commits.
+    /// When <paramref name="allowEmpty"/> is true, creates an empty commit if no files changed
+    /// (useful for triggering CI re-runs after retry fixes that didn't change files).
+    /// </summary>
+    Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message,
+        IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct);
+
     /// <summary>Backward-compatible overload with no blacklist.</summary>
     Task CommitAllAsync(string workspacePath, string message, CancellationToken ct) =>
         CommitAllAsync(workspacePath, message, null, ct);

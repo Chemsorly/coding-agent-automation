@@ -177,6 +177,25 @@ public static class PromptBuilder
     /// <summary>Markers identifying bot-generated comments that should be excluded from context.</summary>
     internal static readonly string[] ExcludedCommentMarkers = ["## 🤖 Agent Analysis"];
 
+    /// <summary>
+    /// Constructs a fix prompt that includes the configurable fix instructions and the raw
+    /// review findings so the agent knows what to fix.
+    /// </summary>
+    public static string BuildFixPrompt(string fixInstructions, string rawFindings)
+    {
+        ArgumentNullException.ThrowIfNull(fixInstructions);
+        ArgumentNullException.ThrowIfNull(rawFindings);
+
+        var sb = new StringBuilder();
+        sb.AppendLine(fixInstructions);
+        sb.AppendLine();
+        sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). The pipeline handles all version control operations. Read-only git commands are fine.");
+        sb.AppendLine();
+        sb.AppendLine("## Review Findings");
+        sb.AppendLine(rawFindings);
+        return sb.ToString().TrimEnd();
+    }
+
     private static void AppendComments(StringBuilder sb, IReadOnlyList<IssueComment>? comments)
     {
         if (comments == null || comments.Count == 0)

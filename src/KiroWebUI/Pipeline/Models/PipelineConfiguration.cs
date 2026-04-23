@@ -17,6 +17,13 @@ public sealed class CodeReviewConfiguration
     public bool Enabled { get; init; } = true;
     public int MaxIterations { get; init; } = 1;
     public string Prompt { get; init; } = PipelineConfiguration.DefaultCodeReviewPrompt;
+
+    /// <summary>
+    /// When set, the review step splits into find-then-fix: the review prompt reports findings
+    /// with severity markers, then this fix prompt is sent only if [CRITICAL] findings exist.
+    /// When null/empty, falls back to single-pass behavior (review prompt does both find and fix).
+    /// </summary>
+    public string? FixPrompt { get; init; }
 }
 
 public sealed class PipelineConfiguration
@@ -25,6 +32,10 @@ public sealed class PipelineConfiguration
         "Use a sub-agent to review the changes you just made against the original issue requirements. " +
         "The sub-agent should check for: correctness against acceptance criteria, code quality and " +
         "project conventions, unhandled edge cases, and security gaps. Fix any issues the review finds.";
+
+    public const string DefaultFixPrompt =
+        "Review the findings above. Fix only items marked [CRITICAL]. " +
+        "For [WARNING] items, add a TODO comment at the relevant location. Ignore [SUGGESTION] items.";
 
     public const string DefaultAnalysisPrompt =
         "Analyze the codebase in context of the following issue. Read the issue carefully, " +

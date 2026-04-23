@@ -381,6 +381,7 @@ public class SettingsPageTests
         savedConfig.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
         savedConfig.AutonomousMode.Should().BeTrue();
         savedConfig.CodeReview.Enabled.Should().BeTrue();
+        savedConfig.CodeReview.FixPrompt.Should().BeNull();
         savedConfig.AnalysisPrompt.Should().Be(PipelineConfiguration.DefaultAnalysisPrompt);
         savedConfig.ImplementationPrompt.Should().Be(PipelineConfiguration.DefaultImplementationPrompt);
     }
