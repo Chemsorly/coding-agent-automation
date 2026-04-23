@@ -73,6 +73,9 @@ public sealed class KiroExecutionService : IDisposable
             throw new InvalidOperationException("An execution is already in progress.");
 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _disposalCts.Token);
+        // Apply the configured timeout from KiroCliLib Configuration (used by the Chat page).
+        // The pipeline path uses PipelineConfiguration.AgentTimeout via KiroCliAgentProvider instead.
+        linkedCts.CancelAfter(_config.Timeout);
         var linkedToken = linkedCts.Token;
 
         try
@@ -164,21 +167,23 @@ public sealed class KiroExecutionService : IDisposable
                 FinalState = CurrentState ?? KiroState.Completed
             };
         }
-        catch (TimeoutException ex)
-        {
-            _logger.Warning(ex, "Kiro CLI execution timed out");
-            AddSystemMessage("Execution timed out.");
-            lock (_messageLock)
-            {
-                var last = _messages.LastOrDefault(m => m.Role == ChatMessageRole.Assistant);
-                if (last != null) { last.IsStreaming = false; last.FinalState = KiroState.Timeout; }
-            }
-            _canResume = false;
-            NotifyChanged();
-            return new ExecutionResult { ExitCode = 124, OutputLines = Array.Empty<string>(), FinalState = KiroState.Timeout };
-        }
         catch (OperationCanceledException)
         {
+            var isTimeout = linkedCts.IsCancellationRequested && !ct.IsCancellationRequested && !_disposalCts.IsCancellationRequested;
+            if (isTimeout)
+            {
+                _logger.Warning("Kiro CLI execution timed out after {Timeout}", _config.Timeout);
+                AddSystemMessage($"Execution timed out after {_config.Timeout}.");
+                lock (_messageLock)
+                {
+                    var last = _messages.LastOrDefault(m => m.Role == ChatMessageRole.Assistant);
+                    if (last != null) { last.IsStreaming = false; last.FinalState = KiroState.Timeout; }
+                }
+                _canResume = false;
+                NotifyChanged();
+                return new ExecutionResult { ExitCode = 124, OutputLines = Array.Empty<string>(), FinalState = KiroState.Timeout };
+            }
+
             _logger.Information("Kiro CLI execution was cancelled");
             AddSystemMessage("Execution was cancelled.");
             lock (_messageLock)

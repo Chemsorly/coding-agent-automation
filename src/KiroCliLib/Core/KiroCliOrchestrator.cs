@@ -97,16 +97,10 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
             });
             return exitCode;
         }
-        catch (TimeoutException ex)
-        {
-            _logger.Error(ex, "Kiro CLI execution timed out");
-            _callbackHandler.Invoke(KiroState.Timeout, new CallbackContext { State = KiroState.Timeout, Message = $"Execution timed out after {_config.Timeout}" });
-            return 124;
-        }
         catch (OperationCanceledException ex)
         {
             _logger.Information(ex, "Kiro CLI execution was cancelled");
-            _callbackHandler.Invoke(KiroState.Error, new CallbackContext { State = KiroState.Error, Message = "Execution was cancelled by user" });
+            _callbackHandler.Invoke(KiroState.Error, new CallbackContext { State = KiroState.Error, Message = "Execution was cancelled" });
             return 130;
         }
         catch (Exception ex)
