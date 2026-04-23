@@ -100,6 +100,10 @@
                                     {
                                         <div>@Run.CodeReviewIterationsCompleted/@Run.CodeReviewIterationsTotal iteration(s) done</div>
                                     }
+                                    @if (Run.CodeReviewAgentsRun.Count > 0)
+                                    {
+                                        <div class="step-detail-sub">Agents: @string.Join(", ", Run.CodeReviewAgentsRun)</div>
+                                    }
                                     @if (Run.CodeReviewCriticalCount > 0 || Run.CodeReviewWarningCount > 0 || Run.CodeReviewSuggestionCount > 0)
                                     {
                                         <div class="step-detail-sub">🔴 @Run.CodeReviewCriticalCount critical · 🟡 @Run.CodeReviewWarningCount warning · 🔵 @Run.CodeReviewSuggestionCount suggestion</div>

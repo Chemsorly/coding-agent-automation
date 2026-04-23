@@ -530,11 +530,41 @@
                                 <label>Max Review Iterations</label>
                                 <input type="number" @bind="_pipelineConfig.CodeReviewMaxIterations" min="1" max="5" />
                             </div>
-                            <div class="form-group">
-                                <label>Review Prompt</label>
-                                <textarea @bind="_pipelineConfig.CodeReviewPrompt" rows="4"></textarea>
-                                <button type="button" class="btn-revert" disabled="@(_pipelineConfig.CodeReviewPrompt == PipelineConfiguration.DefaultCodeReviewPrompt)" @onclick="() => _pipelineConfig.CodeReviewPrompt = PipelineConfiguration.DefaultCodeReviewPrompt">Reset to default</button>
+                            <div class="form-group form-checkbox">
+                                <label>
+                                    <input type="checkbox" @bind="_pipelineConfig.MultiAgentReviewEnabled" />
+                                    Use Specialized Review Agents
+                                    <span class="form-hint-icon" aria-hidden="true" title="Run multiple specialized reviewers sequentially instead of a single prompt">?</span>
+                                </label>
                             </div>
+                            @if (_pipelineConfig.MultiAgentReviewEnabled)
+                            {
+                                <div class="config-sub-fields">
+                                    @for (var idx = 0; idx < _pipelineConfig.ReviewAgents.Count; idx++)
+                                    {
+                                        var agentIdx = idx;
+                                        <div class="form-group" style="border-left: 2px solid var(--border-color, #444); padding-left: 0.75rem; margin-bottom: 1rem;">
+                                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                                <label style="flex: 1;">Agent Name</label>
+                                                <button type="button" class="btn-revert" @onclick="() => _pipelineConfig.ReviewAgents.RemoveAt(agentIdx)">Remove</button>
+                                            </div>
+                                            <input type="text" @bind="_pipelineConfig.ReviewAgents[agentIdx].Name" />
+                                            <label>Prompt</label>
+                                            <textarea @bind="_pipelineConfig.ReviewAgents[agentIdx].Prompt" rows="4"></textarea>
+                                        </div>
+                                    }
+                                    <button type="button" class="btn-revert" @onclick="() => _pipelineConfig.ReviewAgents.Add(new AgentFormEntry())">+ Add Agent</button>
+                                    <button type="button" class="btn-revert" @onclick="ResetReviewAgentsToDefault">Reset to defaults</button>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="form-group">
+                                    <label>Review Prompt</label>
+                                    <textarea @bind="_pipelineConfig.CodeReviewPrompt" rows="4"></textarea>
+                                    <button type="button" class="btn-revert" disabled="@(_pipelineConfig.CodeReviewPrompt == PipelineConfiguration.DefaultCodeReviewPrompt)" @onclick="() => _pipelineConfig.CodeReviewPrompt = PipelineConfiguration.DefaultCodeReviewPrompt">Reset to default</button>
+                                </div>
+                            }
                             <div class="form-group">
                                 <label>Fix Prompt <span class="form-hint">(leave empty for single-pass review)</span></label>
                                 <textarea @bind="_pipelineConfig.CodeReviewFixPrompt" rows="3"></textarea>
@@ -755,6 +785,10 @@
                 CodeReviewMaxIterations = config.CodeReview.MaxIterations,
                 CodeReviewPrompt = config.CodeReview.Prompt,
                 CodeReviewFixPrompt = config.CodeReview.FixPrompt,
+                MultiAgentReviewEnabled = config.CodeReview.Agents is { Count: > 0 },
+                ReviewAgents = config.CodeReview.Agents is { Count: > 0 }
+                    ? config.CodeReview.Agents.Select(a => new AgentFormEntry { Name = a.Name, Prompt = a.Prompt }).ToList()
+                    : PipelineConfiguration.DefaultReviewAgents.Select(a => new AgentFormEntry { Name = a.Name, Prompt = a.Prompt }).ToList(),
                 RiskTiersEnabled = config.CodeReview.RiskTiers != null,
                 RiskTierSkipMaxFiles = config.CodeReview.RiskTiers?.Skip?.MaxFiles ?? 5,
                 RiskTierSkipMaxLines = config.CodeReview.RiskTiers?.Skip?.MaxLines ?? 30,
@@ -1466,6 +1500,12 @@
     }
 
     // --- Pipeline Config ---
+    private void ResetReviewAgentsToDefault()
+    {
+        _pipelineConfig.ReviewAgents = PipelineConfiguration.DefaultReviewAgents
+            .Select(a => new AgentFormEntry { Name = a.Name, Prompt = a.Prompt }).ToList();
+    }
+
     private async Task SavePipelineConfig()
     {
         var config = new PipelineConfiguration
@@ -1481,6 +1521,12 @@
                 MaxIterations = _pipelineConfig.CodeReviewMaxIterations,
                 Prompt = _pipelineConfig.CodeReviewPrompt,
                 FixPrompt = _pipelineConfig.CodeReviewFixPrompt,
+                Agents = _pipelineConfig.MultiAgentReviewEnabled && _pipelineConfig.ReviewAgents.Count > 0
+                    ? _pipelineConfig.ReviewAgents
+                        .Where(a => !string.IsNullOrWhiteSpace(a.Name) && !string.IsNullOrWhiteSpace(a.Prompt))
+                        .Select(a => new ReviewAgentConfig { Name = a.Name.Trim(), Prompt = a.Prompt.Trim() })
+                        .ToArray()
+                    : null,
                 RiskTiers = _pipelineConfig.RiskTiersEnabled
                     ? new CodeReviewRiskTiers
                     {
@@ -1677,6 +1723,12 @@
         public string Model { get; set; } = "auto";
     }
 
+    private class AgentFormEntry
+    {
+        public string Name { get; set; } = "";
+        public string Prompt { get; set; } = "";
+    }
+
     private class PipelineConfigForm
     {
         public bool AutonomousMode { get; set; } = true;
@@ -1686,6 +1738,8 @@
         public int CodeReviewMaxIterations { get; set; } = 1;
         public string CodeReviewPrompt { get; set; } = PipelineConfiguration.DefaultCodeReviewPrompt;
         public string? CodeReviewFixPrompt { get; set; }
+        public bool MultiAgentReviewEnabled { get; set; }
+        public List<AgentFormEntry> ReviewAgents { get; set; } = new();
         public bool RiskTiersEnabled { get; set; }
         public int RiskTierSkipMaxFiles { get; set; } = 5;
         public int RiskTierSkipMaxLines { get; set; } = 30;
