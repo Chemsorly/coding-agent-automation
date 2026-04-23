@@ -1499,7 +1499,6 @@
                         .Select(a => new ReviewAgentConfig { Name = a.Name.Trim(), Prompt = a.Prompt.Trim() })
                         .ToArray()
                     : null,
-                RiskTiers = null,
             },
             AnalysisPrompt = _pipelineConfig.AnalysisPrompt,
             ImplementationPrompt = _pipelineConfig.ImplementationPrompt,

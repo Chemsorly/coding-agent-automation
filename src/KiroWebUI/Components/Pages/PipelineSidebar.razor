@@ -81,16 +81,6 @@
                         else if (step == PipelineStep.ReviewingCode)
                         {
                             <div class="step-detail-box">
-                                @if (Run.CodeReviewTier == "skip")
-                                {
-                                    <div>⏭ Review skipped (below threshold)</div>
-                                }
-                                else
-                                {
-                                    @if (!string.IsNullOrEmpty(Run.CodeReviewTier))
-                                    {
-                                        <div class="step-detail-sub">Tier: @(Run.CodeReviewTier == "full" ? "Full 🔒" : "Standard")</div>
-                                    }
                                     @if (state == StepState.Active && Run.CodeReviewIterationInProgress > 0)
                                     {
                                         <div>🔍 Iteration @Run.CodeReviewIterationInProgress/@Run.CodeReviewIterationsTotal</div>
@@ -108,7 +98,6 @@
                                     {
                                         <div class="step-detail-sub">🔴 @Run.CodeReviewCriticalCount critical · 🟡 @Run.CodeReviewWarningCount warning · 🔵 @Run.CodeReviewSuggestionCount suggestion</div>
                                     }
-                                }
                             </div>
                         }
                         else if (step == PipelineStep.RunningQualityGates)
@@ -339,7 +328,7 @@
         PipelineStep.AnalyzingCode => true,
         PipelineStep.WaitingForAnalysisApproval => Run.ApprovalTimestamp.HasValue,
         PipelineStep.GeneratingCode => Run.FilesChangedCount > 0 || Run.LinesAdded > 0 || Run.LinesRemoved > 0,
-        PipelineStep.ReviewingCode => Run.CodeReviewIterationsCompleted > 0 || Run.CodeReviewTier != null,
+        PipelineStep.ReviewingCode => Run.CodeReviewIterationsCompleted > 0,
         PipelineStep.RunningQualityGates => Run.LatestQualityReport != null,
         PipelineStep.CreatingPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
         _ => false

@@ -191,13 +191,6 @@ public static partial class PipelineFormatting
         sb.AppendLine("## AI Code Review Findings");
         sb.AppendLine();
 
-        if (string.Equals(summary.Tier, "skip", StringComparison.OrdinalIgnoreCase))
-        {
-            sb.AppendLine($"Code review skipped (small change: {summary.FilesChanged} files, {summary.LinesChanged} lines)");
-            sb.AppendLine();
-            return;
-        }
-
         if (summary.CriticalCount == 0 && summary.WarningCount == 0 && summary.SuggestionCount == 0
             && string.IsNullOrEmpty(summary.RawFindings))
         {
@@ -207,9 +200,7 @@ public static partial class PipelineFormatting
         }
 
         if (summary.AgentsRun.Count > 0)
-            sb.AppendLine($"**Agents**: {string.Join(", ", summary.AgentsRun)} | **Tier**: {summary.Tier}");
-        else
-            sb.AppendLine($"**Tier**: {summary.Tier}");
+            sb.AppendLine($"**Agents**: {string.Join(", ", summary.AgentsRun)}");
         sb.AppendLine();
 
         sb.AppendLine("| Severity | Count | Action |");

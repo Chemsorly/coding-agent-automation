@@ -6,10 +6,7 @@ namespace KiroWebUI.Pipeline.Models;
 /// </summary>
 public sealed record CodeReviewSummary(
     IReadOnlyList<string> AgentsRun,
-    string Tier,
     int CriticalCount,
     int WarningCount,
     int SuggestionCount,
-    string? RawFindings,
-    int FilesChanged,
-    int LinesChanged);
+    string? RawFindings);

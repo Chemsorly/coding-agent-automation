@@ -298,33 +298,12 @@ public class GitHubRepositoryProviderTests
     }
 
     [Fact]
-    public void GeneratePrBody_CodeReviewSkipped_ShowsSkipReason()
-    {
-        var summary = new CodeReviewSummary(
-            AgentsRun: Array.Empty<string>(),
-            Tier: "skip",
-            CriticalCount: 0, WarningCount: 0, SuggestionCount: 0,
-            RawFindings: null, FilesChanged: 3, LinesChanged: 12);
-
-        var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug", issueDescription: "Fix",
-            acceptanceCriteria: Array.Empty<string>(),
-            codeReviewSummary: summary);
-
-        body.Should().Contain("## AI Code Review Findings");
-        body.Should().Contain("Code review skipped (small change: 3 files, 12 lines)");
-    }
-
-    [Fact]
     public void GeneratePrBody_CodeReviewNoFindings_ShowsNoFindings()
     {
         var summary = new CodeReviewSummary(
             AgentsRun: new[] { "Correctness" },
-            Tier: "standard",
             CriticalCount: 0, WarningCount: 0, SuggestionCount: 0,
-            RawFindings: null, FilesChanged: 5, LinesChanged: 40);
+            RawFindings: null);
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
@@ -338,14 +317,12 @@ public class GitHubRepositoryProviderTests
     }
 
     [Fact]
-    public void GeneratePrBody_CodeReviewWithFindings_ShowsAgentsAndTier()
+    public void GeneratePrBody_CodeReviewWithFindings_ShowsAgents()
     {
         var summary = new CodeReviewSummary(
             AgentsRun: new[] { "Correctness", "DotNetSpecialist" },
-            Tier: "standard",
             CriticalCount: 1, WarningCount: 2, SuggestionCount: 3,
-            RawFindings: "[1] [CRITICAL] Null ref",
-            FilesChanged: 5, LinesChanged: 40);
+            RawFindings: "[1] [CRITICAL] Null ref");
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
@@ -354,7 +331,7 @@ public class GitHubRepositoryProviderTests
             acceptanceCriteria: Array.Empty<string>(),
             codeReviewSummary: summary);
 
-        body.Should().Contain("**Agents**: Correctness, DotNetSpecialist | **Tier**: standard");
+        body.Should().Contain("**Agents**: Correctness, DotNetSpecialist");
     }
 
     [Fact]
@@ -362,10 +339,8 @@ public class GitHubRepositoryProviderTests
     {
         var summary = new CodeReviewSummary(
             AgentsRun: new[] { "Correctness" },
-            Tier: "full",
             CriticalCount: 2, WarningCount: 3, SuggestionCount: 1,
-            RawFindings: "[1] [CRITICAL] Issue",
-            FilesChanged: 10, LinesChanged: 200);
+            RawFindings: "[1] [CRITICAL] Issue");
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
@@ -385,10 +360,8 @@ public class GitHubRepositoryProviderTests
         var findings = "[1] [CRITICAL] Null dereference\n[2] [WARNING] Resource not disposed";
         var summary = new CodeReviewSummary(
             AgentsRun: new[] { "Correctness" },
-            Tier: "standard",
             CriticalCount: 1, WarningCount: 1, SuggestionCount: 0,
-            RawFindings: findings,
-            FilesChanged: 5, LinesChanged: 40);
+            RawFindings: findings);
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
@@ -409,10 +382,8 @@ public class GitHubRepositoryProviderTests
         var longFindings = new string('x', 3000);
         var summary = new CodeReviewSummary(
             AgentsRun: new[] { "Correctness" },
-            Tier: "standard",
             CriticalCount: 1, WarningCount: 0, SuggestionCount: 0,
-            RawFindings: longFindings,
-            FilesChanged: 5, LinesChanged: 40);
+            RawFindings: longFindings);
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
@@ -430,10 +401,8 @@ public class GitHubRepositoryProviderTests
     {
         var summary = new CodeReviewSummary(
             AgentsRun: new[] { "Correctness" },
-            Tier: "standard",
             CriticalCount: 0, WarningCount: 2, SuggestionCount: 0,
-            RawFindings: "[1] [WARNING] Issue",
-            FilesChanged: 5, LinesChanged: 40);
+            RawFindings: "[1] [WARNING] Issue");
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
@@ -448,14 +417,12 @@ public class GitHubRepositoryProviderTests
     }
 
     [Fact]
-    public void GeneratePrBody_CodeReviewNoAgents_ShowsTierOnly()
+    public void GeneratePrBody_CodeReviewNoAgents_OmitsAgentsLine()
     {
         var summary = new CodeReviewSummary(
             AgentsRun: Array.Empty<string>(),
-            Tier: "standard",
             CriticalCount: 1, WarningCount: 0, SuggestionCount: 0,
-            RawFindings: "[1] [CRITICAL] Issue",
-            FilesChanged: 5, LinesChanged: 40);
+            RawFindings: "[1] [CRITICAL] Issue");
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
@@ -465,6 +432,5 @@ public class GitHubRepositoryProviderTests
             codeReviewSummary: summary);
 
         body.Should().NotContain("**Agents**");
-        body.Should().Contain("**Tier**: standard");
     }
 }
