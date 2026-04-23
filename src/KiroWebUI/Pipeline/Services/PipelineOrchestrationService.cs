@@ -1371,13 +1371,26 @@ public class PipelineOrchestrationService : IDisposable
                 ?? (IReadOnlyList<string>)Array.Empty<string>();
 
             var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, run.IssueIdentifier);
+
+            var codeReviewSummary = _activeConfig!.CodeReview.Enabled
+                ? new CodeReviewSummary(
+                    run.CodeReviewAgentsRun,
+                    run.CodeReviewTier ?? "standard",
+                    run.CodeReviewCriticalCount,
+                    run.CodeReviewWarningCount,
+                    run.CodeReviewSuggestionCount,
+                    run.CodeReviewRawFindings,
+                    run.FilesChangedCount,
+                    run.LinesAdded + run.LinesRemoved)
+                : null;
+
             var prBody = PipelineFormatting.GeneratePrBody(
                 run.IssueIdentifier, testsPassed, testsFailed, testsSkipped,
                 coverage, fileChanges, issueTitle, issueDescription,
                 acceptanceCriteria, isDraft, _activeIssueComments,
                 run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
                 run.ModelName,
-                run.CodeReviewRawFindings);
+                codeReviewSummary);
 
             var prInfo = new PullRequestInfo
             {
