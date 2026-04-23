@@ -15,6 +15,11 @@ public static class PromptBuilder
     public const string AnalysisFilePath = ".kiro/analysis.md";
 
     /// <summary>
+    /// The file path (relative to workspace) where review agents write their findings.
+    /// </summary>
+    public const string ReviewFindingsFilePath = ".kiro/review-findings.md";
+
+    /// <summary>
     /// Constructs an analysis-only prompt. The agent examines the codebase in context of the
     /// issue and writes its recommendation to .kiro/analysis.md without making any other changes.
     /// The configurable analysis instructions are prepended, followed by pipeline mechanics.
@@ -140,6 +145,8 @@ public static class PromptBuilder
         var sb = new StringBuilder();
 
         sb.AppendLine(reviewInstructions);
+        sb.AppendLine();
+        sb.AppendLine($"Write your findings to the file `{ReviewFindingsFilePath}` in the workspace. Do NOT print the findings to stdout — only write them to that file.");
         sb.AppendLine();
         sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). The pipeline handles all version control operations. Read-only git commands are fine.");
         sb.AppendLine();

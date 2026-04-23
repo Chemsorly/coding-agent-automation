@@ -120,6 +120,32 @@ public class PipelineOrchestrationServiceTests
         return (task, agentTcs);
     }
 
+    /// <summary>
+    /// Helper: writes a review findings file into the workspace so the orchestrator can read it.
+    /// Used by tests that verify code review severity parsing (file-based, not stdout).
+    /// </summary>
+    private static void WriteReviewFindingsFile(string workspacePath, string content)
+    {
+        var findingsDir = Path.Combine(workspacePath, ".kiro");
+        Directory.CreateDirectory(findingsDir);
+        File.WriteAllText(Path.Combine(findingsDir, "review-findings.md"), content);
+    }
+
+    /// <summary>
+    /// Helper: sets up a mock review agent that writes findings to the workspace file and returns an empty AgentResult.
+    /// </summary>
+    private void SetupReviewAgentWithFindings(string promptMatch, string findingsContent)
+    {
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains(promptMatch) && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                WriteReviewFindingsFile(req.WorkspacePath, findingsContent);
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+    }
+
     [Fact]
     public async Task StartPipeline_WhenAlreadyRunning_ThrowsInvalidOperationException()
     {
@@ -483,10 +509,7 @@ public class PipelineOrchestrationServiceTests
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
             });
 
-        _mockAgentProvider.Setup(p => p.ExecuteAsync(
-                It.Is<AgentRequest>(r => r.Prompt.Contains("sub-agent") && r.UseResume),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = new[] { "[CRITICAL] Missing null check", "[WARNING] Consider renaming" } });
+        SetupReviewAgentWithFindings("sub-agent", "[CRITICAL] Missing null check\n[WARNING] Consider renaming");
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
@@ -507,10 +530,7 @@ public class PipelineOrchestrationServiceTests
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
             });
 
-        _mockAgentProvider.Setup(p => p.ExecuteAsync(
-                It.Is<AgentRequest>(r => r.Prompt.Contains("sub-agent") && r.UseResume),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = new[] { "[WARNING] Consider renaming", "[SUGGESTION] Use var" } });
+        SetupReviewAgentWithFindings("sub-agent", "[WARNING] Consider renaming\n[SUGGESTION] Use var");
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
@@ -530,10 +550,7 @@ public class PipelineOrchestrationServiceTests
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = null }
             });
 
-        _mockAgentProvider.Setup(p => p.ExecuteAsync(
-                It.Is<AgentRequest>(r => r.Prompt.Contains("sub-agent") && r.UseResume),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = new[] { "[CRITICAL] Missing null check" } });
+        SetupReviewAgentWithFindings("sub-agent", "[CRITICAL] Missing null check");
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
@@ -553,14 +570,8 @@ public class PipelineOrchestrationServiceTests
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
             });
 
-        _mockAgentProvider.Setup(p => p.ExecuteAsync(
-                It.Is<AgentRequest>(r => r.Prompt.Contains("sub-agent") && r.UseResume),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(new AgentResult
-            {
-                ExitCode = 0,
-                OutputLines = new[] { "[CRITICAL] Bug A", "[CRITICAL] Bug B", "[WARNING] Style issue", "[SUGGESTION] Rename X", "[SUGGESTION] Rename Y", "[SUGGESTION] Rename Z" }
-            });
+        SetupReviewAgentWithFindings("sub-agent",
+            "[CRITICAL] Bug A\n[CRITICAL] Bug B\n[WARNING] Style issue\n[SUGGESTION] Rename X\n[SUGGESTION] Rename Y\n[SUGGESTION] Rename Z");
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
@@ -1064,12 +1075,14 @@ public class PipelineOrchestrationServiceTests
 
         var callCount = 0;
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Agent1 prompt") || r.Prompt.Contains("Agent2 prompt")), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(() =>
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
                 callCount++;
-                return callCount == 1
-                    ? new AgentResult { ExitCode = 0, OutputLines = new[] { "[CRITICAL] Bug", "[WARNING] W1", "[WARNING] W2" } }
-                    : new AgentResult { ExitCode = 0, OutputLines = new[] { "[SUGGESTION] S1" } };
+                var findings = callCount == 1
+                    ? "[CRITICAL] Bug\n[WARNING] W1\n[WARNING] W2"
+                    : "[SUGGESTION] S1";
+                WriteReviewFindingsFile(req.WorkspacePath, findings);
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -1090,12 +1103,14 @@ public class PipelineOrchestrationServiceTests
 
         var agentCallCount = 0;
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Agent1 prompt") || r.Prompt.Contains("Agent2 prompt")), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(() =>
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
                 agentCallCount++;
-                return agentCallCount == 1
-                    ? new AgentResult { ExitCode = 0, OutputLines = new[] { "[CRITICAL] Bug found" } }
-                    : new AgentResult { ExitCode = 0, OutputLines = new[] { "[WARNING] Minor issue" } };
+                var findings = agentCallCount == 1
+                    ? "[CRITICAL] Bug found"
+                    : "[WARNING] Minor issue";
+                WriteReviewFindingsFile(req.WorkspacePath, findings);
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
         await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -1113,7 +1128,11 @@ public class PipelineOrchestrationServiceTests
             });
 
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Agent1 prompt") || r.Prompt.Contains("Agent2 prompt")), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = new[] { "[WARNING] Minor" } });
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                WriteReviewFindingsFile(req.WorkspacePath, "[WARNING] Minor");
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
 
         await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         _mockAgentProvider.Verify(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Fix only")), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
@@ -1175,11 +1194,12 @@ public class PipelineOrchestrationServiceTests
 
         var agentCallCount = 0;
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Agent1 prompt") || r.Prompt.Contains("Agent2 prompt")), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(() =>
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
                 agentCallCount++;
                 if (agentCallCount == 2) throw new InvalidOperationException("Agent2 crashed");
-                return new AgentResult { ExitCode = 0, OutputLines = new[] { "[CRITICAL] Bug", "[WARNING] W1" } };
+                WriteReviewFindingsFile(req.WorkspacePath, "[CRITICAL] Bug\n[WARNING] W1");
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);

@@ -653,6 +653,11 @@ public class PipelineOrchestrationService : IDisposable
                             });
                             NotifyChange();
 
+                            // Delete previous findings file so each agent starts clean
+                            var findingsFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.ReviewFindingsFilePath);
+                            if (File.Exists(findingsFilePath))
+                                File.Delete(findingsFilePath);
+
                             var reviewPrompt = PromptBuilder.BuildReviewPrompt(
                                 agent.Prompt,
                                 _activeIssue!,
@@ -681,11 +686,26 @@ public class PipelineOrchestrationService : IDisposable
                                 ? string.Join(Environment.NewLine, reviewResult.OutputLines.TakeLast(10))
                                 : "(no output)";
 
-                            // Parse severity counts from review output
-                            var fullReviewText = reviewResult.OutputLines.Count > 0
-                                ? string.Join(Environment.NewLine, reviewResult.OutputLines)
-                                : "";
-                            var severityCounts = SeverityParser.Parse(reviewResult.OutputLines);
+                            // Read findings from the file the agent wrote
+                            string fullReviewText;
+                            IReadOnlyList<string> findingsLines;
+                            if (File.Exists(findingsFilePath))
+                            {
+                                fullReviewText = await File.ReadAllTextAsync(findingsFilePath, ct);
+                                findingsLines = fullReviewText.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                                _logger.Information("Pipeline {RunId} review agent '{AgentName}' wrote findings to {FindingsFile} ({Length} chars)",
+                                    run.RunId, agent.Name, findingsFilePath, fullReviewText.Length);
+                            }
+                            else
+                            {
+                                _logger.Warning("Pipeline {RunId} review agent '{AgentName}' did not write findings file at {FindingsFile}",
+                                    run.RunId, agent.Name, findingsFilePath);
+                                fullReviewText = "";
+                                findingsLines = Array.Empty<string>();
+                            }
+
+                            // Parse severity counts from findings file
+                            var severityCounts = SeverityParser.Parse(findingsLines);
                             Interlocked.Add(ref run.CodeReviewCriticalCount, severityCounts.Critical);
                             Interlocked.Add(ref run.CodeReviewWarningCount, severityCounts.Warning);
                             Interlocked.Add(ref run.CodeReviewSuggestionCount, severityCounts.Suggestion);

@@ -11,6 +11,6 @@ public static partial class AnsiStripper
 {
     public static string Strip(string input) => AnsiPattern().Replace(input, string.Empty);
 
-    [GeneratedRegex(@"\x1B\[[0-9;]*[A-Za-z]|\x1B\].*?\x07|\[(?:\d+;)*\d*[A-Za-z]|\[K")]
+    [GeneratedRegex(@"\x1B\[[0-9;]*[A-Za-z]|\x1B\].*?\x07|\[(?:\d+;)*\d+[A-Za-z]|\[K")]
     private static partial Regex AnsiPattern();
 }
