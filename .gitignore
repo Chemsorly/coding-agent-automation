@@ -59,6 +59,7 @@ nunit-*.xml
 /package.json
 
 .kiro/*
+.brain/*
 
 # Pipeline provider configs (contain tokens/credentials at runtime)
 config/pipeline/
