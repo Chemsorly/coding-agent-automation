@@ -5,6 +5,7 @@
 @using KiroWebUI.Pipeline.Services
 @inject IConfigurationStore ConfigStore
 @inject GitHubValidationService GitHubValidator
+@inject IProviderFactory ProviderFactory
 
 <div class="settings-page">
     <header class="settings-header">
@@ -31,9 +32,22 @@
                             <span class="provider-detail">@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "")</span>
                         </div>
                         <div class="provider-actions">
+                            @{ var configState = _configureStates.GetValueOrDefault(p.Id); }
+                            @if (configState?.IsLoading == true)
+                            {
+                                <button class="btn-configure" disabled>Configuring…</button>
+                            }
+                            else
+                            {
+                                <button class="btn-configure" @onclick="() => ConfigureIssueProvider(p)">Configure Labels</button>
+                            }
                             <button class="btn-edit" @onclick="() => EditIssueProvider(p)">Edit</button>
                             <button class="btn-delete" @onclick="() => DeleteProvider(p.Id, ProviderKind.Issue)">Delete</button>
                         </div>
+                        @if (configState?.Message is not null)
+                        {
+                            <div class="provider-configure-result @(configState.IsError ? "status-error" : "status-success")">@configState.Message</div>
+                        }
                     </div>
                 }
             </div>
@@ -701,6 +715,16 @@
     private bool _issueValidationSuccess;
     private bool _issueSaving;
 
+    // Configure provider state
+    private readonly Dictionary<string, ConfigureProviderState> _configureStates = new();
+
+    private sealed class ConfigureProviderState
+    {
+        public bool IsLoading { get; set; }
+        public string? Message { get; set; }
+        public bool IsError { get; set; }
+    }
+
     // Repo provider form
     private bool _showRepoForm;
     private ProviderConfig? _editingRepoProvider;
@@ -890,6 +914,31 @@
         finally
         {
             _issueSaving = false;
+        }
+    }
+
+    private async Task ConfigureIssueProvider(ProviderConfig config)
+    {
+        var state = new ConfigureProviderState { IsLoading = true };
+        _configureStates[config.Id] = state;
+        StateHasChanged();
+
+        try
+        {
+            await using var provider = ProviderFactory.CreateIssueProvider(config);
+            await provider.EnsureAgentLabelsAsync(CancellationToken.None);
+            state.Message = "Agent labels configured successfully.";
+            state.IsError = false;
+        }
+        catch (Exception ex)
+        {
+            state.Message = $"Failed to configure labels: {ex.Message}";
+            state.IsError = true;
+        }
+        finally
+        {
+            state.IsLoading = false;
+            StateHasChanged();
         }
     }
 

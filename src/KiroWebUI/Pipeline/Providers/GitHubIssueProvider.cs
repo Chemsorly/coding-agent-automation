@@ -204,6 +204,43 @@ public class GitHubIssueProvider : IIssueProvider
     }
 
     /// <inheritdoc />
+    public async Task RemoveLabelAsync(string identifier, string label, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(label);
+
+        if (!int.TryParse(identifier, out var issueNumber))
+            throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
+
+        var client = await GetClientAsync(ct);
+        try
+        {
+            await client.Issue.Labels.RemoveFromIssue(_owner, _repo, issueNumber, label);
+        }
+        catch (NotFoundException)
+        {
+            // Label not present on issue — no-op
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task EnsureAgentLabelsAsync(CancellationToken ct)
+    {
+        var client = await GetClientAsync(ct);
+        foreach (var (name, color) in AgentLabels.Definitions)
+        {
+            try
+            {
+                await client.Issue.Labels.Create(_owner, _repo, new NewLabel(name, color));
+            }
+            catch (ApiValidationException)
+            {
+                // Label already exists — skip
+            }
+        }
+    }
+
+    /// <inheritdoc />
     public async Task CloseIssueAsync(string identifier, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(identifier);

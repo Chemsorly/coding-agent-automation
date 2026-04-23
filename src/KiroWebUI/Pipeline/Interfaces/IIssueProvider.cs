@@ -38,6 +38,23 @@ public interface IIssueProvider : IAsyncDisposable
     Task CloseIssueAsync(string identifier, CancellationToken ct);
 
     /// <summary>
+    /// Removes a single label from an issue. No-op if the label is not present.
+    /// </summary>
+    Task RemoveLabelAsync(string identifier, string label, CancellationToken ct);
+
+    /// <summary>
+    /// Adds a single label to an issue.
+    /// </summary>
+    Task AddLabelAsync(string identifier, string label, CancellationToken ct)
+        => AddLabelsAsync(identifier, new[] { label }, ct);
+
+    /// <summary>
+    /// Ensures the agent status labels exist in the repository. Creates any that are missing.
+    /// Idempotent — safe to call multiple times.
+    /// </summary>
+    Task EnsureAgentLabelsAsync(CancellationToken ct);
+
+    /// <summary>
     /// Validates that the provider is correctly configured and can communicate with its
     /// backing service. Called at pipeline start before any work begins.
     /// </summary>
