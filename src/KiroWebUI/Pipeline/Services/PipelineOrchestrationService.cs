@@ -645,29 +645,29 @@ public class PipelineOrchestrationService : IDisposable
                 });
             }
 
-            // Self-review step (if enabled)
-            if (_activeConfig!.SelfReviewEnabled && _activeConfig.SelfReviewMaxIterations > 0)
+            // Code review step (if enabled)
+            if (_activeConfig!.CodeReview.Enabled && _activeConfig.CodeReview.MaxIterations > 0)
             {
-                run.ReviewIterationsTotal = _activeConfig.SelfReviewMaxIterations;
-                for (var i = 0; i < _activeConfig.SelfReviewMaxIterations; i++)
+                run.CodeReviewIterationsTotal = _activeConfig.CodeReview.MaxIterations;
+                for (var i = 0; i < _activeConfig.CodeReview.MaxIterations; i++)
                 {
-                    run.ReviewIterationInProgress = i + 1;
+                    run.CodeReviewIterationInProgress = i + 1;
                     TransitionTo(run, PipelineStep.ReviewingCode);
                     _logger.Information(
-                        "Pipeline {RunId} starting self-review iteration {Iteration}/{MaxIterations}",
-                        run.RunId, i + 1, _activeConfig.SelfReviewMaxIterations);
+                        "Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
+                        run.RunId, i + 1, _activeConfig.CodeReview.MaxIterations);
 
                     run.ChatHistory.Enqueue(new ChatEntry
                     {
                         Role = ChatRole.System,
-                        Content = $"Self-review iteration {i + 1}/{_activeConfig.SelfReviewMaxIterations} starting..."
+                        Content = $"Code review iteration {i + 1}/{_activeConfig.CodeReview.MaxIterations} starting..."
                     });
                     NotifyChange();
 
                     try
                     {
                         var reviewPrompt = PromptBuilder.BuildReviewPrompt(
-                            _activeConfig.SelfReviewPrompt,
+                            _activeConfig.CodeReview.Prompt,
                             _activeIssue!,
                             _activeParsedIssue!,
                             _activeIssueComments);
@@ -688,20 +688,20 @@ public class PipelineOrchestrationService : IDisposable
                                 OnOutputLine?.Invoke(line);
                             });
 
-                        run.ReviewIterationsCompleted++;
+                        run.CodeReviewIterationsCompleted++;
 
                         var reviewOutput = reviewResult.OutputLines.Count > 0
                             ? string.Join(Environment.NewLine, reviewResult.OutputLines.TakeLast(10))
                             : "(no output)";
 
                         _logger.Information(
-                            "Pipeline {RunId} self-review iteration {Iteration} completed with exit code {ExitCode}. Review output: {ReviewOutput}",
+                            "Pipeline {RunId} code review iteration {Iteration} completed with exit code {ExitCode}. Review output: {ReviewOutput}",
                             run.RunId, i + 1, reviewResult.ExitCode, reviewOutput);
 
                         run.ChatHistory.Enqueue(new ChatEntry
                         {
                             Role = ChatRole.Agent,
-                            Content = $"[Self-review {i + 1}/{_activeConfig.SelfReviewMaxIterations}] {reviewOutput}"
+                            Content = $"[Code review {i + 1}/{_activeConfig.CodeReview.MaxIterations}] {reviewOutput}"
                         });
                         NotifyChange();
                     }
@@ -712,19 +712,19 @@ public class PipelineOrchestrationService : IDisposable
                     catch (Exception ex)
                     {
                         _logger.Warning(ex,
-                            "Pipeline {RunId} self-review iteration {Iteration} failed, skipping remaining reviews",
+                            "Pipeline {RunId} code review iteration {Iteration} failed, skipping remaining reviews",
                             run.RunId, i + 1);
                         run.ChatHistory.Enqueue(new ChatEntry
                         {
                             Role = ChatRole.System,
-                            Content = $"Self-review iteration {i + 1} failed: {ex.Message}"
+                            Content = $"Code review iteration {i + 1} failed: {ex.Message}"
                         });
                         NotifyChange();
                         break;
                     }
                 }
 
-                run.ReviewIterationInProgress = 0;
+                run.CodeReviewIterationInProgress = 0;
             }
 
             // Transition to WaitingForChat (or auto-proceed in autonomous mode)

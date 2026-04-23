@@ -389,15 +389,18 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task ApproveAnalysis_WithSelfReviewEnabled_RunsReviewBeforeChat()
+    public async Task ApproveAnalysis_WithCodeReviewEnabled_RunsReviewBeforeChat()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 AutonomousMode = false,
-                SelfReviewEnabled = true,
-                SelfReviewMaxIterations = 1
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1
+                }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -406,7 +409,7 @@ public class PipelineOrchestrationServiceTests
         await _service.ApproveAnalysisAsync(CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
-        run.ReviewIterationsCompleted.Should().Be(1);
+        run.CodeReviewIterationsCompleted.Should().Be(1);
 
         // Verify the review prompt was sent via ExecuteAsync with UseResume = true
         _mockAgentProvider.Verify(
@@ -418,21 +421,21 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task ApproveAnalysis_WithSelfReviewDisabled_SkipsReview()
+    public async Task ApproveAnalysis_WithCodeReviewDisabled_SkipsReview()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 AutonomousMode = false,
-                SelfReviewEnabled = false
+                CodeReview = new CodeReviewConfiguration { Enabled = false }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
-        run.ReviewIterationsCompleted.Should().Be(0);
+        run.CodeReviewIterationsCompleted.Should().Be(0);
     }
 
     [Fact]
@@ -443,15 +446,18 @@ public class PipelineOrchestrationServiceTests
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 AutonomousMode = false,
-                SelfReviewEnabled = true,
-                SelfReviewMaxIterations = 3
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 3
+                }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         await _service.ApproveAnalysisAsync(CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
-        run.ReviewIterationsCompleted.Should().Be(3);
+        run.CodeReviewIterationsCompleted.Should().Be(3);
     }
 
     [Fact]
@@ -462,8 +468,11 @@ public class PipelineOrchestrationServiceTests
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 AutonomousMode = false,
-                SelfReviewEnabled = true,
-                SelfReviewMaxIterations = 3
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 3
+                }
             });
 
         // The "sub-agent" matcher hits both the analysis call in StartPipelineAsync
@@ -487,11 +496,11 @@ public class PipelineOrchestrationServiceTests
         await _service.ApproveAnalysisAsync(CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
-        run.ReviewIterationsCompleted.Should().Be(1);
+        run.CodeReviewIterationsCompleted.Should().Be(1);
     }
 
     [Fact]
-    public async Task SelfReviewPrompt_IsConfigurable()
+    public async Task CodeReviewPrompt_IsConfigurable()
     {
         var customPrompt = "Custom review: check for bugs only.";
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -499,9 +508,12 @@ public class PipelineOrchestrationServiceTests
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 AutonomousMode = false,
-                SelfReviewEnabled = true,
-                SelfReviewMaxIterations = 1,
-                SelfReviewPrompt = customPrompt
+                CodeReview = new CodeReviewConfiguration
+                {
+                    Enabled = true,
+                    MaxIterations = 1,
+                    Prompt = customPrompt
+                }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -516,12 +528,12 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
-    public void SelfReviewDefaults_AreCorrect()
+    public void CodeReviewDefaults_AreCorrect()
     {
         var config = new PipelineConfiguration();
-        config.SelfReviewEnabled.Should().BeTrue();
-        config.SelfReviewMaxIterations.Should().Be(1);
-        config.SelfReviewPrompt.Should().Contain("sub-agent");
+        config.CodeReview.Enabled.Should().BeTrue();
+        config.CodeReview.MaxIterations.Should().Be(1);
+        config.CodeReview.Prompt.Should().Contain("sub-agent");
         config.AutonomousMode.Should().BeTrue();
     }
 
@@ -1122,7 +1134,7 @@ public class PipelineOrchestrationServiceTests
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 AutonomousMode = false,
-                SelfReviewEnabled = false,
+                CodeReview = new CodeReviewConfiguration { Enabled = false },
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
                 AgentTimeout = TimeSpan.FromMinutes(5)
@@ -1185,7 +1197,7 @@ public class PipelineOrchestrationServiceTests
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 AutonomousMode = false,
-                SelfReviewEnabled = false,
+                CodeReview = new CodeReviewConfiguration { Enabled = false },
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
                 AgentTimeout = TimeSpan.FromMinutes(5)
@@ -1433,7 +1445,7 @@ public class PipelineOrchestrationServiceTests
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 AutonomousMode = false,
-                SelfReviewEnabled = false,
+                CodeReview = new CodeReviewConfiguration { Enabled = false },
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
                 AgentTimeout = TimeSpan.FromMinutes(5)

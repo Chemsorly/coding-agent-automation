@@ -125,7 +125,7 @@ public static class PromptBuilder
     }
 
     /// <summary>
-    /// Constructs a self-review prompt that includes the original issue context so the
+    /// Constructs a code review prompt that includes the original issue context so the
     /// reviewing agent does not rely solely on conversation history for requirements.
     /// The configurable review instructions are prepended, followed by the full issue
     /// details (title, description, requirements, acceptance criteria, and comments).

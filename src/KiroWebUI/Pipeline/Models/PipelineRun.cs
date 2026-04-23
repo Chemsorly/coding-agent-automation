@@ -21,14 +21,14 @@ public sealed class PipelineRun
     /// <summary>Agent-generated analysis content, populated during AnalyzingCode step.</summary>
     public string? AnalysisContent { get; set; }
 
-    /// <summary>Number of self-review iterations completed during the ReviewingCode step.</summary>
-    public int ReviewIterationsCompleted { get; set; }
+    /// <summary>Number of code review iterations completed during the ReviewingCode step.</summary>
+    public int CodeReviewIterationsCompleted { get; set; }
 
-    /// <summary>Current self-review iteration in progress (1-based), 0 when not reviewing.</summary>
-    public int ReviewIterationInProgress { get; set; }
+    /// <summary>Current code review iteration in progress (1-based), 0 when not reviewing.</summary>
+    public int CodeReviewIterationInProgress { get; set; }
 
-    /// <summary>Total self-review iterations configured for this run.</summary>
-    public int ReviewIterationsTotal { get; set; }
+    /// <summary>Total code review iterations configured for this run.</summary>
+    public int CodeReviewIterationsTotal { get; set; }
 
     /// <summary>Thread-safe collections — mutated by orchestration service while UI reads via OnChange.</summary>
     public ConcurrentBag<string> RetryErrors { get; init; } = new();

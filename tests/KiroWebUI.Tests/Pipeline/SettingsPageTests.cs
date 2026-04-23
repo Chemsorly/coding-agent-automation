@@ -380,7 +380,7 @@ public class SettingsPageTests
         savedConfig.BlacklistedPaths.Should().BeEquivalentTo(new[] { ".kiro", ".github" });
         savedConfig.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
         savedConfig.AutonomousMode.Should().BeTrue();
-        savedConfig.SelfReviewEnabled.Should().BeTrue();
+        savedConfig.CodeReview.Enabled.Should().BeTrue();
         savedConfig.AnalysisPrompt.Should().Be(PipelineConfiguration.DefaultAnalysisPrompt);
         savedConfig.ImplementationPrompt.Should().Be(PipelineConfiguration.DefaultImplementationPrompt);
     }
