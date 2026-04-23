@@ -102,7 +102,6 @@ public class PipelineSummaryComponentTests : BunitContext
     public void CancelledPipeline_ShowsCancelledStepAndNoResultStrip()
     {
         var run = CreateRun(step: PipelineStep.Cancelled, branchName: "feature/test");
-        run.ApprovalTimestamp = DateTime.UtcNow.AddMinutes(-5);
         var cut = Render<PipelineSummary>(p => p
             .Add(s => s.Run, run)
             .Add(s => s.OnBackToIssues, () => { }));

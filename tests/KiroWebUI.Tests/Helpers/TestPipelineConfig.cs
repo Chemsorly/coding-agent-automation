@@ -6,18 +6,28 @@ namespace KiroWebUI.Tests.Helpers;
 /// Factory for creating PipelineConfiguration instances in tests with all properties
 /// explicitly set. This prevents tests from silently breaking when production defaults change.
 /// 
-/// Use <see cref="NonAutonomous"/> for tests that expect the pipeline to pause at
-/// WaitingForAnalysisApproval (most tests). Use <see cref="Autonomous"/> for tests
-/// that expect the pipeline to run to completion without pausing.
+/// Use <see cref="Default"/> for most tests. Use <see cref="WithCodeReview"/> for tests
+/// that need code review enabled.
 /// </summary>
 public static class TestPipelineConfig
 {
     /// <summary>
-    /// Creates a PipelineConfiguration for tests that expect non-autonomous pipeline flow
-    /// (pauses at WaitingForAnalysisApproval and WaitingForChat).
+    /// Creates a PipelineConfiguration for tests that expect the standard pipeline flow
+    /// (code review disabled). All properties are explicitly set to prevent default-change regressions.
+    /// </summary>
+    public static PipelineConfiguration NonAutonomous(string? workspaceBaseDirectory = null) => Default(workspaceBaseDirectory);
+
+    /// <summary>
+    /// Creates a PipelineConfiguration for tests that expect the standard pipeline flow
+    /// (code review enabled). All properties are explicitly set to prevent default-change regressions.
+    /// </summary>
+    public static PipelineConfiguration Autonomous(string? workspaceBaseDirectory = null) => WithCodeReview(workspaceBaseDirectory);
+
+    /// <summary>
+    /// Creates a default PipelineConfiguration with code review disabled.
     /// All properties are explicitly set to prevent default-change regressions.
     /// </summary>
-    public static PipelineConfiguration NonAutonomous(string? workspaceBaseDirectory = null) => new()
+    public static PipelineConfiguration Default(string? workspaceBaseDirectory = null) => new()
     {
         MaxRetries = 3,
         IssuePageSize = 25,
@@ -39,7 +49,6 @@ public static class TestPipelineConfig
         ExternalCiPollInterval = TimeSpan.FromSeconds(30),
         StallWarningInterval = TimeSpan.FromMinutes(2),
         StallPollInterval = TimeSpan.FromSeconds(30),
-        AutonomousMode = false,
         BlacklistedPaths = new[] { ".kiro", ".github" },
         BlacklistMode = BlacklistMode.WarnAndExclude,
         CleanupSuccessfulWorkspaces = true,
@@ -47,11 +56,10 @@ public static class TestPipelineConfig
     };
 
     /// <summary>
-    /// Creates a PipelineConfiguration for tests that expect autonomous pipeline flow
-    /// (runs to completion without pausing).
+    /// Creates a PipelineConfiguration with code review enabled.
     /// All properties are explicitly set to prevent default-change regressions.
     /// </summary>
-    public static PipelineConfiguration Autonomous(string? workspaceBaseDirectory = null) => new()
+    public static PipelineConfiguration WithCodeReview(string? workspaceBaseDirectory = null) => new()
     {
         MaxRetries = 3,
         IssuePageSize = 25,
@@ -73,7 +81,6 @@ public static class TestPipelineConfig
         ExternalCiPollInterval = TimeSpan.FromSeconds(30),
         StallWarningInterval = TimeSpan.FromMinutes(2),
         StallPollInterval = TimeSpan.FromSeconds(30),
-        AutonomousMode = true,
         BlacklistedPaths = new[] { ".kiro", ".github" },
         BlacklistMode = BlacklistMode.WarnAndExclude,
         CleanupSuccessfulWorkspaces = true,

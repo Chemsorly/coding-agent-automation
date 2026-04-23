@@ -17,13 +17,14 @@ public class PipelineStateTransitionPropertyTests
     /// Property 7: Pipeline step transitions update in-memory state.
     /// Verifies that OnChange fires on each transition and ActiveRun.CurrentStep
     /// matches the expected step after each transition in the pipeline flow.
+    /// The pipeline now runs end-to-end without pausing.
     /// **Validates: Requirements 8.2**
     /// </summary>
     [Property(MaxTest = 20)]
-    public void PipelineTransitions_UpdateStateAndFireOnChange(bool shouldCancel)
+    public void PipelineTransitions_UpdateStateAndFireOnChange(bool allGatesPass)
     {
         var transitionLog = new List<PipelineStep>();
-        var service = CreateServiceWithMocks(allGatesPass: !shouldCancel);
+        var service = CreateServiceWithMocks(allGatesPass: allGatesPass);
 
         service.OnChange += () =>
         {
@@ -31,18 +32,9 @@ public class PipelineStateTransitionPropertyTests
                 transitionLog.Add(service.ActiveRun.CurrentStep);
         };
 
-        // Start the pipeline
+        // Start the pipeline — runs end-to-end
         var run = service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None)
             .GetAwaiter().GetResult();
-
-        // After start, should be in WaitingForAnalysisApproval
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
-
-        // Approve analysis to continue to code generation
-        service.ApproveAnalysisAsync(CancellationToken.None).GetAwaiter().GetResult();
-
-        // After approval, should be in WaitingForChat
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
 
         // Verify the expected transitions occurred in order
         transitionLog.Should().ContainInOrder(
@@ -50,30 +42,24 @@ public class PipelineStateTransitionPropertyTests
             PipelineStep.CreatingBranch,
             PipelineStep.AnalyzingCode,
             PipelineStep.PostingAnalysis,
-            PipelineStep.WaitingForAnalysisApproval,
             PipelineStep.GeneratingCode,
-            PipelineStep.WaitingForChat);
+            PipelineStep.RunningQualityGates);
 
         // OnChange should have fired at least once per transition
-        transitionLog.Count.Should().BeGreaterThanOrEqualTo(7);
+        transitionLog.Count.Should().BeGreaterThanOrEqualTo(6);
 
-        if (shouldCancel)
+        if (allGatesPass)
         {
-            // Cancel the pipeline
-            service.CancelPipelineAsync().GetAwaiter().GetResult();
-            run.CurrentStep.Should().Be(PipelineStep.Cancelled);
-            transitionLog.Should().Contain(PipelineStep.Cancelled);
-        }
-        else
-        {
-            // Proceed to quality gates (which pass)
-            service.ProceedToQualityGatesAsync(CancellationToken.None).GetAwaiter().GetResult();
-
-            // Should have transitioned through RunningQualityGates → CreatingPullRequest → Completed
-            transitionLog.Should().Contain(PipelineStep.RunningQualityGates);
+            // Should have transitioned through CreatingPullRequest → Completed
             transitionLog.Should().Contain(PipelineStep.CreatingPullRequest);
             transitionLog.Should().Contain(PipelineStep.Completed);
             run.CurrentStep.Should().Be(PipelineStep.Completed);
+        }
+        else
+        {
+            // Quality gates failed, retries exhausted → Failed
+            run.CurrentStep.Should().Be(PipelineStep.Failed);
+            transitionLog.Should().Contain(PipelineStep.Failed);
         }
     }
 

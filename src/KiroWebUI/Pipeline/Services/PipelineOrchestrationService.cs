@@ -463,47 +463,7 @@ public class PipelineOrchestrationService : IDisposable
                 }
             }
 
-            // Pause for user approval before implementation (or auto-approve in autonomous mode)
-            TransitionTo(run, PipelineStep.WaitingForAnalysisApproval);
-
-            if (_activeConfig!.AutonomousMode)
-            {
-                _logger.Information("Pipeline {RunId} autonomous mode: auto-approving analysis", run.RunId);
-                await ApproveAnalysisAsync(ct);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
-            {
-                _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
-                run.CompletedAt = DateTime.UtcNow;
-                TransitionTo(run, PipelineStep.Cancelled);
-                AddRunToHistory(run);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Approves the analysis and continues the pipeline to code generation.
-    /// Must be called when the pipeline is in WaitingForAnalysisApproval state.
-    /// </summary>
-    public async Task ApproveAnalysisAsync(CancellationToken ct)
-    {
-        if (ActiveRun == null || ActiveRun.CurrentStep != PipelineStep.WaitingForAnalysisApproval)
-            throw new InvalidOperationException("No active pipeline run in WaitingForAnalysisApproval state.");
-
-        var run = ActiveRun;
-        run.ApprovalTimestamp = DateTime.UtcNow;
-        using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
-
-        using var linkedCts = _cancellationTokenSource != null
-            ? CancellationTokenSource.CreateLinkedTokenSource(ct, _cancellationTokenSource.Token)
-            : null;
-        var linkedCt = linkedCts?.Token ?? ct;
-
-        try
-        {
+            // Proceed directly to code generation
             // Generate code — agent implements the issue
             TransitionTo(run, PipelineStep.GeneratingCode);
             try
@@ -512,7 +472,7 @@ public class PipelineOrchestrationService : IDisposable
                 _logger.Debug("Pipeline {RunId} implementation prompt:\n{Prompt}", run.RunId, prompt);
 
                 // Stall monitor: periodically poll GetHealthStatus() to detect silence or process death
-                var stallCts = CancellationTokenSource.CreateLinkedTokenSource(linkedCt);
+                using var stallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 var lastWarnTime = DateTime.UtcNow;
                 var stallMonitorTask = Task.Run(async () =>
                 {
@@ -570,25 +530,30 @@ public class PipelineOrchestrationService : IDisposable
                     catch (ObjectDisposedException) { }
                 }, CancellationToken.None);
 
-                var agentResult = await _activeAgentProvider!.ExecuteAsync(
-                    new AgentRequest
-                    {
-                        Prompt = prompt,
-                        WorkspacePath = run.WorkspacePath!,
-                        Timeout = _activeConfig!.AgentTimeout,
-                        UseResume = true
-                    },
-                    linkedCt,
-                    line =>
-                    {
-                        run.OutputLines.Enqueue(line);
-                        OnOutputLine?.Invoke(line);
-                    });
-
-                // Stop stall monitor
-                await stallCts.CancelAsync();
-                try { await stallMonitorTask; } catch (OperationCanceledException) { }
-                stallCts.Dispose();
+                AgentResult agentResult;
+                try
+                {
+                    agentResult = await _activeAgentProvider!.ExecuteAsync(
+                        new AgentRequest
+                        {
+                            Prompt = prompt,
+                            WorkspacePath = run.WorkspacePath!,
+                            Timeout = _activeConfig!.AgentTimeout,
+                            UseResume = true
+                        },
+                        ct,
+                        line =>
+                        {
+                            run.OutputLines.Enqueue(line);
+                            OnOutputLine?.Invoke(line);
+                        });
+                }
+                finally
+                {
+                    // Stop stall monitor on all paths (success, timeout, cancellation, exception)
+                    await stallCts.CancelAsync();
+                    try { await stallMonitorTask; } catch (OperationCanceledException) { }
+                }
 
                 var outputSummary = agentResult.OutputLines.Count > 0
                     ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
@@ -607,14 +572,14 @@ public class PipelineOrchestrationService : IDisposable
 
                 if (agentResult.ExitCode != 0)
                 {
-                    _logger.Warning("Pipeline {RunId} agent exited with non-zero code {ExitCode}, continuing to chat phase",
+                    _logger.Warning("Pipeline {RunId} agent exited with non-zero code {ExitCode}, continuing to quality gates",
                         run.RunId, agentResult.ExitCode);
                     run.ChatHistory.Enqueue(new ChatEntry
                     {
                         Role = ChatRole.System,
                         Content = $"Agent process exited with code {agentResult.ExitCode} after {(DateTime.UtcNow - run.StartedAt):hh\\:mm\\:ss}. " +
                                   $"Output lines captured: {agentResult.OutputLines.Count}. " +
-                                  $"The process may have stopped unexpectedly. You can continue via chat."
+                                  $"The process may have stopped unexpectedly."
                     });
                 }
             }
@@ -635,13 +600,12 @@ public class PipelineOrchestrationService : IDisposable
             }
             catch (Exception ex)
             {
-                // Agent crash or unexpected error — log and continue to WaitingForChat
-                // so the user can retry via chat instead of the pipeline dying
-                _logger.Warning(ex, "Pipeline {RunId} code generation failed, continuing to chat phase", run.RunId);
+                // Agent crash or unexpected error — log and continue to quality gates
+                _logger.Warning(ex, "Pipeline {RunId} code generation failed, continuing to quality gates", run.RunId);
                 run.ChatHistory.Enqueue(new ChatEntry
                 {
                     Role = ChatRole.System,
-                    Content = $"Agent process failed: {ex.Message}. You can retry via chat."
+                    Content = $"Agent process failed: {ex.Message}."
                 });
             }
 
@@ -741,7 +705,7 @@ public class PipelineOrchestrationService : IDisposable
                                     Timeout = _activeConfig.AgentTimeout,
                                     UseResume = true
                                 },
-                                linkedCt,
+                                ct,
                                 line =>
                                 {
                                     run.OutputLines.Enqueue(line);
@@ -822,7 +786,7 @@ public class PipelineOrchestrationService : IDisposable
                                     Timeout = _activeConfig.AgentTimeout,
                                     UseResume = true
                                 },
-                                linkedCt,
+                                ct,
                                 line =>
                                 {
                                     run.OutputLines.Enqueue(line);
@@ -868,14 +832,8 @@ public class PipelineOrchestrationService : IDisposable
                 } // end else (not skipped)
             }
 
-            // Transition to WaitingForChat (or auto-proceed in autonomous mode)
-            TransitionTo(run, PipelineStep.WaitingForChat);
-
-            if (_activeConfig!.AutonomousMode)
-            {
-                _logger.Information("Pipeline {RunId} autonomous mode: proceeding directly to quality gates", run.RunId);
-                await ProceedToQualityGatesAsync(linkedCt);
-            }
+            // Proceed directly to quality gates
+            await ProceedToQualityGatesAsync(ct);
         }
         catch (OperationCanceledException)
         {
@@ -890,106 +848,11 @@ public class PipelineOrchestrationService : IDisposable
     }
 
     /// <summary>
-    /// Sends a chat message to the agent during WaitingForChat state.
+    /// Runs quality gate validation with retry logic and PR creation.
     /// </summary>
-    public async Task SendChatMessageAsync(string message, CancellationToken ct)
+    private async Task ProceedToQualityGatesAsync(CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(message);
-
-        if (ActiveRun == null || ActiveRun.CurrentStep != PipelineStep.WaitingForChat)
-            throw new InvalidOperationException("No active pipeline run in WaitingForChat state.");
-
-        var run = ActiveRun;
-        using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
-
-        // Add user message to chat history
-        run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.User, Content = message });
-        _logger.Debug("Pipeline {RunId} chat prompt:\n{Prompt}", run.RunId, message);
-        NotifyChange();
-
-        // Transition to GeneratingCode
-        TransitionTo(run, PipelineStep.GeneratingCode);
-
-        try
-        {
-            using var linkedCts = _cancellationTokenSource != null
-                ? CancellationTokenSource.CreateLinkedTokenSource(ct, _cancellationTokenSource.Token)
-                : null;
-            var linkedCt = linkedCts?.Token ?? ct;
-
-            var agentResult = await _activeAgentProvider!.ExecuteAsync(
-                new AgentRequest
-                {
-                    Prompt = message,
-                    WorkspacePath = run.WorkspacePath!,
-                    Timeout = _activeConfig!.AgentTimeout,
-                    UseResume = true
-                },
-                linkedCt,
-                line =>
-                {
-                    run.OutputLines.Enqueue(line);
-                    OnOutputLine?.Invoke(line);
-                });
-
-            var outputSummary = agentResult.OutputLines.Count > 0
-                ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
-                : "(no output)";
-
-            run.ChatHistory.Enqueue(new ChatEntry
-            {
-                Role = ChatRole.Agent,
-                Content = outputSummary
-            });
-
-            _logger.Information("Pipeline {RunId} chat response completed with exit code {ExitCode}",
-                run.RunId, agentResult.ExitCode);
-
-            await UpdateFileChangeStatsAsync(run);
-        }
-        catch (OperationCanceledException) when (_cancellationTokenSource?.IsCancellationRequested == true)
-        {
-            _logger.Information("Pipeline {RunId} was cancelled during chat", run.RunId);
-            run.CompletedAt = DateTime.UtcNow;
-            TransitionTo(run, PipelineStep.Cancelled);
-            AddRunToHistory(run);
-            return;
-        }
-        catch (OperationCanceledException)
-        {
-            // Agent timeout during chat
-            _logger.Warning("Pipeline {RunId} agent timed out during chat after {Duration}",
-                run.RunId, _activeConfig!.AgentTimeout);
-            run.ChatHistory.Enqueue(new ChatEntry
-            {
-                Role = ChatRole.System,
-                Content = $"Agent timed out after {_activeConfig.AgentTimeout}"
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Pipeline {RunId} chat execution failed", run.RunId);
-            run.ChatHistory.Enqueue(new ChatEntry
-            {
-                Role = ChatRole.System,
-                Content = $"Agent error: {ex.Message}"
-            });
-        }
-
-        // Return to WaitingForChat
-        TransitionTo(run, PipelineStep.WaitingForChat);
-    }
-
-    /// <summary>
-    /// Proceeds from WaitingForChat to quality gate validation.
-    /// Handles pass/fail/retry logic including draft PR on exhausted retries.
-    /// </summary>
-    public async Task ProceedToQualityGatesAsync(CancellationToken ct)
-    {
-        if (ActiveRun == null || ActiveRun.CurrentStep != PipelineStep.WaitingForChat)
-            throw new InvalidOperationException("No active pipeline run in WaitingForChat state.");
-
-        var run = ActiveRun;
+        var run = ActiveRun!;
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
 
         TransitionTo(run, PipelineStep.RunningQualityGates);
@@ -1131,12 +994,47 @@ public class PipelineOrchestrationService : IDisposable
                     Content = $"Quality gates failed (attempt {run.RetryCount}/{_activeConfig.MaxRetries}):\n{errorSummary}"
                 });
 
-                // Transition to WaitingForChat so SendChatMessageAsync's precondition is met
-                TransitionTo(run, PipelineStep.WaitingForChat);
+                // Send fix prompt to agent directly
+                TransitionTo(run, PipelineStep.GeneratingCode);
 
-                // Automatically send the failure details to the agent to fix
                 var fixPrompt = $"The quality gates failed. Please fix the following issues:\n{errorSummary}\n\nDo NOT run git write commands (git add, git commit, git push, etc.). The pipeline handles version control automatically.";
-                await SendChatMessageAsync(fixPrompt, linkedCt);
+                run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = fixPrompt });
+                NotifyChange();
+
+                try
+                {
+                    var agentResult = await _activeAgentProvider!.ExecuteAsync(
+                        new AgentRequest
+                        {
+                            Prompt = fixPrompt,
+                            WorkspacePath = run.WorkspacePath!,
+                            Timeout = _activeConfig.AgentTimeout,
+                            UseResume = true
+                        },
+                        linkedCt,
+                        line =>
+                        {
+                            run.OutputLines.Enqueue(line);
+                            OnOutputLine?.Invoke(line);
+                        });
+
+                    var outputSummary = agentResult.OutputLines.Count > 0
+                        ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
+                        : "(no output)";
+                    run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = outputSummary });
+
+                    await UpdateFileChangeStatsAsync(run);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Pipeline {RunId} retry fix agent call failed", run.RunId);
+                    run.ChatHistory.Enqueue(new ChatEntry
+                    {
+                        Role = ChatRole.System,
+                        Content = $"Agent error during retry fix: {ex.Message}"
+                    });
+                }
 
                 // Re-run local quality gates
                 TransitionTo(run, PipelineStep.RunningQualityGates);
@@ -1270,10 +1168,13 @@ public class PipelineOrchestrationService : IDisposable
         }
         catch (OperationCanceledException)
         {
-            _logger.Information("Pipeline {RunId} was cancelled during quality gates", run.RunId);
-            run.CompletedAt = DateTime.UtcNow;
-            TransitionTo(run, PipelineStep.Cancelled);
-            AddRunToHistory(run);
+            if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
+            {
+                _logger.Information("Pipeline {RunId} was cancelled during quality gates", run.RunId);
+                run.CompletedAt = DateTime.UtcNow;
+                TransitionTo(run, PipelineStep.Cancelled);
+                AddRunToHistory(run);
+            }
         }
         catch (Exception ex)
         {
