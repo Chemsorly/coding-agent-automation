@@ -251,6 +251,91 @@ public class GitHubIssueProviderTests
             .Which.ParamName.Should().Be("identifier");
     }
 
+    [Fact]
+    public async Task RemoveLabelAsync_CallsOctokitRemoveFromIssue()
+    {
+        var mockLabels = new Mock<IIssuesLabelsClient>();
+        _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
+
+        await _provider.RemoveLabelAsync("42", "agent:in-progress", CancellationToken.None);
+
+        mockLabels.Verify(l => l.RemoveFromIssue("owner", "repo", 42, "agent:in-progress"), Times.Once);
+    }
+
+    [Fact]
+    public async Task RemoveLabelAsync_LabelNotPresent_DoesNotThrow()
+    {
+        var mockLabels = new Mock<IIssuesLabelsClient>();
+        mockLabels.Setup(l => l.RemoveFromIssue("owner", "repo", 42, "agent:next"))
+            .ThrowsAsync(new NotFoundException("Not found", System.Net.HttpStatusCode.NotFound));
+        _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
+
+        await _provider.RemoveLabelAsync("42", "agent:next", CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RemoveLabelAsync_NullIdentifier_ThrowsArgumentNullException()
+    {
+        var act = () => _provider.RemoveLabelAsync(null!, "label", CancellationToken.None);
+        (await act.Should().ThrowAsync<ArgumentNullException>())
+            .Which.ParamName.Should().Be("identifier");
+    }
+
+    [Fact]
+    public async Task RemoveLabelAsync_NonNumericIdentifier_ThrowsArgumentException()
+    {
+        var act = () => _provider.RemoveLabelAsync("abc", "label", CancellationToken.None);
+        (await act.Should().ThrowAsync<ArgumentException>())
+            .Which.ParamName.Should().Be("identifier");
+    }
+
+    [Fact]
+    public async Task EnsureAgentLabelsAsync_CreatesAllFourLabels()
+    {
+        var mockLabels = new Mock<IIssuesLabelsClient>();
+        _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
+
+        await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
+
+        mockLabels.Verify(l => l.Create("owner", "repo",
+            It.Is<NewLabel>(nl => nl.Name == "agent:next" && nl.Color == "0e8a16")), Times.Once);
+        mockLabels.Verify(l => l.Create("owner", "repo",
+            It.Is<NewLabel>(nl => nl.Name == "agent:in-progress" && nl.Color == "1d76db")), Times.Once);
+        mockLabels.Verify(l => l.Create("owner", "repo",
+            It.Is<NewLabel>(nl => nl.Name == "agent:error" && nl.Color == "d73a4a")), Times.Once);
+        mockLabels.Verify(l => l.Create("owner", "repo",
+            It.Is<NewLabel>(nl => nl.Name == "agent:needs-refinement" && nl.Color == "fbca04")), Times.Once);
+    }
+
+    [Fact]
+    public async Task EnsureAgentLabelsAsync_SkipsExistingLabels()
+    {
+        var mockLabels = new Mock<IIssuesLabelsClient>();
+        mockLabels.Setup(l => l.Create("owner", "repo", It.IsAny<NewLabel>()))
+            .ThrowsAsync(new ApiValidationException());
+        _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
+
+        // Should not throw — all labels already exist
+        await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task EnsureAgentLabelsAsync_CreatesOnlyMissingLabels()
+    {
+        var mockLabels = new Mock<IIssuesLabelsClient>();
+        // First two labels already exist, last two are new
+        mockLabels.Setup(l => l.Create("owner", "repo", It.Is<NewLabel>(nl => nl.Name == "agent:next")))
+            .ThrowsAsync(new ApiValidationException());
+        mockLabels.Setup(l => l.Create("owner", "repo", It.Is<NewLabel>(nl => nl.Name == "agent:in-progress")))
+            .ThrowsAsync(new ApiValidationException());
+        _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
+
+        await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
+
+        // All four should be attempted
+        mockLabels.Verify(l => l.Create("owner", "repo", It.IsAny<NewLabel>()), Times.Exactly(4));
+    }
+
     private static Issue CreateOctokitIssue(int number, string title, string? body, string[] labels)
     {
         var labelObjects = labels.Select(name =>

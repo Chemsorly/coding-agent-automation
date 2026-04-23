@@ -176,6 +176,16 @@ public class PipelineOrchestrationService : IDisposable
             _logger.Information("Pipeline {RunId} created for issue {IssueIdentifier}", run.RunId, issueIdentifier);
             NotifyChange();
 
+            // Ensure agent labels exist in the repository (non-fatal fallback)
+            try
+            {
+                await issueProvider.EnsureAgentLabelsAsync(linkedCt);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Pipeline {RunId} failed to ensure agent labels, continuing", run.RunId);
+            }
+
             // Execute the pipeline steps (fire-and-forget within the lock scope,
             // but we await to completion before returning)
             await ExecutePipelineStepsAsync(run, issueProvider, linkedCt);
@@ -289,6 +299,7 @@ public class PipelineOrchestrationService : IDisposable
                 _logger.Error(ex, "Pipeline {RunId} failed to fetch issue {IssueIdentifier}",
                     run.RunId, run.IssueIdentifier);
                 run.FailureReason = $"Failed to fetch issue: {ex.Message}";
+                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
                 TransitionTo(run, PipelineStep.Failed);
                 AddRunToHistory(run);
                 return;
@@ -299,6 +310,7 @@ public class PipelineOrchestrationService : IDisposable
             {
                 _logger.Warning("Pipeline {RunId} issue has insufficient information", run.RunId);
                 run.FailureReason = "insufficient issue information";
+                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
                 TransitionTo(run, PipelineStep.Failed);
                 AddRunToHistory(run);
                 return;
@@ -338,6 +350,7 @@ public class PipelineOrchestrationService : IDisposable
 
             // Clone repository
             TransitionTo(run, PipelineStep.CloningRepository);
+            await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.InProgress, ct);
             try
             {
                 await _activeRepoProvider!.CloneAsync(workspacePath, ct);
@@ -347,6 +360,7 @@ public class PipelineOrchestrationService : IDisposable
             {
                 _logger.Error(ex, "Pipeline {RunId} failed to clone repository", run.RunId);
                 run.FailureReason = $"Repository clone failed: {ex.Message}";
+                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
                 TransitionTo(run, PipelineStep.Failed);
                 AddRunToHistory(run);
                 return;
@@ -367,6 +381,7 @@ public class PipelineOrchestrationService : IDisposable
             {
                 _logger.Error(ex, "Pipeline {RunId} failed to create branch", run.RunId);
                 run.FailureReason = $"Branch creation failed: {ex.Message}";
+                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
                 TransitionTo(run, PipelineStep.Failed);
                 AddRunToHistory(run);
                 return;
@@ -823,6 +838,7 @@ public class PipelineOrchestrationService : IDisposable
             {
                 _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
                 run.CompletedAt = DateTime.UtcNow;
+                await RemoveAllAgentLabelsAsync(run.IssueIdentifier, CancellationToken.None);
                 TransitionTo(run, PipelineStep.Cancelled);
                 AddRunToHistory(run);
             }
@@ -864,7 +880,7 @@ public class PipelineOrchestrationService : IDisposable
                         run.IssueTitle, run.IssueIdentifier);
                     var blacklisted = await _activeRepoProvider!.CommitAllAsync(
                         run.WorkspacePath!, commitMessage, _activeConfig!.BlacklistedPaths, linkedCt);
-                    if (RecordBlacklistedFiles(run, blacklisted))
+                    if (await RecordBlacklistedFiles(run, blacklisted))
                         return; // Fail mode — pipeline already transitioned to Failed
                 }
                 catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
@@ -1038,7 +1054,7 @@ public class PipelineOrchestrationService : IDisposable
                                 run.IssueTitle, run.IssueIdentifier);
                             var blacklisted = await _activeRepoProvider!.CommitAllAsync(
                                 run.WorkspacePath!, retryCommitMessage, _activeConfig!.BlacklistedPaths, linkedCt);
-                            if (RecordBlacklistedFiles(run, blacklisted))
+                            if (await RecordBlacklistedFiles(run, blacklisted))
                                 return; // Fail mode — pipeline already transitioned to Failed
                         }
                         catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
@@ -1154,6 +1170,7 @@ public class PipelineOrchestrationService : IDisposable
             {
                 _logger.Information("Pipeline {RunId} was cancelled during quality gates", run.RunId);
                 run.CompletedAt = DateTime.UtcNow;
+                await RemoveAllAgentLabelsAsync(run.IssueIdentifier, CancellationToken.None);
                 TransitionTo(run, PipelineStep.Cancelled);
                 AddRunToHistory(run);
             }
@@ -1162,6 +1179,7 @@ public class PipelineOrchestrationService : IDisposable
         {
             _logger.Error(ex, "Pipeline {RunId} quality gate validation failed", run.RunId);
             run.FailureReason = $"Quality gate validation error: {ex.Message}";
+            await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
             TransitionTo(run, PipelineStep.Failed);
             AddRunToHistory(run);
         }
@@ -1170,10 +1188,10 @@ public class PipelineOrchestrationService : IDisposable
     /// <summary>
     /// Cancels the active pipeline run.
     /// </summary>
-    public Task CancelPipelineAsync()
+    public async Task CancelPipelineAsync()
     {
         if (ActiveRun == null || !IsRunning)
-            return Task.CompletedTask;
+            return;
 
         var run = ActiveRun;
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
@@ -1182,10 +1200,10 @@ public class PipelineOrchestrationService : IDisposable
 
         _cancellationTokenSource?.Cancel();
         run.CompletedAt = DateTime.UtcNow;
+        if (_activeIssueProvider != null)
+            await RemoveAllAgentLabelsAsync(run.IssueIdentifier, CancellationToken.None);
         TransitionTo(run, PipelineStep.Cancelled);
         AddRunToHistory(run);
-
-        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -1209,7 +1227,7 @@ public class PipelineOrchestrationService : IDisposable
                     run.IssueTitle, run.IssueIdentifier);
                 var blacklisted = await _activeRepoProvider!.CommitAllAsync(
                     run.WorkspacePath!, commitMessage, _activeConfig!.BlacklistedPaths, ct);
-                if (RecordBlacklistedFiles(run, blacklisted))
+                if (await RecordBlacklistedFiles(run, blacklisted))
                     return; // Fail mode — pipeline already transitioned to Failed
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
@@ -1235,6 +1253,7 @@ public class PipelineOrchestrationService : IDisposable
                     run.RunId, _activeRepoProvider!.BaseBranch);
                 run.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";
                 run.CompletedAt = DateTime.UtcNow;
+                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
                 TransitionTo(run, PipelineStep.Failed);
                 AddRunToHistory(run);
                 return;
@@ -1289,7 +1308,14 @@ public class PipelineOrchestrationService : IDisposable
 
             var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
             if (isDraft)
+            {
                 run.FailureReason = "Quality gates failed after max retries; draft PR created.";
+                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
+            }
+            else
+            {
+                await RemoveAllAgentLabelsAsync(run.IssueIdentifier, ct);
+            }
 
             TransitionTo(run, finalStep);
             AddRunToHistory(run);
@@ -1307,6 +1333,7 @@ public class PipelineOrchestrationService : IDisposable
         {
             _logger.Error(ex, "Pipeline {RunId} failed to create pull request", run.RunId);
             run.FailureReason = $"PR creation failed: {ex.Message}";
+            await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
             TransitionTo(run, PipelineStep.Failed);
             AddRunToHistory(run);
         }
@@ -1318,7 +1345,7 @@ public class PipelineOrchestrationService : IDisposable
     /// Returns true if the pipeline should stop (Fail mode), false otherwise.
     /// In Fail mode, transitions the run to Failed with a clear FailureReason.
     /// </summary>
-    private bool RecordBlacklistedFiles(PipelineRun run, IReadOnlyList<string> blacklisted)
+    private async Task<bool> RecordBlacklistedFiles(PipelineRun run, IReadOnlyList<string> blacklisted)
     {
         if (blacklisted.Count == 0) return false;
 
@@ -1336,6 +1363,7 @@ public class PipelineOrchestrationService : IDisposable
             var fileList = string.Join(", ", blacklisted);
             run.FailureReason = $"Blacklisted files detected: {fileList}. The agent modified protected paths.";
             run.CompletedAt = DateTime.UtcNow;
+            await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
             TransitionTo(run, PipelineStep.Failed);
             AddRunToHistory(run);
             return true;
@@ -1385,6 +1413,41 @@ public class PipelineOrchestrationService : IDisposable
         NotifyChange();
     }
 
+    /// <summary>
+    /// Removes all <c>agent:*</c> labels from the issue, then adds the specified label.
+    /// Non-fatal — failures are logged as warnings and do not affect the pipeline.
+    /// </summary>
+    private async Task SwapAgentLabelAsync(string issueId, string newLabel, CancellationToken ct)
+    {
+        try
+        {
+            foreach (var label in AgentLabels.All)
+                await _activeIssueProvider!.RemoveLabelAsync(issueId, label, ct);
+            await _activeIssueProvider!.AddLabelAsync(issueId, newLabel, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to swap agent label to {Label} on issue {Issue}", newLabel, issueId);
+        }
+    }
+
+    /// <summary>
+    /// Removes all <c>agent:*</c> labels from the issue.
+    /// Non-fatal — failures are logged as warnings and do not affect the pipeline.
+    /// </summary>
+    private async Task RemoveAllAgentLabelsAsync(string issueId, CancellationToken ct)
+    {
+        try
+        {
+            foreach (var label in AgentLabels.All)
+                await _activeIssueProvider!.RemoveLabelAsync(issueId, label, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to remove agent labels from issue {Issue}", issueId);
+        }
+    }
+
     private void NotifyChange()
     {
         try
@@ -1415,6 +1478,7 @@ public class PipelineOrchestrationService : IDisposable
             run.RunId, run.CurrentStep);
         run.FailureReason = ex.Message;
         run.CompletedAt = DateTime.UtcNow;
+        await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
         TransitionTo(run, PipelineStep.Failed);
         AddRunToHistory(run);
     }

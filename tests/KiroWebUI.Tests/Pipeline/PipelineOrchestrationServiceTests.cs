@@ -1247,4 +1247,112 @@ public class PipelineOrchestrationServiceTests
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "Review" });
     }
+
+    [Fact]
+    public async Task StartPipeline_CallsEnsureAgentLabelsAsync()
+    {
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        _mockIssueProvider.Verify(p => p.EnsureAgentLabelsAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task StartPipeline_EnsureAgentLabelsFailure_PipelineContinues()
+    {
+        _mockIssueProvider.Setup(p => p.EnsureAgentLabelsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("API error"));
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+    }
+
+    [Fact]
+    public async Task StartPipeline_SwapsToInProgressAtCloningRepository()
+    {
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Should remove all agent labels then add agent:in-progress
+        foreach (var label in AgentLabels.All)
+            _mockIssueProvider.Verify(p => p.RemoveLabelAsync("42", label, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:in-progress", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task StartPipeline_RemovesLabelsOnCompletion()
+    {
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        // On completion, all agent labels should be removed (the final removal)
+        foreach (var label in AgentLabels.All)
+            _mockIssueProvider.Verify(p => p.RemoveLabelAsync("42", label, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task StartPipeline_SwapsToErrorOnFailure()
+    {
+        _mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Clone failed"));
+
+        try
+        {
+            await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        }
+        catch { }
+
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task CancelPipeline_RemovesAgentLabels()
+    {
+        // Use a blocking agent to keep pipeline running
+        var tcs = new TaskCompletionSource<AgentResult>();
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns(tcs.Task);
+
+        var pipelineTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Wait for pipeline to reach a running state
+        await Task.Delay(200);
+
+        await _service.CancelPipelineAsync();
+        tcs.TrySetCanceled();
+
+        try { await pipelineTask; } catch { }
+
+        _service.ActiveRun!.CurrentStep.Should().Be(PipelineStep.Cancelled);
+        // Verify removal was attempted
+        _mockIssueProvider.Verify(p => p.RemoveLabelAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task StartPipeline_LabelOperationFailure_PipelineContinues()
+    {
+        _mockIssueProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("API rate limit"));
+        _mockIssueProvider.Setup(p => p.AddLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("API rate limit"));
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Pipeline should complete despite label failures
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+    }
+
+    [Fact]
+    public async Task StartPipeline_QualityGateFailure_SwapsToErrorLabel()
+    {
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Validation error"));
+
+        try
+        {
+            await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        }
+        catch { }
+
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
 }

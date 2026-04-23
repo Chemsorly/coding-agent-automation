@@ -14,13 +14,16 @@ namespace KiroWebUI.Tests.Components;
 public class SettingsPageComponentTests : BunitContext
 {
     private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IProviderFactory> _mockProviderFactory;
 
     public SettingsPageComponentTests()
     {
         _mockStore = new Mock<IConfigurationStore>();
+        _mockProviderFactory = new Mock<IProviderFactory>();
         SetupDefaults();
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(new KiroWebUI.Pipeline.Services.GitHubValidationService());
+        Services.AddSingleton(_mockProviderFactory.Object);
     }
 
     private void SetupDefaults()
@@ -294,5 +297,65 @@ public class SettingsPageComponentTests : BunitContext
         Assert.Contains("aria-modal=\"true\"", razorContent);
         Assert.Contains("aria-labelledby=\"related-providers-title\"", razorContent);
         Assert.Contains("HandleModalKeyDown", razorContent);
+    }
+
+    [Fact]
+    public void Settings_IssueProviderCard_ShowsConfigureLabelsButton()
+    {
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "My Issues",
+                    Settings = new Dictionary<string, string> { ["owner"] = "org", ["repo"] = "repo" } }
+            });
+
+        var component = Render<Settings>();
+
+        Assert.Contains("Configure Labels", component.Markup);
+        Assert.NotNull(component.Find(".btn-configure"));
+    }
+
+    [Fact]
+    public async Task Settings_ConfigureLabelsButton_ShowsSuccessMessage()
+    {
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.EnsureAgentLabelsAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "My Issues",
+                    Settings = new Dictionary<string, string> { ["owner"] = "org", ["repo"] = "repo" } }
+            });
+
+        var component = Render<Settings>();
+        var button = component.Find(".btn-configure");
+        await button.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.Contains("Agent labels configured successfully", component.Markup);
+    }
+
+    [Fact]
+    public async Task Settings_ConfigureLabelsButton_ShowsErrorOnFailure()
+    {
+        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Throws(new InvalidOperationException("Insufficient permissions"));
+
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "My Issues",
+                    Settings = new Dictionary<string, string> { ["owner"] = "org", ["repo"] = "repo" } }
+            });
+
+        var component = Render<Settings>();
+        var button = component.Find(".btn-configure");
+        await button.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.Contains("Failed to configure labels", component.Markup);
+        Assert.Contains("Insufficient permissions", component.Markup);
     }
 }
