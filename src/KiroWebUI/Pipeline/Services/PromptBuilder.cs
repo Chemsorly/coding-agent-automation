@@ -25,7 +25,7 @@ public static class PromptBuilder
     /// The configurable analysis instructions are prepended, followed by pipeline mechanics.
     /// </summary>
     public static string BuildAnalysisPrompt(string analysisInstructions, IssueDetail issue, ParsedIssue parsed,
-        IReadOnlyList<IssueComment>? comments = null)
+        IReadOnlyList<IssueComment>? comments = null, string? brainContextSection = null)
     {
         ArgumentNullException.ThrowIfNull(analysisInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -70,6 +70,12 @@ public static class PromptBuilder
 
         AppendComments(sb, comments);
 
+        if (!string.IsNullOrEmpty(brainContextSection))
+        {
+            sb.AppendLine(brainContextSection);
+            sb.AppendLine();
+        }
+
         sb.AppendLine($"Analyze the workspace now and write your recommendation to `{AnalysisFilePath}`.");
 
         return sb.ToString().TrimEnd();
@@ -82,7 +88,8 @@ public static class PromptBuilder
     /// The configurable implementation instructions are prepended, followed by pipeline mechanics.
     /// </summary>
     public static string BuildPrompt(string implementationInstructions, IssueDetail issue, ParsedIssue parsed,
-        IReadOnlyList<IssueComment>? comments = null)
+        IReadOnlyList<IssueComment>? comments = null, string? brainContextSection = null,
+        string? brainWriteInstructions = null)
     {
         ArgumentNullException.ThrowIfNull(implementationInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -124,7 +131,19 @@ public static class PromptBuilder
 
         AppendComments(sb, comments);
 
+        if (!string.IsNullOrEmpty(brainContextSection))
+        {
+            sb.AppendLine(brainContextSection);
+            sb.AppendLine();
+        }
+
         sb.AppendLine("Implement these changes now.");
+
+        if (!string.IsNullOrEmpty(brainWriteInstructions))
+        {
+            sb.AppendLine();
+            sb.AppendLine(brainWriteInstructions);
+        }
 
         return sb.ToString().TrimEnd();
     }
@@ -225,5 +244,76 @@ public static class PromptBuilder
             sb.AppendLine(comment.Body);
             sb.AppendLine();
         }
+    }
+
+    /// <summary>
+    /// Builds the brain context section to inject into agent prompts.
+    /// Returns empty string when brain context is not available.
+    /// </summary>
+    public static string BuildBrainContextSection(
+        bool brainAvailable,
+        string? projectName = null,
+        string? techStack = null,
+        IReadOnlyList<string>? previousWarnings = null)
+    {
+        if (!brainAvailable)
+            return string.Empty;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("## Brain Repository — Accumulated Knowledge");
+        sb.AppendLine();
+        sb.AppendLine("A `.brain/` directory is available in this workspace containing accumulated project knowledge");
+        sb.AppendLine("from previous pipeline runs. It is a SEPARATE Git repository — do NOT reference `.brain/` files");
+        sb.AppendLine("in code repository commits, commit messages, or pull request descriptions.");
+        sb.AppendLine();
+        sb.AppendLine("Read `.brain/AGENTS.md` for the brain repo structure and instructions on reading relevant knowledge.");
+
+        if (!string.IsNullOrWhiteSpace(projectName))
+            sb.AppendLine($"Look for project-specific knowledge in `.brain/projects/{projectName}/`.");
+
+        if (!string.IsNullOrWhiteSpace(techStack))
+            sb.AppendLine($"Look for technology-specific knowledge in `.brain/technology/` for: {techStack}.");
+
+        sb.AppendLine();
+        sb.AppendLine("Do NOT run git commands (commit, push, pull) inside the `.brain/` directory.");
+        sb.AppendLine("The orchestrator handles all git operations on the brain repository.");
+
+        if (previousWarnings != null && previousWarnings.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"Note: your previous brain repo update was missing {string.Join(", ", previousWarnings)}. Please follow the format in .brain/AGENTS.md.");
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Builds the brain write instructions section for the implementation prompt.
+    /// Returns empty string when brain context is not available or when BrainReadOnly is true.
+    /// </summary>
+    public static string BuildBrainWriteInstructions(
+        bool brainAvailable, string runId, string issueIdentifier,
+        bool brainReadOnly = false)
+    {
+        if (!brainAvailable || brainReadOnly)
+            return string.Empty;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("## Brain Repository — Write Back What You Learned");
+        sb.AppendLine();
+        sb.AppendLine("After completing your work, write lessons learned back to the `.brain/` directory:");
+        sb.AppendLine("- General pitfalls and solutions → `.brain/general/lessons-learned.md`");
+        sb.AppendLine("- Technology-specific discoveries → `.brain/technology/{tech}.md`");
+        sb.AppendLine("- Project-specific knowledge → `.brain/projects/{project}/`");
+        sb.AppendLine($"- Session log for this run → `.brain/sessions/{DateTime.UtcNow:yyyy-MM-dd}_{runId}.md`");
+        sb.AppendLine("- Update the operation log → `.brain/log.md`");
+        sb.AppendLine();
+        sb.AppendLine("APPEND to existing files — never overwrite. Follow the entry format in `.brain/AGENTS.md`.");
+        sb.AppendLine("Include source attribution with typed source tags ([docs], [community], [experience], [verified]).");
+        sb.AppendLine("You may create new files and folders as needed.");
+        sb.AppendLine();
+        sb.AppendLine("Do NOT commit these changes — the orchestrator handles git operations.");
+
+        return sb.ToString().TrimEnd();
     }
 }

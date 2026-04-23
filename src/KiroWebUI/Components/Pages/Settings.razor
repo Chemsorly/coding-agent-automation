@@ -147,6 +147,7 @@
                             <strong>@p.DisplayName</strong>
                             <span class="provider-type">@p.ProviderType</span>
                             <span class="provider-detail">@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "") → @p.Settings.GetValueOrDefault("baseBranch", "main")</span>
+                            <span class="provider-type">@p.RepositoryRole</span>
                         </div>
                         <div class="provider-actions">
                             <button class="btn-edit" @onclick="() => EditRepoProvider(p)">Edit</button>
@@ -220,6 +221,13 @@
                         <div class="form-group">
                             <label>Base Branch</label>
                             <input type="text" @bind="_repoForm.BaseBranch" placeholder="main" />
+                        </div>
+                        <div class="form-group">
+                            <label>Repository Role</label>
+                            <select @bind="_repoForm.RepositoryRole">
+                                <option value="Work">Work</option>
+                                <option value="Brain">Brain</option>
+                            </select>
                         </div>
                         @if (!string.IsNullOrEmpty(_repoValidationMessage))
                         {
@@ -622,6 +630,13 @@
                         </div>
                         <input type="number" @bind="_pipelineConfig.FailedWorkspaceRetentionDays" min="-1" />
                     </div>
+                    <div class="form-group form-checkbox">
+                        <label>
+                            <input type="checkbox" @bind="_pipelineConfig.BrainReadOnly" />
+                            Brain Repository Read-Only
+                            <span class="form-hint-icon" aria-hidden="true" title="When enabled, the brain repo is cloned and read by the agent but no changes are written back. Useful for shared brain repos.">?</span>
+                        </label>
+                    </div>
                 </div>
 
                 <div class="pipeline-form-actions">
@@ -799,7 +814,8 @@
                 ExternalCiEnabled = config.ExternalCiEnabled,
                 BlacklistMode = config.BlacklistMode,
                 CleanupSuccessfulWorkspaces = config.CleanupSuccessfulWorkspaces,
-                FailedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays
+                FailedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays,
+                BrainReadOnly = config.BrainReadOnly
             };
             _agentTimeoutMinutes = (int)config.AgentTimeout.TotalMinutes;
             _externalCiTimeoutMinutes = (int)config.ExternalCiTimeout.TotalMinutes;
@@ -1025,7 +1041,8 @@
             PrivateKeyBase64 = p.Settings.GetValueOrDefault("privateKeyBase64", ""),
             Owner = p.Settings.GetValueOrDefault("owner", ""),
             Repo = p.Settings.GetValueOrDefault("repo", ""),
-            BaseBranch = p.Settings.GetValueOrDefault("baseBranch", "main")
+            BaseBranch = p.Settings.GetValueOrDefault("baseBranch", "main"),
+            RepositoryRole = p.RepositoryRole.ToString()
         };
         _showRepoForm = true;
     }
@@ -1089,6 +1106,7 @@
             Kind = ProviderKind.Repository,
             ProviderType = _repoForm.ProviderType,
             DisplayName = _repoForm.DisplayName,
+            RepositoryRole = Enum.TryParse<RepositoryRole>(_repoForm.RepositoryRole, out var role) ? role : RepositoryRole.Work,
             Settings = new Dictionary<string, string>
             {
                 ["apiUrl"] = _repoForm.ApiUrl,
@@ -1610,7 +1628,8 @@
                 .ToArray(),
             BlacklistMode = _pipelineConfig.BlacklistMode,
             CleanupSuccessfulWorkspaces = _pipelineConfig.CleanupSuccessfulWorkspaces,
-            FailedWorkspaceRetentionDays = _pipelineConfig.FailedWorkspaceRetentionDays
+            FailedWorkspaceRetentionDays = _pipelineConfig.FailedWorkspaceRetentionDays,
+            BrainReadOnly = _pipelineConfig.BrainReadOnly
         };
 
         try
@@ -1774,6 +1793,7 @@
         public string Owner { get; set; } = "";
         public string Repo { get; set; } = "";
         public string BaseBranch { get; set; } = "main";
+        public string RepositoryRole { get; set; } = "Work";
     }
 
     private class AgentProviderForm
@@ -1808,6 +1828,7 @@
         public BlacklistMode BlacklistMode { get; set; } = BlacklistMode.WarnAndExclude;
         public bool CleanupSuccessfulWorkspaces { get; set; } = true;
         public int FailedWorkspaceRetentionDays { get; set; } = 7;
+        public bool BrainReadOnly { get; set; } = false;
     }
 
     private class PipelineProviderForm

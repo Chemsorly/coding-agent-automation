@@ -19,7 +19,8 @@ public class BlacklistEnforcementTests
         var config = new PipelineConfiguration();
         config.BlacklistedPaths.Should().Contain(".kiro");
         config.BlacklistedPaths.Should().Contain(".github");
-        config.BlacklistedPaths.Should().HaveCount(2);
+        config.BlacklistedPaths.Should().Contain(".brain");
+        config.BlacklistedPaths.Should().HaveCount(3);
     }
 
     [Fact]

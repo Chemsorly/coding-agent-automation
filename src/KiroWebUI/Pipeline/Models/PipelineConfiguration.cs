@@ -156,7 +156,7 @@ public sealed class PipelineConfiguration
     /// Default is 30 seconds. Tests can set a shorter interval for faster execution.
     /// </summary>
     public TimeSpan StallPollInterval { get; init; } = TimeSpan.FromSeconds(30);
-    public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".kiro", ".github" };
+    public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".kiro", ".github", ".brain" };
     public BlacklistMode BlacklistMode { get; init; } = BlacklistMode.WarnAndExclude;
 
     /// <summary>
@@ -169,4 +169,21 @@ public sealed class PipelineConfiguration
     /// Set to 0 to delete immediately. Set to -1 to retain indefinitely.
     /// </summary>
     public int FailedWorkspaceRetentionDays { get; init; } = 7;
+
+    /// <summary>
+    /// Records the last-used provider ID for each provider selection per pipeline.
+    /// Keys: "issue", "repository", "agent", "brain", "pipeline".
+    /// Values: provider config IDs.
+    /// Pre-populates dropdowns on subsequent pipeline runs.
+    /// </summary>
+    public Dictionary<string, string> LastUsedProviderIds { get; init; } = new();
+
+    /// <summary>
+    /// When true, the brain repository operates in read-only mode: pre-run sync
+    /// (clone/pull) and context injection proceed normally, but all write operations
+    /// are skipped — write instructions are omitted from the prompt, validation is
+    /// skipped, and the SyncingBrainRepoPostRun step (commit and push) is skipped
+    /// entirely. Defaults to false.
+    /// </summary>
+    public bool BrainReadOnly { get; init; } = false;
 }

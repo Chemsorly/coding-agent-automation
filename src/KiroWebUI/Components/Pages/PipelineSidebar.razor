@@ -41,6 +41,19 @@
                         {
                             <div class="step-detail">@Run.RepositoryName</div>
                         }
+                        else if (step == PipelineStep.SyncingBrainRepoPreRun && Run.BrainProviderConfigId != null)
+                        {
+                            <div class="step-detail">
+                                @if (Run.BrainContextLoaded)
+                                {
+                                    <span>✅ @Run.BrainKnowledgeFileCount knowledge files loaded</span>
+                                }
+                                else
+                                {
+                                    <span>⚠️ Brain context unavailable</span>
+                                }
+                            </div>
+                        }
                         else if (step == PipelineStep.Created && !string.IsNullOrEmpty(Run.ModelName))
                         {
                             <div class="step-detail">Model: @Run.ModelName</div>
@@ -172,6 +185,19 @@
                                 <div><a href="@Run.PullRequestUrl" target="_blank" rel="noopener noreferrer" @onclick:stopPropagation="true">🔗 View on GitHub</a></div>
                             </div>
                         }
+                        else if (step == PipelineStep.SyncingBrainRepoPostRun && Run.BrainProviderConfigId != null)
+                        {
+                            <div class="step-detail">
+                                @if (Run.BrainUpdatesPushed)
+                                {
+                                    <span>✅ @Run.BrainFilesCommitted file(s) pushed</span>
+                                }
+                                else
+                                {
+                                    <span>⚠️ Brain updates not persisted</span>
+                                }
+                            </div>
+                        }
 
                         @if (state == StepState.Failed && !string.IsNullOrEmpty(Run.FailureReason))
                         {
@@ -211,13 +237,15 @@
     {
         PipelineStep.Created,
         PipelineStep.CloningRepository,
+        PipelineStep.SyncingBrainRepoPreRun,
         PipelineStep.CreatingBranch,
         PipelineStep.AnalyzingCode,
         PipelineStep.PostingAnalysis,
         PipelineStep.GeneratingCode,
         PipelineStep.ReviewingCode,
         PipelineStep.RunningQualityGates,
-        PipelineStep.CreatingPullRequest
+        PipelineStep.CreatingPullRequest,
+        PipelineStep.SyncingBrainRepoPostRun
     };
 
     private enum StepState { Completed, Active, Pending, Failed, Cancelled }
@@ -246,7 +274,7 @@
         }
 
         if (current == PipelineStep.Completed)
-            return (int)step <= (int)PipelineStep.CreatingPullRequest ? StepState.Completed : StepState.Pending;
+            return (int)step <= (int)PipelineStep.SyncingBrainRepoPostRun ? StepState.Completed : StepState.Pending;
 
         if (step == current) return StepState.Active;
         return (int)step < (int)current ? StepState.Completed : StepState.Pending;
@@ -281,6 +309,7 @@
     {
         PipelineStep.Created => "Pipeline Created",
         PipelineStep.CloningRepository => "Cloning Repository",
+        PipelineStep.SyncingBrainRepoPreRun => "Loading Brain Context",
         PipelineStep.CreatingBranch => "Creating Branch",
         PipelineStep.AnalyzingCode => "Analyzing Code",
         PipelineStep.PostingAnalysis => "Posting Analysis",
@@ -288,6 +317,7 @@
         PipelineStep.ReviewingCode => "Reviewing Code",
         PipelineStep.RunningQualityGates => "Running Quality Gates",
         PipelineStep.CreatingPullRequest => "Creating Pull Request",
+        PipelineStep.SyncingBrainRepoPostRun => "Saving Brain Knowledge",
         _ => step.ToString()
     };
 
@@ -306,12 +336,14 @@
     {
         PipelineStep.Created => !string.IsNullOrEmpty(Run.ModelName),
         PipelineStep.CloningRepository => !string.IsNullOrEmpty(Run.RepositoryName),
+        PipelineStep.SyncingBrainRepoPreRun => Run.BrainProviderConfigId != null,
         PipelineStep.CreatingBranch => !string.IsNullOrEmpty(Run.BranchName),
         PipelineStep.AnalyzingCode => true,
         PipelineStep.GeneratingCode => Run.FilesChangedCount > 0 || Run.LinesAdded > 0 || Run.LinesRemoved > 0,
         PipelineStep.ReviewingCode => Run.CodeReviewIterationsCompleted > 0,
         PipelineStep.RunningQualityGates => Run.LatestQualityReport != null,
         PipelineStep.CreatingPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
+        PipelineStep.SyncingBrainRepoPostRun => Run.BrainProviderConfigId != null,
         _ => false
     };
 

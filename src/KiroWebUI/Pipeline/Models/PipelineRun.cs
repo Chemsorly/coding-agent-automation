@@ -83,4 +83,22 @@ public sealed class PipelineRun
 
     /// <summary>Names of review agents that were executed during this run.</summary>
     public IReadOnlyList<string> CodeReviewAgentsRun { get; set; } = Array.Empty<string>();
+
+    /// <summary>Brain repository provider config ID, or null if no brain repo selected.</summary>
+    public string? BrainProviderConfigId { get; init; }
+
+    /// <summary>Whether brain context was successfully loaded during pre-run sync.</summary>
+    public bool BrainContextLoaded { get; set; }
+
+    /// <summary>Number of knowledge files available in the .brain/ directory after sync.</summary>
+    public int BrainKnowledgeFileCount { get; set; }
+
+    /// <summary>Whether post-run brain updates were pushed successfully.</summary>
+    public bool BrainUpdatesPushed { get; set; }
+
+    /// <summary>Number of brain files committed during post-run sync.</summary>
+    public int BrainFilesCommitted { get; set; }
+
+    /// <summary>Brain update validation result from BrainUpdateService.</summary>
+    public BrainValidationResult? BrainValidation { get; set; }
 }

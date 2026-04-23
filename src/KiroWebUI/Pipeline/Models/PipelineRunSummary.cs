@@ -13,4 +13,10 @@ public sealed class PipelineRunSummary
 
     /// <summary>Model configured for the agent provider used in this run.</summary>
     public string? ModelName { get; init; }
+
+    /// <summary>Whether a brain repository was used for this run.</summary>
+    public bool BrainRepoUsed { get; init; }
+
+    /// <summary>Whether brain updates were pushed successfully.</summary>
+    public bool BrainUpdatesPushed { get; init; }
 }

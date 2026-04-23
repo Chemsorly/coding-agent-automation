@@ -62,4 +62,14 @@ public interface IRepositoryProvider : IAsyncDisposable
     /// backing service. Called at pipeline start before any work begins.
     /// </summary>
     Task ValidateAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Pulls latest changes into an existing clone at the given workspace path.
+    /// The existing code repository workflow clones fresh each run and does not use pull,
+    /// so the default implementation throws NotSupportedException.
+    /// </summary>
+    Task PullAsync(string workspacePath, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support PullAsync. " +
+            "Override this method to enable pull operations.");
 }

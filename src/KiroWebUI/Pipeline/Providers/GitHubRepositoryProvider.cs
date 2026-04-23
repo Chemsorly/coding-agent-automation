@@ -114,6 +114,45 @@ public class GitHubRepositoryProvider : IRepositoryProvider
         }, ct);
     }
 
+    public Task PullAsync(string workspacePath, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(workspacePath);
+
+        return Task.Run(async () =>
+        {
+            var token = await GetTokenAsync(ct);
+
+            using var repo = new Repository(workspacePath);
+            var remote = repo.Network.Remotes["origin"];
+
+            // Fetch
+            var fetchOptions = new FetchOptions
+            {
+                CredentialsProvider = (_, _, _) =>
+                    new UsernamePasswordCredentials
+                        { Username = "x-access-token", Password = token }
+            };
+            var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
+            Commands.Fetch(repo, remote.Name, refSpecs, fetchOptions, null);
+
+            // Fast-forward merge only. If the merge is not fast-forward,
+            // PullAsync returns without merging — the caller (BrainUpdateService)
+            // owns conflict detection and resolution.
+            var trackingBranch = repo.Head.TrackedBranch
+                ?? repo.Branches[$"origin/{_baseBranch}"];
+            if (trackingBranch != null)
+            {
+                var signature = new Signature(
+                    "KiroWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
+                repo.Merge(trackingBranch, signature, new MergeOptions
+                {
+                    FastForwardStrategy = FastForwardStrategy.FastForwardOnly
+                });
+                // If merge results in conflicts, leave them in the index for the caller to resolve.
+            }
+        }, ct);
+    }
+
     public Task<string> CreateBranchAsync(string workspacePath, string branchName, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(workspacePath);

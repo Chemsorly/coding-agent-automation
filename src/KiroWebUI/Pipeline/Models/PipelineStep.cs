@@ -4,6 +4,7 @@ public enum PipelineStep
 {
     Created,
     CloningRepository,
+    SyncingBrainRepoPreRun,
     CreatingBranch,
     AnalyzingCode,
     PostingAnalysis,
@@ -11,6 +12,7 @@ public enum PipelineStep
     ReviewingCode,
     RunningQualityGates,
     CreatingPullRequest,
+    SyncingBrainRepoPostRun,
     Completed,
     Failed,
     Cancelled

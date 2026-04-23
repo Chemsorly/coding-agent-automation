@@ -13,4 +13,10 @@ public sealed class ProviderConfig
     public required string ProviderType { get; init; }  // Matches enum value name: "GitHub", "KiroCli"
     public required string DisplayName { get; init; }
     public Dictionary<string, string> Settings { get; init; } = new();
+
+    /// <summary>
+    /// Role of this repository provider. Only meaningful when Kind == Repository.
+    /// Defaults to Work for backward compatibility with existing configurations.
+    /// </summary>
+    public RepositoryRole RepositoryRole { get; init; } = RepositoryRole.Work;
 }

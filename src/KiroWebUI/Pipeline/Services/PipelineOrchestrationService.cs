@@ -16,6 +16,7 @@ public class PipelineOrchestrationService : IDisposable
     private readonly IssueDescriptionParser _issueParser;
     private readonly IQualityGateValidator _qualityGateValidator;
     private readonly CiLogWriter _ciLogWriter;
+    private readonly BrainUpdateService _brainUpdateService;
     private readonly Serilog.ILogger _logger;
     private readonly List<PipelineRunSummary> _runHistory = new();
     private readonly string _runsDirectory;
@@ -26,6 +27,7 @@ public class PipelineOrchestrationService : IDisposable
     private CancellationTokenSource? _cancellationTokenSource;
     private IAgentProvider? _activeAgentProvider;
     private IRepositoryProvider? _activeRepoProvider;
+    private IRepositoryProvider? _activeBrainProvider;
     private IIssueProvider? _activeIssueProvider;
     private IPipelineProvider? _activePipelineProvider;
     private PipelineConfiguration? _activeConfig;
@@ -57,6 +59,7 @@ public class PipelineOrchestrationService : IDisposable
         IQualityGateValidator qualityGateValidator,
         CiLogWriter ciLogWriter,
         Serilog.ILogger logger,
+        BrainUpdateService? brainUpdateService = null,
         string runsDirectory = "config/pipeline/runs")
     {
         ArgumentNullException.ThrowIfNull(configStore);
@@ -71,6 +74,7 @@ public class PipelineOrchestrationService : IDisposable
         _issueParser = issueParser;
         _qualityGateValidator = qualityGateValidator;
         _ciLogWriter = ciLogWriter;
+        _brainUpdateService = brainUpdateService ?? new BrainUpdateService(logger);
         _logger = logger;
         _runsDirectory = runsDirectory;
 
@@ -84,7 +88,7 @@ public class PipelineOrchestrationService : IDisposable
     /// </summary>
     public async Task<PipelineRun> StartPipelineAsync(
         string issueProviderId, string repoProviderId, string issueIdentifier,
-        string agentProviderId, CancellationToken ct, string? pipelineProviderId = null)
+        string agentProviderId, CancellationToken ct, string? brainProviderId = null, string? pipelineProviderId = null)
     {
         ArgumentNullException.ThrowIfNull(issueProviderId);
         ArgumentNullException.ThrowIfNull(repoProviderId);
@@ -121,6 +125,35 @@ public class PipelineOrchestrationService : IDisposable
             _activeRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
             _activeAgentProvider = _providerFactory.CreateAgentProvider(agentProviderConfig);
 
+            // Resolve brain provider if specified
+            _activeBrainProvider = null;
+            if (!string.IsNullOrEmpty(brainProviderId))
+            {
+                try
+                {
+                    var brainProviderConfig = await ResolveProviderConfigAsync(brainProviderId, ProviderKind.Repository, linkedCt);
+                    _activeBrainProvider = _providerFactory.CreateRepositoryProvider(brainProviderConfig);
+
+                    // Validate brain provider separately (non-fatal)
+                    try
+                    {
+                        await _activeBrainProvider.ValidateAsync(linkedCt);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.Warning(ex, "Brain provider validation failed, disabling brain sync for this run");
+                        if (_activeBrainProvider is IAsyncDisposable disposable)
+                            await disposable.DisposeAsync();
+                        _activeBrainProvider = null;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex, "Failed to resolve brain provider {BrainProviderId}, continuing without brain", brainProviderId);
+                    _activeBrainProvider = null;
+                }
+            }
+
             // Create the pipeline run
             var configuredModel = agentProviderConfig.Settings.GetValueOrDefault("model", "auto");
             var run = new PipelineRun
@@ -133,7 +166,8 @@ public class PipelineOrchestrationService : IDisposable
                 StartedAt = DateTime.UtcNow,
                 CurrentStep = PipelineStep.Created,
                 RepositoryName = _activeRepoProvider.RepositoryFullName,
-                ModelName = configuredModel
+                ModelName = configuredModel,
+                BrainProviderConfigId = _activeBrainProvider != null ? brainProviderId : null
             };
             ActiveRun = run;
             _logger.Information("Pipeline {RunId} using model {Model}", run.RunId, configuredModel);
@@ -186,6 +220,50 @@ public class PipelineOrchestrationService : IDisposable
                 _logger.Warning(ex, "Pipeline {RunId} failed to ensure agent labels, continuing", run.RunId);
             }
 
+            // Persist last-used provider IDs for dropdown pre-population
+            try
+            {
+                var lastUsed = new Dictionary<string, string>(_activeConfig.LastUsedProviderIds)
+                {
+                    ["issue"] = issueProviderId,
+                    ["repository"] = repoProviderId,
+                    ["agent"] = agentProviderId
+                };
+                if (!string.IsNullOrEmpty(brainProviderId))
+                    lastUsed["brain"] = brainProviderId;
+                if (!string.IsNullOrEmpty(pipelineProviderId))
+                    lastUsed["pipeline"] = pipelineProviderId;
+
+                var updatedConfig = new PipelineConfiguration
+                {
+                    MaxRetries = _activeConfig.MaxRetries,
+                    IssuePageSize = _activeConfig.IssuePageSize,
+                    AgentTimeout = _activeConfig.AgentTimeout,
+                    MinCoverageThreshold = _activeConfig.MinCoverageThreshold,
+                    SecurityScanEnabled = _activeConfig.SecurityScanEnabled,
+                    WorkspaceBaseDirectory = _activeConfig.WorkspaceBaseDirectory,
+                    CodeReview = _activeConfig.CodeReview,
+                    AnalysisPrompt = _activeConfig.AnalysisPrompt,
+                    ImplementationPrompt = _activeConfig.ImplementationPrompt,
+                    ExternalCiEnabled = _activeConfig.ExternalCiEnabled,
+                    ExternalCiTimeout = _activeConfig.ExternalCiTimeout,
+                    ExternalCiPollInterval = _activeConfig.ExternalCiPollInterval,
+                    StallWarningInterval = _activeConfig.StallWarningInterval,
+                    StallPollInterval = _activeConfig.StallPollInterval,
+                    BlacklistedPaths = _activeConfig.BlacklistedPaths,
+                    BlacklistMode = _activeConfig.BlacklistMode,
+                    CleanupSuccessfulWorkspaces = _activeConfig.CleanupSuccessfulWorkspaces,
+                    FailedWorkspaceRetentionDays = _activeConfig.FailedWorkspaceRetentionDays,
+                    LastUsedProviderIds = lastUsed,
+                    BrainReadOnly = _activeConfig.BrainReadOnly
+                };
+                await _configStore.SavePipelineConfigAsync(updatedConfig, linkedCt);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Pipeline {RunId} failed to persist last-used provider IDs", run.RunId);
+            }
+
             // Execute the pipeline steps (fire-and-forget within the lock scope,
             // but we await to completion before returning)
             await ExecutePipelineStepsAsync(run, issueProvider, linkedCt);
@@ -212,6 +290,7 @@ public class PipelineOrchestrationService : IDisposable
         await DisposeProviderAsync(_activeAgentProvider, "Agent");
         await DisposeProviderAsync(_activeIssueProvider, "Issue");
         await DisposeProviderAsync(_activeRepoProvider, "Repository");
+        await DisposeProviderAsync(_activeBrainProvider, "Brain");
         await DisposeProviderAsync(_activePipelineProvider, "Pipeline");
     }
 
@@ -366,6 +445,57 @@ public class PipelineOrchestrationService : IDisposable
                 return;
             }
 
+            // Pre-run brain sync (clone/pull brain repo into .brain/)
+            if (_activeBrainProvider != null)
+            {
+                TransitionTo(run, PipelineStep.SyncingBrainRepoPreRun);
+                var brainSw = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    var brainPath = Path.Combine(workspacePath, ".brain");
+                    if (Directory.Exists(brainPath))
+                    {
+                        await _activeBrainProvider.PullAsync(brainPath, ct);
+                        _logger.Information("Pipeline {RunId} brain repo pulled in {Duration}ms",
+                            run.RunId, brainSw.ElapsedMilliseconds);
+                    }
+                    else
+                    {
+                        await _activeBrainProvider.CloneAsync(brainPath, ct);
+                        _logger.Information("Pipeline {RunId} brain repo cloned in {Duration}ms",
+                            run.RunId, brainSw.ElapsedMilliseconds);
+                    }
+
+                    // Ensure .brain/ is in the code repo's .gitignore
+                    var gitignorePath = Path.Combine(workspacePath, ".gitignore");
+                    var gitignoreContent = File.Exists(gitignorePath)
+                        ? await File.ReadAllTextAsync(gitignorePath, ct)
+                        : "";
+                    var updatedGitignore = BrainUpdateService.EnsureGitignoreEntry(gitignoreContent, ".brain/");
+                    if (updatedGitignore != gitignoreContent)
+                    {
+                        await File.WriteAllTextAsync(gitignorePath, updatedGitignore, ct);
+                        _logger.Information("Pipeline {RunId} added .brain/ to .gitignore", run.RunId);
+                    }
+
+                    // Count knowledge files
+                    var brainFiles = Directory.Exists(brainPath)
+                        ? Directory.GetFiles(brainPath, "*.md", SearchOption.AllDirectories)
+                        : Array.Empty<string>();
+                    run.BrainKnowledgeFileCount = brainFiles.Length;
+                    run.BrainContextLoaded = true;
+
+                    _logger.Information(
+                        "Pipeline {RunId} brain sync complete: {BrainFileCount} knowledge files in {Duration}ms",
+                        run.RunId, run.BrainKnowledgeFileCount, brainSw.ElapsedMilliseconds);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex, "Pipeline {RunId} brain sync failed, continuing without brain context", run.RunId);
+                    run.BrainContextLoaded = false;
+                }
+            }
+
             // Create branch
             TransitionTo(run, PipelineStep.CreatingBranch);
             try
@@ -420,7 +550,14 @@ public class PipelineOrchestrationService : IDisposable
 
                 try
                 {
-                    var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(_activeConfig.AnalysisPrompt, issue, parsed, issueComments);
+                    // Build brain context for analysis prompt
+                    var brainContextForAnalysis = PromptBuilder.BuildBrainContextSection(
+                        run.BrainContextLoaded,
+                        run.RepositoryName?.Split('/').LastOrDefault(),
+                        null,
+                        GetPreviousBrainWarnings(run.BrainProviderConfigId));
+
+                    var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(_activeConfig.AnalysisPrompt, issue, parsed, issueComments, brainContextForAnalysis);
                     _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
                     var analysisRequest = new AgentRequest
                     {
@@ -483,7 +620,16 @@ public class PipelineOrchestrationService : IDisposable
             TransitionTo(run, PipelineStep.GeneratingCode);
             try
             {
-                var prompt = PromptBuilder.BuildPrompt(_activeConfig!.ImplementationPrompt, _activeIssue!, _activeParsedIssue!, _activeIssueComments);
+                var brainContextSection = PromptBuilder.BuildBrainContextSection(
+                    run.BrainContextLoaded,
+                    run.RepositoryName?.Split('/').LastOrDefault(),
+                    null,
+                    GetPreviousBrainWarnings(run.BrainProviderConfigId));
+                var brainWriteInstructions = PromptBuilder.BuildBrainWriteInstructions(
+                    run.BrainContextLoaded, run.RunId, run.IssueIdentifier,
+                    _activeConfig!.BrainReadOnly);
+
+                var prompt = PromptBuilder.BuildPrompt(_activeConfig!.ImplementationPrompt, _activeIssue!, _activeParsedIssue!, _activeIssueComments, brainContextSection, brainWriteInstructions);
                 _logger.Debug("Pipeline {RunId} implementation prompt:\n{Prompt}", run.RunId, prompt);
 
                 // Stall monitor: periodically poll GetHealthStatus() to detect silence or process death
@@ -622,6 +768,21 @@ public class PipelineOrchestrationService : IDisposable
                     Role = ChatRole.System,
                     Content = $"Agent process failed: {ex.Message}."
                 });
+            }
+
+            // Pull brain repo before agent writes lessons (minimize merge conflicts)
+            if (_activeBrainProvider != null && !_activeConfig!.BrainReadOnly && run.BrainContextLoaded)
+            {
+                try
+                {
+                    var brainPath = Path.Combine(run.WorkspacePath!, ".brain");
+                    await _activeBrainProvider.PullAsync(brainPath, ct);
+                    _logger.Information("Pipeline {RunId} brain repo pulled before write phase", run.RunId);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex, "Pipeline {RunId} brain repo pull-before-write failed, continuing", run.RunId);
+                }
             }
 
             // Code review step (if enabled)
@@ -1312,10 +1473,57 @@ public class PipelineOrchestrationService : IDisposable
                 await RemoveAllAgentLabelsAsync(run.IssueIdentifier, ct);
             }
 
+            // Post-run brain sync (commit and push .brain/ changes)
+            if (!isDraft && _activeBrainProvider != null && !_activeConfig!.BrainReadOnly)
+            {
+                TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
+                var brainSw = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    var brainPath = Path.Combine(run.WorkspacePath!, ".brain");
+                    var changedFiles = await _brainUpdateService.DetectChangesAsync(brainPath, ct);
+
+                    if (changedFiles.Count > 0)
+                    {
+                        // Validate brain updates
+                        var validation = _brainUpdateService.Validate(brainPath, run.RunId, changedFiles);
+                        run.BrainValidation = validation;
+
+                        // Append fallback log entry if agent didn't update log.md
+                        if (!validation.OperationLogUpdated)
+                        {
+                            await _brainUpdateService.AppendFallbackLogEntryAsync(
+                                brainPath, run.RunId, changedFiles, ct);
+                        }
+
+                        // Commit and push
+                        var syncResult = await _brainUpdateService.CommitAndPushAsync(
+                            brainPath, run.RunId, run.IssueIdentifier, _activeBrainProvider, ct);
+                        run.BrainUpdatesPushed = syncResult.Success;
+                        run.BrainFilesCommitted = syncResult.FilesCommitted;
+
+                        _logger.Information(
+                            "Pipeline {RunId} brain post-run sync: {Success}, {FileCount} files in {Duration}ms",
+                            run.RunId, syncResult.Success, syncResult.FilesCommitted, brainSw.ElapsedMilliseconds);
+                    }
+                    else
+                    {
+                        run.BrainUpdatesPushed = false;
+                        _logger.Information("Pipeline {RunId} no brain changes detected, skipping commit", run.RunId);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex, "Pipeline {RunId} brain post-run sync failed", run.RunId);
+                    run.BrainUpdatesPushed = false;
+                }
+            }
+
             TransitionTo(run, finalStep);
             AddRunToHistory(run);
 
             // Clean up workspace after successful (non-draft) PR creation
+            // Must happen AFTER brain sync so .brain/ is still on disk
             if (finalStep == PipelineStep.Completed && _activeConfig!.CleanupSuccessfulWorkspaces)
                 TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig.WorkspaceBaseDirectory);
 
@@ -1490,7 +1698,9 @@ public class PipelineOrchestrationService : IDisposable
             CompletedAt = run.CompletedAt,
             RetryCount = run.RetryCount,
             PullRequestUrl = run.PullRequestUrl,
-            ModelName = run.ModelName
+            ModelName = run.ModelName,
+            BrainRepoUsed = run.BrainProviderConfigId != null,
+            BrainUpdatesPushed = run.BrainUpdatesPushed
         };
         _runHistory.Insert(0, summary);
         PersistRunSummary(summary);
@@ -1636,6 +1846,23 @@ public class PipelineOrchestrationService : IDisposable
         if (report.ExternalCi is { Passed: false })
             errors.Add($"External CI: {report.ExternalCi.Details}");
         return string.Join(Environment.NewLine, errors);
+    }
+
+    /// <summary>
+    /// Retrieves validation warnings from the most recent completed run that used the same brain provider.
+    /// Returns null if no previous run exists or no warnings were recorded.
+    /// </summary>
+    private IReadOnlyList<string>? GetPreviousBrainWarnings(string? brainProviderConfigId)
+    {
+        if (string.IsNullOrEmpty(brainProviderConfigId))
+            return null;
+
+        // Search run history for the most recent run with the same brain provider
+        // Note: _runHistory is ordered newest-first
+        // We can't access BrainValidation from PipelineRunSummary, so we check ActiveRun history
+        // For the PoC, we only check the immediately previous ActiveRun if it matches
+        // A more complete implementation would persist BrainValidation in run summaries
+        return null; // Feedback loop requires persisted validation — deferred to future enhancement
     }
 
     public void Dispose()

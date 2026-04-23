@@ -40,13 +40,15 @@ builder.Services.AddSingleton<IProviderFactory>(sp =>
 });
 
 // Pipeline — Services
+builder.Services.AddSingleton<BrainUpdateService>(sp => new BrainUpdateService(Serilog.Log.Logger));
 builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
     sp.GetRequiredService<IConfigurationStore>(),
     sp.GetRequiredService<IProviderFactory>(),
     sp.GetRequiredService<IssueDescriptionParser>(),
     sp.GetRequiredService<IQualityGateValidator>(),
     sp.GetRequiredService<CiLogWriter>(),
-    Serilog.Log.Logger));
+    Serilog.Log.Logger,
+    sp.GetRequiredService<BrainUpdateService>()));
 builder.Services.AddTransient<IQualityGateValidator>(sp => new QualityGateValidator(Serilog.Log.Logger));
 builder.Services.AddTransient<IssueDescriptionParser>();
 builder.Services.AddSingleton(sp => new CiLogWriter(Serilog.Log.Logger));

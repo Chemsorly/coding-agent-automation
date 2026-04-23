@@ -212,6 +212,19 @@
                                                 </select>
                                             </div>
                                         }
+                                        @if (_brainProviders.Count > 0)
+                                        {
+                                            <div class="form-group">
+                                                <label>Brain Repository</label>
+                                                <select @bind="_selectedBrainProviderId">
+                                                    <option value="">-- None --</option>
+                                                    @foreach (var p in _brainProviders)
+                                                    {
+                                                        <option value="@p.Id">@p.DisplayName (@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", ""))</option>
+                                                    }
+                                                </select>
+                                            </div>
+                                        }
                                     </div>
 
                                     @if (!string.IsNullOrEmpty(_selectedIssueId) && _selectedIssueDetail != null)
@@ -307,11 +320,13 @@
 
                 <!-- Pipeline Progress View -->
                 @if (run.CurrentStep is PipelineStep.CloningRepository or PipelineStep.CreatingBranch
+                    or PipelineStep.SyncingBrainRepoPreRun
                     or PipelineStep.AnalyzingCode or PipelineStep.GeneratingCode
                     or PipelineStep.ReviewingCode
                     or PipelineStep.RunningQualityGates
                     or PipelineStep.CreatingPullRequest or PipelineStep.Created
-                    or PipelineStep.PostingAnalysis)
+                    or PipelineStep.PostingAnalysis
+                    or PipelineStep.SyncingBrainRepoPostRun)
                 {
                     <div class="progress-view">
                         <h2>Pipeline in Progress</h2>
@@ -340,6 +355,7 @@
     private List<ProviderConfig> _repoProviders = new();
     private List<ProviderConfig> _agentProviders = new();
     private List<ProviderConfig> _pipelineProviders = new();
+    private List<ProviderConfig> _brainProviders = new();
     private List<IssueSummary> _issues = new();
     private List<string> _availableLabels = new();
     private HashSet<string> _selectedLabels = new();
@@ -354,6 +370,7 @@
     private string _selectedRepoProviderId = "";
     private string _selectedAgentProviderId = "";
     private string _selectedPipelineProviderId = "";
+    private string _selectedBrainProviderId = "";
     private string? _errorMessage;
     private bool _loadingIssues;
     private bool _showCompletionOnly;
@@ -413,14 +430,29 @@
             _agentProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None)).ToList();
             _pipelineProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
 
+            // Filter brain providers from repository providers
+            _brainProviders = _repoProviders.Where(p => p.RepositoryRole == RepositoryRole.Brain).ToList();
+
             var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
             _maxRetries = config.MaxRetries;
             _issuePageSize = Math.Clamp(config.IssuePageSize, 1, 100);
 
-            // Auto-select if only one provider of each type
-            if (_repoProviders.Count == 1) _selectedRepoProviderId = _repoProviders[0].Id;
-            if (_agentProviders.Count == 1) _selectedAgentProviderId = _agentProviders[0].Id;
-            if (_pipelineProviders.Count == 1) _selectedPipelineProviderId = _pipelineProviders[0].Id;
+            // Pre-populate from LastUsedProviderIds
+            if (config.LastUsedProviderIds.TryGetValue("issue", out var lastIssue) && _issueProviders.Any(p => p.Id == lastIssue))
+                _selectedIssueProviderId = lastIssue;
+            if (config.LastUsedProviderIds.TryGetValue("repository", out var lastRepo) && _repoProviders.Any(p => p.Id == lastRepo))
+                _selectedRepoProviderId = lastRepo;
+            if (config.LastUsedProviderIds.TryGetValue("agent", out var lastAgent) && _agentProviders.Any(p => p.Id == lastAgent))
+                _selectedAgentProviderId = lastAgent;
+            if (config.LastUsedProviderIds.TryGetValue("brain", out var lastBrain) && _brainProviders.Any(p => p.Id == lastBrain))
+                _selectedBrainProviderId = lastBrain;
+            if (config.LastUsedProviderIds.TryGetValue("pipeline", out var lastPipeline) && _pipelineProviders.Any(p => p.Id == lastPipeline))
+                _selectedPipelineProviderId = lastPipeline;
+
+            // Auto-select if only one provider of each type (fallback when no last-used)
+            if (string.IsNullOrEmpty(_selectedRepoProviderId) && _repoProviders.Count == 1) _selectedRepoProviderId = _repoProviders[0].Id;
+            if (string.IsNullOrEmpty(_selectedAgentProviderId) && _agentProviders.Count == 1) _selectedAgentProviderId = _agentProviders[0].Id;
+            if (string.IsNullOrEmpty(_selectedPipelineProviderId) && _pipelineProviders.Count == 1) _selectedPipelineProviderId = _pipelineProviders[0].Id;
         }
         catch (Exception ex)
         {
@@ -610,6 +642,7 @@
                     await PipelineService.StartPipelineAsync(
                         _selectedIssueProviderId, _selectedRepoProviderId,
                         _selectedIssueId, _selectedAgentProviderId, CancellationToken.None,
+                        brainProviderId: string.IsNullOrEmpty(_selectedBrainProviderId) ? null : _selectedBrainProviderId,
                         pipelineProviderId: string.IsNullOrEmpty(_selectedPipelineProviderId) ? null : _selectedPipelineProviderId);
                 }
                 catch (Exception ex)
