@@ -83,17 +83,29 @@ public partial class KiroCliAgentProvider : IAgentProvider
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
         var outputLines = new List<string>();
-        var exitCode = await _orchestrator.ExecutePromptAsync(
-            request.Prompt,
-            request.WorkspacePath,
-            useResume: request.UseResume,
-            linkedCts.Token,
-            onOutputLine: line =>
-            {
-                var clean = AnsiStripper.Strip(line);
-                outputLines.Add(clean);
-                onOutputLine?.Invoke(clean);
-            });
+        int exitCode;
+        try
+        {
+            exitCode = await _orchestrator.ExecutePromptAsync(
+                request.Prompt,
+                request.WorkspacePath,
+                useResume: request.UseResume,
+                linkedCts.Token,
+                onOutputLine: line =>
+                {
+                    var clean = AnsiStripper.Strip(line);
+                    outputLines.Add(clean);
+                    onOutputLine?.Invoke(clean);
+                });
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            // The timeout CTS fired, not the user's cancellation token.
+            // Convert to exit code 124 (timeout) so the orchestrator can distinguish
+            // timeout from user cancellation.
+            _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
+            exitCode = 124;
+        }
 
         return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };
     }

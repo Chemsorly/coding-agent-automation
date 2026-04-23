@@ -742,6 +742,18 @@ public class PipelineOrchestrationService : IDisposable
                                   $"Output lines captured: {agentResult.OutputLines.Count}. " +
                                   $"The process may have stopped unexpectedly."
                     });
+
+                    // Exit code 124 = timeout. The agent was killed mid-work — implementation is
+                    // incomplete. Fail the pipeline instead of wasting time on review/quality gates.
+                    if (agentResult.ExitCode == 124)
+                    {
+                        run.FailureReason = $"Agent timed out after {_activeConfig!.AgentTimeout}. Implementation is incomplete.";
+                        run.CompletedAt = DateTime.UtcNow;
+                        await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
+                        TransitionTo(run, PipelineStep.Failed);
+                        AddRunToHistory(run);
+                        return;
+                    }
                 }
             }
             catch (OperationCanceledException) when (_cancellationTokenSource?.IsCancellationRequested == true)
@@ -750,7 +762,7 @@ public class PipelineOrchestrationService : IDisposable
             }
             catch (OperationCanceledException)
             {
-                // Agent timeout
+                // Agent timeout (not user cancellation — that's caught by the outer handler)
                 _logger.Warning("Pipeline {RunId} agent timed out after {Duration}",
                     run.RunId, _activeConfig!.AgentTimeout);
                 run.ChatHistory.Enqueue(new ChatEntry
@@ -758,6 +770,12 @@ public class PipelineOrchestrationService : IDisposable
                     Role = ChatRole.System,
                     Content = $"Agent timed out after {_activeConfig.AgentTimeout}"
                 });
+                run.FailureReason = $"Agent timed out after {_activeConfig.AgentTimeout}. Implementation is incomplete.";
+                run.CompletedAt = DateTime.UtcNow;
+                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
+                TransitionTo(run, PipelineStep.Failed);
+                AddRunToHistory(run);
+                return;
             }
             catch (Exception ex)
             {

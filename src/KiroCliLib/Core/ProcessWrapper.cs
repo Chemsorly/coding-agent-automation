@@ -140,15 +140,11 @@ public class ProcessWrapper : IDisposable
             _process.BeginOutputReadLine();
             _process.BeginErrorReadLine();
 
-            var processTask = _process.WaitForExitAsync(cancellationToken);
-            var timeoutTask = Task.Delay(_config.Timeout, cancellationToken);
-            var completedTask = await Task.WhenAny(processTask, timeoutTask);
-
-            if (completedTask == timeoutTask)
-            {
-                Kill();
-                throw new TimeoutException($"Kiro CLI process exceeded timeout of {_config.Timeout}");
-            }
+            // Wait for the process to exit. Timeout is controlled by the caller via
+            // CancellationToken (e.g., KiroCliAgentProvider creates a CTS from AgentTimeout).
+            // When the token fires, WaitForExitAsync throws OperationCanceledException,
+            // which is caught below and triggers Kill().
+            await _process.WaitForExitAsync(cancellationToken);
 
             var exitCode = _process.ExitCode;
             _process.CancelOutputRead();
@@ -157,7 +153,6 @@ public class ProcessWrapper : IDisposable
             return exitCode;
         }
         catch (OperationCanceledException) { Kill(); throw; }
-        catch (TimeoutException) { throw; }
         catch (Exception ex) { Kill(); throw new InvalidOperationException("Failed to execute Kiro CLI process", ex); }
     }
 
