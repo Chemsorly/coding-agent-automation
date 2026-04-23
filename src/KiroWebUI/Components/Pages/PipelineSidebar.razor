@@ -53,17 +53,6 @@
                         {
                             <div class="step-detail">@(Run.AnalysisSkipped ? "Skipped (existing)" : "Agent analysis")</div>
                         }
-                        else if (step == PipelineStep.WaitingForAnalysisApproval)
-                        {
-                            @if (Run.ApprovalTimestamp.HasValue)
-                            {
-                                <div class="step-detail">Approved at @Run.ApprovalTimestamp.Value.ToLocalTime().ToString("HH:mm:ss")</div>
-                            }
-                            else if (state == StepState.Active)
-                            {
-                                <div class="step-detail">Awaiting approval…</div>
-                            }
-                        }
                         else if (step == PipelineStep.GeneratingCode)
                         {
                             <div class="step-detail-box">
@@ -229,11 +218,6 @@
     private readonly HashSet<PipelineStep> _expandedSteps = new();
     private string? _lastRunId;
 
-    /// <summary>
-    /// Pipeline steps displayed in the sidebar. Excludes WaitingForChat (shown as chat panel
-    /// in main content), Completed, Failed, and Cancelled (terminal states that affect how
-    /// other step cards render rather than appearing as their own cards).
-    /// </summary>
     private static readonly PipelineStep[] _steps =
     {
         PipelineStep.Created,
@@ -241,7 +225,6 @@
         PipelineStep.CreatingBranch,
         PipelineStep.AnalyzingCode,
         PipelineStep.PostingAnalysis,
-        PipelineStep.WaitingForAnalysisApproval,
         PipelineStep.GeneratingCode,
         PipelineStep.ReviewingCode,
         PipelineStep.RunningQualityGates,
@@ -289,7 +272,7 @@
         if (!string.IsNullOrEmpty(Run.PullRequestUrl)) return PipelineStep.CreatingPullRequest;
         if (Run.LatestQualityReport != null) return PipelineStep.RunningQualityGates;
         if (Run.CodeReviewIterationsCompleted > 0) return PipelineStep.ReviewingCode;
-        if (Run.ApprovalTimestamp.HasValue) return PipelineStep.GeneratingCode;
+        if (Run.FilesChangedCount > 0 || Run.ChatHistory.Count > 0) return PipelineStep.GeneratingCode;
         if (Run.AnalysisContent != null) return PipelineStep.PostingAnalysis;
         if (!string.IsNullOrEmpty(Run.BranchName)) return PipelineStep.CreatingBranch;
         if (!string.IsNullOrEmpty(Run.WorkspacePath)) return PipelineStep.CloningRepository;
@@ -312,7 +295,6 @@
         PipelineStep.CreatingBranch => "Creating Branch",
         PipelineStep.AnalyzingCode => "Analyzing Code",
         PipelineStep.PostingAnalysis => "Posting Analysis",
-        PipelineStep.WaitingForAnalysisApproval => "Waiting for Approval",
         PipelineStep.GeneratingCode => "Generating Code",
         PipelineStep.ReviewingCode => "Reviewing Code",
         PipelineStep.RunningQualityGates => "Running Quality Gates",
@@ -337,7 +319,6 @@
         PipelineStep.CloningRepository => !string.IsNullOrEmpty(Run.RepositoryName),
         PipelineStep.CreatingBranch => !string.IsNullOrEmpty(Run.BranchName),
         PipelineStep.AnalyzingCode => true,
-        PipelineStep.WaitingForAnalysisApproval => Run.ApprovalTimestamp.HasValue,
         PipelineStep.GeneratingCode => Run.FilesChangedCount > 0 || Run.LinesAdded > 0 || Run.LinesRemoved > 0,
         PipelineStep.ReviewingCode => Run.CodeReviewIterationsCompleted > 0 || Run.CodeReviewTier != null,
         PipelineStep.RunningQualityGates => Run.LatestQualityReport != null,

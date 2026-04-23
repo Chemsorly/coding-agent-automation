@@ -184,11 +184,6 @@ public sealed class PipelineConfiguration
     /// Default is 30 seconds. Tests can set a shorter interval for faster execution.
     /// </summary>
     public TimeSpan StallPollInterval { get; init; } = TimeSpan.FromSeconds(30);
-    /// <summary>
-    /// When enabled, the pipeline skips the analysis approval and chat interaction pauses,
-    /// proceeding directly to quality gates and PR creation.
-    /// </summary>
-    public bool AutonomousMode { get; init; } = true;
     public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".kiro", ".github" };
     public BlacklistMode BlacklistMode { get; init; } = BlacklistMode.WarnAndExclude;
 

@@ -51,8 +51,7 @@ public class ConfigurationStorePropertyTests : IDisposable
             SecurityScanEnabled = securityScan,
             WorkspaceBaseDirectory = workspaceDir.Get,
             BlacklistedPaths = new[] { ".kiro", ".github", $".custom-{Math.Abs(maxRetries % 10)}" },
-            BlacklistMode = blacklistMode,
-            AutonomousMode = !securityScan
+            BlacklistMode = blacklistMode
         };
 
         var store = new JsonConfigurationStore(_tempDir);
@@ -67,7 +66,6 @@ public class ConfigurationStorePropertyTests : IDisposable
         Assert.Equal(original.WorkspaceBaseDirectory, loaded.WorkspaceBaseDirectory);
         Assert.Equal(original.BlacklistedPaths, loaded.BlacklistedPaths);
         Assert.Equal(original.BlacklistMode, loaded.BlacklistMode);
-        Assert.Equal(original.AutonomousMode, loaded.AutonomousMode);
     }
 
     /// <summary>

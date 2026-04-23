@@ -57,9 +57,6 @@ public sealed class PipelineRun
     /// <summary>Whether existing analysis was reused (skipped agent analysis).</summary>
     public bool AnalysisSkipped { get; set; }
 
-    /// <summary>Timestamp when analysis was approved.</summary>
-    public DateTime? ApprovalTimestamp { get; set; }
-
     /// <summary>Whether the PR is a draft (quality gates failed after max retries).</summary>
     public bool IsDraftPr { get; set; }
 

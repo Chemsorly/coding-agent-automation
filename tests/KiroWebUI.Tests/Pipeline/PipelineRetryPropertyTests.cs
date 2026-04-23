@@ -19,6 +19,7 @@ public class PipelineRetryPropertyTests
     /// For any max retry count N (1-5) and any sequence of N distinct error messages,
     /// when quality gates fail on every attempt, the orchestrator auto-retries exactly N times
     /// (sending fix prompts to the agent) and RetryErrors contains all N+1 error messages.
+    /// The pipeline now runs end-to-end without pausing.
     /// **Validates: Requirements 5.2, 5.4**
     /// </summary>
     [Property(MaxTest = 20)]
@@ -34,18 +35,9 @@ public class PipelineRetryPropertyTests
 
         var service = CreateServiceWithFailingQualityGates(maxRetries, errorMessages);
 
-        // Start the pipeline — should reach WaitingForAnalysisApproval
+        // Start the pipeline — runs end-to-end including auto-retry loop
         var run = service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None)
             .GetAwaiter().GetResult();
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForAnalysisApproval);
-
-        // Approve analysis to continue to code generation
-        service.ApproveAnalysisAsync(CancellationToken.None).GetAwaiter().GetResult();
-        run.CurrentStep.Should().Be(PipelineStep.WaitingForChat);
-
-        // Single call drives the entire auto-retry loop:
-        // quality gates fail → agent fix prompt → quality gates fail → ... → draft PR
-        service.ProceedToQualityGatesAsync(CancellationToken.None).GetAwaiter().GetResult();
 
         // After max retries exhausted: draft PR created, run marked Failed
         run.CurrentStep.Should().Be(PipelineStep.Failed);
@@ -74,7 +66,6 @@ public class PipelineRetryPropertyTests
             {
                 MaxRetries = maxRetries,
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                AutonomousMode = false,
                 CodeReview = new CodeReviewConfiguration { Enabled = false }
             });
         mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
