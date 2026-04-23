@@ -1,0 +1,482 @@
+using KiroWebUI.Pipeline.Interfaces;
+using KiroWebUI.Pipeline.Models;
+
+namespace KiroWebUI.Pipeline.Services;
+
+/// <summary>
+/// Handles agent execution phases: analysis, code generation (with stall monitoring),
+/// and code review iterations. Extracted from PipelineOrchestrationService.
+/// </summary>
+public class AgentExecutionOrchestrator
+{
+    private readonly Serilog.ILogger _logger;
+
+    public AgentExecutionOrchestrator(Serilog.ILogger logger)
+    {
+        ArgumentNullException.ThrowIfNull(logger);
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Executes the analysis phase: checks for existing analysis, runs agent analysis if needed,
+    /// reads the analysis file, and posts the analysis comment.
+    /// </summary>
+    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
+    public async Task ExecuteAnalysisPhaseAsync(
+        PipelineRun run, PipelineConfiguration config,
+        IAgentProvider agentProvider, IIssueProvider issueProvider,
+        IssueDetail issue, ParsedIssue parsed,
+        IReadOnlyList<IssueComment> issueComments,
+        BrainSyncOrchestrator brainSync,
+        Action<PipelineStep> transitionTo,
+        Action? onOutputLine, Action? onChange,
+        CancellationToken ct)
+    {
+        string? existingAnalysis = null;
+        var analysisComment = issueComments.FirstOrDefault(c => c.Body.Contains("## 🤖 Agent Analysis"));
+        if (analysisComment != null)
+        {
+            existingAnalysis = analysisComment.Body;
+            _logger.Information("Pipeline {RunId} found existing analysis comment on issue {IssueIdentifier}, skipping agent analysis",
+                run.RunId, run.IssueIdentifier);
+        }
+
+        if (existingAnalysis != null)
+        {
+            run.AnalysisContent = existingAnalysis;
+            run.AnalysisSkipped = true;
+            transitionTo(PipelineStep.AnalyzingCode);
+            await agentProvider.EnsureSessionAsync(run.WorkspacePath!, ct);
+            transitionTo(PipelineStep.PostingAnalysis);
+        }
+        else
+        {
+            transitionTo(PipelineStep.AnalyzingCode);
+            await agentProvider.EnsureSessionAsync(run.WorkspacePath!, ct);
+
+            try
+            {
+                var brainContextForAnalysis = PromptBuilder.BuildBrainContextSection(
+                    run.BrainContextLoaded,
+                    run.RepositoryName?.Split('/').LastOrDefault(),
+                    null,
+                    brainSync.GetPreviousBrainWarnings(run.BrainProviderConfigId));
+
+                var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, issue, parsed, issueComments, brainContextForAnalysis);
+                _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
+
+                await agentProvider.ExecuteAsync(
+                    new AgentRequest
+                    {
+                        Prompt = analysisPrompt,
+                        WorkspacePath = run.WorkspacePath!,
+                        Timeout = config.AgentTimeout,
+                        UseResume = true
+                    },
+                    ct,
+                    line =>
+                    {
+                        run.OutputLines.Enqueue(line);
+                        onOutputLine?.Invoke();
+                    });
+
+                var analysisFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisFilePath);
+                if (File.Exists(analysisFilePath))
+                {
+                    run.AnalysisContent = await File.ReadAllTextAsync(analysisFilePath, ct);
+                    _logger.Information("Pipeline {RunId} read analysis from {AnalysisFilePath}", run.RunId, analysisFilePath);
+                }
+                else
+                {
+                    _logger.Warning("Pipeline {RunId} agent did not write analysis file at {AnalysisFilePath}", run.RunId, analysisFilePath);
+                    run.AnalysisContent = null;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Pipeline {RunId} code analysis failed, falling back to issue-based analysis", run.RunId);
+                run.AnalysisContent = null;
+            }
+
+            transitionTo(PipelineStep.PostingAnalysis);
+            try
+            {
+                var analysis = !string.IsNullOrWhiteSpace(run.AnalysisContent)
+                    ? IssueAnalysisComment.FromAgentAnalysis(issue, run.AnalysisContent)
+                    : IssueAnalysisComment.FromIssue(issue, parsed);
+
+                await issueProvider.PostCommentAsync(run.IssueIdentifier, analysis.ToMarkdown(), ct);
+                _logger.Information("Pipeline {RunId} posted analysis comment on issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Pipeline {RunId} failed to post analysis comment on issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Executes the code generation phase with stall monitoring.
+    /// Returns true if the pipeline should continue to quality gates, false if it should stop (already failed).
+    /// </summary>
+    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
+    public async Task<bool> ExecuteCodeGenerationAsync(
+        PipelineRun run, PipelineConfiguration config,
+        IAgentProvider agentProvider,
+        IssueDetail issue, ParsedIssue parsed,
+        IReadOnlyList<IssueComment>? issueComments,
+        BrainSyncOrchestrator brainSync,
+        CancellationTokenSource? orchestratorCts,
+        Action<PipelineStep> transitionTo,
+        Action<string> onOutputLine, Action onChange,
+        Func<PipelineRun, Task> updateFileChangeStats,
+        Func<string, string, CancellationToken, Task> swapAgentLabel,
+        Action<PipelineRun> addRunToHistory,
+        CancellationToken ct)
+    {
+        transitionTo(PipelineStep.GeneratingCode);
+        try
+        {
+            var brainContextSection = PromptBuilder.BuildBrainContextSection(
+                run.BrainContextLoaded,
+                run.RepositoryName?.Split('/').LastOrDefault(),
+                null,
+                brainSync.GetPreviousBrainWarnings(run.BrainProviderConfigId));
+            var brainWriteInstructions = PromptBuilder.BuildBrainWriteInstructions(
+                run.BrainContextLoaded, run.RunId, run.IssueIdentifier, config.BrainReadOnly);
+
+            var prompt = PromptBuilder.BuildPrompt(config.ImplementationPrompt, issue, parsed, issueComments, brainContextSection, brainWriteInstructions);
+            _logger.Debug("Pipeline {RunId} implementation prompt:\n{Prompt}", run.RunId, prompt);
+
+            using var stallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var lastWarnTime = DateTime.UtcNow;
+            var stallMonitorTask = Task.Run(async () =>
+            {
+                try
+                {
+                    while (!stallCts.Token.IsCancellationRequested)
+                    {
+                        await Task.Delay(config.StallPollInterval, stallCts.Token);
+
+                        AgentHealthStatus health;
+                        try { health = agentProvider.GetHealthStatus(); }
+                        catch (Exception ex)
+                        {
+                            _logger.Warning(ex, "Pipeline {RunId} GetHealthStatus() call failed, continuing to poll", run.RunId);
+                            continue;
+                        }
+
+                        if (health.IsProcessAlive == false)
+                        {
+                            var errorMsg = $"Agent process is no longer alive (PID {health.ProcessId}). " +
+                                           $"Total elapsed: {(DateTime.UtcNow - run.StartedAt):hh\\:mm\\:ss}.";
+                            _logger.Error("Pipeline {RunId} {StallMessage}", run.RunId, errorMsg);
+                            run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = errorMsg });
+                            onChange();
+                            break;
+                        }
+
+                        if (health.LastOutputTime.HasValue)
+                        {
+                            var silence = DateTime.UtcNow - health.LastOutputTime.Value;
+                            var stallWarningInterval = config.StallWarningInterval;
+                            var timeSinceLastWarn = DateTime.UtcNow - lastWarnTime;
+
+                            if (silence >= stallWarningInterval && timeSinceLastWarn >= stallWarningInterval)
+                            {
+                                var elapsed = DateTime.UtcNow - run.StartedAt;
+                                var msg = $"No agent output for {silence.TotalMinutes:F0}m. " +
+                                          $"Agent call still in progress. " +
+                                          $"Total elapsed: {elapsed:hh\\:mm\\:ss}. Timeout: {config.AgentTimeout:hh\\:mm\\:ss}.";
+                                _logger.Warning("Pipeline {RunId} {StallMessage}", run.RunId, msg);
+                                run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = msg });
+                                onChange();
+                                lastWarnTime = DateTime.UtcNow;
+                            }
+                        }
+                    }
+                }
+                catch (OperationCanceledException) { }
+                catch (ObjectDisposedException) { }
+            }, CancellationToken.None);
+
+            AgentResult agentResult;
+            try
+            {
+                agentResult = await agentProvider.ExecuteAsync(
+                    new AgentRequest
+                    {
+                        Prompt = prompt,
+                        WorkspacePath = run.WorkspacePath!,
+                        Timeout = config.AgentTimeout,
+                        UseResume = true
+                    },
+                    ct,
+                    line =>
+                    {
+                        run.OutputLines.Enqueue(line);
+                        onOutputLine(line);
+                    });
+            }
+            finally
+            {
+                await stallCts.CancelAsync();
+                try { await stallMonitorTask; } catch (OperationCanceledException) { }
+            }
+
+            var outputSummary = agentResult.OutputLines.Count > 0
+                ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
+                : "(no output)";
+
+            run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = outputSummary });
+
+            _logger.Information("Pipeline {RunId} initial code generation completed with exit code {ExitCode} after {Elapsed}",
+                run.RunId, agentResult.ExitCode, DateTime.UtcNow - run.StartedAt);
+
+            await updateFileChangeStats(run);
+
+            if (agentResult.ExitCode != 0)
+            {
+                _logger.Warning("Pipeline {RunId} agent exited with non-zero code {ExitCode}, continuing to quality gates",
+                    run.RunId, agentResult.ExitCode);
+                run.ChatHistory.Enqueue(new ChatEntry
+                {
+                    Role = ChatRole.System,
+                    Content = $"Agent process exited with code {agentResult.ExitCode} after {(DateTime.UtcNow - run.StartedAt):hh\\:mm\\:ss}. " +
+                              $"Output lines captured: {agentResult.OutputLines.Count}. " +
+                              $"The process may have stopped unexpectedly."
+                });
+
+                if (agentResult.ExitCode == 124)
+                {
+                    run.FailureReason = $"Agent timed out after {config.AgentTimeout}. Implementation is incomplete.";
+                    run.CompletedAt = DateTime.UtcNow;
+                    await swapAgentLabel(run.IssueIdentifier, AgentLabels.Error, ct);
+                    transitionTo(PipelineStep.Failed);
+                    addRunToHistory(run);
+                    return false;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (orchestratorCts?.IsCancellationRequested == true)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.Warning("Pipeline {RunId} agent timed out after {Duration}", run.RunId, config.AgentTimeout);
+            run.ChatHistory.Enqueue(new ChatEntry
+            {
+                Role = ChatRole.System,
+                Content = $"Agent timed out after {config.AgentTimeout}"
+            });
+            run.FailureReason = $"Agent timed out after {config.AgentTimeout}. Implementation is incomplete.";
+            run.CompletedAt = DateTime.UtcNow;
+            await swapAgentLabel(run.IssueIdentifier, AgentLabels.Error, ct);
+            transitionTo(PipelineStep.Failed);
+            addRunToHistory(run);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} code generation failed, continuing to quality gates", run.RunId);
+            run.ChatHistory.Enqueue(new ChatEntry
+            {
+                Role = ChatRole.System,
+                Content = $"Agent process failed: {ex.Message}."
+            });
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Executes the code review loop with multi-agent support and fix prompts.
+    /// </summary>
+    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
+    public async Task ExecuteCodeReviewAsync(
+        PipelineRun run, PipelineConfiguration config,
+        IAgentProvider agentProvider,
+        IssueDetail issue, ParsedIssue parsed,
+        IReadOnlyList<IssueComment>? issueComments,
+        CancellationTokenSource? orchestratorCts,
+        Action<PipelineStep> transitionTo,
+        Action<string> onOutputLine, Action onChange,
+        CancellationToken ct)
+    {
+        if (!config.CodeReview.Enabled || config.CodeReview.MaxIterations <= 0)
+            return;
+
+        run.CodeReviewIterationsTotal = config.CodeReview.MaxIterations;
+        for (var i = 0; i < config.CodeReview.MaxIterations; i++)
+        {
+            run.CodeReviewIterationInProgress = i + 1;
+            transitionTo(PipelineStep.ReviewingCode);
+            _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
+                run.RunId, i + 1, config.CodeReview.MaxIterations);
+
+            run.ChatHistory.Enqueue(new ChatEntry
+            {
+                Role = ChatRole.System,
+                Content = $"Code review iteration {i + 1}/{config.CodeReview.MaxIterations} starting..."
+            });
+            onChange();
+
+            var agents = config.CodeReview.Agents is { Count: > 0 } configuredAgents
+                ? configuredAgents
+                : (IReadOnlyList<ReviewAgentConfig>)new[] { new ReviewAgentConfig { Name = "Review", Prompt = config.CodeReview.Prompt } };
+
+            var iterationFindings = new System.Text.StringBuilder();
+            var iterationCriticalCount = 0;
+            var agentsRun = new List<string>();
+
+            try
+            {
+                for (var a = 0; a < agents.Count; a++)
+                {
+                    var agent = agents[a];
+                    _logger.Information("Pipeline {RunId} iteration {Iteration}: running review agent '{AgentName}' ({AgentIndex}/{AgentCount})",
+                        run.RunId, i + 1, agent.Name, a + 1, agents.Count);
+
+                    run.ChatHistory.Enqueue(new ChatEntry
+                    {
+                        Role = ChatRole.System,
+                        Content = $"Review agent '{agent.Name}' ({a + 1}/{agents.Count}) starting..."
+                    });
+                    onChange();
+
+                    var findingsFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.ReviewFindingsFilePath);
+                    if (File.Exists(findingsFilePath))
+                        File.Delete(findingsFilePath);
+
+                    var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, issue, parsed, issueComments);
+                    _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, i + 1, agent.Name, reviewPrompt);
+
+                    var reviewResult = await agentProvider.ExecuteAsync(
+                        new AgentRequest
+                        {
+                            Prompt = reviewPrompt,
+                            WorkspacePath = run.WorkspacePath!,
+                            Timeout = config.AgentTimeout,
+                            UseResume = true
+                        },
+                        ct,
+                        line =>
+                        {
+                            run.OutputLines.Enqueue(line);
+                            onOutputLine(line);
+                        });
+
+                    agentsRun.Add(agent.Name);
+
+                    string fullReviewText;
+                    IReadOnlyList<string> findingsLines;
+                    if (File.Exists(findingsFilePath))
+                    {
+                        fullReviewText = await File.ReadAllTextAsync(findingsFilePath, ct);
+                        findingsLines = fullReviewText.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                        _logger.Information("Pipeline {RunId} review agent '{AgentName}' wrote findings to {FindingsFile} ({Length} chars)",
+                            run.RunId, agent.Name, findingsFilePath, fullReviewText.Length);
+                    }
+                    else
+                    {
+                        _logger.Warning("Pipeline {RunId} review agent '{AgentName}' did not write findings file at {FindingsFile}",
+                            run.RunId, agent.Name, findingsFilePath);
+                        fullReviewText = "";
+                        findingsLines = Array.Empty<string>();
+                    }
+
+                    var severityCounts = SeverityParser.Parse(findingsLines);
+                    Interlocked.Add(ref run.CodeReviewCriticalCount, severityCounts.Critical);
+                    Interlocked.Add(ref run.CodeReviewWarningCount, severityCounts.Warning);
+                    Interlocked.Add(ref run.CodeReviewSuggestionCount, severityCounts.Suggestion);
+                    iterationCriticalCount += severityCounts.Critical;
+
+                    if (!string.IsNullOrEmpty(fullReviewText))
+                    {
+                        if (iterationFindings.Length > 0)
+                            iterationFindings.AppendLine($"--- Agent: {agent.Name} ---");
+                        iterationFindings.AppendLine(fullReviewText);
+                        run.CodeReviewAgentFindings[agent.Name] = fullReviewText;
+                    }
+
+                    _logger.Information(
+                        "Pipeline {RunId} review agent '{AgentName}' (iteration {Iteration}) completed with exit code {ExitCode}. " +
+                        "CodeReviewFindings: {Critical} critical, {Warning} warning, {Suggestion} suggestion",
+                        run.RunId, agent.Name, i + 1, reviewResult.ExitCode,
+                        severityCounts.Critical, severityCounts.Warning, severityCounts.Suggestion);
+
+                    run.ChatHistory.Enqueue(new ChatEntry
+                    {
+                        Role = ChatRole.Agent,
+                        Content = $"[Code review {i + 1}/{config.CodeReview.MaxIterations} — {agent.Name}] " +
+                                  (reviewResult.OutputLines.Count > 0
+                                      ? string.Join(Environment.NewLine, reviewResult.OutputLines.TakeLast(10))
+                                      : "(no output)")
+                    });
+                    onChange();
+                }
+
+                run.CodeReviewAgentsRun = agentsRun;
+                var iterationFindingsText = iterationFindings.ToString();
+                run.CodeReviewIterationsCompleted++;
+
+                if (!string.IsNullOrEmpty(config.CodeReview.FixPrompt) && iterationCriticalCount > 0)
+                {
+                    _logger.Information("Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected across {AgentCount} agent(s), sending fix prompt",
+                        run.RunId, i + 1, iterationCriticalCount, agents.Count);
+
+                    var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt, iterationFindingsText);
+                    _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
+
+                    await agentProvider.ExecuteAsync(
+                        new AgentRequest
+                        {
+                            Prompt = fixPrompt,
+                            WorkspacePath = run.WorkspacePath!,
+                            Timeout = config.AgentTimeout,
+                            UseResume = true
+                        },
+                        ct,
+                        line =>
+                        {
+                            run.OutputLines.Enqueue(line);
+                            onOutputLine(line);
+                        });
+
+                    run.ChatHistory.Enqueue(new ChatEntry
+                    {
+                        Role = ChatRole.Agent,
+                        Content = $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes"
+                    });
+                    onChange();
+                }
+                else if (!string.IsNullOrEmpty(config.CodeReview.FixPrompt))
+                {
+                    _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings, skipping fix prompt",
+                        run.RunId, i + 1);
+                }
+            }
+            catch (OperationCanceledException) when (orchestratorCts?.IsCancellationRequested == true)
+            {
+                run.CodeReviewAgentsRun = agentsRun;
+                throw;
+            }
+            catch (Exception ex)
+            {
+                run.CodeReviewAgentsRun = agentsRun;
+                _logger.Warning(ex, "Pipeline {RunId} code review iteration {Iteration} failed, skipping remaining reviews",
+                    run.RunId, i + 1);
+                run.ChatHistory.Enqueue(new ChatEntry
+                {
+                    Role = ChatRole.System,
+                    Content = $"Code review iteration {i + 1} failed: {ex.Message}"
+                });
+                onChange();
+                break;
+            }
+        }
+
+        run.CodeReviewIterationInProgress = 0;
+    }
+}

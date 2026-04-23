@@ -8,11 +8,8 @@ namespace KiroWebUI.Pipeline.Providers;
 /// Reads GitHub Actions workflow run status via the GitHub REST API.
 /// Supports both static token and dynamic token provider (GitHub App auth).
 /// </summary>
-public class GitHubActionsPipelineProvider : IPipelineProvider
+public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvider
 {
-    private readonly GitHubClientProvider _clientProvider;
-    private readonly string _owner;
-    private readonly string _repo;
     private readonly TimeSpan _pollInterval;
     private readonly Serilog.ILogger _logger;
 
@@ -29,15 +26,8 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         string repo,
         TimeSpan pollInterval,
         Serilog.ILogger? logger = null)
+        : base(apiUrl, tokenProvider, owner, repo)
     {
-        ArgumentNullException.ThrowIfNull(apiUrl);
-        ArgumentNullException.ThrowIfNull(tokenProvider);
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(repo);
-
-        _clientProvider = new GitHubClientProvider(apiUrl, tokenProvider);
-        _owner = owner;
-        _repo = repo;
         _pollInterval = pollInterval;
         _logger = logger ?? Serilog.Log.Logger;
     }
@@ -52,15 +42,8 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         string repo,
         TimeSpan pollInterval,
         Serilog.ILogger? logger = null)
+        : base(apiUrl, token, owner, repo)
     {
-        ArgumentNullException.ThrowIfNull(apiUrl);
-        ArgumentNullException.ThrowIfNull(token);
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(repo);
-
-        _clientProvider = new GitHubClientProvider(apiUrl, token);
-        _owner = owner;
-        _repo = repo;
         _pollInterval = pollInterval;
         _logger = logger ?? Serilog.Log.Logger;
     }
@@ -74,14 +57,8 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         string repo,
         TimeSpan pollInterval,
         Serilog.ILogger? logger = null)
+        : base(client, owner, repo)
     {
-        ArgumentNullException.ThrowIfNull(client);
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(repo);
-
-        _clientProvider = new GitHubClientProvider(client);
-        _owner = owner;
-        _repo = repo;
         _pollInterval = pollInterval;
         _logger = logger ?? Serilog.Log.Logger;
     }
@@ -93,7 +70,7 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
 
         var client = await GetClientAsync(ct);
         var request = new WorkflowRunsRequest { Branch = branchName };
-        var runs = await client.Actions.Workflows.Runs.List(_owner, _repo, request);
+        var runs = await client.Actions.Workflows.Runs.List(Owner, Repo, request);
 
         // Filter by commit SHA if provided
         var matchingRuns = commitSha != null
@@ -113,7 +90,7 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         var jobs = new List<PipelineJobResult>();
         foreach (var run in matchingRuns)
         {
-            var runJobs = await client.Actions.Workflows.Jobs.List(_owner, _repo, run.Id);
+            var runJobs = await client.Actions.Workflows.Jobs.List(Owner, Repo, run.Id);
             foreach (var job in runJobs.Jobs)
             {
                 jobs.Add(new PipelineJobResult
@@ -209,7 +186,7 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
         try
         {
             var client = await GetClientAsync(ct);
-            var rawLog = await client.Actions.Workflows.Jobs.GetLogs(_owner, _repo, jobId);
+            var rawLog = await client.Actions.Workflows.Jobs.GetLogs(Owner, Repo, jobId);
             return string.IsNullOrEmpty(rawLog) ? null : rawLog;
         }
         catch (Exception ex)
@@ -279,23 +256,6 @@ public class GitHubActionsPipelineProvider : IPipelineProvider
             CommitSha = status.CommitSha
         };
     }
-
-    /// <inheritdoc />
-    public async Task ValidateAsync(CancellationToken ct)
-    {
-        var client = await GetClientAsync(ct);
-        await client.Repository.Get(_owner, _repo);
-    }
-
-    /// <inheritdoc />
-    public ValueTask DisposeAsync()
-    {
-        GC.SuppressFinalize(this);
-        return ValueTask.CompletedTask;
-    }
-
-    private Task<IGitHubClient> GetClientAsync(CancellationToken ct)
-        => _clientProvider.GetClientAsync(ct);
 
     internal static PipelineRunState MapJobState(WorkflowJobStatus status, WorkflowJobConclusion? conclusion)
     {

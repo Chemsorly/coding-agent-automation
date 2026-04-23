@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using KiroWebUI.Pipeline;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
 using LibGit2Sharp;
@@ -288,8 +289,7 @@ public partial class BrainUpdateService
                 Commands.Stage(repo, "*");
 
                 // Commit
-                var signature = new Signature(
-                    "KiroWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
+                var signature = GitOperationsHelper.CreatePipelineSignature();
                 var message = BuildCommitMessage(runId, issueIdentifier);
                 repo.Commit(message, signature, signature);
             }, ct);

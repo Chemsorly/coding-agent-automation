@@ -186,4 +186,21 @@ public sealed class PipelineConfiguration
     /// entirely. Defaults to false.
     /// </summary>
     public bool BrainReadOnly { get; init; } = false;
+
+    /// <summary>
+    /// Returns a copy of this configuration with the specified last-used provider IDs.
+    /// </summary>
+    public PipelineConfiguration WithLastUsedProviderIds(Dictionary<string, string> lastUsed) => new()
+    {
+        MaxRetries = MaxRetries, IssuePageSize = IssuePageSize, AgentTimeout = AgentTimeout,
+        MinCoverageThreshold = MinCoverageThreshold, SecurityScanEnabled = SecurityScanEnabled,
+        WorkspaceBaseDirectory = WorkspaceBaseDirectory, CodeReview = CodeReview,
+        AnalysisPrompt = AnalysisPrompt, ImplementationPrompt = ImplementationPrompt,
+        ExternalCiEnabled = ExternalCiEnabled, ExternalCiTimeout = ExternalCiTimeout,
+        ExternalCiPollInterval = ExternalCiPollInterval, StallWarningInterval = StallWarningInterval,
+        StallPollInterval = StallPollInterval, BlacklistedPaths = BlacklistedPaths,
+        BlacklistMode = BlacklistMode, CleanupSuccessfulWorkspaces = CleanupSuccessfulWorkspaces,
+        FailedWorkspaceRetentionDays = FailedWorkspaceRetentionDays, LastUsedProviderIds = lastUsed,
+        BrainReadOnly = BrainReadOnly
+    };
 }

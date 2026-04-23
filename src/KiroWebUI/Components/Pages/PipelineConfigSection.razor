@@ -1,0 +1,287 @@
+@using KiroWebUI.Pipeline.Interfaces
+@using KiroWebUI.Pipeline.Models
+
+<section class="settings-section">
+    <h2>Pipeline Configuration</h2>
+    <div class="provider-form">
+
+        <!-- General -->
+        <div class="config-category">
+            <div class="config-category-title">General</div>
+            <div class="form-group">
+                <label>Max Retries</label>
+                <input type="number" @bind="_config.MaxRetries" min="0" max="10" />
+            </div>
+            <div class="form-group">
+                <label>Agent Timeout (minutes)</label>
+                <input type="number" @bind="_agentTimeoutMinutes" min="1" />
+            </div>
+        </div>
+
+        <!-- Prompts -->
+        <div class="config-category">
+            <div class="config-category-title">Prompts</div>
+            <div class="form-group">
+                <label>Analysis Prompt</label>
+                <textarea @bind="_config.AnalysisPrompt" rows="6"></textarea>
+                <button type="button" class="btn-revert" disabled="@(_config.AnalysisPrompt == PipelineConfiguration.DefaultAnalysisPrompt)" @onclick="() => _config.AnalysisPrompt = PipelineConfiguration.DefaultAnalysisPrompt">Reset to default</button>
+            </div>
+            <div class="form-group">
+                <label>Implementation Prompt</label>
+                <textarea @bind="_config.ImplementationPrompt" rows="6"></textarea>
+                <button type="button" class="btn-revert" disabled="@(_config.ImplementationPrompt == PipelineConfiguration.DefaultImplementationPrompt)" @onclick="() => _config.ImplementationPrompt = PipelineConfiguration.DefaultImplementationPrompt">Reset to default</button>
+            </div>
+        </div>
+
+        <!-- Quality Gates -->
+        <div class="config-category">
+            <div class="config-category-title">Quality Gates</div>
+            <div class="form-group">
+                <label>Min Coverage Threshold (%)</label>
+                <input type="number" @bind="_config.MinCoverageThreshold" min="0" max="100" step="0.1" />
+            </div>
+            <div class="form-group form-checkbox">
+                <label>
+                    <input type="checkbox" @bind="_config.CodeReviewEnabled" />
+                    Agent Code Review Enabled
+                </label>
+            </div>
+            @if (_config.CodeReviewEnabled)
+            {
+                <div class="config-sub-fields">
+                    <div class="form-group">
+                        <label>Max Review Iterations</label>
+                        <input type="number" @bind="_config.CodeReviewMaxIterations" min="1" max="5" />
+                    </div>
+                    <div class="form-group form-checkbox">
+                        <label>
+                            <input type="checkbox" @bind="_config.MultiAgentReviewEnabled" />
+                            Use Specialized Review Agents
+                            <span class="form-hint-icon" aria-hidden="true" title="Run multiple specialized reviewers sequentially instead of a single prompt">?</span>
+                        </label>
+                    </div>
+                    @if (_config.MultiAgentReviewEnabled)
+                    {
+                        <div class="config-sub-fields">
+                            @for (var idx = 0; idx < _config.ReviewAgents.Count; idx++)
+                            {
+                                var agentIdx = idx;
+                                <div class="form-group" style="border-left: 2px solid var(--border-color, #444); padding-left: 0.75rem; margin-bottom: 1rem;">
+                                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                        <label style="flex: 1;">Agent Name</label>
+                                        <button type="button" class="btn-revert" @onclick="() => _config.ReviewAgents.RemoveAt(agentIdx)">Remove</button>
+                                    </div>
+                                    <input type="text" @bind="_config.ReviewAgents[agentIdx].Name" />
+                                    <label>Prompt</label>
+                                    <textarea @bind="_config.ReviewAgents[agentIdx].Prompt" rows="4"></textarea>
+                                </div>
+                            }
+                            <button type="button" class="btn-revert" @onclick="() => _config.ReviewAgents.Add(new AgentFormEntry())">+ Add Agent</button>
+                            <button type="button" class="btn-revert" @onclick="ResetReviewAgentsToDefault">Reset to defaults</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="form-group">
+                            <label>Review Prompt</label>
+                            <textarea @bind="_config.CodeReviewPrompt" rows="4"></textarea>
+                            <button type="button" class="btn-revert" disabled="@(_config.CodeReviewPrompt == PipelineConfiguration.DefaultCodeReviewPrompt)" @onclick="() => _config.CodeReviewPrompt = PipelineConfiguration.DefaultCodeReviewPrompt">Reset to default</button>
+                        </div>
+                    }
+                    <div class="form-group">
+                        <label>Fix Prompt <span class="form-hint">(leave empty for single-pass review)</span></label>
+                        <textarea @bind="_config.CodeReviewFixPrompt" rows="3"></textarea>
+                        <button type="button" class="btn-revert" disabled="@(_config.CodeReviewFixPrompt == PipelineConfiguration.DefaultFixPrompt)" @onclick="() => _config.CodeReviewFixPrompt = PipelineConfiguration.DefaultFixPrompt">Reset to default</button>
+                    </div>
+                </div>
+            }
+            <div class="form-group form-checkbox">
+                <label class="@(PipelineProviderCount == 0 ? "disabled-label" : "")">
+                    <input type="checkbox" @bind="_config.ExternalCiEnabled" disabled="@(PipelineProviderCount == 0)" />
+                    External CI Quality Gate
+                    @if (PipelineProviderCount == 0)
+                    {
+                        <span class="form-hint-icon" aria-hidden="true" title="Configure a Pipeline Provider first to enable this option">?</span>
+                    }
+                </label>
+            </div>
+            @if (_config.ExternalCiEnabled)
+            {
+                <div class="config-sub-fields">
+                    <div class="form-group">
+                        <label>CI Timeout (minutes)</label>
+                        <input type="number" @bind="_externalCiTimeoutMinutes" min="1" max="60" />
+                    </div>
+                    <div class="form-group">
+                        <label>CI Poll Interval (seconds)</label>
+                        <input type="number" @bind="_externalCiPollIntervalSeconds" min="10" max="300" />
+                    </div>
+                </div>
+            }
+        </div>
+
+        <!-- Security & Cleanup -->
+        <div class="config-category">
+            <div class="config-category-title">Security &amp; Cleanup</div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Blacklisted Paths</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Comma-separated path prefixes excluded from agent commits (e.g. .kiro, .github)">?</span>
+                </div>
+                <input type="text" @bind="_blacklistedPathsText" placeholder=".kiro, .github" />
+            </div>
+            <div class="form-group">
+                <label>Blacklist Mode</label>
+                <select @bind="_config.BlacklistMode">
+                    <option value="@BlacklistMode.WarnAndExclude">Warn &amp; Exclude (unstage and continue)</option>
+                    <option value="@BlacklistMode.Fail">Fail (stop pipeline on violation)</option>
+                </select>
+            </div>
+            <div class="form-group form-checkbox">
+                <label>
+                    <input type="checkbox" @bind="_config.CleanupSuccessfulWorkspaces" />
+                    Delete Workspace After Successful PR
+                    <span class="form-hint-icon" aria-hidden="true" title="Automatically remove workspace folders after a non-draft PR is created">?</span>
+                </label>
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Failed Run Workspace Retention (days)</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Days to keep workspaces for failed/cancelled runs. 0 = delete immediately, -1 = keep forever">?</span>
+                </div>
+                <input type="number" @bind="_config.FailedWorkspaceRetentionDays" min="-1" />
+            </div>
+            <div class="form-group form-checkbox">
+                <label>
+                    <input type="checkbox" @bind="_config.BrainReadOnly" />
+                    Brain Repository Read-Only
+                    <span class="form-hint-icon" aria-hidden="true" title="When enabled, the brain repo is cloned and read by the agent but no changes are written back. Useful for shared brain repos.">?</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="pipeline-form-actions">
+            <button class="btn-save" @onclick="SaveConfig">Save Pipeline Configuration</button>
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter] public int PipelineProviderCount { get; set; }
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private PipelineConfigForm _config = new();
+    private int _agentTimeoutMinutes = 30;
+    private int _externalCiTimeoutMinutes = 15;
+    private int _externalCiPollIntervalSeconds = 30;
+    private string _blacklistedPathsText = ".kiro, .github";
+
+    public async Task LoadConfigAsync()
+    {
+        var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        _config = new PipelineConfigForm
+        {
+            MaxRetries = config.MaxRetries,
+            MinCoverageThreshold = config.MinCoverageThreshold,
+            CodeReviewEnabled = config.CodeReview.Enabled,
+            CodeReviewMaxIterations = config.CodeReview.MaxIterations,
+            CodeReviewPrompt = config.CodeReview.Prompt,
+            CodeReviewFixPrompt = config.CodeReview.FixPrompt,
+            MultiAgentReviewEnabled = config.CodeReview.Agents is { Count: > 0 },
+            ReviewAgents = config.CodeReview.Agents is { Count: > 0 }
+                ? config.CodeReview.Agents.Select(a => new AgentFormEntry { Name = a.Name, Prompt = a.Prompt }).ToList()
+                : PipelineConfiguration.DefaultReviewAgents.Select(a => new AgentFormEntry { Name = a.Name, Prompt = a.Prompt }).ToList(),
+            AnalysisPrompt = config.AnalysisPrompt,
+            ImplementationPrompt = config.ImplementationPrompt,
+            ExternalCiEnabled = config.ExternalCiEnabled,
+            BlacklistMode = config.BlacklistMode,
+            CleanupSuccessfulWorkspaces = config.CleanupSuccessfulWorkspaces,
+            FailedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays,
+            BrainReadOnly = config.BrainReadOnly
+        };
+        _agentTimeoutMinutes = (int)config.AgentTimeout.TotalMinutes;
+        _externalCiTimeoutMinutes = (int)config.ExternalCiTimeout.TotalMinutes;
+        _externalCiPollIntervalSeconds = (int)config.ExternalCiPollInterval.TotalSeconds;
+        _blacklistedPathsText = string.Join(", ", config.BlacklistedPaths);
+    }
+
+    private void ResetReviewAgentsToDefault()
+    {
+        _config.ReviewAgents = PipelineConfiguration.DefaultReviewAgents
+            .Select(a => new AgentFormEntry { Name = a.Name, Prompt = a.Prompt }).ToList();
+    }
+
+    private async Task SaveConfig()
+    {
+        // TODO: [ARC-10] SaveConfig does not preserve IssuePageSize, WorkspaceBaseDirectory, StallWarningInterval, StallPollInterval, LastUsedProviderIds, SecurityScanEnabled — these reset to defaults on save
+        var config = new PipelineConfiguration
+        {
+            MaxRetries = _config.MaxRetries,
+            AgentTimeout = TimeSpan.FromMinutes(_agentTimeoutMinutes),
+            MinCoverageThreshold = _config.MinCoverageThreshold,
+            SecurityScanEnabled = false,
+            CodeReview = new CodeReviewConfiguration
+            {
+                Enabled = _config.CodeReviewEnabled,
+                MaxIterations = _config.CodeReviewMaxIterations,
+                Prompt = _config.CodeReviewPrompt,
+                FixPrompt = _config.CodeReviewFixPrompt,
+                Agents = _config.MultiAgentReviewEnabled && _config.ReviewAgents.Count > 0
+                    ? _config.ReviewAgents
+                        .Where(a => !string.IsNullOrWhiteSpace(a.Name) && !string.IsNullOrWhiteSpace(a.Prompt))
+                        .Select(a => new ReviewAgentConfig { Name = a.Name.Trim(), Prompt = a.Prompt.Trim() })
+                        .ToArray()
+                    : null,
+            },
+            AnalysisPrompt = _config.AnalysisPrompt,
+            ImplementationPrompt = _config.ImplementationPrompt,
+            ExternalCiEnabled = _config.ExternalCiEnabled,
+            ExternalCiTimeout = TimeSpan.FromMinutes(_externalCiTimeoutMinutes),
+            ExternalCiPollInterval = TimeSpan.FromSeconds(_externalCiPollIntervalSeconds),
+            BlacklistedPaths = _blacklistedPathsText
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .ToArray(),
+            BlacklistMode = _config.BlacklistMode,
+            CleanupSuccessfulWorkspaces = _config.CleanupSuccessfulWorkspaces,
+            FailedWorkspaceRetentionDays = _config.FailedWorkspaceRetentionDays,
+            BrainReadOnly = _config.BrainReadOnly
+        };
+
+        try
+        {
+            await ConfigStore.SavePipelineConfigAsync(config, CancellationToken.None);
+            await OnShowStatus.InvokeAsync(("Pipeline configuration saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+
+    private class AgentFormEntry
+    {
+        public string Name { get; set; } = "";
+        public string Prompt { get; set; } = "";
+    }
+
+    private class PipelineConfigForm
+    {
+        public int MaxRetries { get; set; } = 3;
+        public double MinCoverageThreshold { get; set; } = 80.0;
+        public bool CodeReviewEnabled { get; set; } = true;
+        public int CodeReviewMaxIterations { get; set; } = 1;
+        public string CodeReviewPrompt { get; set; } = PipelineConfiguration.DefaultCodeReviewPrompt;
+        public string? CodeReviewFixPrompt { get; set; }
+        public bool MultiAgentReviewEnabled { get; set; }
+        public List<AgentFormEntry> ReviewAgents { get; set; } = new();
+        public string AnalysisPrompt { get; set; } = PipelineConfiguration.DefaultAnalysisPrompt;
+        public string ImplementationPrompt { get; set; } = PipelineConfiguration.DefaultImplementationPrompt;
+        public bool ExternalCiEnabled { get; set; }
+        public BlacklistMode BlacklistMode { get; set; } = BlacklistMode.WarnAndExclude;
+        public bool CleanupSuccessfulWorkspaces { get; set; } = true;
+        public int FailedWorkspaceRetentionDays { get; set; } = 7;
+        public bool BrainReadOnly { get; set; } = false;
+    }
+}

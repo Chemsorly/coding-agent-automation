@@ -9,20 +9,17 @@ namespace KiroWebUI.Pipeline.Services;
 /// Manages the active pipeline run, state transitions, chat interaction, retry logic,
 /// quality gate validation, and PR creation.
 /// </summary>
-public class PipelineOrchestrationService : IDisposable
+public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 {
     private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
     private readonly IssueDescriptionParser _issueParser;
-    private readonly IQualityGateValidator _qualityGateValidator;
-    private readonly CiLogWriter _ciLogWriter;
-    private readonly BrainUpdateService _brainUpdateService;
+    private readonly BrainSyncOrchestrator _brainSync;
+    private readonly PullRequestOrchestrator _prOrchestrator;
+    private readonly PipelineRunHistoryService _historyService;
+    private readonly AgentExecutionOrchestrator _agentExecution;
+    private readonly QualityGateOrchestrator _qualityGates;
     private readonly Serilog.ILogger _logger;
-    private readonly List<PipelineRunSummary> _runHistory = new();
-    private readonly string _runsDirectory;
-
-    /// <summary>Marker text used to identify analysis comments on GitHub issues.</summary>
-    private const string AnalysisCommentMarker = "## 🤖 Agent Analysis";
 
     private CancellationTokenSource? _cancellationTokenSource;
     private IAgentProvider? _activeAgentProvider;
@@ -32,7 +29,6 @@ public class PipelineOrchestrationService : IDisposable
     private IPipelineProvider? _activePipelineProvider;
     private PipelineConfiguration? _activeConfig;
 
-    // Stored between analysis and implementation phases
     private IssueDetail? _activeIssue;
     private ParsedIssue? _activeParsedIssue;
     private IReadOnlyList<IssueComment>? _activeIssueComments;
@@ -72,14 +68,14 @@ public class PipelineOrchestrationService : IDisposable
         _configStore = configStore;
         _providerFactory = providerFactory;
         _issueParser = issueParser;
-        _qualityGateValidator = qualityGateValidator;
-        _ciLogWriter = ciLogWriter;
-        _brainUpdateService = brainUpdateService ?? new BrainUpdateService(logger);
         _logger = logger;
-        _runsDirectory = runsDirectory;
 
-        // Load persisted run history
-        LoadRunHistory();
+        var brainService = brainUpdateService ?? new BrainUpdateService(logger);
+        _brainSync = new BrainSyncOrchestrator(brainService, logger);
+        _prOrchestrator = new PullRequestOrchestrator(logger);
+        _historyService = new PipelineRunHistoryService(logger, runsDirectory);
+        _agentExecution = new AgentExecutionOrchestrator(logger);
+        _qualityGates = new QualityGateOrchestrator(qualityGateValidator, ciLogWriter, _prOrchestrator, logger);
     }
 
     /// <summary>
@@ -103,29 +99,18 @@ public class PipelineOrchestrationService : IDisposable
 
         try
         {
-            // Load pipeline configuration
             _activeConfig = await _configStore.LoadPipelineConfigAsync(linkedCt);
+            _historyService.CleanupExpiredWorkspaces(_activeConfig, ActiveRun?.RunId);
 
-            // Clean up expired workspaces from previous failed/cancelled runs
-            CleanupExpiredWorkspaces(_activeConfig);
-
-            // Resolve provider configs
             var issueProviderConfig = await ResolveProviderConfigAsync(issueProviderId, ProviderKind.Issue, linkedCt);
             var repoProviderConfig = await ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, linkedCt);
-
-            // Resolve agent provider by explicit ID
             var agentProviderConfig = await ResolveProviderConfigAsync(agentProviderId, ProviderKind.Agent, linkedCt);
 
-            // Dispose previous provider instances before creating new ones (REQ-5.3)
             await DisposePreviousProvidersAsync();
-
-            // Create provider instances
-            var issueProvider = _providerFactory.CreateIssueProvider(issueProviderConfig);
-            _activeIssueProvider = issueProvider;
+            _activeIssueProvider = _providerFactory.CreateIssueProvider(issueProviderConfig);
+            var issueProvider = _activeIssueProvider;
             _activeRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
             _activeAgentProvider = _providerFactory.CreateAgentProvider(agentProviderConfig);
-
-            // Resolve brain provider if specified
             _activeBrainProvider = null;
             if (!string.IsNullOrEmpty(brainProviderId))
             {
@@ -133,17 +118,11 @@ public class PipelineOrchestrationService : IDisposable
                 {
                     var brainProviderConfig = await ResolveProviderConfigAsync(brainProviderId, ProviderKind.Repository, linkedCt);
                     _activeBrainProvider = _providerFactory.CreateRepositoryProvider(brainProviderConfig);
-
-                    // Validate brain provider separately (non-fatal)
-                    try
-                    {
-                        await _activeBrainProvider.ValidateAsync(linkedCt);
-                    }
+                    try { await _activeBrainProvider.ValidateAsync(linkedCt); }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         _logger.Warning(ex, "Brain provider validation failed, disabling brain sync for this run");
-                        if (_activeBrainProvider is IAsyncDisposable disposable)
-                            await disposable.DisposeAsync();
+                        if (_activeBrainProvider is IAsyncDisposable disposable) await disposable.DisposeAsync();
                         _activeBrainProvider = null;
                     }
                 }
@@ -153,14 +132,12 @@ public class PipelineOrchestrationService : IDisposable
                     _activeBrainProvider = null;
                 }
             }
-
-            // Create the pipeline run
             var configuredModel = agentProviderConfig.Settings.GetValueOrDefault("model", "auto");
             var run = new PipelineRun
             {
                 RunId = Guid.NewGuid().ToString(),
                 IssueIdentifier = issueIdentifier,
-                IssueTitle = string.Empty, // Will be set after fetching issue
+                IssueTitle = string.Empty,
                 IssueProviderConfigId = issueProviderId,
                 RepoProviderConfigId = repoProviderId,
                 StartedAt = DateTime.UtcNow,
@@ -171,195 +148,44 @@ public class PipelineOrchestrationService : IDisposable
             };
             ActiveRun = run;
             _logger.Information("Pipeline {RunId} using model {Model}", run.RunId, configuredModel);
-
-            // Create pipeline provider if external CI is enabled
             _activePipelineProvider = null;
             if (_activeConfig.ExternalCiEnabled)
             {
                 ProviderConfig? pipelineProviderConfig = null;
                 if (!string.IsNullOrEmpty(pipelineProviderId))
-                {
                     pipelineProviderConfig = await ResolveProviderConfigAsync(pipelineProviderId, ProviderKind.Pipeline, linkedCt);
-                }
                 else
                 {
                     var pipelineConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, linkedCt);
-                    if (pipelineConfigs.Count > 0)
-                        pipelineProviderConfig = pipelineConfigs[0];
+                    if (pipelineConfigs.Count > 0) pipelineProviderConfig = pipelineConfigs[0];
                 }
-
                 if (pipelineProviderConfig is not null)
                 {
                     _activePipelineProvider = _providerFactory.CreatePipelineProvider(pipelineProviderConfig);
                     _logger.Information("Pipeline {RunId} external CI provider configured", run.RunId);
                 }
                 else
-                {
                     _logger.Warning("Pipeline {RunId} external CI enabled but no pipeline provider configured", run.RunId);
-                }
             }
-
-            // Validate all active providers before workspace creation/clone (REQ-5.2)
-            await ValidateProvidersAsync(
-                issueProvider, issueProviderConfig,
-                _activeRepoProvider, repoProviderConfig,
-                _activeAgentProvider, agentProviderConfig,
-                _activePipelineProvider,
-                linkedCt);
-
+            await ValidateProvidersAsync(issueProvider, issueProviderConfig, _activeRepoProvider, repoProviderConfig,
+                _activeAgentProvider, agentProviderConfig, _activePipelineProvider, linkedCt);
             _logger.Information("Pipeline {RunId} created for issue {IssueIdentifier}", run.RunId, issueIdentifier);
             NotifyChange();
-
-            // Ensure agent labels exist in the repository (non-fatal fallback)
-            try
-            {
-                await issueProvider.EnsureAgentLabelsAsync(linkedCt);
-            }
+            try { await issueProvider.EnsureAgentLabelsAsync(linkedCt); }
             catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Warning(ex, "Pipeline {RunId} failed to ensure agent labels, continuing", run.RunId);
-            }
-
-            // Persist last-used provider IDs for dropdown pre-population
-            try
-            {
-                var lastUsed = new Dictionary<string, string>(_activeConfig.LastUsedProviderIds)
-                {
-                    ["issue"] = issueProviderId,
-                    ["repository"] = repoProviderId,
-                    ["agent"] = agentProviderId
-                };
-                if (!string.IsNullOrEmpty(brainProviderId))
-                    lastUsed["brain"] = brainProviderId;
-                if (!string.IsNullOrEmpty(pipelineProviderId))
-                    lastUsed["pipeline"] = pipelineProviderId;
-
-                var updatedConfig = new PipelineConfiguration
-                {
-                    MaxRetries = _activeConfig.MaxRetries,
-                    IssuePageSize = _activeConfig.IssuePageSize,
-                    AgentTimeout = _activeConfig.AgentTimeout,
-                    MinCoverageThreshold = _activeConfig.MinCoverageThreshold,
-                    SecurityScanEnabled = _activeConfig.SecurityScanEnabled,
-                    WorkspaceBaseDirectory = _activeConfig.WorkspaceBaseDirectory,
-                    CodeReview = _activeConfig.CodeReview,
-                    AnalysisPrompt = _activeConfig.AnalysisPrompt,
-                    ImplementationPrompt = _activeConfig.ImplementationPrompt,
-                    ExternalCiEnabled = _activeConfig.ExternalCiEnabled,
-                    ExternalCiTimeout = _activeConfig.ExternalCiTimeout,
-                    ExternalCiPollInterval = _activeConfig.ExternalCiPollInterval,
-                    StallWarningInterval = _activeConfig.StallWarningInterval,
-                    StallPollInterval = _activeConfig.StallPollInterval,
-                    BlacklistedPaths = _activeConfig.BlacklistedPaths,
-                    BlacklistMode = _activeConfig.BlacklistMode,
-                    CleanupSuccessfulWorkspaces = _activeConfig.CleanupSuccessfulWorkspaces,
-                    FailedWorkspaceRetentionDays = _activeConfig.FailedWorkspaceRetentionDays,
-                    LastUsedProviderIds = lastUsed,
-                    BrainReadOnly = _activeConfig.BrainReadOnly
-                };
-                await _configStore.SavePipelineConfigAsync(updatedConfig, linkedCt);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Warning(ex, "Pipeline {RunId} failed to persist last-used provider IDs", run.RunId);
-            }
-
-            // Execute the pipeline steps (fire-and-forget within the lock scope,
-            // but we await to completion before returning)
+            { _logger.Warning(ex, "Pipeline {RunId} failed to ensure agent labels, continuing", run.RunId); }
+            await PersistLastUsedProviderIdsAsync(issueProviderId, repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, linkedCt);
             await ExecutePipelineStepsAsync(run, issueProvider, linkedCt);
-
             return run;
         }
         catch (Exception ex) when (ex is not InvalidOperationException || ActiveRun != null)
         {
             if (ActiveRun != null && ActiveRun.CurrentStep != PipelineStep.Failed
                 && ActiveRun.CurrentStep != PipelineStep.Cancelled)
-            {
                 await HandlePipelineErrorAsync(ActiveRun, ex);
-            }
             throw;
         }
     }
-
-    /// <summary>
-    /// Disposes any previously active provider instances. Disposal failures are logged
-    /// as warnings and never prevent a new pipeline run from starting (REQ-5.3).
-    /// </summary>
-    private async Task DisposePreviousProvidersAsync()
-    {
-        await DisposeProviderAsync(_activeAgentProvider, "Agent");
-        await DisposeProviderAsync(_activeIssueProvider, "Issue");
-        await DisposeProviderAsync(_activeRepoProvider, "Repository");
-        await DisposeProviderAsync(_activeBrainProvider, "Brain");
-        await DisposeProviderAsync(_activePipelineProvider, "Pipeline");
-    }
-
-    private async Task DisposeProviderAsync(IAsyncDisposable? provider, string providerKind)
-    {
-        if (provider is null)
-            return;
-
-        try
-        {
-            await provider.DisposeAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to dispose previous {ProviderKind} provider", providerKind);
-        }
-    }
-
-    private async Task ValidateProvidersAsync(
-        IIssueProvider issueProvider, ProviderConfig issueConfig,
-        IRepositoryProvider repoProvider, ProviderConfig repoConfig,
-        IAgentProvider agentProvider, ProviderConfig agentConfig,
-        IPipelineProvider? pipelineProvider,
-        CancellationToken ct)
-    {
-        try
-        {
-            await issueProvider.ValidateAsync(ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            throw new InvalidOperationException(
-                $"Issue provider ({issueConfig.ProviderType}) validation failed: {ex.Message}", ex);
-        }
-
-        try
-        {
-            await repoProvider.ValidateAsync(ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            throw new InvalidOperationException(
-                $"Repository provider ({repoConfig.ProviderType}) validation failed: {ex.Message}", ex);
-        }
-
-        try
-        {
-            await agentProvider.ValidateAsync(ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            throw new InvalidOperationException(
-                $"Agent provider ({agentConfig.ProviderType}) validation failed: {ex.Message}", ex);
-        }
-
-        if (pipelineProvider != null)
-        {
-            try
-            {
-                await pipelineProvider.ValidateAsync(ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                throw new InvalidOperationException(
-                    $"Pipeline provider validation failed: {ex.Message}", ex);
-            }
-        }
-    }
-
     private async Task ExecutePipelineStepsAsync(
         PipelineRun run, IIssueProvider issueProvider, CancellationToken ct)
     {
@@ -369,44 +195,22 @@ public class PipelineOrchestrationService : IDisposable
         {
             // Fetch and validate issue
             IssueDetail issue;
-            try
-            {
-                issue = await issueProvider.GetIssueAsync(run.IssueIdentifier, ct);
-            }
+            try { issue = await issueProvider.GetIssueAsync(run.IssueIdentifier, ct); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.Error(ex, "Pipeline {RunId} failed to fetch issue {IssueIdentifier}",
-                    run.RunId, run.IssueIdentifier);
-                run.FailureReason = $"Failed to fetch issue: {ex.Message}";
-                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
-                TransitionTo(run, PipelineStep.Failed);
-                AddRunToHistory(run);
+                _logger.Error(ex, "Pipeline {RunId} failed to fetch issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
+                await FailRunAsync(run, $"Failed to fetch issue: {ex.Message}");
                 return;
             }
 
-            // Validate issue has required fields
             if (string.IsNullOrWhiteSpace(issue.Title) || string.IsNullOrWhiteSpace(issue.Description))
-            {
-                _logger.Warning("Pipeline {RunId} issue has insufficient information", run.RunId);
-                run.FailureReason = "insufficient issue information";
-                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
-                TransitionTo(run, PipelineStep.Failed);
-                AddRunToHistory(run);
-                return;
-            }
+            { _logger.Warning("Pipeline {RunId} issue has insufficient information", run.RunId); await FailRunAsync(run, "insufficient issue information"); return; }
 
-            // Update run with issue title
             run.IssueTitle = issue.Title;
             run.IssueLabels = issue.Labels;
-
-            // Parse issue description
             var parsed = _issueParser.Parse(issue.Description);
-
-            // Store for use after approval
             _activeIssue = issue;
             _activeParsedIssue = parsed;
-
-            // Fetch issue comments for additional context
             IReadOnlyList<IssueComment> issueComments = Array.Empty<IssueComment>();
             try
             {
@@ -415,594 +219,81 @@ public class PipelineOrchestrationService : IDisposable
                     run.RunId, issueComments.Count, run.IssueIdentifier);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Warning(ex, "Pipeline {RunId} failed to fetch issue comments, proceeding without them",
-                    run.RunId);
-            }
+            { _logger.Warning(ex, "Pipeline {RunId} failed to fetch issue comments, proceeding without them", run.RunId); }
             _activeIssueComments = issueComments;
-
-            // Create workspace
+            // Create workspace and clone
             var workspacePath = Path.Combine(_activeConfig!.WorkspaceBaseDirectory, run.RunId);
             Directory.CreateDirectory(workspacePath);
             run.WorkspacePath = workspacePath;
-            _logger.Information("Pipeline {RunId} workspace created at {WorkspacePath}", run.RunId, workspacePath);
 
-            // Clone repository
             TransitionTo(run, PipelineStep.CloningRepository);
             await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.InProgress, ct);
-            try
-            {
-                await _activeRepoProvider!.CloneAsync(workspacePath, ct);
-                _logger.Information("Pipeline {RunId} repository cloned successfully", run.RunId);
-            }
+            try { await _activeRepoProvider!.CloneAsync(workspacePath, ct); }
             catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Error(ex, "Pipeline {RunId} failed to clone repository", run.RunId);
-                run.FailureReason = $"Repository clone failed: {ex.Message}";
-                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
-                TransitionTo(run, PipelineStep.Failed);
-                AddRunToHistory(run);
-                return;
-            }
-
-            // Pre-run brain sync (clone/pull brain repo into .brain/)
+            { _logger.Error(ex, "Pipeline {RunId} failed to clone repository", run.RunId); await FailRunAsync(run, $"Repository clone failed: {ex.Message}"); return; }
+            // Brain sync pre-run
             if (_activeBrainProvider != null)
             {
                 TransitionTo(run, PipelineStep.SyncingBrainRepoPreRun);
-                var brainSw = System.Diagnostics.Stopwatch.StartNew();
-                try
-                {
-                    var brainPath = Path.Combine(workspacePath, ".brain");
-                    if (Directory.Exists(brainPath))
-                    {
-                        await _activeBrainProvider.PullAsync(brainPath, ct);
-                        _logger.Information("Pipeline {RunId} brain repo pulled in {Duration}ms",
-                            run.RunId, brainSw.ElapsedMilliseconds);
-                    }
-                    else
-                    {
-                        await _activeBrainProvider.CloneAsync(brainPath, ct);
-                        _logger.Information("Pipeline {RunId} brain repo cloned in {Duration}ms",
-                            run.RunId, brainSw.ElapsedMilliseconds);
-                    }
-
-                    // Ensure .brain/ is in the code repo's .gitignore
-                    var gitignorePath = Path.Combine(workspacePath, ".gitignore");
-                    var gitignoreContent = File.Exists(gitignorePath)
-                        ? await File.ReadAllTextAsync(gitignorePath, ct)
-                        : "";
-                    var updatedGitignore = BrainUpdateService.EnsureGitignoreEntry(gitignoreContent, ".brain/");
-                    if (updatedGitignore != gitignoreContent)
-                    {
-                        await File.WriteAllTextAsync(gitignorePath, updatedGitignore, ct);
-                        _logger.Information("Pipeline {RunId} added .brain/ to .gitignore", run.RunId);
-                    }
-
-                    // Count knowledge files
-                    var brainFiles = Directory.Exists(brainPath)
-                        ? Directory.GetFiles(brainPath, "*.md", SearchOption.AllDirectories)
-                        : Array.Empty<string>();
-                    run.BrainKnowledgeFileCount = brainFiles.Length;
-                    run.BrainContextLoaded = true;
-
-                    _logger.Information(
-                        "Pipeline {RunId} brain sync complete: {BrainFileCount} knowledge files in {Duration}ms",
-                        run.RunId, run.BrainKnowledgeFileCount, brainSw.ElapsedMilliseconds);
-                }
+                try { await _brainSync.SyncPreRunAsync(run, _activeBrainProvider, workspacePath, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _logger.Warning(ex, "Pipeline {RunId} brain sync failed, continuing without brain context", run.RunId);
                     run.BrainContextLoaded = false;
                 }
             }
-
             // Create branch
             TransitionTo(run, PipelineStep.CreatingBranch);
             try
             {
-                var branchName = PipelineFormatting.GenerateBranchName(
-                    run.IssueIdentifier, issue.Title, run.RunId);
-                var createdBranch = await _activeRepoProvider.CreateBranchAsync(
-                    workspacePath, branchName, ct);
-                run.BranchName = createdBranch;
-                _logger.Information("Pipeline {RunId} branch {BranchName} created", run.RunId, createdBranch);
+                var branchName = PipelineFormatting.GenerateBranchName(run.IssueIdentifier, issue.Title, run.RunId);
+                run.BranchName = await _activeRepoProvider.CreateBranchAsync(workspacePath, branchName, ct);
+                _logger.Information("Pipeline {RunId} branch {BranchName} created", run.RunId, run.BranchName);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Error(ex, "Pipeline {RunId} failed to create branch", run.RunId);
-                run.FailureReason = $"Branch creation failed: {ex.Message}";
-                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
-                TransitionTo(run, PipelineStep.Failed);
-                AddRunToHistory(run);
-                return;
-            }
-
-            // Check for existing analysis comment using the already-fetched issueComments (REQ-3.2)
-            // If the first ListCommentsAsync failed, issueComments is empty and we gracefully skip.
-            string? existingAnalysis = null;
-            var analysisComment = issueComments.FirstOrDefault(c => c.Body.Contains(AnalysisCommentMarker));
-            if (analysisComment != null)
-            {
-                existingAnalysis = analysisComment.Body;
-                _logger.Information("Pipeline {RunId} found existing analysis comment on issue {IssueIdentifier}, skipping agent analysis",
-                    run.RunId, run.IssueIdentifier);
-            }
-
-            if (existingAnalysis != null)
-            {
-                // Reuse existing analysis — skip agent analysis and comment posting
-                run.AnalysisContent = existingAnalysis;
-                run.AnalysisSkipped = true;
-                TransitionTo(run, PipelineStep.AnalyzingCode);
-
-                // Ensure a CLI session is established (warm-up handled by the provider)
-                await _activeAgentProvider!.EnsureSessionAsync(workspacePath, ct);
-
-                TransitionTo(run, PipelineStep.PostingAnalysis);
-            }
-            else
-            {
-                // Analyze code — agent examines the codebase in context of the issue
-                TransitionTo(run, PipelineStep.AnalyzingCode);
-
-                // Ensure a CLI session is established (warm-up handled by the provider)
-                await _activeAgentProvider!.EnsureSessionAsync(workspacePath, ct);
-
-                try
-                {
-                    // Build brain context for analysis prompt
-                    var brainContextForAnalysis = PromptBuilder.BuildBrainContextSection(
-                        run.BrainContextLoaded,
-                        run.RepositoryName?.Split('/').LastOrDefault(),
-                        null,
-                        GetPreviousBrainWarnings(run.BrainProviderConfigId));
-
-                    var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(_activeConfig.AnalysisPrompt, issue, parsed, issueComments, brainContextForAnalysis);
-                    _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
-                    var analysisRequest = new AgentRequest
-                    {
-                        Prompt = analysisPrompt,
-                        WorkspacePath = workspacePath,
-                        Timeout = _activeConfig.AgentTimeout,
-                        UseResume = true
-                    };
-
-                    await _activeAgentProvider!.ExecuteAsync(analysisRequest, ct,
-                        line =>
-                        {
-                            run.OutputLines.Enqueue(line);
-                            OnOutputLine?.Invoke(line);
-                        });
-
-                    // Read the analysis from the file the agent wrote
-                    var analysisFilePath = Path.Combine(workspacePath, PromptBuilder.AnalysisFilePath);
-                    if (File.Exists(analysisFilePath))
-                    {
-                        run.AnalysisContent = await File.ReadAllTextAsync(analysisFilePath, ct);
-                        _logger.Information("Pipeline {RunId} read analysis from {AnalysisFilePath}",
-                            run.RunId, analysisFilePath);
-                    }
-                    else
-                    {
-                        _logger.Warning("Pipeline {RunId} agent did not write analysis file at {AnalysisFilePath}",
-                            run.RunId, analysisFilePath);
-                        run.AnalysisContent = null;
-                    }
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Pipeline {RunId} code analysis failed, falling back to issue-based analysis",
-                        run.RunId);
-                    run.AnalysisContent = null;
-                }
-
-                // Post analysis comment on the issue (non-fatal)
-                TransitionTo(run, PipelineStep.PostingAnalysis);
-                try
-                {
-                    var analysis = !string.IsNullOrWhiteSpace(run.AnalysisContent)
-                        ? IssueAnalysisComment.FromAgentAnalysis(issue, run.AnalysisContent)
-                        : IssueAnalysisComment.FromIssue(issue, parsed);
-
-                    await _activeIssueProvider!.PostCommentAsync(run.IssueIdentifier, analysis.ToMarkdown(), ct);
-                    _logger.Information("Pipeline {RunId} posted analysis comment on issue {IssueIdentifier}",
-                        run.RunId, run.IssueIdentifier);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Pipeline {RunId} failed to post analysis comment on issue {IssueIdentifier}",
-                        run.RunId, run.IssueIdentifier);
-                }
-            }
-
-            // Proceed directly to code generation
-            // Generate code — agent implements the issue
-            TransitionTo(run, PipelineStep.GeneratingCode);
-            try
-            {
-                var brainContextSection = PromptBuilder.BuildBrainContextSection(
-                    run.BrainContextLoaded,
-                    run.RepositoryName?.Split('/').LastOrDefault(),
-                    null,
-                    GetPreviousBrainWarnings(run.BrainProviderConfigId));
-                var brainWriteInstructions = PromptBuilder.BuildBrainWriteInstructions(
-                    run.BrainContextLoaded, run.RunId, run.IssueIdentifier,
-                    _activeConfig!.BrainReadOnly);
-
-                var prompt = PromptBuilder.BuildPrompt(_activeConfig!.ImplementationPrompt, _activeIssue!, _activeParsedIssue!, _activeIssueComments, brainContextSection, brainWriteInstructions);
-                _logger.Debug("Pipeline {RunId} implementation prompt:\n{Prompt}", run.RunId, prompt);
-
-                // Stall monitor: periodically poll GetHealthStatus() to detect silence or process death
-                using var stallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                var lastWarnTime = DateTime.UtcNow;
-                var stallMonitorTask = Task.Run(async () =>
-                {
-                    try
-                    {
-                        while (!stallCts.Token.IsCancellationRequested)
-                        {
-                            await Task.Delay(_activeConfig!.StallPollInterval, stallCts.Token);
-
-                            AgentHealthStatus health;
-                            try
-                            {
-                                health = _activeAgentProvider!.GetHealthStatus();
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.Warning(ex, "Pipeline {RunId} GetHealthStatus() call failed, continuing to poll", run.RunId);
-                                continue;
-                            }
-
-                            // If the process has died, log error immediately
-                            if (health.IsProcessAlive == false)
-                            {
-                                var errorMsg = $"Agent process is no longer alive (PID {health.ProcessId}). " +
-                                               $"Total elapsed: {(DateTime.UtcNow - run.StartedAt):hh\\:mm\\:ss}.";
-                                _logger.Error("Pipeline {RunId} {StallMessage}", run.RunId, errorMsg);
-                                run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = errorMsg });
-                                NotifyChange();
-                                break;
-                            }
-
-                            // Check for silence via LastOutputTime
-                            if (health.LastOutputTime.HasValue)
-                            {
-                                var silence = DateTime.UtcNow - health.LastOutputTime.Value;
-                                var stallWarningInterval = _activeConfig!.StallWarningInterval;
-                                var timeSinceLastWarn = DateTime.UtcNow - lastWarnTime;
-
-                                if (silence >= stallWarningInterval && timeSinceLastWarn >= stallWarningInterval)
-                                {
-                                    var elapsed = DateTime.UtcNow - run.StartedAt;
-                                    var msg = $"No agent output for {silence.TotalMinutes:F0}m. " +
-                                              $"Agent call still in progress. " +
-                                              $"Total elapsed: {elapsed:hh\\:mm\\:ss}. Timeout: {_activeConfig!.AgentTimeout:hh\\:mm\\:ss}.";
-                                    _logger.Warning("Pipeline {RunId} {StallMessage}", run.RunId, msg);
-                                    run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = msg });
-                                    NotifyChange();
-                                    // Reset so we warn again after another interval of silence
-                                    lastWarnTime = DateTime.UtcNow;
-                                }
-                            }
-                        }
-                    }
-                    catch (OperationCanceledException) { }
-                    catch (ObjectDisposedException) { }
-                }, CancellationToken.None);
-
-                AgentResult agentResult;
-                try
-                {
-                    agentResult = await _activeAgentProvider!.ExecuteAsync(
-                        new AgentRequest
-                        {
-                            Prompt = prompt,
-                            WorkspacePath = run.WorkspacePath!,
-                            Timeout = _activeConfig!.AgentTimeout,
-                            UseResume = true
-                        },
-                        ct,
-                        line =>
-                        {
-                            run.OutputLines.Enqueue(line);
-                            OnOutputLine?.Invoke(line);
-                        });
-                }
-                finally
-                {
-                    // Stop stall monitor on all paths (success, timeout, cancellation, exception)
-                    await stallCts.CancelAsync();
-                    try { await stallMonitorTask; } catch (OperationCanceledException) { }
-                }
-
-                var outputSummary = agentResult.OutputLines.Count > 0
-                    ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
-                    : "(no output)";
-
-                run.ChatHistory.Enqueue(new ChatEntry
-                {
-                    Role = ChatRole.Agent,
-                    Content = outputSummary
-                });
-
-                _logger.Information("Pipeline {RunId} initial code generation completed with exit code {ExitCode} after {Elapsed}",
-                    run.RunId, agentResult.ExitCode, DateTime.UtcNow - run.StartedAt);
-
-                await UpdateFileChangeStatsAsync(run);
-
-                if (agentResult.ExitCode != 0)
-                {
-                    _logger.Warning("Pipeline {RunId} agent exited with non-zero code {ExitCode}, continuing to quality gates",
-                        run.RunId, agentResult.ExitCode);
-                    run.ChatHistory.Enqueue(new ChatEntry
-                    {
-                        Role = ChatRole.System,
-                        Content = $"Agent process exited with code {agentResult.ExitCode} after {(DateTime.UtcNow - run.StartedAt):hh\\:mm\\:ss}. " +
-                                  $"Output lines captured: {agentResult.OutputLines.Count}. " +
-                                  $"The process may have stopped unexpectedly."
-                    });
-
-                    // Exit code 124 = timeout. The agent was killed mid-work — implementation is
-                    // incomplete. Fail the pipeline instead of wasting time on review/quality gates.
-                    if (agentResult.ExitCode == 124)
-                    {
-                        run.FailureReason = $"Agent timed out after {_activeConfig!.AgentTimeout}. Implementation is incomplete.";
-                        run.CompletedAt = DateTime.UtcNow;
-                        await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
-                        TransitionTo(run, PipelineStep.Failed);
-                        AddRunToHistory(run);
-                        return;
-                    }
-                }
-            }
-            catch (OperationCanceledException) when (_cancellationTokenSource?.IsCancellationRequested == true)
-            {
-                throw;
-            }
-            catch (OperationCanceledException)
-            {
-                // Agent timeout (not user cancellation — that's caught by the outer handler)
-                _logger.Warning("Pipeline {RunId} agent timed out after {Duration}",
-                    run.RunId, _activeConfig!.AgentTimeout);
-                run.ChatHistory.Enqueue(new ChatEntry
-                {
-                    Role = ChatRole.System,
-                    Content = $"Agent timed out after {_activeConfig.AgentTimeout}"
-                });
-                run.FailureReason = $"Agent timed out after {_activeConfig.AgentTimeout}. Implementation is incomplete.";
-                run.CompletedAt = DateTime.UtcNow;
-                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
-                TransitionTo(run, PipelineStep.Failed);
-                AddRunToHistory(run);
-                return;
-            }
-            catch (Exception ex)
-            {
-                // Agent crash or unexpected error — log and continue to quality gates
-                _logger.Warning(ex, "Pipeline {RunId} code generation failed, continuing to quality gates", run.RunId);
-                run.ChatHistory.Enqueue(new ChatEntry
-                {
-                    Role = ChatRole.System,
-                    Content = $"Agent process failed: {ex.Message}."
-                });
-            }
-
-            // Pull brain repo before agent writes lessons (minimize merge conflicts)
+            { _logger.Error(ex, "Pipeline {RunId} failed to create branch", run.RunId); await FailRunAsync(run, $"Branch creation failed: {ex.Message}"); return; }
+            // Analysis phase
+            // TODO: [ARC-10] OnOutputLine fires with empty string instead of actual line content — behavioral difference from code generation/review phases
+            await _agentExecution.ExecuteAnalysisPhaseAsync(
+                run, _activeConfig, _activeAgentProvider!, _activeIssueProvider!,
+                issue, parsed, issueComments, _brainSync,
+                step => TransitionTo(run, step),
+                () => OnOutputLine?.Invoke(string.Empty), () => NotifyChange(), ct);
+            // Code generation phase
+            var shouldContinue = await _agentExecution.ExecuteCodeGenerationAsync(
+                run, _activeConfig, _activeAgentProvider!,
+                issue, parsed, issueComments, _brainSync,
+                _cancellationTokenSource,
+                step => TransitionTo(run, step),
+                line => OnOutputLine?.Invoke(line), () => NotifyChange(),
+                r => UpdateFileChangeStatsAsync(r),
+                (id, label, token) => SwapAgentLabelAsync(id, label, token),
+                r => AddRunToHistory(r), ct);
+            if (!shouldContinue) return;
+            // Brain pull before write
             if (_activeBrainProvider != null && !_activeConfig!.BrainReadOnly && run.BrainContextLoaded)
             {
-                try
-                {
-                    var brainPath = Path.Combine(run.WorkspacePath!, ".brain");
-                    await _activeBrainProvider.PullAsync(brainPath, ct);
-                    _logger.Information("Pipeline {RunId} brain repo pulled before write phase", run.RunId);
-                }
+                try { await _brainSync.PullBeforeWriteAsync(run, _activeBrainProvider, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Pipeline {RunId} brain repo pull-before-write failed, continuing", run.RunId);
-                }
+                { _logger.Warning(ex, "Pipeline {RunId} brain repo pull-before-write failed, continuing", run.RunId); }
             }
-
-            // Code review step (if enabled)
-            if (_activeConfig!.CodeReview.Enabled && _activeConfig.CodeReview.MaxIterations > 0)
-            {
-                run.CodeReviewIterationsTotal = _activeConfig.CodeReview.MaxIterations;
-                for (var i = 0; i < _activeConfig.CodeReview.MaxIterations; i++)
-                {
-                    run.CodeReviewIterationInProgress = i + 1;
-                    TransitionTo(run, PipelineStep.ReviewingCode);
-                    _logger.Information(
-                        "Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
-                        run.RunId, i + 1, _activeConfig.CodeReview.MaxIterations);
-
-                    run.ChatHistory.Enqueue(new ChatEntry
-                    {
-                        Role = ChatRole.System,
-                        Content = $"Code review iteration {i + 1}/{_activeConfig.CodeReview.MaxIterations} starting..."
-                    });
-                    NotifyChange();
-
-                    // Determine review agents: multi-agent or single-prompt fallback
-                    var agents = _activeConfig.CodeReview.Agents is { Count: > 0 } configuredAgents
-                        ? configuredAgents
-                        : (IReadOnlyList<ReviewAgentConfig>)new[] { new ReviewAgentConfig { Name = "Review", Prompt = _activeConfig.CodeReview.Prompt } };
-
-                    var iterationFindings = new System.Text.StringBuilder();
-                    var iterationCriticalCount = 0;
-                    var agentsRun = new List<string>();
-
-                    try
-                    {
-                        for (var a = 0; a < agents.Count; a++)
-                        {
-                            var agent = agents[a];
-                            _logger.Information(
-                                "Pipeline {RunId} iteration {Iteration}: running review agent '{AgentName}' ({AgentIndex}/{AgentCount})",
-                                run.RunId, i + 1, agent.Name, a + 1, agents.Count);
-
-                            run.ChatHistory.Enqueue(new ChatEntry
-                            {
-                                Role = ChatRole.System,
-                                Content = $"Review agent '{agent.Name}' ({a + 1}/{agents.Count}) starting..."
-                            });
-                            NotifyChange();
-
-                            // Delete previous findings file so each agent starts clean
-                            var findingsFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.ReviewFindingsFilePath);
-                            if (File.Exists(findingsFilePath))
-                                File.Delete(findingsFilePath);
-
-                            var reviewPrompt = PromptBuilder.BuildReviewPrompt(
-                                agent.Prompt,
-                                _activeIssue!,
-                                _activeParsedIssue!,
-                                _activeIssueComments);
-                            _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, i + 1, agent.Name, reviewPrompt);
-
-                            var reviewResult = await _activeAgentProvider!.ExecuteAsync(
-                                new AgentRequest
-                                {
-                                    Prompt = reviewPrompt,
-                                    WorkspacePath = run.WorkspacePath!,
-                                    Timeout = _activeConfig.AgentTimeout,
-                                    UseResume = true
-                                },
-                                ct,
-                                line =>
-                                {
-                                    run.OutputLines.Enqueue(line);
-                                    OnOutputLine?.Invoke(line);
-                                });
-
-                            agentsRun.Add(agent.Name);
-
-                            var reviewOutput = reviewResult.OutputLines.Count > 0
-                                ? string.Join(Environment.NewLine, reviewResult.OutputLines.TakeLast(10))
-                                : "(no output)";
-
-                            // Read findings from the file the agent wrote
-                            string fullReviewText;
-                            IReadOnlyList<string> findingsLines;
-                            if (File.Exists(findingsFilePath))
-                            {
-                                fullReviewText = await File.ReadAllTextAsync(findingsFilePath, ct);
-                                findingsLines = fullReviewText.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-                                _logger.Information("Pipeline {RunId} review agent '{AgentName}' wrote findings to {FindingsFile} ({Length} chars)",
-                                    run.RunId, agent.Name, findingsFilePath, fullReviewText.Length);
-                            }
-                            else
-                            {
-                                _logger.Warning("Pipeline {RunId} review agent '{AgentName}' did not write findings file at {FindingsFile}",
-                                    run.RunId, agent.Name, findingsFilePath);
-                                fullReviewText = "";
-                                findingsLines = Array.Empty<string>();
-                            }
-
-                            // Parse severity counts from findings file
-                            var severityCounts = SeverityParser.Parse(findingsLines);
-                            Interlocked.Add(ref run.CodeReviewCriticalCount, severityCounts.Critical);
-                            Interlocked.Add(ref run.CodeReviewWarningCount, severityCounts.Warning);
-                            Interlocked.Add(ref run.CodeReviewSuggestionCount, severityCounts.Suggestion);
-                            iterationCriticalCount += severityCounts.Critical;
-
-                            if (!string.IsNullOrEmpty(fullReviewText))
-                            {
-                                if (iterationFindings.Length > 0)
-                                    iterationFindings.AppendLine($"--- Agent: {agent.Name} ---");
-                                iterationFindings.AppendLine(fullReviewText);
-
-                                // Store per-agent findings (latest iteration wins)
-                                run.CodeReviewAgentFindings[agent.Name] = fullReviewText;
-                            }
-
-                            _logger.Information(
-                                "Pipeline {RunId} review agent '{AgentName}' (iteration {Iteration}) completed with exit code {ExitCode}. " +
-                                "CodeReviewFindings: {Critical} critical, {Warning} warning, {Suggestion} suggestion",
-                                run.RunId, agent.Name, i + 1, reviewResult.ExitCode,
-                                severityCounts.Critical, severityCounts.Warning, severityCounts.Suggestion);
-
-                            run.ChatHistory.Enqueue(new ChatEntry
-                            {
-                                Role = ChatRole.Agent,
-                                Content = $"[Code review {i + 1}/{_activeConfig.CodeReview.MaxIterations} — {agent.Name}] {reviewOutput}"
-                            });
-                            NotifyChange();
-                        }
-
-                        // Update agents-run tracking
-                        run.CodeReviewAgentsRun = agentsRun;
-
-                        // Accumulate combined findings text for the fix prompt
-                        var iterationFindingsText = iterationFindings.ToString();
-
-                        run.CodeReviewIterationsCompleted++;
-
-                        // Fix phase: send fix prompt once after all agents complete (if CRITICALs found)
-                        if (!string.IsNullOrEmpty(_activeConfig.CodeReview.FixPrompt) && iterationCriticalCount > 0)
-                        {
-                            _logger.Information(
-                                "Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected across {AgentCount} agent(s), sending fix prompt",
-                                run.RunId, i + 1, iterationCriticalCount, agents.Count);
-
-                            var fixPrompt = PromptBuilder.BuildFixPrompt(
-                                _activeConfig.CodeReview.FixPrompt, iterationFindingsText);
-                            _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
-
-                            await _activeAgentProvider!.ExecuteAsync(
-                                new AgentRequest
-                                {
-                                    Prompt = fixPrompt,
-                                    WorkspacePath = run.WorkspacePath!,
-                                    Timeout = _activeConfig.AgentTimeout,
-                                    UseResume = true
-                                },
-                                ct,
-                                line =>
-                                {
-                                    run.OutputLines.Enqueue(line);
-                                    OnOutputLine?.Invoke(line);
-                                });
-
-                            run.ChatHistory.Enqueue(new ChatEntry
-                            {
-                                Role = ChatRole.Agent,
-                                Content = $"[Code review fix {i + 1}/{_activeConfig.CodeReview.MaxIterations}] Applied CRITICAL fixes"
-                            });
-                            NotifyChange();
-                        }
-                        else if (!string.IsNullOrEmpty(_activeConfig.CodeReview.FixPrompt))
-                        {
-                            _logger.Information(
-                                "Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings, skipping fix prompt",
-                                run.RunId, i + 1);
-                        }
-                    }
-                    catch (OperationCanceledException) when (_cancellationTokenSource?.IsCancellationRequested == true)
-                    {
-                        run.CodeReviewAgentsRun = agentsRun;
-                        throw;
-                    }
-                    catch (Exception ex)
-                    {
-                        run.CodeReviewAgentsRun = agentsRun;
-                        _logger.Warning(ex,
-                            "Pipeline {RunId} code review iteration {Iteration} failed, skipping remaining reviews",
-                            run.RunId, i + 1);
-                        run.ChatHistory.Enqueue(new ChatEntry
-                        {
-                            Role = ChatRole.System,
-                            Content = $"Code review iteration {i + 1} failed: {ex.Message}"
-                        });
-                        NotifyChange();
-                        break;
-                    }
-                }
-
-                run.CodeReviewIterationInProgress = 0;
-            }
-
-            // Proceed directly to quality gates
-            await ProceedToQualityGatesAsync(ct);
+            // Code review phase
+            await _agentExecution.ExecuteCodeReviewAsync(
+                run, _activeConfig!, _activeAgentProvider!,
+                _activeIssue!, _activeParsedIssue!, _activeIssueComments,
+                _cancellationTokenSource,
+                step => TransitionTo(run, step),
+                line => OnOutputLine?.Invoke(line), () => NotifyChange(), ct);
+            // Quality gates
+            await _qualityGates.ProceedToQualityGatesAsync(
+                run, _activeConfig!, _activeAgentProvider!, _activeRepoProvider!, _activePipelineProvider,
+                _cancellationTokenSource,
+                step => TransitionTo(run, step),
+                (id, label, token) => SwapAgentLabelAsync(id, label, token),
+                (id, token) => RemoveAllAgentLabelsAsync(id, token),
+                r => AddRunToHistory(r),
+                line => OnOutputLine?.Invoke(line), () => NotifyChange(),
+                (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, token), ct);
         }
         catch (OperationCanceledException)
         {
@@ -1016,360 +307,13 @@ public class PipelineOrchestrationService : IDisposable
             }
         }
     }
-
-    /// <summary>
-    /// Runs quality gate validation with retry logic and PR creation.
-    /// </summary>
-    private async Task ProceedToQualityGatesAsync(CancellationToken ct)
-    {
-        var run = ActiveRun!;
-        using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
-
-        TransitionTo(run, PipelineStep.RunningQualityGates);
-
-        try
-        {
-            using var linkedCts = _cancellationTokenSource != null
-                ? CancellationTokenSource.CreateLinkedTokenSource(ct, _cancellationTokenSource.Token)
-                : null;
-            var linkedCt = linkedCts?.Token ?? ct;
-
-            // Run local quality gates first (compilation, tests, coverage)
-            var report = await _qualityGateValidator.ValidateAsync(
-                run.WorkspacePath!, _activeConfig!, linkedCt);
-
-            // If local gates passed and external CI is enabled, push and wait for CI
-            if (report.Compilation.Passed && report.Tests.Passed
-                && (report.Coverage?.Passed ?? true) && (report.SecurityScan?.Passed ?? true)
-                && _activeConfig!.ExternalCiEnabled && _activePipelineProvider != null)
-            {
-                GateResult? externalCiGate = null;
-                try
-                {
-                try
-                {
-                    var commitMessage = PipelineFormatting.GenerateCommitMessage(
-                        run.IssueTitle, run.IssueIdentifier);
-                    var blacklisted = await _activeRepoProvider!.CommitAllAsync(
-                        run.WorkspacePath!, commitMessage, _activeConfig!.BlacklistedPaths, linkedCt);
-                    if (await RecordBlacklistedFiles(run, blacklisted))
-                        return; // Fail mode — pipeline already transitioned to Failed
-                }
-                catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
-                {
-                    // Agent may have committed directly — check if branch has commits ahead
-                    if (!await _activeRepoProvider!.HasCommitsAheadAsync(run.WorkspacePath!, linkedCt))
-                    {
-                        _logger.Warning("Pipeline {RunId} no changes to commit and no commits ahead of base — agent did not produce changes",
-                            run.RunId);
-                        throw;
-                    }
-                    _logger.Information("Pipeline {RunId} no uncommitted changes but branch has commits ahead (agent committed directly), proceeding to push",
-                        run.RunId);
-                }
-                    await _activeRepoProvider!.PushBranchAsync(run.WorkspacePath!, run.BranchName!, linkedCt);
-                    _logger.Information("Pipeline {RunId} pushed branch {BranchName} for CI validation",
-                        run.RunId, run.BranchName);
-
-                    // Get HEAD commit SHA for precise CI matching
-                    string? commitSha = null;
-                    try
-                    {
-                        commitSha = await _activeRepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, linkedCt);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA", run.RunId);
-                    }
-
-                    // Wait for external CI — logs for failed jobs are fetched
-                    // automatically by the provider before returning
-                    var ciStatus = await _activePipelineProvider.WaitForCompletionAsync(
-                        run.BranchName!, commitSha, _activeConfig.ExternalCiTimeout, linkedCt);
-
-                    var ciPassed = ciStatus.State == PipelineRunState.Passed;
-
-                    // Write full CI logs to .kiro/ci-logs/ so the agent can read them on demand
-                    IReadOnlyDictionary<long, string>? ciLogPaths = null;
-                    if (!ciPassed && run.WorkspacePath != null)
-                    {
-                        ciLogPaths = _ciLogWriter.WriteJobLogs(ciStatus, run.WorkspacePath, run.RunId);
-                    }
-
-                    externalCiGate = new GateResult
-                    {
-                        GateName = "External CI",
-                        Passed = ciPassed,
-                        Details = ciPassed
-                            ? $"CI passed. {ciStatus.Jobs.Count} job(s) completed."
-                            : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
-                    };
-                }
-                catch (OperationCanceledException) when (!linkedCt.IsCancellationRequested)
-                {
-                    externalCiGate = new GateResult
-                    {
-                        GateName = "External CI",
-                        Passed = false,
-                        Details = $"External CI timed out after {_activeConfig.ExternalCiTimeout}"
-                    };
-                }
-                catch (OperationCanceledException)
-                {
-                    throw; // Pipeline cancellation — propagate
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Pipeline {RunId} external CI check failed, treating as gate failure", run.RunId);
-                    externalCiGate = new GateResult
-                    {
-                        GateName = "External CI",
-                        Passed = false,
-                        Details = $"External CI error: {ex.Message}"
-                    };
-                }
-
-                // Rebuild report with external CI result
-                report = new QualityGateReport
-                {
-                    Compilation = report.Compilation,
-                    Tests = report.Tests,
-                    Coverage = report.Coverage,
-                    SecurityScan = report.SecurityScan,
-                    ExternalCi = externalCiGate
-                };
-            }
-
-            run.LatestQualityReport = report;
-            run.QualityGateHistory.Enqueue(report);
-
-            _logger.Information(
-                "Pipeline {RunId} quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}",
-                run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed);
-
-            // Retry loop: if gates fail and retries remain, send fix prompt and re-validate
-            while (!report.AllPassed && run.RetryCount < _activeConfig!.MaxRetries)
-            {
-                run.RetryCount++;
-                var errorSummary = BuildQualityGateErrorSummary(report);
-                run.RetryErrors.Add(errorSummary);
-
-                _logger.Information(
-                    "Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}",
-                    run.RunId, run.RetryCount, _activeConfig.MaxRetries);
-
-                run.ChatHistory.Enqueue(new ChatEntry
-                {
-                    Role = ChatRole.System,
-                    Content = $"Quality gates failed (attempt {run.RetryCount}/{_activeConfig.MaxRetries}):\n{errorSummary}"
-                });
-
-                // Send fix prompt to agent directly
-                TransitionTo(run, PipelineStep.GeneratingCode);
-
-                var fixPrompt = $"The quality gates failed. Please fix the following issues:\n{errorSummary}\n\nDo NOT run git write commands (git add, git commit, git push, etc.). The pipeline handles version control automatically.";
-                run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = fixPrompt });
-                NotifyChange();
-
-                try
-                {
-                    var agentResult = await _activeAgentProvider!.ExecuteAsync(
-                        new AgentRequest
-                        {
-                            Prompt = fixPrompt,
-                            WorkspacePath = run.WorkspacePath!,
-                            Timeout = _activeConfig.AgentTimeout,
-                            UseResume = true
-                        },
-                        linkedCt,
-                        line =>
-                        {
-                            run.OutputLines.Enqueue(line);
-                            OnOutputLine?.Invoke(line);
-                        });
-
-                    var outputSummary = agentResult.OutputLines.Count > 0
-                        ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
-                        : "(no output)";
-                    run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = outputSummary });
-
-                    await UpdateFileChangeStatsAsync(run);
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Pipeline {RunId} retry fix agent call failed", run.RunId);
-                    run.ChatHistory.Enqueue(new ChatEntry
-                    {
-                        Role = ChatRole.System,
-                        Content = $"Agent error during retry fix: {ex.Message}"
-                    });
-                }
-
-                // Re-run local quality gates
-                TransitionTo(run, PipelineStep.RunningQualityGates);
-                report = await _qualityGateValidator.ValidateAsync(
-                    run.WorkspacePath!, _activeConfig!, linkedCt);
-
-                // If local gates passed and external CI is enabled, commit + push to trigger CI
-                if (report.Compilation.Passed && report.Tests.Passed
-                    && (report.Coverage?.Passed ?? true) && (report.SecurityScan?.Passed ?? true)
-                    && _activeConfig!.ExternalCiEnabled && _activePipelineProvider != null)
-                {
-                    GateResult? retryCiGate = null;
-                    try
-                    {
-                        // Commit the agent's fixes and push to trigger CI via push event
-                        try
-                        {
-                            var retryCommitMessage = PipelineFormatting.GenerateCommitMessage(
-                                run.IssueTitle, run.IssueIdentifier);
-                            var blacklisted = await _activeRepoProvider!.CommitAllAsync(
-                                run.WorkspacePath!, retryCommitMessage, _activeConfig!.BlacklistedPaths, linkedCt);
-                            if (await RecordBlacklistedFiles(run, blacklisted))
-                                return; // Fail mode — pipeline already transitioned to Failed
-                        }
-                        catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
-                        {
-                            // Agent may not have changed files (e.g. flaky test fix was a no-op).
-                            // Create an empty commit to trigger CI via push event.
-                            _logger.Information("Pipeline {RunId} no changes after retry fix, creating empty commit to trigger CI",
-                                run.RunId);
-                            await _activeRepoProvider!.CommitAllAsync(
-                                run.WorkspacePath!,
-                                $"chore: trigger CI re-run for {run.IssueIdentifier} (retry {run.RetryCount})",
-                                _activeConfig!.BlacklistedPaths, allowEmpty: true, linkedCt);
-                        }
-
-                        await _activeRepoProvider!.PushBranchAsync(run.WorkspacePath!, run.BranchName!, linkedCt);
-                        _logger.Information("Pipeline {RunId} pushed retry fixes on branch {BranchName} for CI validation",
-                            run.RunId, run.BranchName);
-
-                        string? commitSha = null;
-                        try
-                        {
-                            commitSha = await _activeRepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, linkedCt);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA on retry", run.RunId);
-                        }
-
-                        var ciStatus = await _activePipelineProvider.WaitForCompletionAsync(
-                            run.BranchName!, commitSha, _activeConfig.ExternalCiTimeout, linkedCt);
-
-                        var ciPassed = ciStatus.State == PipelineRunState.Passed;
-
-                        IReadOnlyDictionary<long, string>? ciLogPaths = null;
-                        if (!ciPassed && run.WorkspacePath != null)
-                        {
-                            ciLogPaths = _ciLogWriter.WriteJobLogs(ciStatus, run.WorkspacePath, run.RunId);
-                        }
-
-                        retryCiGate = new GateResult
-                        {
-                            GateName = "External CI",
-                            Passed = ciPassed,
-                            Details = ciPassed
-                                ? $"CI passed. {ciStatus.Jobs.Count} job(s) completed."
-                                : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
-                        };
-                    }
-                    catch (OperationCanceledException) when (!linkedCt.IsCancellationRequested)
-                    {
-                        retryCiGate = new GateResult
-                        {
-                            GateName = "External CI",
-                            Passed = false,
-                            Details = $"External CI timed out after {_activeConfig.ExternalCiTimeout}"
-                        };
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        throw; // Pipeline cancellation — propagate
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Warning(ex, "Pipeline {RunId} external CI check failed on retry, treating as gate failure", run.RunId);
-                        retryCiGate = new GateResult
-                        {
-                            GateName = "External CI",
-                            Passed = false,
-                            Details = $"External CI error: {ex.Message}"
-                        };
-                    }
-
-                    // Rebuild report with external CI result
-                    report = new QualityGateReport
-                    {
-                        Compilation = report.Compilation,
-                        Tests = report.Tests,
-                        Coverage = report.Coverage,
-                        SecurityScan = report.SecurityScan,
-                        ExternalCi = retryCiGate
-                    };
-                }
-
-                run.LatestQualityReport = report;
-                run.QualityGateHistory.Enqueue(report);
-
-                _logger.Information(
-                    "Pipeline {RunId} retry quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}",
-                    run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed);
-            }
-
-            if (report.AllPassed)
-            {
-                // All gates passed — create PR
-                await CreatePullRequestAsync(run, report, isDraft: false, linkedCt);
-            }
-            else
-            {
-                // Max retries exhausted — create draft PR
-                _logger.Warning(
-                    "Pipeline {RunId} max retries ({MaxRetries}) exhausted, creating draft PR",
-                    run.RunId, _activeConfig!.MaxRetries);
-
-                var errorSummary = BuildQualityGateErrorSummary(report);
-                run.RetryErrors.Add(errorSummary);
-
-                await CreatePullRequestAsync(run, report, isDraft: true, linkedCt);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
-            {
-                _logger.Information("Pipeline {RunId} was cancelled during quality gates", run.RunId);
-                run.CompletedAt = DateTime.UtcNow;
-                await RemoveAllAgentLabelsAsync(run.IssueIdentifier, CancellationToken.None);
-                TransitionTo(run, PipelineStep.Cancelled);
-                AddRunToHistory(run);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Pipeline {RunId} quality gate validation failed", run.RunId);
-            run.FailureReason = $"Quality gate validation error: {ex.Message}";
-            await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
-            TransitionTo(run, PipelineStep.Failed);
-            AddRunToHistory(run);
-        }
-    }
-
-    /// <summary>
-    /// Cancels the active pipeline run.
-    /// </summary>
+    /// <summary>Cancels the active pipeline run.</summary>
     public async Task CancelPipelineAsync()
     {
-        if (ActiveRun == null || !IsRunning)
-            return;
-
+        if (ActiveRun == null || !IsRunning) return;
         var run = ActiveRun;
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
-
         _logger.Information("Pipeline {RunId} cancellation requested", run.RunId);
-
         _cancellationTokenSource?.Cancel();
         run.CompletedAt = DateTime.UtcNow;
         if (_activeIssueProvider != null)
@@ -1377,108 +321,25 @@ public class PipelineOrchestrationService : IDisposable
         TransitionTo(run, PipelineStep.Cancelled);
         AddRunToHistory(run);
     }
-
-    /// <summary>
-    /// Returns the in-memory run history.
-    /// </summary>
-    public IReadOnlyList<PipelineRunSummary> GetRunHistory() => _runHistory.AsReadOnly();
-
+    /// <summary>Returns the in-memory run history.</summary>
+    public IReadOnlyList<PipelineRunSummary> GetRunHistory() => _historyService.GetRunHistory();
     // --- Private helpers ---
-
     private async Task CreatePullRequestAsync(
         PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
     {
         TransitionTo(run, PipelineStep.CreatingPullRequest);
-
         try
         {
-            // Commit any uncommitted changes (skip if already committed by agent or CI step)
-            try
-            {
-                var commitMessage = PipelineFormatting.GenerateCommitMessage(
-                    run.IssueTitle, run.IssueIdentifier);
-                var blacklisted = await _activeRepoProvider!.CommitAllAsync(
-                    run.WorkspacePath!, commitMessage, _activeConfig!.BlacklistedPaths, ct);
-                if (await RecordBlacklistedFiles(run, blacklisted))
-                    return; // Fail mode — pipeline already transitioned to Failed
-            }
-            catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
-            {
-                _logger.Information(
-                    "Pipeline {RunId} no uncommitted changes, skipping commit",
-                    run.RunId);
-            }
+            var prUrl = await _prOrchestrator.CreatePullRequestAsync(
+                run, report, isDraft, _activeRepoProvider!, _activeIssue, _activeParsedIssue,
+                _activeIssueComments, _activeConfig!, ct);
 
-            // Always push — the branch may have commits from the orchestrator's commit above,
-            // from the CI validation step, or from the agent committing directly.
-            // Push is idempotent if the remote is already up to date.
-            await _activeRepoProvider!.PushBranchAsync(run.WorkspacePath!, run.BranchName!, ct);
+            if (prUrl == null && _activeConfig?.BlacklistMode == BlacklistMode.Fail
+                && run.BlacklistedFilesDetected.Count > 0)
+            { await FailRunAsync(run, $"Blacklisted files detected: {string.Join(", ", run.BlacklistedFilesDetected)}. The agent modified protected paths."); return; }
 
-            // Refresh file change stats now that changes are committed
-            await UpdateFileChangeStatsAsync(run);
-
-            // Verify the branch actually has commits beyond the base branch.
-            // If the agent didn't implement anything, there's nothing to PR.
-            if (!await _activeRepoProvider!.HasCommitsAheadAsync(run.WorkspacePath!, ct))
-            {
-                _logger.Warning("Pipeline {RunId} branch has no commits ahead of {BaseBranch} — agent did not produce any changes",
-                    run.RunId, _activeRepoProvider!.BaseBranch);
-                run.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";
-                run.CompletedAt = DateTime.UtcNow;
-                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
-                TransitionTo(run, PipelineStep.Failed);
-                AddRunToHistory(run);
-                return;
-            }
-
-            // Build PR info
-            var testsPassed = report.Tests.TestsPassed ?? 0;
-            var testsFailed = report.Tests.TestsFailed ?? 0;
-            var testsSkipped = report.Tests.TestsSkipped ?? 0;
-            var coverage = report.Coverage?.CoveragePercent;
-
-            var fileChanges = await _activeRepoProvider!.GetFileChangesAsync(run.WorkspacePath!, ct);
-
-            var issueTitle = _activeIssue?.Title ?? run.IssueTitle;
-            var issueDescription = _activeIssue?.Description ?? string.Empty;
-            var acceptanceCriteria = _activeParsedIssue?.AcceptanceCriteria
-                ?? (IReadOnlyList<string>)Array.Empty<string>();
-
-            var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, run.IssueIdentifier);
-
-            var codeReviewSummary = _activeConfig!.CodeReview.Enabled
-                ? new CodeReviewSummary(
-                    run.CodeReviewAgentsRun,
-                    run.CodeReviewCriticalCount,
-                    run.CodeReviewWarningCount,
-                    run.CodeReviewSuggestionCount,
-                    run.CodeReviewAgentFindings
-                        .Select(kv => new AgentFindings(kv.Key, kv.Value))
-                        .ToArray())
-                : null;
-
-            var prBody = PipelineFormatting.GeneratePrBody(
-                run.IssueIdentifier, testsPassed, testsFailed, testsSkipped,
-                coverage, fileChanges, issueTitle, issueDescription,
-                acceptanceCriteria, isDraft, _activeIssueComments,
-                run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
-                run.ModelName,
-                codeReviewSummary);
-
-            var prInfo = new PullRequestInfo
-            {
-                Title = prTitle,
-                Body = prBody,
-                BranchName = run.BranchName!,
-                BaseBranch = _activeRepoProvider!.BaseBranch,
-                IsDraft = isDraft
-            };
-
-            var prUrl = await _activeRepoProvider!.CreatePullRequestAsync(prInfo, ct);
-            run.PullRequestUrl = prUrl;
-            run.IsDraftPr = isDraft;
-            run.PullRequestNumber = ExtractPrNumber(prUrl);
-            run.CompletedAt = DateTime.UtcNow;
+            if (prUrl == null)
+            { await FailRunAsync(run, "Agent did not produce any changes. No commits ahead of base branch.", ct); return; }
 
             var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
             if (isDraft)
@@ -1487,157 +348,87 @@ public class PipelineOrchestrationService : IDisposable
                 await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
             }
             else
-            {
                 await RemoveAllAgentLabelsAsync(run.IssueIdentifier, ct);
-            }
 
-            // Post-run brain sync (commit and push .brain/ changes)
             if (!isDraft && _activeBrainProvider != null && !_activeConfig!.BrainReadOnly)
             {
                 TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
-                var brainSw = System.Diagnostics.Stopwatch.StartNew();
-                try
-                {
-                    var brainPath = Path.Combine(run.WorkspacePath!, ".brain");
-                    var changedFiles = await _brainUpdateService.DetectChangesAsync(brainPath, ct);
-
-                    if (changedFiles.Count > 0)
-                    {
-                        // Validate brain updates
-                        var validation = _brainUpdateService.Validate(brainPath, run.RunId, changedFiles);
-                        run.BrainValidation = validation;
-
-                        // Append fallback log entry if agent didn't update log.md
-                        if (!validation.OperationLogUpdated)
-                        {
-                            await _brainUpdateService.AppendFallbackLogEntryAsync(
-                                brainPath, run.RunId, changedFiles, ct);
-                        }
-
-                        // Commit and push
-                        var syncResult = await _brainUpdateService.CommitAndPushAsync(
-                            brainPath, run.RunId, run.IssueIdentifier, _activeBrainProvider, ct);
-                        run.BrainUpdatesPushed = syncResult.Success;
-                        run.BrainFilesCommitted = syncResult.FilesCommitted;
-
-                        _logger.Information(
-                            "Pipeline {RunId} brain post-run sync: {Success}, {FileCount} files in {Duration}ms",
-                            run.RunId, syncResult.Success, syncResult.FilesCommitted, brainSw.ElapsedMilliseconds);
-                    }
-                    else
-                    {
-                        run.BrainUpdatesPushed = false;
-                        _logger.Information("Pipeline {RunId} no brain changes detected, skipping commit", run.RunId);
-                    }
-                }
+                try { await _brainSync.SyncPostRunAsync(run, _activeBrainProvider, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Pipeline {RunId} brain post-run sync failed", run.RunId);
-                    run.BrainUpdatesPushed = false;
-                }
+                { _logger.Warning(ex, "Pipeline {RunId} brain post-run sync failed", run.RunId); run.BrainUpdatesPushed = false; }
             }
 
             TransitionTo(run, finalStep);
             AddRunToHistory(run);
-
-            // Clean up workspace after successful (non-draft) PR creation
-            // Must happen AFTER brain sync so .brain/ is still on disk
             if (finalStep == PipelineStep.Completed && _activeConfig!.CleanupSuccessfulWorkspaces)
-                TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig.WorkspaceBaseDirectory);
-
-            var duration = run.CompletedAt.Value - run.StartedAt;
-            _logger.Information(
-                "Pipeline {RunId} {Outcome} in {Duration}. Retries: {RetryCount}. PR: {PullRequestUrl}",
-                run.RunId, finalStep, duration, run.RetryCount, prUrl);
+                _historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig.WorkspaceBaseDirectory);
+            _logger.Information("Pipeline {RunId} {Outcome} in {Duration}. Retries: {RetryCount}. PR: {PullRequestUrl}",
+                run.RunId, finalStep, run.CompletedAt!.Value - run.StartedAt, run.RetryCount, prUrl);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.Error(ex, "Pipeline {RunId} failed to create pull request", run.RunId);
-            run.FailureReason = $"PR creation failed: {ex.Message}";
-            await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
-            TransitionTo(run, PipelineStep.Failed);
-            AddRunToHistory(run);
-        }
+        { _logger.Error(ex, "Pipeline {RunId} failed to create pull request", run.RunId); await FailRunAsync(run, $"PR creation failed: {ex.Message}"); }
     }
-
-    /// <summary>
-    /// Records blacklisted files on the pipeline run and logs the violation.
-    /// Merges with any previously detected files (from earlier commit calls).
-    /// Returns true if the pipeline should stop (Fail mode), false otherwise.
-    /// In Fail mode, transitions the run to Failed with a clear FailureReason.
-    /// </summary>
-    private async Task<bool> RecordBlacklistedFiles(PipelineRun run, IReadOnlyList<string> blacklisted)
+    private async Task DisposePreviousProvidersAsync()
     {
-        if (blacklisted.Count == 0) return false;
-
-        var merged = run.BlacklistedFilesDetected.Count > 0
-            ? run.BlacklistedFilesDetected.Concat(blacklisted).Distinct().ToList()
-            : blacklisted.ToList();
-        run.BlacklistedFilesDetected = merged;
-
-        _logger.Warning(
-            "Pipeline {RunId} blacklisted {Count} file(s) excluded from commit (mode={BlacklistMode}, patterns={Patterns}): {Files}",
-            run.RunId, blacklisted.Count, _activeConfig?.BlacklistMode, _activeConfig?.BlacklistedPaths, blacklisted);
-
-        if (_activeConfig?.BlacklistMode == BlacklistMode.Fail)
-        {
-            var fileList = string.Join(", ", blacklisted);
-            run.FailureReason = $"Blacklisted files detected: {fileList}. The agent modified protected paths.";
-            run.CompletedAt = DateTime.UtcNow;
-            await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
-            TransitionTo(run, PipelineStep.Failed);
-            AddRunToHistory(run);
-            return true;
-        }
-
-        NotifyChange();
-        return false;
+        await DisposeProviderAsync(_activeAgentProvider, "Agent");
+        await DisposeProviderAsync(_activeIssueProvider, "Issue");
+        await DisposeProviderAsync(_activeRepoProvider, "Repository");
+        await DisposeProviderAsync(_activeBrainProvider, "Brain");
+        await DisposeProviderAsync(_activePipelineProvider, "Pipeline");
     }
-
-    private async Task UpdateFileChangeStatsAsync(PipelineRun run)
+    private async Task DisposeProviderAsync(IAsyncDisposable? provider, string providerKind)
+    {
+        if (provider is null) return;
+        try { await provider.DisposeAsync(); }
+        catch (Exception ex) { _logger.Warning(ex, "Failed to dispose previous {ProviderKind} provider", providerKind); }
+    }
+    private async Task ValidateProvidersAsync(
+        IIssueProvider issueProvider, ProviderConfig issueConfig,
+        IRepositoryProvider repoProvider, ProviderConfig repoConfig,
+        IAgentProvider agentProvider, ProviderConfig agentConfig,
+        IPipelineProvider? pipelineProvider, CancellationToken ct)
+    {
+        try { await issueProvider.ValidateAsync(ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { throw new InvalidOperationException($"Issue provider ({issueConfig.ProviderType}) validation failed: {ex.Message}", ex); }
+        try { await repoProvider.ValidateAsync(ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { throw new InvalidOperationException($"Repository provider ({repoConfig.ProviderType}) validation failed: {ex.Message}", ex); }
+        try { await agentProvider.ValidateAsync(ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { throw new InvalidOperationException($"Agent provider ({agentConfig.ProviderType}) validation failed: {ex.Message}", ex); }
+        if (pipelineProvider != null)
+        {
+            try { await pipelineProvider.ValidateAsync(ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            { throw new InvalidOperationException($"Pipeline provider validation failed: {ex.Message}", ex); }
+        }
+    }
+    private async Task PersistLastUsedProviderIdsAsync(
+        string issueId, string repoId, string agentId,
+        string? brainId, string? pipelineId, CancellationToken ct)
     {
         try
         {
-            if (string.IsNullOrEmpty(run.WorkspacePath)) return;
-            var changes = await _activeRepoProvider!.GetFileChangesAsync(run.WorkspacePath, CancellationToken.None);
-            run.FilesChangedCount = changes.Count;
-            run.LinesAdded = changes.Sum(c => c.LinesAdded);
-            run.LinesRemoved = changes.Sum(c => c.LinesDeleted);
-            _logger.Debug("Pipeline {RunId} file changes: {Count} files, +{Added} -{Removed} lines",
-                run.RunId, changes.Count, run.LinesAdded, run.LinesRemoved);
+            var lastUsed = new Dictionary<string, string>(_activeConfig!.LastUsedProviderIds)
+                { ["issue"] = issueId, ["repository"] = repoId, ["agent"] = agentId };
+            if (!string.IsNullOrEmpty(brainId)) lastUsed["brain"] = brainId;
+            if (!string.IsNullOrEmpty(pipelineId)) lastUsed["pipeline"] = pipelineId;
+            await _configStore.SavePipelineConfigAsync(
+                _activeConfig.WithLastUsedProviderIds(lastUsed), ct);
         }
-        catch (Exception ex)
-        {
-            _logger.Debug(ex, "Pipeline {RunId} failed to compute file change stats", run.RunId);
-        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { _logger.Warning(ex, "Pipeline {RunId} failed to persist last-used provider IDs", ActiveRun?.RunId); }
     }
-
-    private static string? ExtractPrNumber(string? prUrl)
-    {
-        if (string.IsNullOrEmpty(prUrl)) return null;
-        // GitHub PR URLs: https://github.com/owner/repo/pull/47
-        var lastSlash = prUrl.LastIndexOf('/');
-        if (lastSlash >= 0 && lastSlash < prUrl.Length - 1)
-        {
-            var candidate = prUrl[(lastSlash + 1)..];
-            if (int.TryParse(candidate, out _)) return candidate;
-        }
-        return null;
-    }
-
+    private Task UpdateFileChangeStatsAsync(PipelineRun run)
+        => _prOrchestrator.UpdateFileChangeStatsAsync(run, _activeRepoProvider!);
     private void TransitionTo(PipelineRun run, PipelineStep step)
     {
         var previousStep = run.CurrentStep;
         run.CurrentStep = step;
-        _logger.Information("Pipeline {RunId} transitioned from {PreviousStep} to {Step}",
-            run.RunId, previousStep, step);
+        _logger.Information("Pipeline {RunId} transitioned from {PreviousStep} to {Step}", run.RunId, previousStep, step);
         NotifyChange();
     }
-
-    /// <summary>
-    /// Removes all <c>agent:*</c> labels from the issue, then adds the specified label.
-    /// Non-fatal — failures are logged as warnings and do not affect the pipeline.
-    /// </summary>
     private async Task SwapAgentLabelAsync(string issueId, string newLabel, CancellationToken ct)
     {
         try
@@ -1646,16 +437,8 @@ public class PipelineOrchestrationService : IDisposable
                 await _activeIssueProvider!.RemoveLabelAsync(issueId, label, ct);
             await _activeIssueProvider!.AddLabelAsync(issueId, newLabel, ct);
         }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to swap agent label to {Label} on issue {Issue}", newLabel, issueId);
-        }
+        catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on issue {Issue}", newLabel, issueId); }
     }
-
-    /// <summary>
-    /// Removes all <c>agent:*</c> labels from the issue.
-    /// Non-fatal — failures are logged as warnings and do not affect the pipeline.
-    /// </summary>
     private async Task RemoveAllAgentLabelsAsync(string issueId, CancellationToken ct)
     {
         try
@@ -1663,228 +446,45 @@ public class PipelineOrchestrationService : IDisposable
             foreach (var label in AgentLabels.All)
                 await _activeIssueProvider!.RemoveLabelAsync(issueId, label, ct);
         }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to remove agent labels from issue {Issue}", issueId);
-        }
+        catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from issue {Issue}", issueId); }
     }
-
     private void NotifyChange()
     {
-        try
-        {
-            OnChange?.Invoke();
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "OnChange handler threw an exception");
-        }
+        try { OnChange?.Invoke(); }
+        catch (Exception ex) { _logger.Warning(ex, "OnChange handler threw an exception"); }
     }
-
-    private async Task<ProviderConfig> ResolveProviderConfigAsync(
-        string providerId, ProviderKind kind, CancellationToken ct)
+    private async Task<ProviderConfig> ResolveProviderConfigAsync(string providerId, ProviderKind kind, CancellationToken ct)
     {
         var configs = await _configStore.LoadProviderConfigsAsync(kind, ct);
-        var config = configs.FirstOrDefault(c => c.Id == providerId);
-        if (config == null)
-            throw new InvalidOperationException(
-                $"Provider config '{providerId}' of kind '{kind}' not found.");
-        return config;
+        return configs.FirstOrDefault(c => c.Id == providerId)
+            ?? throw new InvalidOperationException($"Provider config '{providerId}' of kind '{kind}' not found.");
     }
-
     private async Task HandlePipelineErrorAsync(PipelineRun run, Exception ex)
     {
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
-        _logger.Error(ex, "Pipeline {RunId} encountered an unhandled error at step {Step}",
-            run.RunId, run.CurrentStep);
-        run.FailureReason = ex.Message;
+        _logger.Error(ex, "Pipeline {RunId} encountered an unhandled error at step {Step}", run.RunId, run.CurrentStep);
+        await FailRunAsync(run, ex.Message);
+    }
+    private void AddRunToHistory(PipelineRun run) => _historyService.AddRunToHistory(run);
+    private async Task FailRunAsync(PipelineRun run, string reason, CancellationToken ct = default)
+    {
+        run.FailureReason = reason;
         run.CompletedAt = DateTime.UtcNow;
-        await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
+        await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
         TransitionTo(run, PipelineStep.Failed);
         AddRunToHistory(run);
     }
-
-    private void AddRunToHistory(PipelineRun run)
+    public async ValueTask DisposeAsync()
     {
-        var summary = new PipelineRunSummary
-        {
-            RunId = run.RunId,
-            IssueIdentifier = run.IssueIdentifier,
-            IssueTitle = run.IssueTitle,
-            FinalStep = run.CurrentStep,
-            StartedAt = run.StartedAt,
-            CompletedAt = run.CompletedAt,
-            RetryCount = run.RetryCount,
-            PullRequestUrl = run.PullRequestUrl,
-            ModelName = run.ModelName,
-            BrainRepoUsed = run.BrainProviderConfigId != null,
-            BrainUpdatesPushed = run.BrainUpdatesPushed
-        };
-        _runHistory.Insert(0, summary);
-        PersistRunSummary(summary);
+        _cancellationTokenSource?.Dispose();
+        await DisposePreviousProvidersAsync();
+        GC.SuppressFinalize(this);
     }
-
-    private void PersistRunSummary(PipelineRunSummary summary)
-    {
-        try
-        {
-            if (!Directory.Exists(_runsDirectory))
-                Directory.CreateDirectory(_runsDirectory);
-
-            var path = Path.Combine(_runsDirectory, $"{summary.RunId}.json");
-            var json = System.Text.Json.JsonSerializer.Serialize(summary, _jsonOptions);
-            File.WriteAllText(path, json);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to persist run summary {RunId}", summary.RunId);
-        }
-    }
-
-    private void LoadRunHistory()
-    {
-        try
-        {
-            if (!Directory.Exists(_runsDirectory))
-                return;
-
-            var summaries = new List<PipelineRunSummary>();
-            foreach (var file in Directory.GetFiles(_runsDirectory, "*.json"))
-            {
-                try
-                {
-                    var json = File.ReadAllText(file);
-                    var summary = System.Text.Json.JsonSerializer.Deserialize<PipelineRunSummary>(json, _jsonOptions);
-                    if (summary != null)
-                        summaries.Add(summary);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Failed to load run summary from {File}", file);
-                }
-            }
-
-            _runHistory.AddRange(summaries.OrderByDescending(s => s.StartedAt));
-
-            _logger.Information("Loaded {Count} pipeline run(s) from history", _runHistory.Count);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to load run history");
-        }
-    }
-
-    /// <summary>
-    /// Attempts to delete a workspace directory. Logs but does not throw on failure.
-    /// Validates the path is a subdirectory of the workspace base and not a symlink
-    /// to prevent accidental deletion outside the workspace area.
-    /// </summary>
-    private void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory)
-    {
-        if (string.IsNullOrEmpty(workspacePath) || !Directory.Exists(workspacePath))
-            return;
-
-        // Reject symlinks to prevent following them into unrelated directories
-        var dirInfo = new DirectoryInfo(workspacePath);
-        if (dirInfo.LinkTarget != null)
-        {
-            _logger.Warning("Pipeline {RunId} workspace {Path} is a symlink, skipping cleanup",
-                runId, workspacePath);
-            return;
-        }
-
-        // Guard against deleting outside the workspace base directory
-        var fullPath = Path.GetFullPath(workspacePath);
-        var fullBase = Path.GetFullPath(workspaceBaseDirectory).TrimEnd(Path.DirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
-        if (!fullPath.StartsWith(fullBase, StringComparison.Ordinal) || fullPath.TrimEnd(Path.DirectorySeparatorChar) == fullBase.TrimEnd(Path.DirectorySeparatorChar))
-        {
-            _logger.Warning("Pipeline {RunId} workspace path {Path} is not inside base {Base}, skipping cleanup",
-                runId, workspacePath, workspaceBaseDirectory);
-            return;
-        }
-
-        try
-        {
-            Directory.Delete(workspacePath, recursive: true);
-            _logger.Information("Pipeline {RunId} workspace deleted: {Path}", runId, workspacePath);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Pipeline {RunId} failed to delete workspace: {Path}", runId, workspacePath);
-        }
-    }
-
-    /// <summary>
-    /// Cleans up expired workspace folders for failed/cancelled runs based on retention policy.
-    /// Called after run history is loaded and a pipeline config is available.
-    /// </summary>
-    internal void CleanupExpiredWorkspaces(PipelineConfiguration config)
-    {
-        if (config.FailedWorkspaceRetentionDays < 0)
-            return; // -1 means retain indefinitely
-
-        var cutoff = DateTime.UtcNow.AddDays(-config.FailedWorkspaceRetentionDays);
-
-        foreach (var summary in _runHistory)
-        {
-            if (summary.FinalStep == PipelineStep.Completed)
-                continue; // successful runs are cleaned up immediately after PR creation
-
-            if (summary.CompletedAt == null || summary.CompletedAt > cutoff)
-                continue;
-
-            // Skip the active run
-            if (ActiveRun != null && ActiveRun.RunId == summary.RunId)
-                continue;
-
-            var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, summary.RunId);
-            TryDeleteWorkspace(workspacePath, summary.RunId, config.WorkspaceBaseDirectory);
-        }
-    }
-
-    private static readonly System.Text.Json.JsonSerializerOptions _jsonOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
-        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-    };
-
-    private static string BuildQualityGateErrorSummary(QualityGateReport report)
-    {
-        var errors = new List<string>();
-        if (!report.Compilation.Passed)
-            errors.Add($"Compilation: {report.Compilation.Details}");
-        if (!report.Tests.Passed)
-            errors.Add($"Tests: {report.Tests.Details}");
-        if (report.Coverage is { Passed: false })
-            errors.Add($"Coverage: {report.Coverage.Details}");
-        if (report.SecurityScan is { Passed: false })
-            errors.Add($"Security: {report.SecurityScan.Details}");
-        if (report.ExternalCi is { Passed: false })
-            errors.Add($"External CI: {report.ExternalCi.Details}");
-        return string.Join(Environment.NewLine, errors);
-    }
-
-    /// <summary>
-    /// Retrieves validation warnings from the most recent completed run that used the same brain provider.
-    /// Returns null if no previous run exists or no warnings were recorded.
-    /// </summary>
-    private IReadOnlyList<string>? GetPreviousBrainWarnings(string? brainProviderConfigId)
-    {
-        if (string.IsNullOrEmpty(brainProviderConfigId))
-            return null;
-
-        // Search run history for the most recent run with the same brain provider
-        // Note: _runHistory is ordered newest-first
-        // We can't access BrainValidation from PipelineRunSummary, so we check ActiveRun history
-        // For the PoC, we only check the immediately previous ActiveRun if it matches
-        // A more complete implementation would persist BrainValidation in run summaries
-        return null; // Feedback loop requires persisted validation — deferred to future enhancement
-    }
-
     public void Dispose()
     {
         _cancellationTokenSource?.Dispose();
+        // Best-effort provider disposal on sync path (teardown only)
+        DisposePreviousProvidersAsync().GetAwaiter().GetResult();
+        GC.SuppressFinalize(this);
     }
 }

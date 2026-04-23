@@ -40,6 +40,7 @@ public sealed class PipelineRun
     public int CodeReviewSuggestionCount;
 
     /// <summary>Per-agent findings accumulated across all review iterations.</summary>
+    // TODO: [ARC-10] Should be ConcurrentDictionary for thread safety — written by orchestration, read by UI concurrently
     public Dictionary<string, string> CodeReviewAgentFindings { get; } = new();
 
     /// <summary>Thread-safe collections — mutated by orchestration service while UI reads via OnChange.</summary>
@@ -76,6 +77,7 @@ public sealed class PipelineRun
     public string? PullRequestNumber { get; set; }
 
     /// <summary>Files excluded from the commit due to blacklist rules (from GIT-04).</summary>
+    // TODO: [ARC-10] Setter allows mutable List<string> assignment behind IReadOnlyList interface
     public IReadOnlyList<string> BlacklistedFilesDetected { get; set; } = Array.Empty<string>();
 
     /// <summary>Model configured for the agent provider used in this run (e.g. "auto", "claude-sonnet-4.6").</summary>
@@ -101,4 +103,21 @@ public sealed class PipelineRun
 
     /// <summary>Brain update validation result from BrainUpdateService.</summary>
     public BrainValidationResult? BrainValidation { get; set; }
+
+    /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
+    // TODO: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
+    public PipelineRunSummary ToSummary() => new()
+    {
+        RunId = RunId,
+        IssueIdentifier = IssueIdentifier,
+        IssueTitle = IssueTitle,
+        FinalStep = CurrentStep,
+        StartedAt = StartedAt,
+        CompletedAt = CompletedAt,
+        RetryCount = RetryCount,
+        PullRequestUrl = PullRequestUrl,
+        ModelName = ModelName,
+        BrainRepoUsed = BrainProviderConfigId != null,
+        BrainUpdatesPushed = BrainUpdatesPushed
+    };
 }

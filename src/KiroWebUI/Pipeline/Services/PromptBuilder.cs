@@ -45,30 +45,7 @@ public static class PromptBuilder
         sb.AppendLine("Use sub-agents to cover more ground and provide a thorough analysis. For example, delegate parallel investigations to explore different parts of the codebase — one sub-agent could examine the data layer while another looks at the UI components, or one traces the call chain while another checks for test coverage gaps. This produces a more complete picture than a single-threaded read-through.");
         sb.AppendLine();
 
-        sb.AppendLine($"# Issue: {issue.Title}");
-        sb.AppendLine();
-        sb.AppendLine("## Description");
-        sb.AppendLine(issue.Description);
-        sb.AppendLine();
-
-        if (!string.IsNullOrWhiteSpace(parsed.RequirementsSection))
-        {
-            sb.AppendLine("## Requirements");
-            sb.AppendLine(parsed.RequirementsSection);
-            sb.AppendLine();
-        }
-
-        if (parsed.AcceptanceCriteria.Count > 0)
-        {
-            sb.AppendLine("## Acceptance Criteria");
-            foreach (var criterion in parsed.AcceptanceCriteria)
-            {
-                sb.AppendLine($"- {criterion}");
-            }
-            sb.AppendLine();
-        }
-
-        AppendComments(sb, comments);
+        AppendIssueContext(sb, issue, parsed, comments);
 
         if (!string.IsNullOrEmpty(brainContextSection))
         {
@@ -106,30 +83,7 @@ public static class PromptBuilder
         sb.AppendLine($"The analysis for this issue is at `{AnalysisFilePath}` — read it before implementing.");
         sb.AppendLine();
 
-        sb.AppendLine($"# Issue: {issue.Title}");
-        sb.AppendLine();
-        sb.AppendLine("## Description");
-        sb.AppendLine(issue.Description);
-        sb.AppendLine();
-
-        if (!string.IsNullOrWhiteSpace(parsed.RequirementsSection))
-        {
-            sb.AppendLine("## Requirements");
-            sb.AppendLine(parsed.RequirementsSection);
-            sb.AppendLine();
-        }
-
-        if (parsed.AcceptanceCriteria.Count > 0)
-        {
-            sb.AppendLine("## Acceptance Criteria");
-            foreach (var criterion in parsed.AcceptanceCriteria)
-            {
-                sb.AppendLine($"- {criterion}");
-            }
-            sb.AppendLine();
-        }
-
-        AppendComments(sb, comments);
+        AppendIssueContext(sb, issue, parsed, comments);
 
         if (!string.IsNullOrEmpty(brainContextSection))
         {
@@ -172,30 +126,7 @@ public static class PromptBuilder
         sb.AppendLine("Below is the original issue for reference. Review the changes against these requirements.");
         sb.AppendLine();
 
-        sb.AppendLine($"# Issue: {issue.Title}");
-        sb.AppendLine();
-        sb.AppendLine("## Description");
-        sb.AppendLine(issue.Description);
-        sb.AppendLine();
-
-        if (!string.IsNullOrWhiteSpace(parsed.RequirementsSection))
-        {
-            sb.AppendLine("## Requirements");
-            sb.AppendLine(parsed.RequirementsSection);
-            sb.AppendLine();
-        }
-
-        if (parsed.AcceptanceCriteria.Count > 0)
-        {
-            sb.AppendLine("## Acceptance Criteria");
-            foreach (var criterion in parsed.AcceptanceCriteria)
-            {
-                sb.AppendLine($"- {criterion}");
-            }
-            sb.AppendLine();
-        }
-
-        AppendComments(sb, comments);
+        AppendIssueContext(sb, issue, parsed, comments);
 
         return sb.ToString().TrimEnd();
     }
@@ -220,6 +151,35 @@ public static class PromptBuilder
         sb.AppendLine("## Review Findings");
         sb.AppendLine(rawFindings);
         return sb.ToString().TrimEnd();
+    }
+
+    private static void AppendIssueContext(StringBuilder sb, IssueDetail issue, ParsedIssue parsed,
+        IReadOnlyList<IssueComment>? comments = null)
+    {
+        sb.AppendLine($"# Issue: {issue.Title}");
+        sb.AppendLine();
+        sb.AppendLine("## Description");
+        sb.AppendLine(issue.Description);
+        sb.AppendLine();
+
+        if (!string.IsNullOrWhiteSpace(parsed.RequirementsSection))
+        {
+            sb.AppendLine("## Requirements");
+            sb.AppendLine(parsed.RequirementsSection);
+            sb.AppendLine();
+        }
+
+        if (parsed.AcceptanceCriteria.Count > 0)
+        {
+            sb.AppendLine("## Acceptance Criteria");
+            foreach (var criterion in parsed.AcceptanceCriteria)
+            {
+                sb.AppendLine($"- {criterion}");
+            }
+            sb.AppendLine();
+        }
+
+        AppendComments(sb, comments);
     }
 
     private static void AppendComments(StringBuilder sb, IReadOnlyList<IssueComment>? comments)
