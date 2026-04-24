@@ -260,6 +260,43 @@ Workspaces are created inside the container at `/app/workspaces/` (configurable 
 3. Go to **Settings** and configure your providers (Issue, Repository, Agent)
 4. Go to **Agent Coding** to select an issue and start a pipeline run
 
+### MCP Server Support
+
+Kiro CLI natively supports [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) servers via `~/.kiro/settings/mcp.json`. The Docker image includes `uv` and `uvx` (Python package manager) so that stdio-based MCP servers can run inside the container.
+
+The existing Kiro settings volume mount (`/home/ubuntu/.kiro/settings`) already covers `mcp.json` — no additional mount is needed.
+
+**Setup**: Create an `mcp.json` file in your local Kiro settings directory:
+
+```json
+{
+  "mcpServers": {
+    "context7": {
+      "command": "uvx",
+      "args": ["context7-mcp@latest"],
+      "env": {},
+      "disabled": false,
+      "autoApprove": []
+    },
+    "aws-docs": {
+      "command": "uvx",
+      "args": ["awslabs.aws-documentation-mcp-server@latest"],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
+```
+
+Place this file so it is mounted into the container at `/home/ubuntu/.kiro/settings/mcp.json`. With the default `docker run` command above, save it to your local `.kiro/settings/mcp.json` directory (the one mapped via the Kiro settings volume mount).
+
+Kiro CLI will automatically discover and start the configured MCP servers, making their tools available to the agent during pipeline runs.
+
+**Security note**: The `.kiro/` directory is in the pipeline's blacklisted paths (`PipelineConfiguration.BlacklistedPaths`). Any files under `.kiro/`, including `mcp.json` and any credentials it contains, are automatically excluded from commits and will never be pushed to the repository.
+
 ## Testing
 
 ### Run Unit Tests
