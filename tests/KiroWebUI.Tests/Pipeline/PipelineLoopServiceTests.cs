@@ -213,6 +213,114 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Loop_EarlyExitsWhenAllCandidatesNeedRefinement()
+    {
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary>
+                {
+                    new() { Identifier = "1", Title = "Needs Refinement 1", Labels = new[] { "agent:next", "agent:needs-refinement" }, CreatedAt = new DateTime(2026, 1, 1) },
+                    new() { Identifier = "2", Title = "Needs Refinement 2", Labels = new[] { "agent:next", "agent:needs-refinement" }, CreatedAt = new DateTime(2026, 1, 2) }
+                },
+                Page = 1, PageSize = 100, HasMore = false
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+
+        await Task.Delay(1500);
+
+        Assert.Equal(0, svc.ProcessedCount);
+        Assert.Contains("refinement", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
+
+        svc.StopLoop();
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
+
+    [Fact]
+    public async Task Loop_EarlyExitsWhenAllCandidatesHaveMixedErrorAndRefinement()
+    {
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary>
+                {
+                    new() { Identifier = "1", Title = "Errored", Labels = new[] { "agent:next", "agent:error" }, CreatedAt = new DateTime(2026, 1, 1) },
+                    new() { Identifier = "2", Title = "Needs Refinement", Labels = new[] { "agent:next", "agent:needs-refinement" }, CreatedAt = new DateTime(2026, 1, 2) }
+                },
+                Page = 1, PageSize = 100, HasMore = false
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+
+        await Task.Delay(1500);
+
+        Assert.Equal(0, svc.ProcessedCount);
+        // Early-exit status message should mention both error and refinement
+        Assert.Contains("error", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("refinement", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
+
+        svc.StopLoop();
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
+
+    [Fact]
+    public async Task Loop_RespectsMaxPagesToFetch()
+    {
+        int pageRequested = 0;
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns<int, int, IReadOnlyList<string>?, CancellationToken>((page, _, _, _) =>
+            {
+                Interlocked.Exchange(ref pageRequested, page);
+                return Task.FromResult(new PagedResult<IssueSummary>
+                {
+                    Items = new List<IssueSummary>
+                    {
+                        new() { Identifier = $"p{page}", Title = $"Issue page {page}", Labels = new[] { "agent:next" }, CreatedAt = DateTime.UtcNow }
+                    },
+                    Page = page, PageSize = 100, HasMore = true // Always more pages
+                });
+            });
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopMaxPagesToFetch = 3
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+
+        // Wait for at least one poll cycle to complete
+        await Task.Delay(2000);
+
+        svc.StopLoop();
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+
+        // Should have stopped at page 3 despite HasMore = true
+        Assert.True(pageRequested <= 3, $"Expected max 3 pages but requested page {pageRequested}");
+    }
+
+    [Fact]
     public async Task Loop_ReturnsToPollingWhenNoIssues()
     {
         _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
@@ -454,6 +562,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.Equal(0, config.ClosedLoopMaxRunsPerCycle);
         Assert.Equal(5, config.ClosedLoopMaxConsecutivePollFailures);
         Assert.Equal(TimeSpan.FromMinutes(15), config.ClosedLoopMaxBackoffInterval);
+        Assert.Equal(10, config.ClosedLoopMaxPagesToFetch);
     }
 
     [Fact]
@@ -464,13 +573,15 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
             ClosedLoopMaxRunsPerCycle = 5,
             ClosedLoopMaxConsecutivePollFailures = 10,
-            ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(30)
+            ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(30),
+            ClosedLoopMaxPagesToFetch = 20
         };
         var copy = config.WithLastUsedProviderIds(new Dictionary<string, string>());
         Assert.Equal(TimeSpan.FromSeconds(120), copy.ClosedLoopPollInterval);
         Assert.Equal(5, copy.ClosedLoopMaxRunsPerCycle);
         Assert.Equal(10, copy.ClosedLoopMaxConsecutivePollFailures);
         Assert.Equal(TimeSpan.FromMinutes(30), copy.ClosedLoopMaxBackoffInterval);
+        Assert.Equal(20, copy.ClosedLoopMaxPagesToFetch);
     }
 
     [Fact]

@@ -452,8 +452,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     {
         try
         {
-            var lastUsed = new Dictionary<string, string>(_activeConfig!.LastUsedProviderIds)
-                { ["issue"] = issueId, ["repository"] = repoId, ["agent"] = agentId };
+            var lastUsed = _activeConfig!.LastUsedProviderIds.ToDictionary(kv => kv.Key, kv => kv.Value);
+            lastUsed["issue"] = issueId;
+            lastUsed["repository"] = repoId;
+            lastUsed["agent"] = agentId;
             if (!string.IsNullOrEmpty(brainId)) lastUsed["brain"] = brainId;
             if (!string.IsNullOrEmpty(pipelineId)) lastUsed["pipeline"] = pipelineId;
             await _configStore.SavePipelineConfigAsync(

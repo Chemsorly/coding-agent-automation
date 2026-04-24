@@ -7,7 +7,7 @@ namespace KiroWebUI.Pipeline.Services;
 /// Handles quality gate validation with retry logic and external CI integration.
 /// Extracted from PipelineOrchestrationService.
 /// </summary>
-public class QualityGateOrchestrator
+internal class QualityGateOrchestrator
 {
     private readonly IQualityGateValidator _qualityGateValidator;
     private readonly CiLogWriter _ciLogWriter;

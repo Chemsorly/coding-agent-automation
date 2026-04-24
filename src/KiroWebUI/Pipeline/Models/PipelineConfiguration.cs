@@ -176,8 +176,7 @@ public sealed class PipelineConfiguration
     /// Values: provider config IDs.
     /// Pre-populates dropdowns on subsequent pipeline runs.
     /// </summary>
-    // TODO: [UX-12b] Should be IReadOnlyDictionary or defensively copied — contents are mutable after construction (review finding #16)
-    public Dictionary<string, string> LastUsedProviderIds { get; init; } = new();
+    public IReadOnlyDictionary<string, string> LastUsedProviderIds { get; init; } = new Dictionary<string, string>();
 
     /// <summary>
     /// When true, the brain repository operates in read-only mode: pre-run sync
@@ -214,9 +213,16 @@ public sealed class PipelineConfiguration
     public TimeSpan ClosedLoopMaxBackoffInterval { get; init; } = TimeSpan.FromMinutes(15);
 
     /// <summary>
+    /// Maximum number of pages to fetch when polling for agent:next issues.
+    /// Each page contains up to 100 issues. Default: 10 (1000 issues max).
+    /// </summary>
+    // TODO: [REF-01] Add server-side validation to reject values < 1 — values ≤ 0 silently fetch only 1 page (review finding #2)
+    public int ClosedLoopMaxPagesToFetch { get; init; } = 10;
+
+    /// <summary>
     /// Returns a copy of this configuration with the specified last-used provider IDs.
     /// </summary>
-    public PipelineConfiguration WithLastUsedProviderIds(Dictionary<string, string> lastUsed) => new()
+    public PipelineConfiguration WithLastUsedProviderIds(IReadOnlyDictionary<string, string> lastUsed) => new()
     {
         MaxRetries = MaxRetries, IssuePageSize = IssuePageSize, AgentTimeout = AgentTimeout,
         MinCoverageThreshold = MinCoverageThreshold, SecurityScanEnabled = SecurityScanEnabled,
@@ -230,6 +236,7 @@ public sealed class PipelineConfiguration
         BrainReadOnly = BrainReadOnly,
         ClosedLoopPollInterval = ClosedLoopPollInterval, ClosedLoopMaxRunsPerCycle = ClosedLoopMaxRunsPerCycle,
         ClosedLoopMaxConsecutivePollFailures = ClosedLoopMaxConsecutivePollFailures,
-        ClosedLoopMaxBackoffInterval = ClosedLoopMaxBackoffInterval
+        ClosedLoopMaxBackoffInterval = ClosedLoopMaxBackoffInterval,
+        ClosedLoopMaxPagesToFetch = ClosedLoopMaxPagesToFetch
     };
 }

@@ -60,7 +60,8 @@ public class PipelineIntegrationTests : IntegrationTestBase
             },
             BrainReadOnly = true,
             ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
-            ClosedLoopMaxRunsPerCycle = 5
+            ClosedLoopMaxRunsPerCycle = 5,
+            ClosedLoopMaxPagesToFetch = 20
         };
 
         await ConfigStore.SavePipelineConfigAsync(original, CancellationToken.None);
@@ -90,6 +91,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
         loaded.BrainReadOnly.Should().Be(original.BrainReadOnly);
         loaded.ClosedLoopPollInterval.Should().Be(original.ClosedLoopPollInterval);
         loaded.ClosedLoopMaxRunsPerCycle.Should().Be(original.ClosedLoopMaxRunsPerCycle);
+        loaded.ClosedLoopMaxPagesToFetch.Should().Be(original.ClosedLoopMaxPagesToFetch);
 
         // Nested CodeReviewConfiguration
         loaded.CodeReview.Enabled.Should().Be(true);

@@ -40,7 +40,6 @@ public sealed class PipelineRun
     public int CodeReviewSuggestionCount;
 
     /// <summary>Per-agent findings accumulated across all review iterations.</summary>
-    // TODO: [ARC-10] Should be ConcurrentDictionary for thread safety — written by orchestration, read by UI concurrently
     public Dictionary<string, string> CodeReviewAgentFindings { get; } = new();
 
     /// <summary>Thread-safe collections — mutated by orchestration service while UI reads via OnChange.</summary>

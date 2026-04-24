@@ -7,7 +7,7 @@ namespace KiroWebUI.Pipeline.Services;
 /// Handles agent execution phases: analysis, code generation (with stall monitoring),
 /// and code review iterations. Extracted from PipelineOrchestrationService.
 /// </summary>
-public class AgentExecutionOrchestrator
+internal class AgentExecutionOrchestrator
 {
     private readonly Serilog.ILogger _logger;
 
