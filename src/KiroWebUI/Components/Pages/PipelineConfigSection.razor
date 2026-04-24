@@ -18,6 +18,25 @@
             </div>
         </div>
 
+        <!-- Pipeline Loop -->
+        <div class="config-category">
+            <div class="config-category-title">Pipeline Loop</div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Poll Interval (seconds)</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="How often the loop checks for new agent:next issues when idle">?</span>
+                </div>
+                <input type="number" @bind="_closedLoopPollIntervalSeconds" min="10" max="600" />
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Max Runs Per Cycle</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Maximum issues to process per poll cycle. 0 = unlimited (process entire backlog)">?</span>
+                </div>
+                <input type="number" @bind="_config.ClosedLoopMaxRunsPerCycle" min="0" />
+            </div>
+        </div>
+
         <!-- Prompts -->
         <div class="config-category">
             <div class="config-category-title">Prompts</div>
@@ -176,6 +195,7 @@
     private int _externalCiTimeoutMinutes = 15;
     private int _externalCiPollIntervalSeconds = 30;
     private string _blacklistedPathsText = ".kiro, .github";
+    private int _closedLoopPollIntervalSeconds = 60;
 
     public async Task LoadConfigAsync()
     {
@@ -198,12 +218,14 @@
             BlacklistMode = config.BlacklistMode,
             CleanupSuccessfulWorkspaces = config.CleanupSuccessfulWorkspaces,
             FailedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays,
-            BrainReadOnly = config.BrainReadOnly
+            BrainReadOnly = config.BrainReadOnly,
+            ClosedLoopMaxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle
         };
         _agentTimeoutMinutes = (int)config.AgentTimeout.TotalMinutes;
         _externalCiTimeoutMinutes = (int)config.ExternalCiTimeout.TotalMinutes;
         _externalCiPollIntervalSeconds = (int)config.ExternalCiPollInterval.TotalSeconds;
         _blacklistedPathsText = string.Join(", ", config.BlacklistedPaths);
+        _closedLoopPollIntervalSeconds = (int)config.ClosedLoopPollInterval.TotalSeconds;
     }
 
     private void ResetReviewAgentsToDefault()
@@ -246,7 +268,9 @@
             BlacklistMode = _config.BlacklistMode,
             CleanupSuccessfulWorkspaces = _config.CleanupSuccessfulWorkspaces,
             FailedWorkspaceRetentionDays = _config.FailedWorkspaceRetentionDays,
-            BrainReadOnly = _config.BrainReadOnly
+            BrainReadOnly = _config.BrainReadOnly,
+            ClosedLoopPollInterval = TimeSpan.FromSeconds(_closedLoopPollIntervalSeconds),
+            ClosedLoopMaxRunsPerCycle = _config.ClosedLoopMaxRunsPerCycle
         };
 
         try
@@ -283,5 +307,6 @@
         public bool CleanupSuccessfulWorkspaces { get; set; } = true;
         public int FailedWorkspaceRetentionDays { get; set; } = 7;
         public bool BrainReadOnly { get; set; } = false;
+        public int ClosedLoopMaxRunsPerCycle { get; set; } = 0;
     }
 }

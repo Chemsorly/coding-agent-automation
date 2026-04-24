@@ -1,4 +1,7 @@
 @inherits LayoutComponentBase
+@implements IDisposable
+@using KiroWebUI.Pipeline.Services
+@inject PipelineLoopService LoopService
 
 <div class="app-layout">
     <nav class="sidebar" role="navigation" aria-label="Main navigation">
@@ -14,6 +17,10 @@
         <NavLink href="/agent-coding" class="sidebar-link">
             <span class="sidebar-icon">🤖</span>
             <span>Agent Coding</span>
+            @if (LoopService.IsLoopActive)
+            {
+                <span class="sidebar-loop-indicator" title="Pipeline loop is active">🔄</span>
+            }
         </NavLink>
         <NavLink href="/settings" class="sidebar-link">
             <span class="sidebar-icon">⚙️</span>
@@ -28,3 +35,21 @@
         @Body
     </main>
 </div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        LoopService.OnChange += HandleLoopChanged;
+    }
+
+    private async void HandleLoopChanged()
+    {
+        try { await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { }
+    }
+
+    public void Dispose()
+    {
+        LoopService.OnChange -= HandleLoopChanged;
+    }
+}

@@ -22,6 +22,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     private readonly Serilog.ILogger _logger;
 
     private CancellationTokenSource? _cancellationTokenSource;
+    private readonly SemaphoreSlim _startLock = new(1, 1);
     private IAgentProvider? _activeAgentProvider;
     private IRepositoryProvider? _activeRepoProvider;
     private IRepositoryProvider? _activeBrainProvider;
@@ -84,17 +85,27 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     /// </summary>
     public async Task<PipelineRun> StartPipelineAsync(
         string issueProviderId, string repoProviderId, string issueIdentifier,
-        string agentProviderId, CancellationToken ct, string? brainProviderId = null, string? pipelineProviderId = null)
+        string agentProviderId, CancellationToken ct, string? brainProviderId = null, string? pipelineProviderId = null,
+        string initiatedBy = "manual")
     {
         ArgumentNullException.ThrowIfNull(issueProviderId);
         ArgumentNullException.ThrowIfNull(repoProviderId);
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(agentProviderId);
 
-        if (IsRunning)
-            throw new InvalidOperationException("A pipeline run is already in progress.");
+        await _startLock.WaitAsync(ct);
+        try
+        {
+            if (IsRunning)
+                throw new InvalidOperationException("A pipeline run is already in progress.");
 
-        _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        }
+        finally
+        {
+            _startLock.Release();
+        }
+
         var linkedCt = _cancellationTokenSource.Token;
 
         try
@@ -144,7 +155,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 CurrentStep = PipelineStep.Created,
                 RepositoryName = _activeRepoProvider.RepositoryFullName,
                 ModelName = configuredModel,
-                BrainProviderConfigId = _activeBrainProvider != null ? brainProviderId : null
+                BrainProviderConfigId = _activeBrainProvider != null ? brainProviderId : null,
+                InitiatedBy = initiatedBy
             };
             ActiveRun = run;
             _logger.Information("Pipeline {RunId} using model {Model}", run.RunId, configuredModel);
@@ -477,14 +489,17 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _cancellationTokenSource?.Dispose();
+        _startLock.Dispose();
         await DisposePreviousProvidersAsync();
         GC.SuppressFinalize(this);
     }
     public void Dispose()
     {
         _cancellationTokenSource?.Dispose();
-        // Best-effort provider disposal on sync path (teardown only)
-        DisposePreviousProvidersAsync().GetAwaiter().GetResult();
+        _startLock.Dispose();
+        // Do not call DisposePreviousProvidersAsync synchronously — .GetAwaiter().GetResult()
+        // deadlocks in Blazor Server's SynchronizationContext (review finding #13).
+        // DisposeAsync() is the correct disposal path; sync Dispose handles only sync resources.
         GC.SuppressFinalize(this);
     }
 }

@@ -51,7 +51,9 @@ public static class TestPipelineConfig
         BlacklistedPaths = new[] { ".kiro", ".github" },
         BlacklistMode = BlacklistMode.WarnAndExclude,
         CleanupSuccessfulWorkspaces = true,
-        FailedWorkspaceRetentionDays = 7
+        FailedWorkspaceRetentionDays = 7,
+        ClosedLoopPollInterval = TimeSpan.FromSeconds(60),
+        ClosedLoopMaxRunsPerCycle = 0
     };
 
     /// <summary>
@@ -82,6 +84,8 @@ public static class TestPipelineConfig
         BlacklistedPaths = new[] { ".kiro", ".github" },
         BlacklistMode = BlacklistMode.WarnAndExclude,
         CleanupSuccessfulWorkspaces = true,
-        FailedWorkspaceRetentionDays = 7
+        FailedWorkspaceRetentionDays = 7,
+        ClosedLoopPollInterval = TimeSpan.FromSeconds(60),
+        ClosedLoopMaxRunsPerCycle = 0
     };
 }

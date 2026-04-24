@@ -234,7 +234,8 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
             Identifier = issue.Number.ToString(),
             Title = issue.Title ?? string.Empty,
             Labels = issue.Labels?.Select(l => l.Name).ToList().AsReadOnly()
-                ?? (IReadOnlyList<string>)Array.Empty<string>()
+                ?? (IReadOnlyList<string>)Array.Empty<string>(),
+            CreatedAt = issue.CreatedAt.UtcDateTime
         };
     }
 }

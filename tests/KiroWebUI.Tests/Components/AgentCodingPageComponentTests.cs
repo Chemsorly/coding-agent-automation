@@ -43,6 +43,7 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddSingleton(_pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
+        Services.AddSingleton(new PipelineLoopService(_pipelineService, _mockFactory.Object, _mockStore.Object, mockLogger.Object));
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
     }
 
@@ -128,7 +129,7 @@ public class AgentCodingPageComponentTests : BunitContext
         var component = Render<AgentCoding>();
 
         // Start Pipeline button is always visible but disabled until all providers and issue are selected
-        Assert.Contains("Start Pipeline", component.Markup);
+        Assert.Contains("Start Pipeline on Issue", component.Markup);
         var btn = component.Find(".pipeline-start-btn");
         Assert.True(btn.HasAttribute("disabled"));
     }
