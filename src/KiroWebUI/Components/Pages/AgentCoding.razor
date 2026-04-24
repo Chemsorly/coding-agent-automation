@@ -184,9 +184,15 @@
             if (config.LastUsedProviderIds.TryGetValue("pipeline", out var lastPipeline) && _pipelineProviders.Any(p => p.Id == lastPipeline))
                 _selectedPipelineProviderId = lastPipeline;
 
+            // Auto-select if only one provider of each type (fallback when no last-used)
+            if (string.IsNullOrEmpty(_selectedIssueProviderId) && _issueProviders.Count == 1) _selectedIssueProviderId = _issueProviders[0].Id;
             if (string.IsNullOrEmpty(_selectedRepoProviderId) && _repoProviders.Count == 1) _selectedRepoProviderId = _repoProviders[0].Id;
             if (string.IsNullOrEmpty(_selectedAgentProviderId) && _agentProviders.Count == 1) _selectedAgentProviderId = _agentProviders[0].Id;
             if (string.IsNullOrEmpty(_selectedPipelineProviderId) && _pipelineProviders.Count == 1) _selectedPipelineProviderId = _pipelineProviders[0].Id;
+
+            // Load issues if an issue provider was pre-selected (from LastUsedProviderIds or auto-select)
+            if (!string.IsNullOrEmpty(_selectedIssueProviderId))
+                await OnIssueProviderChanged();
         }
         catch (Exception ex)
         {
