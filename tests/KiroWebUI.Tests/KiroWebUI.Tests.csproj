@@ -32,6 +32,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" Exclude="Fixtures\**\bin\**;Fixtures\**\obj\**" />
+    <Compile Remove="Fixtures\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\KiroWebUI\KiroWebUI.csproj" />
   </ItemGroup>
 
