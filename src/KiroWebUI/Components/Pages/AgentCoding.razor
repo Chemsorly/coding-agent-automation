@@ -190,9 +190,7 @@
             if (string.IsNullOrEmpty(_selectedAgentProviderId) && _agentProviders.Count == 1) _selectedAgentProviderId = _agentProviders[0].Id;
             if (string.IsNullOrEmpty(_selectedPipelineProviderId) && _pipelineProviders.Count == 1) _selectedPipelineProviderId = _pipelineProviders[0].Id;
 
-            // Load issues if an issue provider was pre-selected (from LastUsedProviderIds or auto-select)
-            if (!string.IsNullOrEmpty(_selectedIssueProviderId))
-                await OnIssueProviderChanged();
+            // Issue loading is handled by IssueListPanel on firstRender when InitialIssueProviderId is set
         }
         catch (Exception ex)
         {
