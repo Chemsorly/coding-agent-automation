@@ -201,6 +201,19 @@ public sealed class PipelineConfiguration
     public int ClosedLoopMaxRunsPerCycle { get; init; } = 0;
 
     /// <summary>
+    /// Number of consecutive poll failures before the circuit breaker pauses the loop.
+    /// Default: 5.
+    /// </summary>
+    // TODO: [RES-03] Add server-side validation to reject values < 1 — UI has min="1" but JSON config can bypass it (review finding #3)
+    public int ClosedLoopMaxConsecutivePollFailures { get; init; } = 5;
+
+    /// <summary>
+    /// Maximum backoff interval between poll retries after consecutive failures.
+    /// Backoff uses exponential formula capped at this value. Default: 15 minutes.
+    /// </summary>
+    public TimeSpan ClosedLoopMaxBackoffInterval { get; init; } = TimeSpan.FromMinutes(15);
+
+    /// <summary>
     /// Returns a copy of this configuration with the specified last-used provider IDs.
     /// </summary>
     public PipelineConfiguration WithLastUsedProviderIds(Dictionary<string, string> lastUsed) => new()
@@ -215,6 +228,8 @@ public sealed class PipelineConfiguration
         BlacklistMode = BlacklistMode, CleanupSuccessfulWorkspaces = CleanupSuccessfulWorkspaces,
         FailedWorkspaceRetentionDays = FailedWorkspaceRetentionDays, LastUsedProviderIds = lastUsed,
         BrainReadOnly = BrainReadOnly,
-        ClosedLoopPollInterval = ClosedLoopPollInterval, ClosedLoopMaxRunsPerCycle = ClosedLoopMaxRunsPerCycle
+        ClosedLoopPollInterval = ClosedLoopPollInterval, ClosedLoopMaxRunsPerCycle = ClosedLoopMaxRunsPerCycle,
+        ClosedLoopMaxConsecutivePollFailures = ClosedLoopMaxConsecutivePollFailures,
+        ClosedLoopMaxBackoffInterval = ClosedLoopMaxBackoffInterval
     };
 }

@@ -19,6 +19,7 @@ public sealed class PipelineLoopService : BackgroundService
 
     private volatile bool _stopRequested;
     private CancellationTokenSource? _loopCts;
+    private TaskCompletionSource? _resumeSignal;
 
     // Captured provider IDs at start time
     private string _issueProviderId = "";
@@ -50,6 +51,16 @@ public sealed class PipelineLoopService : BackgroundService
 
     /// <summary>Number of agent:next issues remaining in the current queue snapshot.</summary>
     public int QueueCount { get; private set; }
+
+    /// <summary>Number of consecutive poll failures since last successful poll.</summary>
+    // TODO: [RES-03] ConsecutivePollFailures, IsCircuitBroken, and LastPollError are written in RunLoopAsync without _lock — consider wrapping writes under lock for consistency with StartLoop/StopLoop/ResumeLoop (review finding .NET #1)
+    public int ConsecutivePollFailures { get; private set; }
+
+    /// <summary>Whether the circuit breaker has tripped due to consecutive poll failures.</summary>
+    public bool IsCircuitBroken { get; private set; }
+
+    /// <summary>Last poll error message, or null if last poll succeeded.</summary>
+    public string? LastPollError { get; private set; }
 
     public PipelineLoopService(
         PipelineOrchestrationService orchestration,
@@ -92,6 +103,9 @@ public sealed class PipelineLoopService : BackgroundService
             ProcessedCount = 0;
             FailedCount = 0;
             QueueCount = 0;
+            ConsecutivePollFailures = 0;
+            IsCircuitBroken = false;
+            LastPollError = null;
             CurrentIssueIdentifier = null;
             IsLoopActive = true;
             StatusMessage = "🔄 Loop starting…";
@@ -119,9 +133,30 @@ public sealed class PipelineLoopService : BackgroundService
             _stopRequested = true;
             // Cancel the loop CTS so DelayOrStop returns immediately (review finding #2)
             try { _loopCts?.Cancel(); } catch (ObjectDisposedException) { }
+            // Unblock circuit breaker wait if paused
+            _resumeSignal?.TrySetResult();
             StatusMessage = "⏹ Loop stopping… (finishing current run)";
             NotifyChange();
             _logger.Information("Pipeline loop stop requested");
+        }
+    }
+
+    /// <summary>
+    /// Resumes the loop after the circuit breaker has tripped. Resets failure counters
+    /// and unblocks the polling loop.
+    /// </summary>
+    public void ResumeLoop()
+    {
+        lock (_lock)
+        {
+            if (!IsCircuitBroken) return;
+            ConsecutivePollFailures = 0;
+            IsCircuitBroken = false;
+            LastPollError = null;
+            StatusMessage = "🔄 Loop resumed, polling at normal interval.";
+            _resumeSignal?.TrySetResult();
+            NotifyChange();
+            _logger.Information("Loop resumed, polling at normal interval");
         }
     }
 
@@ -164,10 +199,13 @@ public sealed class PipelineLoopService : BackgroundService
         var config = await _configStore.LoadPipelineConfigAsync(stoppingToken);
         var pollInterval = config.ClosedLoopPollInterval;
         var maxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
+        var maxConsecutiveFailures = config.ClosedLoopMaxConsecutivePollFailures;
+        var maxBackoff = config.ClosedLoopMaxBackoffInterval;
 
         // ct is linked to both stoppingToken and _loopCts — used for delays and polling.
         // StopLoop cancels _loopCts to break out of delays promptly.
         // Pipeline runs receive stoppingToken only — StopLoop does not cancel active runs (review finding #7).
+        // TODO: [RES-03] _loopCts is read here without _lock — could race with CleanupAsync disposing it; capture token under lock (review finding .NET #2)
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, _loopCts?.Token ?? CancellationToken.None);
         var ct = linkedCts.Token;
 
@@ -180,17 +218,66 @@ public sealed class PipelineLoopService : BackgroundService
             try
             {
                 candidates = await FetchAgentNextIssuesAsync(ct);
+                // Success — reset backoff state
+                ConsecutivePollFailures = 0;
+                LastPollError = null;
             }
             catch (OperationCanceledException)
             {
                 break;
             }
+            catch (RateLimitExceededException ex)
+            {
+                // Rate limits are expected — wait until reset, don't count as failure
+                var waitUntil = ex.ResetAt - DateTimeOffset.UtcNow;
+                if (waitUntil < TimeSpan.Zero) waitUntil = pollInterval;
+                _logger.Warning("Rate limit exceeded, waiting until {ResetAt} ({WaitDuration})",
+                    ex.ResetAt, waitUntil);
+                StatusMessage = $"🔄 Loop idle — rate limited. Resuming at {ex.ResetAt:HH:mm:ss} UTC.";
+                NotifyChange();
+                await DelayOrStop(waitUntil, ct);
+                continue;
+            }
             catch (Exception ex)
             {
-                _logger.Warning(ex, "Pipeline loop failed to poll for issues, retrying next cycle");
-                StatusMessage = "🔄 Loop idle — polling error, retrying next cycle.";
+                ConsecutivePollFailures++;
+                LastPollError = ex.Message;
+
+                // Circuit breaker — pause after N consecutive failures
+                if (ConsecutivePollFailures >= maxConsecutiveFailures)
+                {
+                    IsCircuitBroken = true;
+                    StatusMessage = $"⚠️ Loop paused — polling failed {ConsecutivePollFailures} times consecutively. Last error: {ex.Message}";
+                    NotifyChange();
+                    _logger.Warning("Loop paused after {FailureCount} consecutive poll failures. Last error: {ErrorMessage}",
+                        ConsecutivePollFailures, ex.Message);
+
+                    // Wait for ResumeLoop or StopLoop
+                    _resumeSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    try
+                    {
+                        await _resumeSignal.Task.WaitAsync(ct);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+
+                    if (_stopRequested) break;
+                    continue;
+                }
+
+                // Exponential backoff: pollInterval × 2^(failures-1), capped at maxBackoff
+                var shift = Math.Min(ConsecutivePollFailures - 1, 30);
+                var backoffTicks = pollInterval.Ticks * (1L << shift);
+                var backoffInterval = backoffTicks > maxBackoff.Ticks || backoffTicks <= 0
+                    ? maxBackoff : TimeSpan.FromTicks(backoffTicks);
+
+                _logger.Warning(ex, "Poll failure #{FailureCount}, backing off to {NextRetryIn}. ErrorType={ErrorType}, ErrorMessage={ErrorMessage}",
+                    ConsecutivePollFailures, backoffInterval, ex.GetType().Name, ex.Message);
+                StatusMessage = $"🔄 Loop idle — poll failure #{ConsecutivePollFailures}, retrying in {(int)backoffInterval.TotalSeconds}s.";
                 NotifyChange();
-                await DelayOrStop(pollInterval, ct);
+                await DelayOrStop(backoffInterval, ct);
                 continue;
             }
 
@@ -324,6 +411,9 @@ public sealed class PipelineLoopService : BackgroundService
             IsLoopActive = false;
             _stopRequested = false;
             CurrentIssueIdentifier = null;
+            ConsecutivePollFailures = 0;
+            IsCircuitBroken = false;
+            LastPollError = null;
             StatusMessage = "";
             // Reset activation signal under lock to prevent race with StartLoop (review finding #1)
             _activationSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
