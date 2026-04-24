@@ -49,6 +49,15 @@ builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
     sp.GetRequiredService<CiLogWriter>(),
     Serilog.Log.Logger,
     sp.GetRequiredService<BrainUpdateService>()));
+
+// Pipeline — Loop Service (background service, starts dormant)
+builder.Services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(
+    sp.GetRequiredService<PipelineOrchestrationService>(),
+    sp.GetRequiredService<IProviderFactory>(),
+    sp.GetRequiredService<IConfigurationStore>(),
+    Serilog.Log.Logger));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
+
 builder.Services.AddTransient<IQualityGateValidator>(sp => new QualityGateValidator(Serilog.Log.Logger));
 builder.Services.AddTransient<IssueDescriptionParser>();
 builder.Services.AddSingleton(sp => new CiLogWriter(Serilog.Log.Logger));

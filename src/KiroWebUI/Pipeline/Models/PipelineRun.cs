@@ -104,6 +104,9 @@ public sealed class PipelineRun
     /// <summary>Brain update validation result from BrainUpdateService.</summary>
     public BrainValidationResult? BrainValidation { get; set; }
 
+    /// <summary>How this run was initiated: "manual" or "loop".</summary>
+    public string InitiatedBy { get; init; } = "manual";
+
     /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
     // TODO: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
     public PipelineRunSummary ToSummary() => new()
@@ -118,6 +121,7 @@ public sealed class PipelineRun
         PullRequestUrl = PullRequestUrl,
         ModelName = ModelName,
         BrainRepoUsed = BrainProviderConfigId != null,
-        BrainUpdatesPushed = BrainUpdatesPushed
+        BrainUpdatesPushed = BrainUpdatesPushed,
+        InitiatedBy = InitiatedBy
     };
 }

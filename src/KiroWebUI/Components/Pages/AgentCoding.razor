@@ -5,6 +5,7 @@
 @using KiroWebUI.Pipeline.Models
 @using KiroWebUI.Pipeline.Services
 @inject PipelineOrchestrationService PipelineService
+@inject PipelineLoopService LoopService
 @inject IConfigurationStore ConfigStore
 @inject IProviderFactory ProviderFactory
 @inject IJSRuntime JS
@@ -12,13 +13,26 @@
 <div class="agent-coding-page">
     <header class="agent-header">
         <h1>Agent Coding</h1>
+        @if (LoopService.IsLoopActive)
+        {
+            <span class="step-badge step-loop-active" title="@LoopService.StatusMessage">🔄 Loop</span>
+        }
         @if (PipelineService.ActiveRun is not null)
         {
             <span class="step-badge step-@PipelineService.ActiveRun.CurrentStep.ToString().ToLowerInvariant()">
                 @PipelineService.ActiveRun.CurrentStep
             </span>
+            @if (PipelineService.ActiveRun.InitiatedBy == "loop")
+            {
+                <span class="step-badge step-loop-badge">loop</span>
+            }
         }
     </header>
+
+    @if (LoopService.IsLoopActive)
+    {
+        <div class="settings-status status-info">@LoopService.StatusMessage</div>
+    }
 
     @if (!string.IsNullOrEmpty(_errorMessage))
     {
@@ -73,7 +87,11 @@
                                                     SelectedAgentProviderIdChanged="v => _selectedAgentProviderId = v"
                                                     SelectedPipelineProviderIdChanged="v => _selectedPipelineProviderId = v"
                                                     SelectedBrainProviderIdChanged="v => _selectedBrainProviderId = v"
-                                                    OnStartPipeline="StartPipeline" />
+                                                    OnStartPipeline="StartPipeline"
+                                                    IsLoopActive="LoopService.IsLoopActive"
+                                                    IsManualRunInProgress="PipelineService.IsRunning && !LoopService.IsLoopActive"
+                                                    OnStartLoop="StartLoop"
+                                                    OnStopLoop="StopLoop" />
                         </div>
                     }
                 }
@@ -157,6 +175,7 @@
     {
         PipelineService.OnChange += HandleStateChanged;
         PipelineService.OnOutputLine += HandleOutputLine;
+        LoopService.OnChange += HandleStateChanged;
 
         _elapsedTimer = new Timer(ElapsedTimerTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
@@ -268,6 +287,12 @@
             return;
         }
 
+        if (LoopService.IsLoopActive)
+        {
+            _errorMessage = "Stop the loop to run manually.";
+            return;
+        }
+
         var canStart = !string.IsNullOrEmpty(_selectedIssueProviderId)
             && !string.IsNullOrEmpty(_selectedIssueId)
             && !string.IsNullOrEmpty(_selectedRepoProviderId)
@@ -310,6 +335,36 @@
         }
     }
 
+    private void StartLoop()
+    {
+        _errorMessage = null;
+
+        var canStart = !string.IsNullOrEmpty(_selectedIssueProviderId)
+            && !string.IsNullOrEmpty(_selectedRepoProviderId)
+            && !string.IsNullOrEmpty(_selectedAgentProviderId);
+
+        if (!canStart)
+        {
+            _errorMessage = "Please select an issue provider, repository provider, and agent provider.";
+            return;
+        }
+
+        var started = LoopService.StartLoop(
+            _selectedIssueProviderId, _selectedRepoProviderId, _selectedAgentProviderId,
+            string.IsNullOrEmpty(_selectedBrainProviderId) ? null : _selectedBrainProviderId,
+            string.IsNullOrEmpty(_selectedPipelineProviderId) ? null : _selectedPipelineProviderId);
+
+        if (!started)
+            _errorMessage = LoopService.IsLoopActive
+                ? "Loop is already active."
+                : "A manual run is in progress. Wait for it to complete.";
+    }
+
+    private void StopLoop()
+    {
+        LoopService.StopLoop();
+    }
+
     private async Task CancelPipeline()
     {
         try
@@ -334,5 +389,6 @@
         _elapsedTimer?.Dispose();
         PipelineService.OnChange -= HandleStateChanged;
         PipelineService.OnOutputLine -= HandleOutputLine;
+        LoopService.OnChange -= HandleStateChanged;
     }
 }

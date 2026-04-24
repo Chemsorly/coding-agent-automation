@@ -176,6 +176,7 @@ public sealed class PipelineConfiguration
     /// Values: provider config IDs.
     /// Pre-populates dropdowns on subsequent pipeline runs.
     /// </summary>
+    // TODO: [UX-12b] Should be IReadOnlyDictionary or defensively copied — contents are mutable after construction (review finding #16)
     public Dictionary<string, string> LastUsedProviderIds { get; init; } = new();
 
     /// <summary>
@@ -186,6 +187,18 @@ public sealed class PipelineConfiguration
     /// entirely. Defaults to false.
     /// </summary>
     public bool BrainReadOnly { get; init; } = false;
+
+    /// <summary>
+    /// Poll interval for the closed pipeline loop when checking for new agent:next issues.
+    /// Default: 60 seconds.
+    /// </summary>
+    public TimeSpan ClosedLoopPollInterval { get; init; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Maximum number of issues to process per poll cycle in the closed loop.
+    /// 0 means unlimited (process entire backlog). Counter resets each poll cycle.
+    /// </summary>
+    public int ClosedLoopMaxRunsPerCycle { get; init; } = 0;
 
     /// <summary>
     /// Returns a copy of this configuration with the specified last-used provider IDs.
@@ -201,6 +214,7 @@ public sealed class PipelineConfiguration
         StallPollInterval = StallPollInterval, BlacklistedPaths = BlacklistedPaths,
         BlacklistMode = BlacklistMode, CleanupSuccessfulWorkspaces = CleanupSuccessfulWorkspaces,
         FailedWorkspaceRetentionDays = FailedWorkspaceRetentionDays, LastUsedProviderIds = lastUsed,
-        BrainReadOnly = BrainReadOnly
+        BrainReadOnly = BrainReadOnly,
+        ClosedLoopPollInterval = ClosedLoopPollInterval, ClosedLoopMaxRunsPerCycle = ClosedLoopMaxRunsPerCycle
     };
 }

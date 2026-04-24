@@ -9,7 +9,7 @@
             <div class="config-category-title">Providers</div>
             <div class="form-group">
                 <label>Repository Provider</label>
-                <select @bind="SelectedRepoProviderId" @bind:after="NotifyRepoChanged">
+                <select @bind="SelectedRepoProviderId" @bind:after="NotifyRepoChanged" disabled="@IsLoopActive">
                     <option value="">-- Select Repository --</option>
                     @foreach (var p in RepoProviders)
                     {
@@ -19,7 +19,7 @@
             </div>
             <div class="form-group">
                 <label>Agent Provider</label>
-                <select @bind="SelectedAgentProviderId" @bind:after="NotifyAgentChanged">
+                <select @bind="SelectedAgentProviderId" @bind:after="NotifyAgentChanged" disabled="@IsLoopActive">
                     <option value="">-- Select Agent --</option>
                     @foreach (var p in AgentProviders)
                     {
@@ -31,7 +31,7 @@
             {
                 <div class="form-group">
                     <label>Pipeline Provider (CI)</label>
-                    <select @bind="SelectedPipelineProviderId" @bind:after="NotifyPipelineChanged">
+                    <select @bind="SelectedPipelineProviderId" @bind:after="NotifyPipelineChanged" disabled="@IsLoopActive">
                         <option value="">-- None --</option>
                         @foreach (var p in PipelineProviders)
                         {
@@ -44,7 +44,7 @@
             {
                 <div class="form-group">
                     <label>Brain Repository</label>
-                    <select @bind="SelectedBrainProviderId" @bind:after="NotifyBrainChanged">
+                    <select @bind="SelectedBrainProviderId" @bind:after="NotifyBrainChanged" disabled="@IsLoopActive">
                         <option value="">-- None --</option>
                         @foreach (var p in BrainProviders)
                         {
@@ -75,11 +75,27 @@
         }
 
         <button class="btn-save pipeline-start-btn" @onclick="OnStartPipeline"
-                disabled="@(!CanStartPipeline)">
-            🚀 Start Pipeline
+                disabled="@(!CanStartPipeline || IsLoopActive)"
+                title="@(IsLoopActive ? "Stop the loop to run manually" : "")">
+            🚀 Start Pipeline on Issue
         </button>
 
-        @if (!CanStartPipeline && !string.IsNullOrEmpty(SelectedIssueProviderId))
+        @if (IsLoopActive)
+        {
+            <button class="btn-save pipeline-start-btn pipeline-stop-loop-btn" @onclick="OnStopLoop">
+                ⏹ Stop Loop
+            </button>
+        }
+        else
+        {
+            <button class="btn-save pipeline-start-btn pipeline-loop-btn" @onclick="OnStartLoop"
+                    disabled="@(!CanStartLoop || IsManualRunInProgress)"
+                    title="@(IsManualRunInProgress ? "Wait for the current run to complete" : "")">
+                🔄 Start Pipeline Loop
+            </button>
+        }
+
+        @if (!CanStartPipeline && !string.IsNullOrEmpty(SelectedIssueProviderId) && !IsLoopActive)
         {
             <div class="pipeline-setup-hint">
                 @if (string.IsNullOrEmpty(SelectedIssueId))
@@ -95,6 +111,14 @@
                     <span>Select an agent provider</span>
                 }
             </div>
+        }
+        @if (IsLoopActive)
+        {
+            <div class="pipeline-setup-hint"><span>Stop the loop to run manually</span></div>
+        }
+        else if (IsManualRunInProgress)
+        {
+            <div class="pipeline-setup-hint"><span>Wait for the current run to complete</span></div>
         }
 
         <!-- Run History -->
@@ -118,6 +142,10 @@
                                 <div class="history-info">
                                     <span class="history-title">#@h.IssueIdentifier @Truncate(h.IssueTitle, 40)</span>
                                     <span class="step-badge step-@h.FinalStep.ToString().ToLowerInvariant()">@h.FinalStep</span>
+                                    @if (h.InitiatedBy == "loop")
+                                    {
+                                        <span class="step-badge step-loop-badge">loop</span>
+                                    }
                                 </div>
                                 <div class="history-meta">
                                     <span>@h.StartedAt.ToLocalTime().ToString("g")</span>
@@ -156,12 +184,21 @@
     [Parameter] public EventCallback<string> SelectedPipelineProviderIdChanged { get; set; }
     [Parameter] public EventCallback<string> SelectedBrainProviderIdChanged { get; set; }
     [Parameter] public EventCallback OnStartPipeline { get; set; }
+    [Parameter] public bool IsLoopActive { get; set; }
+    [Parameter] public bool IsManualRunInProgress { get; set; }
+    [Parameter] public EventCallback OnStartLoop { get; set; }
+    [Parameter] public EventCallback OnStopLoop { get; set; }
 
     private bool _historyExpanded;
 
     private bool CanStartPipeline =>
         !string.IsNullOrEmpty(SelectedIssueProviderId)
         && !string.IsNullOrEmpty(SelectedIssueId)
+        && !string.IsNullOrEmpty(SelectedRepoProviderId)
+        && !string.IsNullOrEmpty(SelectedAgentProviderId);
+
+    private bool CanStartLoop =>
+        !string.IsNullOrEmpty(SelectedIssueProviderId)
         && !string.IsNullOrEmpty(SelectedRepoProviderId)
         && !string.IsNullOrEmpty(SelectedAgentProviderId);
 
