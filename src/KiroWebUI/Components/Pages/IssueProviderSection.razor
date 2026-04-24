@@ -1,0 +1,260 @@
+@using KiroWebUI.Pipeline.Interfaces
+@using KiroWebUI.Pipeline.Models
+@using KiroWebUI.Pipeline.Services
+
+<section class="settings-section">
+    <h2>Issue Providers</h2>
+    <div class="provider-list">
+        @foreach (var p in Providers)
+        {
+            <div class="provider-card">
+                <div class="provider-info">
+                    <strong>@p.DisplayName</strong>
+                    <span class="provider-type">@p.ProviderType</span>
+                    <span class="provider-detail">@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "")</span>
+                </div>
+                <div class="provider-actions">
+                    <button class="btn-edit" @onclick="() => EditProvider(p)">Edit</button>
+                    <button class="btn-delete" @onclick="() => OnDelete.InvokeAsync(p.Id)">Delete</button>
+                </div>
+            </div>
+        }
+    </div>
+    @if (_showForm)
+    {
+        <GitHubAppProviderForm
+            SectionTitle="Issue Provider"
+            DisplayNamePlaceholder="My GitHub Issues"
+            IsEditing="@(_editingProvider is not null)"
+            ProviderType="@_form.ProviderType" ProviderTypeChanged="v => _form.ProviderType = v"
+            DisplayName="@_form.DisplayName" DisplayNameChanged="v => _form.DisplayName = v"
+            ApiUrl="@_form.ApiUrl" ApiUrlChanged="v => _form.ApiUrl = v"
+            ClientId="@_form.ClientId" ClientIdChanged="v => _form.ClientId = v"
+            InstallationId="@_form.InstallationId" InstallationIdChanged="v => _form.InstallationId = v"
+            PrivateKeyBase64="@_form.PrivateKeyBase64" PrivateKeyBase64Changed="v => _form.PrivateKeyBase64 = v"
+            Owner="@_form.Owner" OwnerChanged="v => _form.Owner = v"
+            Repo="@_form.Repo" RepoChanged="v => _form.Repo = v"
+            AvailableRepos="_availableRepos"
+            SelectedRepo="@_selectedRepo" SelectedRepoChanged="v => _selectedRepo = v"
+            LoadingRepos="_loadingRepos"
+            ValidationMessage="@_validationMessage"
+            ValidationSuccess="_validationSuccess"
+            Saving="_saving"
+            OnSave="SaveProvider"
+            OnCancel="CancelForm"
+            OnFetchRepos="FetchRepos">
+            <HelpContent>
+                <h4>🔐 GitHub App Setup</h4>
+                <p>Configure a <strong>GitHub App</strong> for authentication. See
+                    <a href="https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app" target="_blank">GitHub App docs</a>.</p>
+                <p class="help-heading">Required permissions:</p>
+                <ul>
+                    <li><strong>Issues: Read &amp; write</strong> — fetch and list issues</li>
+                </ul>
+                <p class="help-heading">Fields:</p>
+                <ul>
+                    <li><strong>Client ID</strong> — from the App's General settings page (e.g. <code>Iv1.abc123...</code>)</li>
+                    <li><strong>Installation ID</strong> — from the installation URL (<code>github.com/settings/installations/{'{'}id{'}'}</code>)</li>
+                    <li><strong>Private Key</strong> — upload the .pem file downloaded from the App's settings</li>
+                    <li><strong>API URL</strong> — use <code>https://api.github.com</code> for github.com, or your GitHub Enterprise URL</li>
+                </ul>
+                <p class="help-tip">💡 You can reuse the same GitHub App for the Repository Provider if you add Contents and Pull requests permissions.</p>
+            </HelpContent>
+        </GitHubAppProviderForm>
+    }
+    else
+    {
+        <button class="btn-add" @onclick="ShowAddForm">+ Add Issue Provider</button>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public List<ProviderConfig> Providers { get; set; } = new();
+    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter, EditorRequired] public GitHubValidationService GitHubValidator { get; set; } = default!;
+    [Parameter, EditorRequired] public IProviderFactory ProviderFactory { get; set; } = default!;
+    [Parameter] public EventCallback<string> OnDelete { get; set; }
+    [Parameter] public EventCallback<ProviderConfig> OnSaved { get; set; }
+
+    private bool _showForm;
+    private ProviderConfig? _editingProvider;
+    private IssueProviderForm _form = new();
+    private List<(string FullName, string Owner, string Name)> _availableRepos = new();
+    private string _selectedRepo = "";
+    private bool _loadingRepos;
+    private string? _validationMessage;
+    private bool _validationSuccess;
+    private bool _saving;
+
+    private void ShowAddForm()
+    {
+        _editingProvider = null;
+        _form = new IssueProviderForm();
+        _availableRepos.Clear();
+        _selectedRepo = "";
+        _validationMessage = null;
+        _showForm = true;
+    }
+
+    private void EditProvider(ProviderConfig p)
+    {
+        _editingProvider = p;
+        _form = new IssueProviderForm
+        {
+            ProviderType = p.ProviderType,
+            DisplayName = p.DisplayName,
+            ApiUrl = p.Settings.GetValueOrDefault("apiUrl", ""),
+            ClientId = p.Settings.GetValueOrDefault("clientId", ""),
+            InstallationId = p.Settings.GetValueOrDefault("installationId", ""),
+            PrivateKeyBase64 = p.Settings.GetValueOrDefault("privateKeyBase64", ""),
+            Owner = p.Settings.GetValueOrDefault("owner", ""),
+            Repo = p.Settings.GetValueOrDefault("repo", "")
+        };
+        _showForm = true;
+    }
+
+    private async Task SaveProvider()
+    {
+        if (string.IsNullOrWhiteSpace(_form.DisplayName))
+        {
+            _validationMessage = "Display Name is required.";
+            _validationSuccess = false;
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(_selectedRepo))
+        {
+            var selected = _availableRepos.FirstOrDefault(r => r.FullName == _selectedRepo);
+            if (selected != default)
+            {
+                _form.Owner = selected.Owner;
+                _form.Repo = selected.Name;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(_form.Owner) || string.IsNullOrWhiteSpace(_form.Repo))
+        {
+            _validationMessage = "Owner and Repository are required.";
+            _validationSuccess = false;
+            return;
+        }
+
+        _saving = true;
+        _validationMessage = "Validating GitHub App credentials...";
+        _validationSuccess = true;
+        StateHasChanged();
+
+        if (!long.TryParse(_form.InstallationId, out var installationId))
+        {
+            _validationMessage = "Installation ID must be a valid number.";
+            _validationSuccess = false;
+            _saving = false;
+            return;
+        }
+
+        var (success, message) = await GitHubValidator.ValidateAppCredentialsAsync(
+            _form.ApiUrl, _form.ClientId, installationId, _form.PrivateKeyBase64, CancellationToken.None,
+            _form.Owner, _form.Repo);
+
+        if (!success)
+        {
+            _validationMessage = message;
+            _validationSuccess = false;
+            _saving = false;
+            return;
+        }
+
+        var config = new ProviderConfig
+        {
+            Id = _editingProvider?.Id ?? Guid.NewGuid().ToString(),
+            Kind = ProviderKind.Issue,
+            ProviderType = _form.ProviderType,
+            DisplayName = _form.DisplayName,
+            Settings = new Dictionary<string, string>
+            {
+                ["apiUrl"] = _form.ApiUrl,
+                ["clientId"] = _form.ClientId,
+                ["installationId"] = _form.InstallationId,
+                ["privateKeyBase64"] = _form.PrivateKeyBase64,
+                ["owner"] = _form.Owner,
+                ["repo"] = _form.Repo
+            }
+        };
+
+        try
+        {
+            await ConfigStore.SaveProviderConfigAsync(config, CancellationToken.None);
+            _showForm = false;
+            _availableRepos.Clear();
+            _validationMessage = null;
+            await OnSaved.InvokeAsync(config);
+        }
+        catch (Exception ex)
+        {
+            _validationMessage = $"Failed to save: {ex.Message}";
+            _validationSuccess = false;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void CancelForm()
+    {
+        _showForm = false;
+        _availableRepos.Clear();
+        _validationMessage = null;
+    }
+
+    private async Task FetchRepos()
+    {
+        if (string.IsNullOrWhiteSpace(_form.ClientId) || string.IsNullOrWhiteSpace(_form.InstallationId)
+            || string.IsNullOrWhiteSpace(_form.PrivateKeyBase64))
+        {
+            _validationMessage = "Enter Client ID, Installation ID, and Private Key first.";
+            _validationSuccess = false;
+            return;
+        }
+
+        if (!long.TryParse(_form.InstallationId, out var installationId))
+        {
+            _validationMessage = "Installation ID must be a valid number.";
+            _validationSuccess = false;
+            return;
+        }
+
+        _loadingRepos = true;
+        _validationMessage = null;
+        StateHasChanged();
+
+        var (credOk, credMsg) = await GitHubValidator.ValidateAppCredentialsAsync(
+            _form.ApiUrl, _form.ClientId, installationId, _form.PrivateKeyBase64, CancellationToken.None);
+        if (!credOk)
+        {
+            _validationMessage = credMsg;
+            _validationSuccess = false;
+            _loadingRepos = false;
+            return;
+        }
+
+        var repos = await GitHubValidator.ListRepositoriesWithAppAsync(
+            _form.ApiUrl, _form.ClientId, installationId, _form.PrivateKeyBase64, CancellationToken.None);
+        _availableRepos = repos.ToList();
+        _validationMessage = $"{credMsg} — {repos.Count} repositories found";
+        _validationSuccess = true;
+        _loadingRepos = false;
+    }
+
+    private class IssueProviderForm
+    {
+        public string ProviderType { get; set; } = "GitHub";
+        public string DisplayName { get; set; } = "";
+        public string ApiUrl { get; set; } = "https://api.github.com";
+        public string ClientId { get; set; } = "";
+        public string InstallationId { get; set; } = "";
+        public string PrivateKeyBase64 { get; set; } = "";
+        public string Owner { get; set; } = "";
+        public string Repo { get; set; } = "";
+    }
+}

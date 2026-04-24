@@ -1,0 +1,175 @@
+@using KiroWebUI.Pipeline.Interfaces
+@using KiroWebUI.Pipeline.Models
+@using KiroWebUI.Pipeline.Services
+@inject PipelineOrchestrationService PipelineService
+
+<div class="pipeline-setup-panel">
+    <div class="pipeline-setup-card">
+        <div class="config-category">
+            <div class="config-category-title">Providers</div>
+            <div class="form-group">
+                <label>Repository Provider</label>
+                <select @bind="SelectedRepoProviderId" @bind:after="NotifyRepoChanged">
+                    <option value="">-- Select Repository --</option>
+                    @foreach (var p in RepoProviders)
+                    {
+                        <option value="@p.Id">@p.DisplayName (@p.ProviderType: @p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "") → @p.Settings.GetValueOrDefault("baseBranch", "main"))</option>
+                    }
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Agent Provider</label>
+                <select @bind="SelectedAgentProviderId" @bind:after="NotifyAgentChanged">
+                    <option value="">-- Select Agent --</option>
+                    @foreach (var p in AgentProviders)
+                    {
+                        <option value="@p.Id">@p.DisplayName (@p.ProviderType: @p.Settings.GetValueOrDefault("executablePath", ""))</option>
+                    }
+                </select>
+            </div>
+            @if (PipelineProviders.Count > 0)
+            {
+                <div class="form-group">
+                    <label>Pipeline Provider (CI)</label>
+                    <select @bind="SelectedPipelineProviderId" @bind:after="NotifyPipelineChanged">
+                        <option value="">-- None --</option>
+                        @foreach (var p in PipelineProviders)
+                        {
+                            <option value="@p.Id">@p.DisplayName (@p.ProviderType: @p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", ""))</option>
+                        }
+                    </select>
+                </div>
+            }
+            @if (BrainProviders.Count > 0)
+            {
+                <div class="form-group">
+                    <label>Brain Repository</label>
+                    <select @bind="SelectedBrainProviderId" @bind:after="NotifyBrainChanged">
+                        <option value="">-- None --</option>
+                        @foreach (var p in BrainProviders)
+                        {
+                            <option value="@p.Id">@p.DisplayName (@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", ""))</option>
+                        }
+                    </select>
+                </div>
+            }
+        </div>
+
+        @if (!string.IsNullOrEmpty(SelectedIssueId) && SelectedIssueDetail != null)
+        {
+            <div class="config-category">
+                <div class="config-category-title">Selected Issue</div>
+                <div class="pipeline-selected-issue">
+                    <strong>#@SelectedIssueDetail.Identifier</strong> @SelectedIssueDetail.Title
+                    @if (SelectedIssueDetail.Labels.Count > 0)
+                    {
+                        <div class="issue-labels" style="margin-top: 6px;">
+                            @foreach (var label in SelectedIssueDetail.Labels)
+                            {
+                                <span class="issue-label">@label</span>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
+        <button class="btn-save pipeline-start-btn" @onclick="OnStartPipeline"
+                disabled="@(!CanStartPipeline)">
+            🚀 Start Pipeline
+        </button>
+
+        @if (!CanStartPipeline && !string.IsNullOrEmpty(SelectedIssueProviderId))
+        {
+            <div class="pipeline-setup-hint">
+                @if (string.IsNullOrEmpty(SelectedIssueId))
+                {
+                    <span>Select an issue to continue</span>
+                }
+                else if (string.IsNullOrEmpty(SelectedRepoProviderId))
+                {
+                    <span>Select a repository provider</span>
+                }
+                else if (string.IsNullOrEmpty(SelectedAgentProviderId))
+                {
+                    <span>Select an agent provider</span>
+                }
+            </div>
+        }
+
+        <!-- Run History -->
+        @{
+            var history = PipelineService.GetRunHistory();
+        }
+        @if (history.Count > 0)
+        {
+            <div class="config-category" style="margin-top: 8px;">
+                <div class="config-category-title run-history-toggle-title" @onclick="() => _historyExpanded = !_historyExpanded" role="button" tabindex="0">
+                    <span>Run History</span>
+                    <span class="run-history-count">@history.Count</span>
+                    <span class="run-history-toggle">@(_historyExpanded ? "▾" : "▸")</span>
+                </div>
+                @if (_historyExpanded)
+                {
+                    <div class="history-list">
+                        @foreach (var h in history)
+                        {
+                            <div class="history-card">
+                                <div class="history-info">
+                                    <span class="history-title">#@h.IssueIdentifier @Truncate(h.IssueTitle, 40)</span>
+                                    <span class="step-badge step-@h.FinalStep.ToString().ToLowerInvariant()">@h.FinalStep</span>
+                                </div>
+                                <div class="history-meta">
+                                    <span>@h.StartedAt.ToLocalTime().ToString("g")</span>
+                                    @if (h.CompletedAt.HasValue)
+                                    {
+                                        <span>@((h.CompletedAt.Value - h.StartedAt).ToString(@"hh\:mm\:ss"))</span>
+                                    }
+                                    @if (!string.IsNullOrEmpty(h.PullRequestUrl))
+                                    {
+                                        <a href="@h.PullRequestUrl" target="_blank" rel="noopener noreferrer">PR</a>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ProviderConfig> RepoProviders { get; set; } = Array.Empty<ProviderConfig>();
+    [Parameter, EditorRequired] public IReadOnlyList<ProviderConfig> AgentProviders { get; set; } = Array.Empty<ProviderConfig>();
+    [Parameter] public IReadOnlyList<ProviderConfig> PipelineProviders { get; set; } = Array.Empty<ProviderConfig>();
+    [Parameter] public IReadOnlyList<ProviderConfig> BrainProviders { get; set; } = Array.Empty<ProviderConfig>();
+    [Parameter] public string SelectedIssueProviderId { get; set; } = "";
+    [Parameter] public string SelectedIssueId { get; set; } = "";
+    [Parameter] public IssueDetail? SelectedIssueDetail { get; set; }
+    [Parameter] public string SelectedRepoProviderId { get; set; } = "";
+    [Parameter] public string SelectedAgentProviderId { get; set; } = "";
+    [Parameter] public string SelectedPipelineProviderId { get; set; } = "";
+    [Parameter] public string SelectedBrainProviderId { get; set; } = "";
+    [Parameter] public EventCallback<string> SelectedRepoProviderIdChanged { get; set; }
+    [Parameter] public EventCallback<string> SelectedAgentProviderIdChanged { get; set; }
+    [Parameter] public EventCallback<string> SelectedPipelineProviderIdChanged { get; set; }
+    [Parameter] public EventCallback<string> SelectedBrainProviderIdChanged { get; set; }
+    [Parameter] public EventCallback OnStartPipeline { get; set; }
+
+    private bool _historyExpanded;
+
+    private bool CanStartPipeline =>
+        !string.IsNullOrEmpty(SelectedIssueProviderId)
+        && !string.IsNullOrEmpty(SelectedIssueId)
+        && !string.IsNullOrEmpty(SelectedRepoProviderId)
+        && !string.IsNullOrEmpty(SelectedAgentProviderId);
+
+    private Task NotifyRepoChanged() => SelectedRepoProviderIdChanged.InvokeAsync(SelectedRepoProviderId);
+    private Task NotifyAgentChanged() => SelectedAgentProviderIdChanged.InvokeAsync(SelectedAgentProviderId);
+    private Task NotifyPipelineChanged() => SelectedPipelineProviderIdChanged.InvokeAsync(SelectedPipelineProviderId);
+    private Task NotifyBrainChanged() => SelectedBrainProviderIdChanged.InvokeAsync(SelectedBrainProviderId);
+
+    private static string Truncate(string text, int maxLength) =>
+        text.Length <= maxLength ? text : text[..maxLength] + "…";
+}

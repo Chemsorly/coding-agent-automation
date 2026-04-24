@@ -1,0 +1,283 @@
+@using KiroWebUI.Pipeline.Interfaces
+@using KiroWebUI.Pipeline.Models
+
+<div class="pipeline-setup-issues">
+  <div class="pipeline-setup-card">
+    <div class="config-category">
+        <div class="config-category-title">Browse Issues</div>
+        <div class="form-group">
+            <label>Issue Provider</label>
+            <select @bind="_selectedIssueProviderId" @bind:after="OnIssueProviderChanged">
+                <option value="">-- Select Provider --</option>
+                @foreach (var p in IssueProviders)
+                {
+                    <option value="@p.Id">@p.DisplayName (@p.ProviderType: @p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", ""))</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    @if (_loadingIssues)
+    {
+        <div class="loading-text">Loading issues...</div>
+    }
+
+    @if (_issues.Count > 0)
+    {
+        @if (_availableLabels.Count > 0)
+        {
+            <div class="label-filter">
+                <div class="label-filter-header">
+                    <span class="label-filter-title">Filter by labels:</span>
+                    @if (_selectedLabels.Count > 0)
+                    {
+                        <button class="label-clear-btn" @onclick="ClearLabelFilter">Clear all</button>
+                    }
+                </div>
+                @if (_selectedLabels.Count > 0)
+                {
+                    <div class="label-active-filters">
+                        @foreach (var label in _selectedLabels.OrderBy(l => l))
+                        {
+                            <button class="label-chip label-chip-active"
+                                    aria-label="Remove filter: @label"
+                                    @onclick="() => ToggleLabel(label)">@label ✕</button>
+                        }
+                    </div>
+                }
+                <div class="label-chip-list">
+                    @foreach (var label in _availableLabels)
+                    {
+                        <button class="label-chip @(_selectedLabels.Contains(label) ? "label-chip-selected" : "")"
+                                aria-pressed="@(_selectedLabels.Contains(label) ? "true" : "false")"
+                                @onclick="() => ToggleLabel(label)">@label</button>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (_selectedLabels.Count > 0)
+        {
+            <div class="label-filter-count" aria-live="polite">Showing @FilteredIssues.Count of @_issues.Count issues</div>
+        }
+
+        <div class="issue-list">
+            @foreach (var issue in FilteredIssues)
+            {
+                <div class="issue-card @(SelectedIssueId == issue.Identifier ? "issue-selected" : "")"
+                     @onclick="() => SelectIssue(issue.Identifier)">
+                    <span class="issue-id">#@issue.Identifier</span>
+                    <span class="issue-title">@issue.Title</span>
+                    @if (issue.Labels.Count > 0)
+                    {
+                        <div class="issue-labels">
+                            @foreach (var label in issue.Labels)
+                            {
+                                <span class="issue-label">@label</span>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+            @if (FilteredIssues.Count == 0 && _selectedLabels.Count > 0)
+            {
+                <div class="issue-list-empty" role="status">
+                    @if (_selectedLabels.Count == 1 && _selectedLabels.Contains(AgentLabels.Next))
+                    {
+                        <span>No issues labeled <code>@AgentLabels.Next</code>. Label issues in GitHub to queue them for the agent.</span>
+                    }
+                    else
+                    {
+                        <span>No issues match the selected filters.</span>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="issue-pagination">
+            <button class="btn-page" disabled="@(_currentPage <= 1)" @onclick="PreviousPage">← Previous</button>
+            <span class="page-indicator">Page @_currentPage</span>
+            <button class="btn-page" disabled="@(!_hasMoreIssues)" @onclick="NextPage">Next →</button>
+        </div>
+    }
+
+    @if (_loadingIssueDetail)
+    {
+        <div class="loading-text">Loading issue details...</div>
+    }
+
+    @if (_selectedIssueDetail != null)
+    {
+        <div class="issue-detail-panel">
+            <h3>#@_selectedIssueDetail.Identifier @_selectedIssueDetail.Title</h3>
+            <pre class="issue-description">@_selectedIssueDetail.Description</pre>
+            @if (_selectedIssueDetail.Labels.Count > 0)
+            {
+                <div class="issue-labels">
+                    @foreach (var label in _selectedIssueDetail.Labels)
+                    {
+                        <span class="issue-label">@label</span>
+                    }
+                </div>
+            }
+        </div>
+    }
+  </div>
+</div>
+
+@code {
+    // TODO: [ARC-10] LoadIssuePage and SelectIssue pass CancellationToken.None — should use component-scoped CTS cancelled on Dispose
+    [Parameter, EditorRequired] public IReadOnlyList<ProviderConfig> IssueProviders { get; set; } = Array.Empty<ProviderConfig>();
+    [Parameter, EditorRequired] public IProviderFactory ProviderFactory { get; set; } = default!;
+    [Parameter] public string InitialIssueProviderId { get; set; } = "";
+    [Parameter] public int IssuePageSize { get; set; } = 25;
+    [Parameter] public EventCallback<string> OnIssueProviderIdChanged { get; set; }
+    [Parameter] public EventCallback<(string IssueId, IssueDetail? Detail)> OnIssueSelected { get; set; }
+    [Parameter] public EventCallback<string?> OnError { get; set; }
+
+    /// <summary>The currently selected issue ID, driven by the parent shell.</summary>
+    [Parameter] public string SelectedIssueId { get; set; } = "";
+
+    private List<IssueSummary> _issues = new();
+    private List<string> _availableLabels = new();
+    private HashSet<string> _selectedLabels = new();
+    private List<IssueSummary>? _filteredIssuesCache;
+    private IssueDetail? _selectedIssueDetail;
+    private bool _loadingIssues;
+    private bool _loadingIssueDetail;
+    private string _selectedIssueProviderId = "";
+    private int _currentPage = 1;
+    private bool _hasMoreIssues;
+
+    private IReadOnlyList<IssueSummary> FilteredIssues =>
+        _filteredIssuesCache ??= _selectedLabels.Count == 0
+            ? _issues
+            : _issues.Where(i => i.Labels.Any(l => _selectedLabels.Contains(l))).ToList();
+
+    protected override void OnInitialized()
+    {
+        _selectedIssueProviderId = InitialIssueProviderId;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !string.IsNullOrEmpty(_selectedIssueProviderId))
+            await OnIssueProviderChanged();
+    }
+
+    private void ToggleLabel(string label)
+    {
+        if (!_selectedLabels.Remove(label))
+            _selectedLabels.Add(label);
+        _filteredIssuesCache = null;
+        ClearSelectionIfFiltered();
+    }
+
+    private void ClearLabelFilter()
+    {
+        _selectedLabels.Clear();
+        _filteredIssuesCache = null;
+    }
+
+    private void ClearSelectionIfFiltered()
+    {
+        if (!string.IsNullOrEmpty(SelectedIssueId)
+            && !FilteredIssues.Any(i => i.Identifier == SelectedIssueId))
+        {
+            _ = OnIssueSelected.InvokeAsync(("", null));
+        }
+    }
+
+    private async Task OnIssueProviderChanged()
+    {
+        _issues.Clear();
+        _selectedLabels.Clear();
+        _availableLabels.Clear();
+        _filteredIssuesCache = null;
+        _currentPage = 1;
+        _hasMoreIssues = false;
+        _selectedIssueDetail = null;
+
+        await OnIssueProviderIdChanged.InvokeAsync(_selectedIssueProviderId);
+        await OnIssueSelected.InvokeAsync(("", null));
+
+        if (string.IsNullOrEmpty(_selectedIssueProviderId))
+            return;
+
+        await LoadIssuePage();
+    }
+
+    private async Task LoadIssuePage()
+    {
+        _loadingIssues = true;
+        _filteredIssuesCache = null;
+        _selectedIssueDetail = null;
+        _selectedLabels.Clear();
+        await OnIssueSelected.InvokeAsync(("", null));
+        try
+        {
+            var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == _selectedIssueProviderId);
+            if (providerConfig == null) return;
+
+            await using var issueProvider = ProviderFactory.CreateIssueProvider(providerConfig);
+            var result = await issueProvider.ListOpenIssuesAsync(_currentPage, IssuePageSize, CancellationToken.None);
+            _issues = result.Items.ToList();
+            _hasMoreIssues = result.HasMore;
+            _availableLabels = _issues.SelectMany(i => i.Labels).Distinct().OrderBy(l => l).ToList();
+            if (_availableLabels.Contains(AgentLabels.Next))
+            {
+                _selectedLabels.Add(AgentLabels.Next);
+                _filteredIssuesCache = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            await OnError.InvokeAsync($"Failed to fetch issues: {ex.Message}");
+        }
+        finally
+        {
+            _loadingIssues = false;
+        }
+    }
+
+    private async Task PreviousPage()
+    {
+        if (_currentPage <= 1) return;
+        _currentPage--;
+        await LoadIssuePage();
+    }
+
+    private async Task NextPage()
+    {
+        if (!_hasMoreIssues) return;
+        _currentPage++;
+        await LoadIssuePage();
+    }
+
+    private async Task SelectIssue(string issueId)
+    {
+        _selectedIssueDetail = null;
+        _loadingIssueDetail = true;
+        StateHasChanged();
+
+        try
+        {
+            var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == _selectedIssueProviderId);
+            if (providerConfig != null)
+            {
+                await using var issueProvider = ProviderFactory.CreateIssueProvider(providerConfig);
+                _selectedIssueDetail = await issueProvider.GetIssueAsync(issueId, CancellationToken.None);
+            }
+            await OnIssueSelected.InvokeAsync((issueId, _selectedIssueDetail));
+        }
+        catch (Exception ex)
+        {
+            await OnError.InvokeAsync($"Failed to load issue details: {ex.Message}");
+            await OnIssueSelected.InvokeAsync((issueId, null));
+        }
+        finally
+        {
+            _loadingIssueDetail = false;
+        }
+    }
+}

@@ -1,0 +1,148 @@
+@using KiroWebUI.Pipeline.Interfaces
+@using KiroWebUI.Pipeline.Models
+@using KiroWebUI.Pipeline.Services
+
+<div class="provider-form-row">
+    <div class="provider-form">
+        <h3>@(IsEditing ? "Edit" : "Add") @SectionTitle</h3>
+        <div class="form-group">
+            <label>Provider Type</label>
+            <select @bind="ProviderType"><option value="GitHub">GitHub</option></select>
+        </div>
+        <div class="form-group">
+            <label>Display Name</label>
+            <input type="text" @bind="DisplayName" placeholder="@DisplayNamePlaceholder" />
+        </div>
+        <div class="form-group">
+            <label>API URL</label>
+            <input type="text" @bind="ApiUrl" placeholder="https://api.github.com" />
+        </div>
+        <div class="form-group">
+            <label>Client ID</label>
+            <input type="text" @bind="ClientId" placeholder="Iv1.abc123..." />
+        </div>
+        @if (ShowAppId)
+        {
+            <div class="form-group">
+                <label>App ID</label>
+                <input type="text" @bind="AppId" placeholder="123456" />
+            </div>
+        }
+        <div class="form-group">
+            <label>Installation ID</label>
+            <input type="text" @bind="InstallationId" placeholder="78901234" />
+        </div>
+        <div class="form-group">
+            <label>Private Key (.pem file)</label>
+            <InputFile OnChange="OnKeyFileSelected" accept=".pem" />
+            <div class="input-with-action" style="margin-top: 0.5rem;">
+                @if (!string.IsNullOrEmpty(PrivateKeyBase64))
+                {
+                    <span class="key-status" style="color: #4ade80;">✅ Key loaded</span>
+                }
+                <button class="btn-edit" @onclick="OnFetchRepos" disabled="@LoadingRepos">
+                    @(LoadingRepos ? "Loading..." : "Fetch Repos")
+                </button>
+            </div>
+        </div>
+        @if (AvailableRepos.Count > 0)
+        {
+            <div class="form-group">
+                <label>Repository</label>
+                <select @bind="SelectedRepo">
+                    <option value="">-- Select Repository --</option>
+                    @foreach (var r in AvailableRepos)
+                    {
+                        <option value="@r.FullName">@r.FullName</option>
+                    }
+                </select>
+            </div>
+        }
+        else
+        {
+            <div class="form-group">
+                <label>Owner</label>
+                <input type="text" @bind="Owner" placeholder="owner" />
+            </div>
+            <div class="form-group">
+                <label>Repository</label>
+                <input type="text" @bind="Repo" placeholder="repo" />
+            </div>
+        }
+        @if (AdditionalFields is not null)
+        {
+            @AdditionalFields
+        }
+        @if (!string.IsNullOrEmpty(ValidationMessage))
+        {
+            <div class="settings-status @(ValidationSuccess ? "status-success" : "status-error")">@ValidationMessage</div>
+        }
+        <div class="form-buttons">
+            <button class="btn-save" @onclick="OnSave" disabled="@Saving">
+                @(Saving ? "Validating..." : "Save")
+            </button>
+            <button class="btn-cancel" @onclick="OnCancel">Cancel</button>
+        </div>
+    </div>
+    <div class="provider-help">
+        @if (HelpContent is not null)
+        {
+            @HelpContent
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public string SectionTitle { get; set; } = "";
+    [Parameter] public string DisplayNamePlaceholder { get; set; } = "";
+    [Parameter] public bool IsEditing { get; set; }
+    [Parameter] public bool ShowAppId { get; set; }
+
+    [Parameter] public string ProviderType { get; set; } = "GitHub";
+    [Parameter] public EventCallback<string> ProviderTypeChanged { get; set; }
+    [Parameter] public string DisplayName { get; set; } = "";
+    [Parameter] public EventCallback<string> DisplayNameChanged { get; set; }
+    [Parameter] public string ApiUrl { get; set; } = "https://api.github.com";
+    [Parameter] public EventCallback<string> ApiUrlChanged { get; set; }
+    [Parameter] public string ClientId { get; set; } = "";
+    [Parameter] public EventCallback<string> ClientIdChanged { get; set; }
+    [Parameter] public string AppId { get; set; } = "";
+    [Parameter] public EventCallback<string> AppIdChanged { get; set; }
+    [Parameter] public string InstallationId { get; set; } = "";
+    [Parameter] public EventCallback<string> InstallationIdChanged { get; set; }
+    [Parameter] public string PrivateKeyBase64 { get; set; } = "";
+    [Parameter] public EventCallback<string> PrivateKeyBase64Changed { get; set; }
+    [Parameter] public string Owner { get; set; } = "";
+    [Parameter] public EventCallback<string> OwnerChanged { get; set; }
+    [Parameter] public string Repo { get; set; } = "";
+    [Parameter] public EventCallback<string> RepoChanged { get; set; }
+
+    [Parameter] public List<(string FullName, string Owner, string Name)> AvailableRepos { get; set; } = new();
+    [Parameter] public string SelectedRepo { get; set; } = "";
+    [Parameter] public EventCallback<string> SelectedRepoChanged { get; set; }
+    [Parameter] public bool LoadingRepos { get; set; }
+
+    [Parameter] public string? ValidationMessage { get; set; }
+    [Parameter] public bool ValidationSuccess { get; set; }
+    [Parameter] public bool Saving { get; set; }
+
+    [Parameter] public EventCallback OnSave { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+    [Parameter] public EventCallback OnFetchRepos { get; set; }
+
+    [Parameter] public RenderFragment? AdditionalFields { get; set; }
+    [Parameter] public RenderFragment? HelpContent { get; set; }
+
+    private async Task OnKeyFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file is null) return;
+        const int maxSize = 32 * 1024;
+        using var stream = file.OpenReadStream(maxSize);
+        using var reader = new StreamReader(stream);
+        var pemContent = await reader.ReadToEndAsync();
+        var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(pemContent));
+        PrivateKeyBase64 = base64;
+        await PrivateKeyBase64Changed.InvokeAsync(base64);
+    }
+}

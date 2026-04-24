@@ -9,58 +9,28 @@ namespace KiroWebUI.Pipeline.Providers;
 /// Supports both static token authentication (backward compatible) and
 /// dynamic token provider delegate (for GitHub App auth).
 /// </summary>
-public class GitHubIssueProvider : IIssueProvider
+public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
 {
-    private readonly GitHubClientProvider _clientProvider;
-    private readonly string _owner;
-    private readonly string _repo;
-
     public IssueProviderType ProviderType => IssueProviderType.GitHub;
 
     /// <summary>
     /// Creates a provider with a static token (backward compatible).
     /// </summary>
     public GitHubIssueProvider(string apiUrl, string token, string owner, string repo)
-    {
-        ArgumentNullException.ThrowIfNull(apiUrl);
-        ArgumentNullException.ThrowIfNull(token);
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(repo);
-
-        _clientProvider = new GitHubClientProvider(apiUrl, token);
-        _owner = owner;
-        _repo = repo;
-    }
+        : base(apiUrl, token, owner, repo) { }
 
     /// <summary>
     /// Creates a provider with a token provider delegate (for GitHub App auth).
     /// The delegate is called before each API call to obtain a fresh token.
     /// </summary>
     public GitHubIssueProvider(string apiUrl, Func<CancellationToken, Task<string>> tokenProvider, string owner, string repo)
-    {
-        ArgumentNullException.ThrowIfNull(apiUrl);
-        ArgumentNullException.ThrowIfNull(tokenProvider);
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(repo);
-
-        _clientProvider = new GitHubClientProvider(apiUrl, tokenProvider);
-        _owner = owner;
-        _repo = repo;
-    }
+        : base(apiUrl, tokenProvider, owner, repo) { }
 
     /// <summary>
     /// Internal constructor for testing with a mock IGitHubClient.
     /// </summary>
     internal GitHubIssueProvider(IGitHubClient client, string owner, string repo)
-    {
-        ArgumentNullException.ThrowIfNull(client);
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(repo);
-
-        _clientProvider = new GitHubClientProvider(client);
-        _owner = owner;
-        _repo = repo;
-    }
+        : base(client, owner, repo) { }
 
     public async Task<IssueDetail> GetIssueAsync(string identifier, CancellationToken ct)
     {
@@ -70,7 +40,7 @@ public class GitHubIssueProvider : IIssueProvider
             throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
 
         var client = await GetClientAsync(ct);
-        var issue = await client.Issue.Get(_owner, _repo, issueNumber);
+        var issue = await client.Issue.Get(Owner, Repo, issueNumber);
         return MapToIssueDetail(issue);
     }
 
@@ -100,7 +70,7 @@ public class GitHubIssueProvider : IIssueProvider
         };
 
         var client = await GetClientAsync(ct);
-        var issues = await client.Issue.GetAllForRepository(_owner, _repo, request, apiOptions);
+        var issues = await client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions);
 
         var items = issues
             .Where(i => i.PullRequest == null)
@@ -125,9 +95,6 @@ public class GitHubIssueProvider : IIssueProvider
     public Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize, CancellationToken ct)
         => ListOpenIssuesAsync(page, pageSize, labels: null, ct);
 
-    private Task<IGitHubClient> GetClientAsync(CancellationToken ct)
-        => _clientProvider.GetClientAsync(ct);
-
     private static IssueDetail MapToIssueDetail(Issue issue)
     {
         return new IssueDetail
@@ -149,7 +116,7 @@ public class GitHubIssueProvider : IIssueProvider
             throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
 
         var client = await GetClientAsync(ct);
-        await client.Issue.Comment.Create(_owner, _repo, issueNumber, body);
+        await client.Issue.Comment.Create(Owner, Repo, issueNumber, body);
     }
 
     public async Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct)
@@ -165,7 +132,7 @@ public class GitHubIssueProvider : IIssueProvider
             throw new ArgumentException($"Invalid comment identifier: '{commentId}'. Expected a numeric comment ID.", nameof(commentId));
 
         var client = await GetClientAsync(ct);
-        await client.Issue.Comment.Update(_owner, _repo, commentIdParsed, body);
+        await client.Issue.Comment.Update(Owner, Repo, commentIdParsed, body);
     }
 
     public async Task<IReadOnlyList<Models.IssueComment>> ListCommentsAsync(string identifier, CancellationToken ct)
@@ -176,7 +143,7 @@ public class GitHubIssueProvider : IIssueProvider
             throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
 
         var client = await GetClientAsync(ct);
-        var comments = await client.Issue.Comment.GetAllForIssue(_owner, _repo, issueNumber);
+        var comments = await client.Issue.Comment.GetAllForIssue(Owner, Repo, issueNumber);
 
         return comments
             .Select(c => new Models.IssueComment
@@ -200,7 +167,7 @@ public class GitHubIssueProvider : IIssueProvider
             throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
 
         var client = await GetClientAsync(ct);
-        await client.Issue.Labels.AddToIssue(_owner, _repo, issueNumber, labels.ToArray());
+        await client.Issue.Labels.AddToIssue(Owner, Repo, issueNumber, labels.ToArray());
     }
 
     /// <inheritdoc />
@@ -215,7 +182,7 @@ public class GitHubIssueProvider : IIssueProvider
         var client = await GetClientAsync(ct);
         try
         {
-            await client.Issue.Labels.RemoveFromIssue(_owner, _repo, issueNumber, label);
+            await client.Issue.Labels.RemoveFromIssue(Owner, Repo, issueNumber, label);
         }
         catch (NotFoundException)
         {
@@ -227,7 +194,7 @@ public class GitHubIssueProvider : IIssueProvider
     public async Task<bool> HasAgentLabelsAsync(CancellationToken ct)
     {
         var client = await GetClientAsync(ct);
-        var repoLabels = await client.Issue.Labels.GetAllForRepository(_owner, _repo);
+        var repoLabels = await client.Issue.Labels.GetAllForRepository(Owner, Repo);
         var repoLabelNames = repoLabels.Select(l => l.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return AgentLabels.All.All(name => repoLabelNames.Contains(name));
     }
@@ -239,7 +206,7 @@ public class GitHubIssueProvider : IIssueProvider
         {
             try
             {
-                await client.Issue.Labels.Create(_owner, _repo, new NewLabel(name, color));
+                await client.Issue.Labels.Create(Owner, Repo, new NewLabel(name, color));
             }
             catch (ApiValidationException)
             {
@@ -257,21 +224,7 @@ public class GitHubIssueProvider : IIssueProvider
             throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
 
         var client = await GetClientAsync(ct);
-        await client.Issue.Update(_owner, _repo, issueNumber, new IssueUpdate { State = ItemState.Closed });
-    }
-
-    /// <inheritdoc />
-    public async Task ValidateAsync(CancellationToken ct)
-    {
-        var client = await GetClientAsync(ct);
-        await client.Repository.Get(_owner, _repo);
-    }
-
-    /// <inheritdoc />
-    public ValueTask DisposeAsync()
-    {
-        GC.SuppressFinalize(this);
-        return ValueTask.CompletedTask;
+        await client.Issue.Update(Owner, Repo, issueNumber, new IssueUpdate { State = ItemState.Closed });
     }
 
     private static IssueSummary MapToIssueSummary(Issue issue)

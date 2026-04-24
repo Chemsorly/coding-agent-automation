@@ -1,7 +1,8 @@
 using LibGit2Sharp;
 using Octokit;
 using KiroWebUI.Pipeline.Interfaces;
-using KiroWebUI.Pipeline.Models;using Signature = LibGit2Sharp.Signature;
+using KiroWebUI.Pipeline.Models;
+using Signature = LibGit2Sharp.Signature;
 using Repository = LibGit2Sharp.Repository;
 
 namespace KiroWebUI.Pipeline.Providers;
@@ -11,11 +12,8 @@ namespace KiroWebUI.Pipeline.Providers;
 /// Supports both static token authentication (backward compatible) and
 /// dynamic token provider delegate (for GitHub App auth).
 /// </summary>
-public class GitHubRepositoryProvider : IRepositoryProvider
+public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
 {
-    private readonly GitHubClientProvider _clientProvider;
-    private readonly string _owner;
-    private readonly string _repo;
     private readonly string _baseBranch;
 
     static GitHubRepositoryProvider()
@@ -27,28 +25,22 @@ public class GitHubRepositoryProvider : IRepositoryProvider
         //      https://stackoverflow.com/questions/76366963
         GlobalSettings.SetOwnerValidation(false);
     }
+
     public RepositoryProviderType ProviderType => RepositoryProviderType.GitHub;
 
     /// <inheritdoc />
     public string BaseBranch => _baseBranch;
 
     /// <inheritdoc />
-    public string RepositoryFullName => $"{_owner}/{_repo}";
+    public string RepositoryFullName => $"{Owner}/{Repo}";
 
     /// <summary>
     /// Creates a provider with a static token (backward compatible).
     /// </summary>
     public GitHubRepositoryProvider(string apiUrl, string token, string owner, string repo, string baseBranch)
+        : base(apiUrl, token, owner, repo)
     {
-        ArgumentNullException.ThrowIfNull(apiUrl);
-        ArgumentNullException.ThrowIfNull(token);
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(baseBranch);
-
-        _clientProvider = new GitHubClientProvider(apiUrl, token);
-        _owner = owner;
-        _repo = repo;
         _baseBranch = baseBranch;
     }
 
@@ -57,16 +49,9 @@ public class GitHubRepositoryProvider : IRepositoryProvider
     /// The delegate is called before each API call to obtain a fresh token.
     /// </summary>
     public GitHubRepositoryProvider(string apiUrl, Func<CancellationToken, Task<string>> tokenProvider, string owner, string repo, string baseBranch)
+        : base(apiUrl, tokenProvider, owner, repo)
     {
-        ArgumentNullException.ThrowIfNull(apiUrl);
-        ArgumentNullException.ThrowIfNull(tokenProvider);
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(baseBranch);
-
-        _clientProvider = new GitHubClientProvider(apiUrl, tokenProvider);
-        _owner = owner;
-        _repo = repo;
         _baseBranch = baseBranch;
     }
 
@@ -74,16 +59,9 @@ public class GitHubRepositoryProvider : IRepositoryProvider
     /// Internal constructor for testing with a mock IGitHubClient.
     /// </summary>
     internal GitHubRepositoryProvider(IGitHubClient gitHubClient, string token, string owner, string repo, string baseBranch)
+        : base(gitHubClient, token, owner, repo)
     {
-        ArgumentNullException.ThrowIfNull(gitHubClient);
-        ArgumentNullException.ThrowIfNull(token);
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(baseBranch);
-
-        _clientProvider = new GitHubClientProvider(gitHubClient, token);
-        _owner = owner;
-        _repo = repo;
         _baseBranch = baseBranch;
     }
 
@@ -96,11 +74,11 @@ public class GitHubRepositoryProvider : IRepositoryProvider
             var token = await GetTokenAsync(ct);
 
             // Derive clone URL: api.github.com → github.com, or GHE api base → GHE base
-            var cloneBaseUrl = (_clientProvider.ApiUrl ?? string.Empty).Replace("api.github.com", "github.com", StringComparison.OrdinalIgnoreCase);
+            var cloneBaseUrl = (ApiUrl ?? string.Empty).Replace("api.github.com", "github.com", StringComparison.OrdinalIgnoreCase);
             // For GHE: https://github.example.com/api/v3 → https://github.example.com
             if (cloneBaseUrl.EndsWith("/api/v3", StringComparison.OrdinalIgnoreCase))
                 cloneBaseUrl = cloneBaseUrl[..^"/api/v3".Length];
-            var cloneUrl = $"{cloneBaseUrl.TrimEnd('/')}/{_owner}/{_repo}.git";
+            var cloneUrl = $"{cloneBaseUrl.TrimEnd('/')}/{Owner}/{Repo}.git";
             var options = new CloneOptions
             {
                 BranchName = _baseBranch,
@@ -297,7 +275,7 @@ public class GitHubRepositoryProvider : IRepositoryProvider
             Draft = prInfo.IsDraft
         };
 
-        var pr = await client.PullRequest.Create(_owner, _repo, newPr);
+        var pr = await client.PullRequest.Create(Owner, Repo, newPr);
         return pr.HtmlUrl;
     }
 
@@ -412,31 +390,4 @@ public class GitHubRepositoryProvider : IRepositoryProvider
         ChangeKind.Renamed => "Renamed",
         _ => "Modified"
     };
-
-    /// <inheritdoc />
-    public async Task ValidateAsync(CancellationToken ct)
-    {
-        var client = await GetClientAsync(ct);
-        await client.Repository.Get(_owner, _repo);
-    }
-
-    /// <inheritdoc />
-    public ValueTask DisposeAsync()
-    {
-        GC.SuppressFinalize(this);
-        return ValueTask.CompletedTask;
-    }
-
-    /// <summary>
-    /// Returns a current token, either from the static field or by calling the token provider.
-    /// </summary>
-    private Task<string> GetTokenAsync(CancellationToken ct)
-        => _clientProvider.GetTokenAsync(ct);
-
-    /// <summary>
-    /// Returns a GitHubClient configured with a current token.
-    /// </summary>
-    private Task<IGitHubClient> GetClientAsync(CancellationToken ct)
-        => _clientProvider.GetClientAsync(ct);
-
 }

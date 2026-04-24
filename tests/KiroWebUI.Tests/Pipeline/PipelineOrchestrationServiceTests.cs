@@ -721,8 +721,8 @@ public class PipelineOrchestrationServiceTests
             File.WriteAllText(Path.Combine(runsDir, $"{expiredRunId}.json"), System.Text.Json.JsonSerializer.Serialize(new PipelineRunSummary { RunId = expiredRunId, IssueIdentifier = "1", IssueTitle = "Expired", FinalStep = PipelineStep.Failed, StartedAt = DateTime.UtcNow.AddDays(-10), CompletedAt = DateTime.UtcNow.AddDays(-10) }, jsonOptions));
             File.WriteAllText(Path.Combine(runsDir, $"{recentRunId}.json"), System.Text.Json.JsonSerializer.Serialize(new PipelineRunSummary { RunId = recentRunId, IssueIdentifier = "2", IssueTitle = "Recent", FinalStep = PipelineStep.Failed, StartedAt = DateTime.UtcNow.AddDays(-1), CompletedAt = DateTime.UtcNow.AddDays(-1) }, jsonOptions));
 
-            var service = new PipelineOrchestrationService(_mockConfigStore.Object, _mockFactory.Object, new IssueDescriptionParser(), _mockValidator.Object, new CiLogWriter(_mockLogger.Object), _mockLogger.Object, runsDirectory: runsDir);
-            service.CleanupExpiredWorkspaces(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase, FailedWorkspaceRetentionDays = 7 });
+            var historyService = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
+            historyService.CleanupExpiredWorkspaces(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase, FailedWorkspaceRetentionDays = 7 });
 
             Directory.Exists(Path.Combine(workspaceBase, expiredRunId)).Should().BeFalse();
             Directory.Exists(Path.Combine(workspaceBase, recentRunId)).Should().BeTrue();
@@ -743,8 +743,8 @@ public class PipelineOrchestrationServiceTests
             var jsonOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
             File.WriteAllText(Path.Combine(runsDir, $"{oldRunId}.json"), System.Text.Json.JsonSerializer.Serialize(new PipelineRunSummary { RunId = oldRunId, IssueIdentifier = "1", IssueTitle = "Old", FinalStep = PipelineStep.Failed, StartedAt = DateTime.UtcNow.AddDays(-100), CompletedAt = DateTime.UtcNow.AddDays(-100) }, jsonOptions));
 
-            var service = new PipelineOrchestrationService(_mockConfigStore.Object, _mockFactory.Object, new IssueDescriptionParser(), _mockValidator.Object, new CiLogWriter(_mockLogger.Object), _mockLogger.Object, runsDirectory: runsDir);
-            service.CleanupExpiredWorkspaces(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase, FailedWorkspaceRetentionDays = -1 });
+            var historyService = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
+            historyService.CleanupExpiredWorkspaces(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase, FailedWorkspaceRetentionDays = -1 });
 
             Directory.Exists(Path.Combine(workspaceBase, oldRunId)).Should().BeTrue();
         }
@@ -764,8 +764,8 @@ public class PipelineOrchestrationServiceTests
             var jsonOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
             File.WriteAllText(Path.Combine(runsDir, $"{runId}.json"), System.Text.Json.JsonSerializer.Serialize(new PipelineRunSummary { RunId = runId, IssueIdentifier = "1", IssueTitle = "Recent", FinalStep = PipelineStep.Failed, StartedAt = DateTime.UtcNow.AddSeconds(-5), CompletedAt = DateTime.UtcNow.AddSeconds(-1) }, jsonOptions));
 
-            var service = new PipelineOrchestrationService(_mockConfigStore.Object, _mockFactory.Object, new IssueDescriptionParser(), _mockValidator.Object, new CiLogWriter(_mockLogger.Object), _mockLogger.Object, runsDirectory: runsDir);
-            service.CleanupExpiredWorkspaces(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase, FailedWorkspaceRetentionDays = 0 });
+            var historyService = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
+            historyService.CleanupExpiredWorkspaces(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase, FailedWorkspaceRetentionDays = 0 });
 
             Directory.Exists(Path.Combine(workspaceBase, runId)).Should().BeFalse();
         }
@@ -785,8 +785,8 @@ public class PipelineOrchestrationServiceTests
             var jsonOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
             File.WriteAllText(Path.Combine(runsDir, $"{runId}.json"), System.Text.Json.JsonSerializer.Serialize(new PipelineRunSummary { RunId = runId, IssueIdentifier = "1", IssueTitle = "Cancelled", FinalStep = PipelineStep.Cancelled, StartedAt = DateTime.UtcNow.AddDays(-10), CompletedAt = DateTime.UtcNow.AddDays(-10) }, jsonOptions));
 
-            var service = new PipelineOrchestrationService(_mockConfigStore.Object, _mockFactory.Object, new IssueDescriptionParser(), _mockValidator.Object, new CiLogWriter(_mockLogger.Object), _mockLogger.Object, runsDirectory: runsDir);
-            service.CleanupExpiredWorkspaces(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase, FailedWorkspaceRetentionDays = 7 });
+            var historyService = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
+            historyService.CleanupExpiredWorkspaces(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase, FailedWorkspaceRetentionDays = 7 });
 
             Directory.Exists(Path.Combine(workspaceBase, runId)).Should().BeFalse();
         }
