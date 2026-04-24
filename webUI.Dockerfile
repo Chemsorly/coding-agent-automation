@@ -49,6 +49,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf \
     /tmp/kirocli/kirocli/install.sh --no-confirm && \
     rm -rf /tmp/kirocli /tmp/kirocli.zip
 
+# Install uv (Python package manager) for MCP server support
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
 WORKDIR /app
 
 # Pre-create config directory with correct ownership (before volume mount)
