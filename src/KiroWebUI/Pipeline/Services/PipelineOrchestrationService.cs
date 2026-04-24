@@ -364,6 +364,36 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 
             if (!isDraft && _activeBrainProvider != null && !_activeConfig!.BrainReadOnly)
             {
+                // Reflection step: ask the agent to review the entire run and enrich .brain/ knowledge
+                TransitionTo(run, PipelineStep.ReflectingOnRun);
+                try
+                {
+                    var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
+                        run, _activeIssue?.Title, run.RepositoryName?.Split('/').LastOrDefault());
+                    _logger.Debug("Pipeline {RunId} reflection prompt:\n{Prompt}", run.RunId, reflectionPrompt);
+
+                    await _activeAgentProvider!.ExecuteAsync(
+                        new AgentRequest
+                        {
+                            Prompt = reflectionPrompt,
+                            WorkspacePath = run.WorkspacePath!,
+                            Timeout = _activeConfig.AgentTimeout,
+                            UseResume = true
+                        },
+                        ct,
+                        line =>
+                        {
+                            run.OutputLines.Enqueue(line);
+                            OnOutputLine?.Invoke(line);
+                        });
+
+                    _logger.Information("Pipeline {RunId} reflection step completed", run.RunId);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex, "Pipeline {RunId} reflection step failed, continuing with brain sync", run.RunId);
+                }
+
                 TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
                 try { await _brainSync.SyncPostRunAsync(run, _activeBrainProvider, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException)

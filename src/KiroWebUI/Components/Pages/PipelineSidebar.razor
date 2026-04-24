@@ -245,6 +245,7 @@
         PipelineStep.ReviewingCode,
         PipelineStep.RunningQualityGates,
         PipelineStep.CreatingPullRequest,
+        PipelineStep.ReflectingOnRun,
         PipelineStep.SyncingBrainRepoPostRun
     };
 
@@ -317,6 +318,7 @@
         PipelineStep.ReviewingCode => "Reviewing Code",
         PipelineStep.RunningQualityGates => "Running Quality Gates",
         PipelineStep.CreatingPullRequest => "Creating Pull Request",
+        PipelineStep.ReflectingOnRun => "Reflecting on Run",
         PipelineStep.SyncingBrainRepoPostRun => "Saving Brain Knowledge",
         _ => step.ToString()
     };
@@ -343,6 +345,7 @@
         PipelineStep.ReviewingCode => Run.CodeReviewIterationsCompleted > 0,
         PipelineStep.RunningQualityGates => Run.LatestQualityReport != null,
         PipelineStep.CreatingPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
+        PipelineStep.ReflectingOnRun => Run.BrainProviderConfigId != null,
         PipelineStep.SyncingBrainRepoPostRun => Run.BrainProviderConfigId != null,
         _ => false
     };
