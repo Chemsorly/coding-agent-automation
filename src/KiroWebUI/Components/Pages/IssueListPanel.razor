@@ -154,15 +154,14 @@
             ? _issues
             : _issues.Where(i => i.Labels.Any(l => _selectedLabels.Contains(l))).ToList();
 
-    protected override void OnInitialized()
+    protected override async Task OnParametersSetAsync()
     {
-        _selectedIssueProviderId = InitialIssueProviderId;
-    }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (firstRender && !string.IsNullOrEmpty(_selectedIssueProviderId))
+        if (_selectedIssueProviderId != InitialIssueProviderId
+            && !string.IsNullOrEmpty(InitialIssueProviderId))
+        {
+            _selectedIssueProviderId = InitialIssueProviderId;
             await OnIssueProviderChanged();
+        }
     }
 
     private void ToggleLabel(string label)
