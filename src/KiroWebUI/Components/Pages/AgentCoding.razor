@@ -13,20 +13,6 @@
 <div class="agent-coding-page">
     <header class="agent-header">
         <h1>Agent Coding</h1>
-        @if (LoopService.IsLoopActive)
-        {
-            <span class="step-badge step-loop-active" title="@LoopService.StatusMessage">🔄 Loop</span>
-        }
-        @if (PipelineService.ActiveRun is not null)
-        {
-            <span class="step-badge step-@PipelineService.ActiveRun.CurrentStep.ToString().ToLowerInvariant()">
-                @PipelineService.ActiveRun.CurrentStep
-            </span>
-            @if (PipelineService.ActiveRun.InitiatedBy == "loop")
-            {
-                <span class="step-badge step-loop-badge">loop</span>
-            }
-        }
     </header>
 
     @if (LoopService.IsLoopActive)
@@ -118,6 +104,7 @@
                     or PipelineStep.AnalyzingCode or PipelineStep.GeneratingCode
                     or PipelineStep.ReviewingCode
                     or PipelineStep.RunningQualityGates
+                    or PipelineStep.ReflectingOnRun
                     or PipelineStep.CreatingPullRequest or PipelineStep.Created
                     or PipelineStep.PostingAnalysis
                     or PipelineStep.SyncingBrainRepoPostRun)

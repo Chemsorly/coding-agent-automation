@@ -248,6 +248,70 @@ public static class PromptBuilder
     }
 
     /// <summary>
+    /// Builds a reflection prompt that asks the agent to review the entire run and
+    /// update .brain/ knowledge files with lessons learned, including failures and
+    /// review findings. Called after quality gates pass but before brain post-run sync.
+    /// </summary>
+    public static string BuildReflectionPrompt(
+        PipelineRun run,
+        string? issueTitle = null,
+        string? projectName = null)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+
+        var sb = new StringBuilder();
+        sb.AppendLine("## Reflect on This Run and Update Brain Knowledge");
+        sb.AppendLine();
+        sb.AppendLine("The implementation is complete and quality gates have passed.");
+        sb.AppendLine("Now it's time to reflect on this run and update the brain repository.");
+        sb.AppendLine("Read `.brain/AGENTS.md` for instructions on what to write and where.");
+        sb.AppendLine();
+
+        // Run context — data the agent can't get elsewhere
+        sb.AppendLine("### Run Context");
+        sb.AppendLine($"- **Run ID:** {run.RunId}");
+        sb.AppendLine($"- **Date:** {DateTime.UtcNow:yyyy-MM-dd}");
+        sb.AppendLine($"- **Issue:** #{run.IssueIdentifier}" + (!string.IsNullOrWhiteSpace(issueTitle) ? $" — {issueTitle}" : ""));
+        if (!string.IsNullOrWhiteSpace(projectName))
+            sb.AppendLine($"- **Project:** {projectName}");
+        sb.AppendLine($"- **Outcome:** success");
+        if (run.RetryCount > 0)
+            sb.AppendLine($"- **Quality gate retries:** {run.RetryCount}");
+        if (run.CodeReviewIterationsCompleted > 0)
+            sb.AppendLine($"- **Code review iterations:** {run.CodeReviewIterationsCompleted}");
+        if (run.CodeReviewCriticalCount > 0 || run.CodeReviewWarningCount > 0)
+            sb.AppendLine($"- **Review findings:** {run.CodeReviewCriticalCount} critical, {run.CodeReviewWarningCount} warnings, {run.CodeReviewSuggestionCount} suggestions");
+
+        // Retry errors
+        var retryErrors = run.RetryErrors.ToArray();
+        if (retryErrors.Length > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("### Quality Gate Failures (before passing)");
+            foreach (var error in retryErrors)
+                sb.AppendLine($"- {error}");
+        }
+
+        // Review agent findings
+        if (run.CodeReviewAgentFindings.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("### Code Review Findings");
+            foreach (var (agent, findings) in run.CodeReviewAgentFindings)
+            {
+                sb.AppendLine($"**{agent}:**");
+                sb.AppendLine(findings.Length > 2000 ? findings[..2000] + "\n[truncated]" : findings);
+            }
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("Do NOT commit these changes — the orchestrator handles git operations.");
+        sb.AppendLine("Do NOT modify any source code files — only update `.brain/` files.");
+
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
     /// Builds the brain write instructions section for the implementation prompt.
     /// Returns empty string when brain context is not available or when BrainReadOnly is true.
     /// </summary>
