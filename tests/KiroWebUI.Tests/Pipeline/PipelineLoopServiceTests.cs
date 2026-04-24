@@ -535,9 +535,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopMaxConsecutivePollFailures = 20,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(500)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(300)
             });
 
         var svc = CreateService();
@@ -546,8 +546,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
-        // 200ms + 400ms + 500ms(capped) + 500ms(capped) = ~1600ms for 4 calls
-        await Task.Delay(3000);
+        // 100ms + 200ms + 300ms(capped) + 300ms(capped) = ~900ms for 4 calls; wait 5s for CI headroom
+        await Task.Delay(5000);
 
         svc.StopLoop();
         await Task.Delay(500);
