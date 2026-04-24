@@ -53,7 +53,9 @@ public static class TestPipelineConfig
         CleanupSuccessfulWorkspaces = true,
         FailedWorkspaceRetentionDays = 7,
         ClosedLoopPollInterval = TimeSpan.FromSeconds(60),
-        ClosedLoopMaxRunsPerCycle = 0
+        ClosedLoopMaxRunsPerCycle = 0,
+        ClosedLoopMaxConsecutivePollFailures = 5,
+        ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15)
     };
 
     /// <summary>
@@ -86,6 +88,8 @@ public static class TestPipelineConfig
         CleanupSuccessfulWorkspaces = true,
         FailedWorkspaceRetentionDays = 7,
         ClosedLoopPollInterval = TimeSpan.FromSeconds(60),
-        ClosedLoopMaxRunsPerCycle = 0
+        ClosedLoopMaxRunsPerCycle = 0,
+        ClosedLoopMaxConsecutivePollFailures = 5,
+        ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15)
     };
 }

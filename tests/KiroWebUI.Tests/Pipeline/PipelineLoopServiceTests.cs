@@ -294,7 +294,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopMaxConsecutivePollFailures = 5,
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(2)
             });
 
         var svc = CreateService();
@@ -303,12 +305,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
-        // Wait for at least 2 poll cycles
-        await Task.Delay(1500);
+        // Wait for at least 2 poll cycles (first fails with backoff, second succeeds)
+        await Task.Delay(2000);
 
         // Loop should still be active (didn't crash)
         Assert.True(svc.IsLoopActive);
         Assert.True(callCount >= 2, $"Expected at least 2 poll attempts, got {callCount}");
+        // After success, consecutive failures should reset
+        Assert.Equal(0, svc.ConsecutivePollFailures);
 
         svc.StopLoop();
         await Task.Delay(500);
@@ -448,6 +452,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         var config = new PipelineConfiguration();
         Assert.Equal(TimeSpan.FromSeconds(60), config.ClosedLoopPollInterval);
         Assert.Equal(0, config.ClosedLoopMaxRunsPerCycle);
+        Assert.Equal(5, config.ClosedLoopMaxConsecutivePollFailures);
+        Assert.Equal(TimeSpan.FromMinutes(15), config.ClosedLoopMaxBackoffInterval);
     }
 
     [Fact]
@@ -456,11 +462,449 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         var config = new PipelineConfiguration
         {
             ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
-            ClosedLoopMaxRunsPerCycle = 5
+            ClosedLoopMaxRunsPerCycle = 5,
+            ClosedLoopMaxConsecutivePollFailures = 10,
+            ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(30)
         };
         var copy = config.WithLastUsedProviderIds(new Dictionary<string, string>());
         Assert.Equal(TimeSpan.FromSeconds(120), copy.ClosedLoopPollInterval);
         Assert.Equal(5, copy.ClosedLoopMaxRunsPerCycle);
+        Assert.Equal(10, copy.ClosedLoopMaxConsecutivePollFailures);
+        Assert.Equal(TimeSpan.FromMinutes(30), copy.ClosedLoopMaxBackoffInterval);
+    }
+
+    [Fact]
+    public async Task Loop_BackoffProgression_IncreasesDelayOnConsecutiveFailures()
+    {
+        var callTimestamps = new List<DateTime>();
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns<int, int, IReadOnlyList<string>?, CancellationToken>((_, _, _, _) =>
+            {
+                callTimestamps.Add(DateTime.UtcNow);
+                throw new HttpRequestException("Network error");
+            });
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopMaxConsecutivePollFailures = 10, // High threshold so circuit breaker doesn't trip
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(10)
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+
+        // Wait for 3 failures: delays should be ~200ms, ~400ms, ~800ms
+        await Task.Delay(3000);
+
+        svc.StopLoop();
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+
+        Assert.True(callTimestamps.Count >= 3, $"Expected at least 3 poll attempts, got {callTimestamps.Count}");
+        // Verify delays increase: gap between 2nd and 3rd should be larger than gap between 1st and 2nd
+        if (callTimestamps.Count >= 3)
+        {
+            var gap1 = (callTimestamps[1] - callTimestamps[0]).TotalMilliseconds;
+            var gap2 = (callTimestamps[2] - callTimestamps[1]).TotalMilliseconds;
+            Assert.True(gap2 > gap1, $"Expected increasing delays: gap1={gap1:F0}ms, gap2={gap2:F0}ms");
+        }
+    }
+
+    [Fact]
+    public async Task Loop_BackoffCap_NeverExceedsMaxBackoff()
+    {
+        var callCount = 0;
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns<int, int, IReadOnlyList<string>?, CancellationToken>((_, _, _, _) =>
+            {
+                callCount++;
+                throw new HttpRequestException("Network error");
+            });
+
+        // pollInterval=200ms, maxBackoff=500ms — after a few failures the backoff should cap
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopMaxConsecutivePollFailures = 20,
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(500)
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+
+        // 200ms + 400ms + 500ms(capped) + 500ms(capped) = ~1600ms for 4 calls
+        await Task.Delay(3000);
+
+        svc.StopLoop();
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+
+        // With cap at 500ms, we should get more calls than without cap
+        // Without cap: 200+400+800+1600 = 3000ms for 4 calls
+        // With cap: 200+400+500+500+500 = 2100ms for 5 calls
+        Assert.True(callCount >= 4, $"Expected at least 4 poll attempts with backoff cap, got {callCount}");
+    }
+
+    [Fact]
+    public async Task Loop_BackoffResetOnSuccess_ResetsToNormalInterval()
+    {
+        var callCount = 0;
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns<int, int, IReadOnlyList<string>?, CancellationToken>((_, _, _, _) =>
+            {
+                callCount++;
+                // Fail on calls 1-2, succeed on 3+
+                if (callCount <= 2)
+                    throw new HttpRequestException("Network error");
+                return Task.FromResult(new PagedResult<IssueSummary>
+                {
+                    Items = new List<IssueSummary>(),
+                    Page = 1, PageSize = 100, HasMore = false
+                });
+            });
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopMaxConsecutivePollFailures = 10,
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(5)
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+
+        // Wait for failures + recovery
+        await Task.Delay(2000);
+
+        // After success, consecutive failures should be reset
+        Assert.Equal(0, svc.ConsecutivePollFailures);
+        Assert.Null(svc.LastPollError);
+
+        svc.StopLoop();
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
+
+    [Fact]
+    public async Task Loop_CircuitBreakerTrips_AfterMaxConsecutiveFailures()
+    {
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Network error"));
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
+                ClosedLoopMaxConsecutivePollFailures = 3,
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+
+        // Wait for 3 failures: 100ms + 200ms + 200ms(capped) = ~500ms, then circuit breaks
+        await Task.Delay(2000);
+
+        Assert.True(svc.IsCircuitBroken);
+        Assert.Equal(3, svc.ConsecutivePollFailures);
+        Assert.Contains("paused", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("3 times", svc.StatusMessage);
+
+        svc.StopLoop();
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
+
+    [Fact]
+    public async Task Loop_CircuitBreakerResume_ResetsAndContinuesPolling()
+    {
+        var callCount = 0;
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns<int, int, IReadOnlyList<string>?, CancellationToken>((_, _, _, _) =>
+            {
+                callCount++;
+                // Fail first 3 (trip circuit breaker), then succeed after resume
+                if (callCount <= 3)
+                    throw new HttpRequestException("Network error");
+                return Task.FromResult(new PagedResult<IssueSummary>
+                {
+                    Items = new List<IssueSummary>(),
+                    Page = 1, PageSize = 100, HasMore = false
+                });
+            });
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
+                ClosedLoopMaxConsecutivePollFailures = 3,
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+
+        // Wait for circuit breaker to trip
+        await Task.Delay(2000);
+        Assert.True(svc.IsCircuitBroken);
+
+        // Resume the loop
+        svc.ResumeLoop();
+        Assert.False(svc.IsCircuitBroken);
+        Assert.Equal(0, svc.ConsecutivePollFailures);
+
+        // Wait for successful poll after resume
+        await Task.Delay(1000);
+
+        Assert.True(svc.IsLoopActive);
+        Assert.False(svc.IsCircuitBroken);
+
+        svc.StopLoop();
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
+
+    [Fact]
+    public async Task Loop_CircuitBreakerStop_TerminatesLoop()
+    {
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Network error"));
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
+                ClosedLoopMaxConsecutivePollFailures = 3,
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+
+        // Wait for circuit breaker to trip
+        await Task.Delay(2000);
+        Assert.True(svc.IsCircuitBroken);
+
+        // Stop the loop while circuit breaker is active
+        svc.StopLoop();
+        await Task.Delay(1000);
+
+        Assert.False(svc.IsLoopActive);
+
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
+
+    [Fact]
+    public async Task Loop_RateLimitWaitsUntilReset_DoesNotIncrementFailures()
+    {
+        var callCount = 0;
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns<int, int, IReadOnlyList<string>?, CancellationToken>((_, _, _, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    throw new RateLimitExceededException(DateTimeOffset.UtcNow.AddMilliseconds(300));
+                return Task.FromResult(new PagedResult<IssueSummary>
+                {
+                    Items = new List<IssueSummary>(),
+                    Page = 1, PageSize = 100, HasMore = false
+                });
+            });
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopMaxConsecutivePollFailures = 3,
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(5)
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+
+        await Task.Delay(1500);
+
+        // Rate limit should NOT count as a failure
+        Assert.Equal(0, svc.ConsecutivePollFailures);
+        Assert.False(svc.IsCircuitBroken);
+        Assert.True(callCount >= 2, $"Expected at least 2 poll attempts, got {callCount}");
+
+        svc.StopLoop();
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
+
+    [Fact]
+    public async Task Loop_NormalRecoveryAfterTransientFailure()
+    {
+        var callCount = 0;
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns<int, int, IReadOnlyList<string>?, CancellationToken>((_, _, _, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    throw new HttpRequestException("Transient error");
+                return Task.FromResult(new PagedResult<IssueSummary>
+                {
+                    Items = new List<IssueSummary>(),
+                    Page = 1, PageSize = 100, HasMore = false
+                });
+            });
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopMaxConsecutivePollFailures = 5,
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(2)
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+
+        await Task.Delay(1500);
+
+        Assert.True(svc.IsLoopActive);
+        Assert.Equal(0, svc.ConsecutivePollFailures);
+        Assert.Null(svc.LastPollError);
+        Assert.False(svc.IsCircuitBroken);
+
+        svc.StopLoop();
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
+
+    [Fact]
+    public async Task Loop_CircuitBreakerRespectsAppShutdown()
+    {
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Network error"));
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
+                ClosedLoopMaxConsecutivePollFailures = 3,
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+
+        // Wait for circuit breaker to trip
+        await Task.Delay(2000);
+        Assert.True(svc.IsCircuitBroken);
+
+        // Simulate app shutdown while paused on circuit breaker
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+
+        Assert.False(svc.IsLoopActive);
+    }
+
+    [Fact]
+    public async Task Loop_CustomMaxConsecutiveFailures_TripsAtConfiguredThreshold()
+    {
+        var callCount = 0;
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns<int, int, IReadOnlyList<string>?, CancellationToken>((_, _, _, _) =>
+            {
+                callCount++;
+                throw new HttpRequestException("Network error");
+            });
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
+                ClosedLoopMaxConsecutivePollFailures = 2,
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+
+        // Wait for 2 failures to trip circuit breaker
+        await Task.Delay(1500);
+
+        Assert.True(svc.IsCircuitBroken);
+        Assert.Equal(2, svc.ConsecutivePollFailures);
+
+        svc.StopLoop();
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
+
+    [Fact]
+    public void ResumeLoop_WhenNotBroken_IsNoop()
+    {
+        var svc = CreateService();
+        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.ResumeLoop(); // Should not throw
+        Assert.False(svc.IsCircuitBroken);
     }
 
     public async ValueTask DisposeAsync()

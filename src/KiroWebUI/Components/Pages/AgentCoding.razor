@@ -15,6 +15,23 @@
         <h1>Agent Coding</h1>
     </header>
 
+    @if (LoopService.IsLoopActive)
+    {
+        @* TODO: [RES-03] Add && !LoopService.IsCircuitBroken to avoid duplicate status message when circuit breaker trips (review finding #2) *@
+        <div class="settings-status status-info">@LoopService.StatusMessage</div>
+    }
+
+    @if (LoopService.IsCircuitBroken)
+    {
+        <div class="settings-status status-error">
+            @LoopService.StatusMessage
+            <span style="margin-left: 1rem;">
+                <button class="btn-save" @onclick="ResumeLoop" style="margin-right: 0.5rem;">Resume</button>
+                <button class="btn-revert" @onclick="StopLoop">Stop</button>
+            </span>
+        </div>
+    }
+
     @if (!string.IsNullOrEmpty(_errorMessage))
     {
         <div class="settings-status status-error">@_errorMessage</div>
@@ -345,6 +362,11 @@
     private void StopLoop()
     {
         LoopService.StopLoop();
+    }
+
+    private void ResumeLoop()
+    {
+        LoopService.ResumeLoop();
     }
 
     private async Task CancelPipeline()

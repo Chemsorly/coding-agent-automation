@@ -336,6 +336,40 @@ public class GitHubIssueProviderTests
         mockLabels.Verify(l => l.Create("owner", "repo", It.IsAny<NewLabel>()), Times.Exactly(4));
     }
 
+    [Fact]
+    public async Task ListOpenIssuesAsync_RateLimitException_WrapsAsCustomException()
+    {
+        var resetTime = DateTimeOffset.UtcNow.AddMinutes(5);
+        var resetUnix = resetTime.ToUnixTimeSeconds().ToString();
+        var headers = new Dictionary<string, string>
+        {
+            { "X-RateLimit-Limit", "5000" },
+            { "X-RateLimit-Remaining", "0" },
+            { "X-RateLimit-Reset", resetUnix }
+        };
+        var rateLimit = new RateLimit(5000, 0, resetTime.ToUnixTimeSeconds());
+        var apiInfo = new ApiInfo(new Dictionary<string, Uri>(), new List<string>(), new List<string>(),
+            string.Empty, rateLimit);
+        var response = new Mock<Octokit.IResponse>();
+        response.Setup(r => r.StatusCode).Returns(System.Net.HttpStatusCode.Forbidden);
+        response.Setup(r => r.Headers).Returns(headers);
+        response.Setup(r => r.Body).Returns("");
+        response.Setup(r => r.ContentType).Returns("application/json");
+        response.Setup(r => r.ApiInfo).Returns(apiInfo);
+
+        _mockIssues.Setup(i => i.GetAllForRepository("owner", "repo",
+                It.IsAny<RepositoryIssueRequest>(), It.IsAny<ApiOptions>()))
+            .ThrowsAsync(new Octokit.RateLimitExceededException(response.Object));
+
+        var act = () => _provider.ListOpenIssuesAsync(1, 10, CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<KiroWebUI.Pipeline.Models.RateLimitExceededException>();
+        ex.Which.ResetAt.Should().BeCloseTo(resetTime, TimeSpan.FromSeconds(2));
+        ex.Which.InnerException.Should().BeOfType<Octokit.RateLimitExceededException>();
+    }
+
+    // TODO: [RES-03] Add tests for AbuseException wrapping — both RetryAfterSeconds.HasValue and fallback branches are untested (review finding #5)
+
     private static Issue CreateOctokitIssue(int number, string title, string? body, string[] labels)
     {
         var labelObjects = labels.Select(name =>

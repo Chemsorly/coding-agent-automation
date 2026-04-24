@@ -11,6 +11,8 @@ namespace KiroWebUI.Pipeline.Providers;
 /// </summary>
 public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
 {
+    private static readonly TimeSpan DefaultRateLimitWait = TimeSpan.FromSeconds(60);
+
     public IssueProviderType ProviderType => IssueProviderType.GitHub;
 
     /// <summary>
@@ -70,7 +72,23 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         };
 
         var client = await GetClientAsync(ct);
-        var issues = await client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions);
+        IReadOnlyList<Issue> issues;
+        // TODO: [RES-03] Rate limit wrapping only covers ListOpenIssuesAsync — other API methods (GetIssueAsync, AddLabelsAsync, etc.) propagate raw Octokit exceptions (review finding #4)
+        try
+        {
+            issues = await client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions);
+        }
+        catch (Octokit.RateLimitExceededException ex)
+        {
+            throw new Models.RateLimitExceededException(ex.Reset, ex);
+        }
+        catch (AbuseException ex)
+        {
+            var resetAt = ex.RetryAfterSeconds.HasValue
+                ? DateTimeOffset.UtcNow.AddSeconds(ex.RetryAfterSeconds.Value)
+                : DateTimeOffset.UtcNow.Add(DefaultRateLimitWait);
+            throw new Models.RateLimitExceededException(resetAt, ex);
+        }
 
         var items = issues
             .Where(i => i.PullRequest == null)
