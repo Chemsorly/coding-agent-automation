@@ -26,13 +26,15 @@ RUN dotnet publish src/KiroWebUI/KiroWebUI.csproj -c Release -o /app/publish
 # Pinned to 10.0.200 feature band to match global.json (rollForward: latestPatch)
 FROM mcr.microsoft.com/dotnet/sdk:10.0.203 AS runtime
 
-# Install dependencies for Kiro CLI (curl, unzip, ca-certificates)
+# Install dependencies for Kiro CLI (curl, unzip, ca-certificates, Node.js for npx MCP servers)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
         unzip \
         ca-certificates \
         git \
+        nodejs \
+        npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Reuse existing ubuntu user (UID 1000) from the base image
@@ -51,6 +53,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf \
 
 # Install uv (Python package manager) for MCP server support
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Pre-cache MCP server packages so first run doesn't timeout downloading
+ENV PATH="/home/ubuntu/.npm-global/node_modules/.bin:${PATH}"
 
 WORKDIR /app
 

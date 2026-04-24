@@ -1,0 +1,64 @@
+{
+  "mcpServers": {
+    "context7": {
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp",
+      "disabled": false,
+      "autoApprove": [
+        "resolve-library-id",
+        "query-docs"
+      ]
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "disabled": false,
+      "autoApprove": [
+        "sequentialthinking"
+      ]
+    },
+    "web-search": {
+      "command": "uvx",
+      "args": ["duckduckgo-mcp-server"],
+      "disabled": false,
+      "autoApprove": [
+        "search",
+        "fetch_content"
+      ]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "disabled": false,
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": ""
+      },
+      "autoApprove": [
+        "search_code",
+        "get_file_contents",
+        "search_issues",
+        "list_issues",
+        "list_pull_requests",
+        "search_pull_requests",
+        "search_repositories",
+        "get_me",
+        "list_commits",
+        "get_commit",
+        "list_branches",
+        "list_tags"
+      ]
+    },
+    "reddit": {
+      "command": "uvx",
+      "args": ["reddit-no-auth-mcp-server"],
+      "disabled": false,
+      "autoApprove": [
+        "search_reddit",
+        "get_post_comments",
+        "get_reddit_post",
+        "get_subreddit_info",
+        "get_top_posts"
+      ]
+    }
+  }
+}

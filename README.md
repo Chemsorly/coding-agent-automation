@@ -235,7 +235,7 @@ The KiroWebUI application provides a web-based interface for the automated devel
 ```powershell
 docker build -f webUI.Dockerfile -t kiro-webui:latest .
 
-docker run -it --rm -p 5000:5000 -v ${PWD}/config/kiro-cli-data:/home/ubuntu/.local/share/kiro-cli -v "$env:USERPROFILE\.aws:/home/ubuntu/.aws" -v "$env:USERPROFILE\.kiro\settings:/home/ubuntu/.kiro/settings" -v ${PWD}/config/pipeline:/app/config/pipeline kiro-webui:latest 2>&1 | Tee-Object -FilePath .kiro/debug.log
+docker run -it --rm -p 5000:5000 -v ${PWD}/config/kiro-cli-data:/home/ubuntu/.local/share/kiro-cli -v "$env:USERPROFILE\.aws:/home/ubuntu/.aws" -v ${PWD}/config/kiro-settings:/home/ubuntu/.kiro/settings -v ${PWD}/config/pipeline:/app/config/pipeline kiro-webui:latest 2>&1 | Tee-Object -FilePath .kiro/debug.log
 
 
 ```
