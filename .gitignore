@@ -61,6 +61,10 @@ nunit-*.xml
 .kiro/*
 .brain/*
 
+# Test fixture build artifacts
+tests/**/Fixtures/**/bin/
+tests/**/Fixtures/**/obj/
+
 # Pipeline provider configs (contain tokens/credentials at runtime)
 config/pipeline/
 config/kiro-cli-data/
