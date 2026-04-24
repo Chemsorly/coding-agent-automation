@@ -201,6 +201,7 @@ public sealed class PipelineLoopService : BackgroundService
         var maxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
         var maxConsecutiveFailures = config.ClosedLoopMaxConsecutivePollFailures;
         var maxBackoff = config.ClosedLoopMaxBackoffInterval;
+        var maxPagesToFetch = config.ClosedLoopMaxPagesToFetch;
 
         // ct is linked to both stoppingToken and _loopCts — used for delays and polling.
         // StopLoop cancels _loopCts to break out of delays promptly.
@@ -217,7 +218,7 @@ public sealed class PipelineLoopService : BackgroundService
             List<IssueSummary> candidates;
             try
             {
-                candidates = await FetchAgentNextIssuesAsync(ct);
+                candidates = await FetchAgentNextIssuesAsync(maxPagesToFetch, ct);
                 // Success — reset backoff state
                 ConsecutivePollFailures = 0;
                 LastPollError = null;
@@ -290,11 +291,10 @@ public sealed class PipelineLoopService : BackgroundService
                 continue;
             }
 
-            // TODO: [UX-12b] Early-exit check only tests agent:error; should also check agent:needs-refinement (review finding #3)
-            // Check if all candidates have agent:error
-            if (candidates.All(c => c.Labels.Contains(AgentLabels.Error)))
+            // Check if all candidates have agent:error or agent:needs-refinement
+            if (candidates.All(c => c.Labels.Contains(AgentLabels.Error) || c.Labels.Contains(AgentLabels.NeedsRefinement)))
             {
-                StatusMessage = "🔄 Loop idle — all `agent:next` issues have errors. Polling every " + (int)pollInterval.TotalSeconds + "s.";
+                StatusMessage = "🔄 Loop idle — all `agent:next` issues have errors or need refinement. Polling every " + (int)pollInterval.TotalSeconds + "s.";
                 QueueCount = candidates.Count;
                 NotifyChange();
                 await DelayOrStop(pollInterval, ct);
@@ -368,8 +368,7 @@ public sealed class PipelineLoopService : BackgroundService
         }
     }
 
-    // TODO: [UX-12b] No upper bound on pages — could exhaust GitHub API rate limit with thousands of agent:next issues (review finding #8)
-    private async Task<List<IssueSummary>> FetchAgentNextIssuesAsync(CancellationToken ct)
+    private async Task<List<IssueSummary>> FetchAgentNextIssuesAsync(int maxPages, CancellationToken ct)
     {
         var result = new List<IssueSummary>();
         int page = 1;
@@ -381,6 +380,12 @@ public sealed class PipelineLoopService : BackgroundService
                 new[] { AgentLabels.Next }, ct);
             result.AddRange(pagedResult.Items);
             if (!pagedResult.HasMore) break;
+            if (page >= maxPages)
+            {
+                _logger.Warning("Reached max page limit ({MaxPages}) while fetching agent:next issues; {Count} issues fetched, more available",
+                    maxPages, result.Count);
+                break;
+            }
             page++;
         }
 

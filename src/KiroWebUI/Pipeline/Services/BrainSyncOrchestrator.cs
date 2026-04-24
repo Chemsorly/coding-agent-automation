@@ -8,7 +8,7 @@ namespace KiroWebUI.Pipeline.Services;
 /// change detection, validation, commit, and push. Extracted from
 /// PipelineOrchestrationService to reduce file size.
 /// </summary>
-public class BrainSyncOrchestrator
+internal class BrainSyncOrchestrator
 {
     private readonly BrainUpdateService _brainUpdateService;
     private readonly Serilog.ILogger _logger;

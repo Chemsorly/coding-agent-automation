@@ -8,7 +8,7 @@ namespace KiroWebUI.Pipeline.Services;
 /// build PR info, create PR, and file change stats. Extracted from
 /// PipelineOrchestrationService to reduce file size.
 /// </summary>
-public class PullRequestOrchestrator
+internal class PullRequestOrchestrator
 {
     private readonly Serilog.ILogger _logger;
 
