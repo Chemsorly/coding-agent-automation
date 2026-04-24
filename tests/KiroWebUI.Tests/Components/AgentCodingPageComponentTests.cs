@@ -265,4 +265,77 @@ public class AgentCodingPageComponentTests : BunitContext
 
     // TODO: [UX-12a] Add test for pagination re-filter scenario: user clears agent:next filter,
     // navigates to next page, and asserts the user's filter choice is preserved (not re-auto-filtered).
+
+    [Fact]
+    public void AgentCoding_WhenSingleProvider_AutoSelectsSyncsToDropdownAndLoadsIssues()
+    {
+        // With one issue provider, the parent auto-selects it in OnInitializedAsync.
+        // IssueListPanel.OnParametersSetAsync should sync and load issues automatically.
+        var component = Render<AgentCoding>();
+
+        // Issues should be loaded without manual dropdown interaction
+        Assert.Contains("#42", component.Markup);
+        Assert.Contains("Test Issue", component.Markup);
+        _mockIssueProvider.Verify(
+            p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public void AgentCoding_WhenLastUsedProviderSet_SyncsToDropdownAndLoadsIssues()
+    {
+        // Setup: two issue providers, last-used points to the second one
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Provider One" },
+                new() { Id = "ip-2", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Provider Two" }
+            });
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                LastUsedProviderIds = new Dictionary<string, string> { ["issue"] = "ip-2" }
+            });
+
+        var component = Render<AgentCoding>();
+
+        // Issues should load automatically from the last-used provider
+        Assert.Contains("#42", component.Markup);
+        _mockIssueProvider.Verify(
+            p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public void AgentCoding_WhenNoProviders_DropdownShowsPlaceholderAndNoIssuesLoad()
+    {
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var component = Render<AgentCoding>();
+
+        // Dropdown should show placeholder, no issues loaded
+        Assert.Contains("-- Select Provider --", component.Markup);
+        Assert.DoesNotContain("#42", component.Markup);
+        _mockIssueProvider.Verify(
+            p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public void AgentCoding_LoopButton_DisabledWhenRepoAndAgentMissing()
+    {
+        // Issue provider auto-selects (single provider), but repo/agent are empty
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var component = Render<AgentCoding>();
+
+        // Loop button should be disabled because repo/agent are missing
+        var loopBtn = component.Find(".pipeline-loop-btn");
+        Assert.True(loopBtn.HasAttribute("disabled"));
+    }
 }
