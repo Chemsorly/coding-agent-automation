@@ -148,6 +148,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .settings-status { padding: 8px 14px; border-radius: var(--radius); font-size: 0.85rem; margin: 12px 20px 0; }
 .status-success { background: #1a3a1a; color: var(--success); }
 .status-error { background: #3a1a1a; color: var(--error); }
+.status-info { background: #1a2a3a; color: var(--accent-light); }
+.loop-status-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.loop-status-text { flex: 1; min-width: 0; }
+.loop-stop-btn { flex-shrink: 0; padding: 4px 12px; font-size: 0.8rem; }
 
 .provider-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .provider-card { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: var(--bg); border-radius: var(--radius); border: 1px solid var(--border); }
@@ -306,6 +310,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .label-chip-active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .label-chip-selected:hover,
 .label-chip-active:hover { opacity: 0.85; color: #fff; }
+.label-chip-agent { border-style: dashed; }
+.label-chip-agent.label-chip-selected { border-style: solid; }
 .label-filter-count { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 6px; }
 
 /* Pipeline Summary */

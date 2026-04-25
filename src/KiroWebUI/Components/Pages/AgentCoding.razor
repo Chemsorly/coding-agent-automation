@@ -18,7 +18,10 @@
     @if (LoopService.IsLoopActive)
     {
         @* TODO: [RES-03] Add && !LoopService.IsCircuitBroken to avoid duplicate status message when circuit breaker trips (review finding #2) *@
-        <div class="settings-status status-info">@LoopService.StatusMessage</div>
+        <div class="settings-status status-info loop-status-bar">
+            <span class="loop-status-text">@LoopService.StatusMessage</span>
+            <button class="btn-revert loop-stop-btn" @onclick="StopLoop">⏹ Stop Loop</button>
+        </div>
     }
 
     @if (LoopService.IsCircuitBroken)

@@ -48,7 +48,8 @@
                 <div class="label-chip-list">
                     @foreach (var label in _availableLabels)
                     {
-                        <button class="label-chip @(_selectedLabels.Contains(label) ? "label-chip-selected" : "")"
+                        var isAgent = AgentLabels.All.Contains(label);
+                        <button class="label-chip @(isAgent ? "label-chip-agent" : "") @(_selectedLabels.Contains(label) ? "label-chip-selected" : "")"
                                 aria-pressed="@(_selectedLabels.Contains(label) ? "true" : "false")"
                                 @onclick="() => ToggleLabel(label)">@label</button>
                     }
@@ -222,12 +223,15 @@
             var result = await issueProvider.ListOpenIssuesAsync(_currentPage, IssuePageSize, CancellationToken.None);
             _issues = result.Items.ToList();
             _hasMoreIssues = result.HasMore;
-            _availableLabels = _issues.SelectMany(i => i.Labels).Distinct().OrderBy(l => l).ToList();
-            if (_availableLabels.Contains(AgentLabels.Next))
-            {
-                _selectedLabels.Add(AgentLabels.Next);
-                _filteredIssuesCache = null;
-            }
+            var issueLabels = _issues.SelectMany(i => i.Labels).Distinct().ToList();
+            // Always include agent labels so they're available as filters even when
+            // no issue on the current page carries them (e.g. agent:next on page 2).
+            _availableLabels = AgentLabels.All
+                .Concat(issueLabels.Where(l => !AgentLabels.All.Contains(l)))
+                .OrderBy(l => l)
+                .ToList();
+            _selectedLabels.Add(AgentLabels.Next);
+            _filteredIssuesCache = null;
         }
         catch (Exception ex)
         {
