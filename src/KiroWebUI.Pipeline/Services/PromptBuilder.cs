@@ -15,9 +15,20 @@ public static class PromptBuilder
     public const string AnalysisFilePath = ".kiro/analysis.md";
 
     /// <summary>
+    /// The file path (relative to workspace) where the agent writes its structured assessment.
+    /// </summary>
+    public const string AnalysisAssessmentFilePath = ".kiro/analysis-assessment.json";
+
+    /// <summary>
     /// The file path (relative to workspace) where review agents write their findings.
     /// </summary>
     public const string ReviewFindingsFilePath = ".kiro/review-findings.md";
+
+    /// <summary>
+    /// The directory (relative to workspace) where quality gate output files are written.
+    /// Each gate writes its stdout/stderr here; the agent discovers files by listing the directory.
+    /// </summary>
+    public const string QualityGatesOutputDirectory = ".kiro/quality-gates";
 
     /// <summary>
     /// The file path (relative to workspace) where the pipeline writes issue context
@@ -58,6 +69,25 @@ public static class PromptBuilder
         sb.AppendLine();
 
         AppendIssueContext(sb, issue, parsed);
+
+        sb.AppendLine($"After writing your analysis to `{AnalysisFilePath}`, also write a structured assessment to `{AnalysisAssessmentFilePath}` with this exact JSON schema:");
+        sb.AppendLine();
+        sb.AppendLine("```json");
+        sb.AppendLine("{");
+        sb.AppendLine("  \"recommendation\": \"ready\",");
+        sb.AppendLine("  \"reason\": \"Issue is well-scoped with clear acceptance criteria\",");
+        sb.AppendLine("  \"concerns\": [\"Non-blocking concern\"],");
+        sb.AppendLine("  \"blockingIssues\": [],");
+        sb.AppendLine("  \"plannedApproach\": \"One-line implementation strategy\",");
+        sb.AppendLine("  \"estimatedComplexity\": \"moderate\"");
+        sb.AppendLine("}");
+        sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine("Set `recommendation` to:");
+        sb.AppendLine("- `\"ready\"` if the issue is clear, well-scoped, and you have a concrete implementation plan.");
+        sb.AppendLine("- `\"not_ready\"` if the issue is too vague, contradictory, has hard blockers, or requires information you can't determine from the codebase. Add any blocking issues to `blockingIssues`.");
+        sb.AppendLine("- `\"wont_do\"` if, after analyzing the codebase, you determine no code changes are needed. This includes: bugs that can't be reproduced, issues that are already fixed, features that are already implemented, or behavior that is working as designed. Explain your reasoning in `reason`.");
+        sb.AppendLine();
 
         if (brainContextWritten)
         {
@@ -143,24 +173,28 @@ public static class PromptBuilder
     }
 
     /// <summary>Markers identifying bot-generated comments that should be excluded from context.</summary>
-    internal static readonly string[] ExcludedCommentMarkers = ["## 🤖 Agent Analysis"];
+    // TODO: [ARC-08a] Gate comment markers rely on exact substring match — if a human edits the comment to remove the HTML marker, the gate comment leaks into prompt context
+    internal static readonly string[] ExcludedCommentMarkers =
+    [
+        "## 🤖 Agent Analysis",
+        "<!-- agent:gate-rejection -->",
+        "<!-- agent:gate-wont-do -->"
+    ];
 
     /// <summary>
-    /// Constructs a fix prompt that includes the configurable fix instructions and the raw
-    /// review findings so the agent knows what to fix.
+    /// Constructs a fix prompt that references the review findings file instead of inlining
+    /// the raw findings. The agent reads .kiro/review-findings.md on demand.
     /// </summary>
-    public static string BuildFixPrompt(string fixInstructions, string rawFindings)
+    public static string BuildFixPrompt(string fixInstructions)
     {
         ArgumentNullException.ThrowIfNull(fixInstructions);
-        ArgumentNullException.ThrowIfNull(rawFindings);
 
         var sb = new StringBuilder();
         sb.AppendLine(fixInstructions);
         sb.AppendLine();
         sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). The pipeline handles all version control operations. Read-only git commands are fine.");
         sb.AppendLine();
-        sb.AppendLine("## Review Findings");
-        sb.AppendLine(rawFindings);
+        sb.AppendLine($"Review findings have been written to `{ReviewFindingsFilePath}`. Read the file, then fix only items marked [CRITICAL].");
         return sb.ToString().TrimEnd();
     }
 

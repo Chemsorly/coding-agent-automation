@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
@@ -40,6 +41,18 @@ public class QualityGateValidator : IQualityGateValidator
         catch (Exception ex)
         {
             _logger.Warning(ex, "Failed to clean up previous test results at {TestResultsRoot}", testResultsRoot);
+        }
+
+        // Clear quality gate output directory so the agent only sees output from this run
+        var qualityGatesDir = Path.Combine(workspacePath, PromptBuilder.QualityGatesOutputDirectory);
+        try
+        {
+            if (Directory.Exists(qualityGatesDir))
+                Directory.Delete(qualityGatesDir, recursive: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to clean up quality gates output at {QualityGatesDir}", qualityGatesDir);
         }
 
         var compilation = await RunCompilationGateAsync(workspacePath, ct);
@@ -92,55 +105,41 @@ public class QualityGateValidator : IQualityGateValidator
     }
 
     /// <summary>
-    /// Formats CI failure details for display in quality gate error summaries.
-    /// References log file paths when available so the agent can read them on demand.
+    /// Formats a short CI failure summary for GateResult.Details.
+    /// Verbose per-job logs are in .kiro/quality-gates/ — the retry prompt points there.
     /// </summary>
-    /// <param name="status">The CI run status containing job results.</param>
-    /// <param name="logPathMapping">
-    /// Optional mapping of jobId → workspace-relative file path, returned by
-    /// <see cref="CiLogWriter.WriteJobLogs"/>. When provided, failed jobs with
-    /// an entry in the dictionary get a "Full CI log saved to" reference.
-    /// </param>
     internal static string BuildCiFailureDetails(
         PipelineRunStatus status, IReadOnlyDictionary<long, string>? logPathMapping = null)
     {
-        var lines = new List<string> { $"CI {status.State}." };
-
         var failedJobs = status.Jobs.Where(j => j.State == PipelineRunState.Failed).ToList();
-        if (failedJobs.Count > 0)
-        {
-            lines.Add($"{failedJobs.Count} job(s) failed:");
-            foreach (var job in failedJobs)
-            {
-                var reason = !string.IsNullOrEmpty(job.FailureReason) ? $" — {job.FailureReason}" : "";
-                var logLink = !string.IsNullOrEmpty(job.LogUrl) ? $" (logs: {job.LogUrl})" : "";
-                lines.Add($"  - {job.Name}{reason}{logLink}");
-
-                if (logPathMapping != null && logPathMapping.TryGetValue(job.JobId, out var logFilePath))
-                {
-                    lines.Add($"    Full CI log saved to: {logFilePath}");
-                    lines.Add($"    Read this file (raw GitHub Actions job log) to diagnose the failure.");
-                }
-            }
-        }
-
-        if (!string.IsNullOrEmpty(status.Url))
-            lines.Add($"Full run: {status.Url}");
-
-        return string.Join(Environment.NewLine, lines);
+        var jobNames = failedJobs.Count > 0
+            ? string.Join(", ", failedJobs.Select(j => $"'{j.Name}'"))
+            : "unknown";
+        return $"CI {status.State}. {failedJobs.Count} job(s) failed: {jobNames}.";
     }
 
     private async Task<GateResult> RunCompilationGateAsync(string workspacePath, CancellationToken ct)
     {
-        var (exitCode, _, stderr) = await RunProcessAsync("dotnet", "build", workspacePath, ct);
+        var (exitCode, stdout, stderr) = await RunProcessAsync("dotnet", "build", workspacePath, ct);
+
+        WriteGateOutput(workspacePath, "compilation", stdout, stderr);
+
+        string details;
+        if (exitCode == 0)
+        {
+            details = "Build succeeded";
+        }
+        else
+        {
+            var (errors, warnings) = ParseBuildErrorCounts(stdout + "\n" + stderr);
+            details = $"Build failed with exit code {exitCode}. {errors} error(s), {warnings} warning(s).";
+        }
 
         return new GateResult
         {
             GateName = "Compilation",
             Passed = exitCode == 0,
-            Details = exitCode == 0
-                ? "Build succeeded"
-                : $"Build failed with exit code {exitCode}: {stderr}"
+            Details = details
         };
     }
 
@@ -157,6 +156,8 @@ public class QualityGateValidator : IQualityGateValidator
         _logger.Debug("Running tests: dotnet {Args} in {WorkspacePath}", args, workspacePath);
 
         var (exitCode, stdout, stderr) = await RunProcessAsync("dotnet", args, workspacePath, ct);
+
+        WriteGateOutput(workspacePath, "tests", stdout, stderr);
 
         _logger.Debug("Test results directory contents: {Files}",
             Directory.Exists(resultsDir)
@@ -182,7 +183,7 @@ public class QualityGateValidator : IQualityGateValidator
             Passed = exitCode == 0,
             Details = exitCode == 0
                 ? $"Tests passed: {passed} passed, {failed} failed, {skipped} skipped"
-                : $"Tests failed: {passed} passed, {failed} failed, {skipped} skipped. {stderr}",
+                : $"Tests failed: {passed} passed, {failed} failed, {skipped} skipped.",
             TestsPassed = passed,
             TestsFailed = failed,
             TestsSkipped = skipped
@@ -378,6 +379,50 @@ public class QualityGateValidator : IQualityGateValidator
         }
 
         return (passed, failed, skipped);
+    }
+
+    /// <summary>
+    /// Writes gate stdout/stderr to .kiro/quality-gates/{gateName}-stdout.txt and
+    /// {gateName}-stderr.txt so the agent can read them on demand.
+    /// </summary>
+    private void WriteGateOutput(string workspacePath, string gateName, string? stdout, string? stderr)
+    {
+        try
+        {
+            var dir = Path.Combine(workspacePath, PromptBuilder.QualityGatesOutputDirectory);
+            Directory.CreateDirectory(dir);
+            if (!string.IsNullOrEmpty(stdout))
+                File.WriteAllText(Path.Combine(dir, $"{gateName}-stdout.txt"), stdout);
+            if (!string.IsNullOrEmpty(stderr))
+                File.WriteAllText(Path.Combine(dir, $"{gateName}-stderr.txt"), stderr);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to write quality gate output for {GateName}", gateName);
+        }
+    }
+
+    /// <summary>
+    /// Parses error and warning counts from MSBuild output.
+    /// Looks for the summary line pattern: "X Error(s)" and "Y Warning(s)".
+    /// </summary>
+    internal static (int Errors, int Warnings) ParseBuildErrorCounts(string output)
+    {
+        var errors = 0;
+        var warnings = 0;
+
+        if (string.IsNullOrWhiteSpace(output))
+            return (errors, warnings);
+
+        var errorMatch = Regex.Match(output, @"(\d+)\s+Error\(s\)", RegexOptions.IgnoreCase);
+        if (errorMatch.Success)
+            int.TryParse(errorMatch.Groups[1].Value, out errors);
+
+        var warningMatch = Regex.Match(output, @"(\d+)\s+Warning\(s\)", RegexOptions.IgnoreCase);
+        if (warningMatch.Success)
+            int.TryParse(warningMatch.Groups[1].Value, out warnings);
+
+        return (errors, warnings);
     }
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(

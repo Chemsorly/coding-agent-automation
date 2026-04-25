@@ -355,4 +355,90 @@ public class PromptConstructionPropertyTests
         analysisPrompt.Should().NotContain(PromptBuilder.BrainContextFilePath);
         implPrompt.Should().NotContain(PromptBuilder.BrainContextFilePath);
     }
+
+    // --- BuildFixPrompt tests ---
+
+    /// <summary>
+    /// BuildFixPrompt references the review findings file instead of inlining content.
+    /// </summary>
+    [Fact]
+    public void BuildFixPrompt_ReferencesReviewFindingsFile()
+    {
+        var prompt = PromptBuilder.BuildFixPrompt("Fix the issues.");
+
+        prompt.Should().Contain(PromptBuilder.ReviewFindingsFilePath);
+        prompt.Should().Contain("Read the file");
+        prompt.Should().Contain("[CRITICAL]");
+    }
+
+    /// <summary>
+    /// BuildFixPrompt includes the configurable fix instructions.
+    /// </summary>
+    [Fact]
+    public void BuildFixPrompt_IncludesFixInstructions()
+    {
+        var prompt = PromptBuilder.BuildFixPrompt("Custom fix instructions here.");
+
+        prompt.Should().Contain("Custom fix instructions here.");
+        prompt.Should().Contain("Do NOT run git write commands");
+    }
+
+    /// <summary>
+    /// BuildFixPrompt does not inline any raw findings content.
+    /// </summary>
+    [Fact]
+    public void BuildFixPrompt_DoesNotContainReviewFindingsHeader()
+    {
+        var prompt = PromptBuilder.BuildFixPrompt("Fix the issues.");
+
+        prompt.Should().NotContain("## Review Findings");
+    }
+
+    // --- QualityGatesOutputDirectory constant tests ---
+
+    [Fact]
+    public void QualityGatesOutputDirectory_IsKiroSubdirectory()
+    {
+        PromptBuilder.QualityGatesOutputDirectory.Should().StartWith(".kiro/");
+    }
+
+    // --- BuildQualityGateRetryPrompt tests ---
+
+    [Fact]
+    public void BuildQualityGateRetryPrompt_IncludesAllGatesWithStatus()
+    {
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build failed with exit code 1. 3 error(s), 2 warning(s)." },
+            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "Tests passed: 42 passed, 0 failed, 0 skipped" },
+            Coverage = new GateResult { GateName = "Coverage", Passed = true, Details = "Coverage 85.0% meets threshold 40.0%" }
+        };
+
+        var prompt = QualityGateOrchestrator.BuildQualityGateRetryPrompt(report, 1, 3);
+
+        prompt.Should().Contain("Quality gates failed (attempt 1/3):");
+        prompt.Should().Contain("- Compilation: FAILED");
+        prompt.Should().Contain("- Tests: PASSED");
+        prompt.Should().Contain("- Coverage: PASSED");
+        prompt.Should().Contain(PromptBuilder.QualityGatesOutputDirectory);
+        prompt.Should().Contain("List the files there and read the relevant ones");
+    }
+
+    [Fact]
+    public void BuildQualityGateRetryPrompt_OmitsNullOptionalGates()
+    {
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "Build succeeded" },
+            Tests = new GateResult { GateName = "Tests", Passed = false, Details = "Tests failed: 10 passed, 2 failed, 0 skipped." }
+        };
+
+        var prompt = QualityGateOrchestrator.BuildQualityGateRetryPrompt(report, 2, 3);
+
+        prompt.Should().Contain("- Compilation: PASSED");
+        prompt.Should().Contain("- Tests: FAILED");
+        prompt.Should().NotContain("Coverage");
+        prompt.Should().NotContain("Security");
+        prompt.Should().NotContain("External CI");
+    }
 }
