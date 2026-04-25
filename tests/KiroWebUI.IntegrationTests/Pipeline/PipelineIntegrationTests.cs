@@ -271,9 +271,9 @@ public class PipelineIntegrationTests : IntegrationTestBase
         run.IssueTitle.Should().Be("Add input validation");
 
         // Verify IssueDescriptionParser output was wired into PromptBuilder:
-        // the agent should have received a prompt containing the parsed requirements
+        // the agent should have received a prompt containing the issue title and file reference
         MockAgentProvider.Verify(p => p.ExecuteAsync(
-            It.Is<AgentRequest>(r => r.Prompt.Contains("null checks") && r.Prompt.Contains("public methods")),
+            It.Is<AgentRequest>(r => r.Prompt.Contains("Add input validation") && r.Prompt.Contains(PromptBuilder.IssueContextFilePath)),
             It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.AtLeastOnce);
 
         // Verify expected state transitions occurred

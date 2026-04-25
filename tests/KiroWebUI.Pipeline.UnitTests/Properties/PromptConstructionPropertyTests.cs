@@ -16,16 +16,12 @@ public class PromptConstructionPropertyTests
     private static readonly string DefaultAnalysis = PipelineConfiguration.DefaultAnalysisPrompt;
 
     /// <summary>
-    /// Property 2: Prompt construction includes all issue fields.
-    /// For any valid IssueDetail (with non-empty title, non-empty description,
-    /// and zero or more acceptance criteria), the prompt contains the issue title,
-    /// the issue description, and every individual acceptance criterion string.
-    /// **Validates: Requirements 3.2**
+    /// Prompt contains the issue title and acceptance criteria inline,
+    /// but references the issue context file instead of inlining description.
     /// </summary>
     [Property(MaxTest = 20)]
-    public void Prompt_ContainsAllIssueFields(NonEmptyString title, NonEmptyString description, byte criteriaCount)
+    public void Prompt_ContainsTitleAndCriteriaButReferencesFile(NonEmptyString title, NonEmptyString description, byte criteriaCount)
     {
-        // Generate a reasonable number of criteria (0-5)
         var count = criteriaCount % 6;
         var criteriaOptions = new[] { "Must compile", "Tests pass", "Coverage above 80%", "No security issues", "Handles edge cases" };
         var criteria = criteriaOptions.Take(count).ToList();
@@ -47,7 +43,8 @@ public class PromptConstructionPropertyTests
         var prompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed);
 
         prompt.Should().Contain(issue.Title);
-        prompt.Should().Contain(issue.Description);
+        prompt.Should().Contain(issue.Identifier);
+        prompt.Should().Contain(PromptBuilder.IssueContextFilePath);
 
         foreach (var criterion in parsed.AcceptanceCriteria)
         {
@@ -56,10 +53,38 @@ public class PromptConstructionPropertyTests
     }
 
     /// <summary>
-    /// Prompt includes all comment bodies and author attributions when comments are provided.
+    /// Prompt does not contain the issue description or comments inline — they are in the file.
+    /// </summary>
+    [Fact]
+    public void Prompt_DoesNotContainDescriptionOrComments()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "1",
+            Title = "Test",
+            Description = "Unique-description-content-xyz",
+            Labels = Array.Empty<string>()
+        };
+
+        var parsed = new ParsedIssue
+        {
+            RequirementsSection = "Unique-description-content-xyz",
+            AcceptanceCriteria = Array.Empty<string>()
+        };
+
+        var prompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed);
+
+        prompt.Should().NotContain("Unique-description-content-xyz");
+        prompt.Should().NotContain("## Comments");
+        prompt.Should().NotContain("## Description");
+        prompt.Should().NotContain("## Requirements");
+    }
+
+    /// <summary>
+    /// Issue context file content includes all comment bodies and author attributions.
     /// </summary>
     [Property(MaxTest = 50)]
-    public void Prompt_ContainsAllCommentBodiesAndAuthors(NonEmptyString title, NonEmptyString description, byte commentCount)
+    public void IssueContextFile_ContainsAllCommentBodiesAndAuthors(NonEmptyString title, NonEmptyString description, byte commentCount)
     {
         var count = (commentCount % 4) + 1; // 1-4 comments
         var comments = Enumerable.Range(0, count).Select(i => new IssueComment
@@ -84,21 +109,21 @@ public class PromptConstructionPropertyTests
             AcceptanceCriteria = Array.Empty<string>()
         };
 
-        var prompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed, comments);
+        var content = PromptBuilder.BuildIssueContextFileContent(issue, parsed, comments);
 
-        prompt.Should().Contain("## Comments");
+        content.Should().Contain("## Comments");
         foreach (var comment in comments)
         {
-            prompt.Should().Contain(comment.Body);
-            prompt.Should().Contain($"@{comment.Author}");
+            content.Should().Contain(comment.Body);
+            content.Should().Contain($"@{comment.Author}");
         }
     }
 
     /// <summary>
-    /// Prompt omits the Comments section when no comments are provided.
+    /// Issue context file omits the Comments section when no comments are provided.
     /// </summary>
     [Fact]
-    public void Prompt_OmitsCommentsSection_WhenNoComments()
+    public void IssueContextFile_OmitsCommentsSection_WhenNoComments()
     {
         var issue = new IssueDetail
         {
@@ -114,16 +139,16 @@ public class PromptConstructionPropertyTests
             AcceptanceCriteria = Array.Empty<string>()
         };
 
-        var prompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed);
+        var content = PromptBuilder.BuildIssueContextFileContent(issue, parsed);
 
-        prompt.Should().NotContain("## Comments");
+        content.Should().NotContain("## Comments");
     }
 
     /// <summary>
-    /// Agent analysis comments are excluded from the prompt context.
+    /// Agent analysis comments are excluded from the issue context file.
     /// </summary>
     [Fact]
-    public void Prompt_ExcludesAgentAnalysisComments()
+    public void IssueContextFile_ExcludesAgentAnalysisComments()
     {
         var comments = new List<IssueComment>
         {
@@ -139,19 +164,19 @@ public class PromptConstructionPropertyTests
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
 
-        var prompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed, comments);
+        var content = PromptBuilder.BuildIssueContextFileContent(issue, parsed, comments);
 
-        prompt.Should().Contain("@alice");
-        prompt.Should().Contain("@bob");
-        prompt.Should().NotContain("@bot");
-        prompt.Should().NotContain("Agent Analysis");
+        content.Should().Contain("@alice");
+        content.Should().Contain("@bob");
+        content.Should().NotContain("@bot");
+        content.Should().NotContain("Agent Analysis");
     }
 
     /// <summary>
-    /// Only the last 10 comments are included when there are more than 10.
+    /// Only the last 10 comments are included in the issue context file.
     /// </summary>
     [Fact]
-    public void Prompt_LimitsToLast10Comments()
+    public void IssueContextFile_LimitsToLast10Comments()
     {
         var comments = Enumerable.Range(0, 15).Select(i => new IssueComment
         {
@@ -168,19 +193,45 @@ public class PromptConstructionPropertyTests
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
 
-        var prompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed, comments);
+        var content = PromptBuilder.BuildIssueContextFileContent(issue, parsed, comments);
 
         // First 5 should be excluded, last 10 included
         for (var i = 0; i < 5; i++)
-            prompt.Should().NotContain($"Unique-comment-body-{i:D3}");
+            content.Should().NotContain($"Unique-comment-body-{i:D3}");
         for (var i = 5; i < 15; i++)
-            prompt.Should().Contain($"Unique-comment-body-{i:D3}");
+            content.Should().Contain($"Unique-comment-body-{i:D3}");
+    }
+
+    /// <summary>
+    /// Issue context file contains all issue fields (title, description, requirements, criteria).
+    /// </summary>
+    [Fact]
+    public void IssueContextFile_ContainsAllIssueFields()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "42", Title = "Add caching layer", Description = "We need Redis caching",
+            Labels = Array.Empty<string>()
+        };
+        var parsed = new ParsedIssue
+        {
+            RequirementsSection = "We need Redis caching",
+            AcceptanceCriteria = new[] { "Cache hit rate > 90%" }.ToList().AsReadOnly()
+        };
+
+        var content = PromptBuilder.BuildIssueContextFileContent(issue, parsed);
+
+        content.Should().Contain("Add caching layer");
+        content.Should().Contain("We need Redis caching");
+        content.Should().Contain("Cache hit rate > 90%");
+        content.Should().Contain("## Description");
     }
 
     // --- BuildAnalysisPrompt tests ---
 
     /// <summary>
-    /// Analysis prompt contains the configurable instructions and all issue fields.
+    /// Analysis prompt contains the configurable instructions, issue title, acceptance criteria,
+    /// and references the issue context file.
     /// </summary>
     [Fact]
     public void AnalysisPrompt_ContainsConfigurableInstructionsAndIssueFields()
@@ -201,8 +252,8 @@ public class PromptConstructionPropertyTests
         prompt.Should().Contain("Planned Approach");
         prompt.Should().Contain("Test Coverage");
         prompt.Should().Contain("Add caching layer");
-        prompt.Should().Contain("We need Redis caching");
         prompt.Should().Contain("Cache hit rate > 90%");
+        prompt.Should().Contain(PromptBuilder.IssueContextFilePath);
     }
 
     /// <summary>
@@ -263,5 +314,45 @@ public class PromptConstructionPropertyTests
         var prompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed);
 
         prompt.Should().NotContain("file write is rejected");
+    }
+
+    /// <summary>
+    /// Prompts reference brain context file when brainContextWritten is true.
+    /// </summary>
+    [Fact]
+    public void Prompt_ReferencesBrainContextFile_WhenBrainContextWritten()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "1", Title = "Test", Description = "Desc",
+            Labels = Array.Empty<string>()
+        };
+        var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
+
+        var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(DefaultAnalysis, issue, parsed, brainContextWritten: true);
+        var implPrompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed, brainContextWritten: true);
+
+        analysisPrompt.Should().Contain(PromptBuilder.BrainContextFilePath);
+        implPrompt.Should().Contain(PromptBuilder.BrainContextFilePath);
+    }
+
+    /// <summary>
+    /// Prompts omit brain context file reference when brainContextWritten is false.
+    /// </summary>
+    [Fact]
+    public void Prompt_OmitsBrainContextFileReference_WhenNotWritten()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "1", Title = "Test", Description = "Desc",
+            Labels = Array.Empty<string>()
+        };
+        var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
+
+        var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(DefaultAnalysis, issue, parsed);
+        var implPrompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed);
+
+        analysisPrompt.Should().NotContain(PromptBuilder.BrainContextFilePath);
+        implPrompt.Should().NotContain(PromptBuilder.BrainContextFilePath);
     }
 }
