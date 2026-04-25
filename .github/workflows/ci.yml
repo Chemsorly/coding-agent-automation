@@ -59,3 +59,29 @@ jobs:
       - name: Build Web UI image
         run: docker build -f webUI.Dockerfile -t kiro-webui:ci .
 
+  docker-push:
+    needs: [build-and-test, docker-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198e19c3c90f2d # v6.18.0
+        with:
+          context: .
+          file: webUI.Dockerfile
+          push: true
+          tags: chemsorly/dev:coding-agent
+
