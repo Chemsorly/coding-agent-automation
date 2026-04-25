@@ -1,8 +1,11 @@
 using KiroCliLib.Configuration;
 using KiroCliLib.Core;
 using KiroWebUI.Components;
+using KiroWebUI.Infrastructure;
+using KiroWebUI.Infrastructure.GitHub;
+using KiroWebUI.Infrastructure.Git;
+using KiroWebUI.Infrastructure.Persistence;
 using KiroWebUI.Pipeline.Interfaces;
-using KiroWebUI.Pipeline.Providers;
 using KiroWebUI.Pipeline.Services;
 using KiroWebUI.Services;
 using Serilog;
@@ -40,7 +43,8 @@ builder.Services.AddSingleton<IProviderFactory>(sp =>
 });
 
 // Pipeline — Services
-builder.Services.AddSingleton<BrainUpdateService>(sp => new BrainUpdateService(Serilog.Log.Logger));
+builder.Services.AddSingleton<IBrainUpdateService>(sp => new BrainUpdateService(Serilog.Log.Logger));
+builder.Services.AddSingleton<IPipelineRunHistoryService>(sp => new PipelineRunHistoryService(Serilog.Log.Logger));
 builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
     sp.GetRequiredService<IConfigurationStore>(),
     sp.GetRequiredService<IProviderFactory>(),
@@ -48,7 +52,8 @@ builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
     sp.GetRequiredService<IQualityGateValidator>(),
     sp.GetRequiredService<CiLogWriter>(),
     Serilog.Log.Logger,
-    sp.GetRequiredService<BrainUpdateService>()));
+    sp.GetRequiredService<IBrainUpdateService>(),
+    sp.GetRequiredService<IPipelineRunHistoryService>()));
 
 // Pipeline — Loop Service (background service, starts dormant)
 builder.Services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(
@@ -58,6 +63,7 @@ builder.Services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService
     Serilog.Log.Logger));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
 
+// TODO: [ARC-12] Captive dependency — IQualityGateValidator and IssueDescriptionParser are transient but captured by singleton PipelineOrchestrationService. Register as singleton or use factories.
 builder.Services.AddTransient<IQualityGateValidator>(sp => new QualityGateValidator(Serilog.Log.Logger));
 builder.Services.AddTransient<IssueDescriptionParser>();
 builder.Services.AddSingleton(sp => new CiLogWriter(Serilog.Log.Logger));
