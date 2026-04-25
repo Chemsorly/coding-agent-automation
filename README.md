@@ -1,272 +1,122 @@
-# Kiro CLI Integration PoC
+# Coding Agent Automation
 
-A proof-of-concept C# console application demonstrating programmatic integration with Kiro CLI through process management, real-time output parsing, and event-driven callbacks.
+An automated development pipeline that uses AI coding agents (Kiro CLI) to implement GitHub issues end-to-end: analyze the issue, generate code, run quality gates, and create a pull request — all orchestrated through a Blazor Server web UI running in Docker.
 
-## Purpose
+## How It Works
 
-This PoC validates that Kiro CLI can be effectively controlled and monitored from external code before building a full automated development pipeline. It demonstrates:
+1. **Pick an issue** — Select a GitHub issue from the web UI (or let the closed-loop mode pick the next `agent:next` issue automatically)
+2. **Analysis** — The agent reads the issue, explores the codebase, and writes an analysis with a planned approach
+3. **Implementation** — The agent implements the changes, guided by the analysis
+4. **Quality gates** — Automated checks run: build, tests, code review (multi-agent), external CI
+5. **Retry loop** — If quality gates fail, the agent gets feedback and retries (configurable max retries)
+6. **Pull request** — On success, a PR is created with the changes, linked to the original issue
 
-- **Process Management**: Starting and controlling Kiro CLI via WSL (Windows) or natively (Linux/Mac)
-- **Persistent Conversation Mode**: Maintaining conversation history across multiple prompts
-- **Real-time Output Parsing**: Detecting state changes, file operations, and test results
-- **Event-Driven Callbacks**: Triggering actions based on Kiro CLI state changes
-- **File Change Detection**: Monitoring workspace modifications during execution
-- **Cross-Platform Support**: Works on Windows (via WSL) and Linux
+The pipeline runs inside a Docker container with Kiro CLI installed. The web UI provides real-time visibility into each step.
 
 ## Prerequisites
 
-- **.NET 10 SDK**: Required for building and running
-- **Kiro CLI**: Must be installed
-  - **Windows**: Install in WSL at `/root/.local/bin/kiro-cli`
-  - **Linux/Mac**: Install natively, accessible in PATH
-- **WSL (Windows only)**: Required for running Kiro CLI on Windows
-  - Install: `wsl --install`
-  - Verify: `wsl /root/.local/bin/kiro-cli --version`
+- **Docker** — For building and running the application
+- **.NET 10 SDK** — For local development (optional if only running via Docker)
+- **GitHub App** — For issue/repository access and PR creation (configured in Settings)
+- **Kiro CLI authentication** — The container needs Kiro CLI auth tokens (see First-Time Setup)
 
 ## Quick Start
 
-### 1. Build the Application
-
-```bash
-dotnet build
-```
-
-### 2. Run in Interactive Mode
-
-```bash
-dotnet run
-```
-
-The application will start in interactive mode where you can type prompts directly:
-
-```
-[17:52:08 INF] Kiro CLI Integration PoC starting
-[17:52:08 INF] Configuration loaded successfully
-[17:52:08 INF] ================================================================================
-[17:52:08 INF] Interactive Mode: Type your prompts and press Enter
-[17:52:08 INF] Commands: 'exit' or 'quit' to stop, 'clear' to clear screen
-[17:52:08 INF] ================================================================================
-
-[Prompt 1] > Say hello and introduce yourself
-[17:52:10 INF] Kiro: Hello! I'm Kiro, an AI assistant...
-
-[Prompt 2] > What can you help me with?
-[17:52:15 INF] Kiro: I can help you with...
-
-[Prompt 3] > exit
-[17:52:20 INF] Exiting...
-```
-
-### 3. Interactive Commands
-
-- **Type any prompt**: Sends the prompt to Kiro CLI and displays the response
-- **`exit` or `quit`**: Exits the application
-- **`clear`**: Clears the screen and resets the prompt counter
-
-## Features
-
-### Interactive Mode
-
-The PoC runs in interactive mode with **persistent conversation support**, allowing you to:
-- Type prompts directly into the console
-- See Kiro's responses in real-time
-- Have multi-turn conversations with **conversation history maintained**
-- Simulate API-driven interactions
-
-**Key Feature: Persistent Conversation Mode**
-- A single Kiro CLI process is maintained across all prompts
-- Kiro remembers previous prompts and responses (conversation history)
-- More efficient than starting a new process for each prompt
-- Mimics real interactive usage and API-driven workflows
-
-**Response Completion Detection**
-- The application automatically detects when Kiro finishes responding
-- Uses silence detection: waits for 2 seconds of no output
-- Maximum wait time of 60 seconds per prompt
-- Allows natural conversation flow without manual intervention
-
-This approach mimics how an API would work: each prompt is submitted independently, responses are processed as they arrive, and conversation context is preserved.
-
-### Real-Time Output Parsing
-
-The application parses Kiro CLI output in real-time to detect:
-- **State Changes**: Started, ResearchPhase, PlanPhase, ImplementPhase, TestPhase, Completed, Error, NeedsInput
-- **File Operations**: Created, Modified, Deleted files
-- **Test Results**: Passed/failed test counts, coverage percentages
-- **Progress Updates**: Current phase and activity
-
-### Event-Driven Callbacks
-
-Callbacks are triggered automatically based on Kiro's state:
-- 🚀 **OnStarted**: When Kiro CLI begins execution
-- ⚙️ **OnProgress**: During research, planning, implementation, or testing phases
-- ✅ **OnCompleted**: When execution finishes successfully
-- ❌ **OnError**: When an error occurs
-- ⏱️ **OnTimeout**: When execution exceeds the timeout
-- ❓ **OnNeedsInput**: When Kiro requests clarification
-- 📁 **OnFilesChanged**: When files are created, modified, or deleted
-
-### File Change Detection
-
-The application monitors the workspace directory:
-- Scans before execution to capture initial state
-- Scans after execution to detect changes
-- Reports all created, modified, and deleted files
-- Triggers callbacks with file change information
-
-## Test Scenarios
-
-The `TestScenarios` class provides predefined multi-turn conversations for testing:
-
-### HelloWorld
-```csharp
-Prompts:
-1. "Say 'Hello, World!' and introduce yourself briefly."
-2. "What are your main capabilities?"
-3. "Thank you! That's all for now."
-```
-
-### AnalyzeDirectory
-```csharp
-Prompts:
-1. "Analyze the current directory structure and tell me what type of project this is."
-2. "What files are most important in this project?"
-3. "Are there any potential improvements you'd suggest?"
-```
-
-### CreateFile
-```csharp
-Prompts:
-1. "Create a file named 'test.txt' with the content 'Hello from Kiro CLI PoC!'"
-2. "Did you create the file successfully? Please confirm."
-3. "Great! Now delete the test.txt file to clean up."
-```
-
-These scenarios demonstrate multi-turn conversations but are not used in interactive mode.
-
-## Architecture
-
-### Core Components
-
-- **ProcessWrapper**: Manages Kiro CLI process lifecycle with WSL support
-  - `StartInteractiveAsync()`: Starts Kiro CLI in persistent conversation mode
-  - `SendPromptAsync()`: Sends prompts to the running process via stdin
-  - `WaitForResponseAsync()`: Detects response completion via silence detection
-- **OutputParser**: Parses Kiro CLI output to detect states and extract information
-- **CallbackHandler**: Manages callback registration and invocation with error isolation
-- **FileSystemMonitor**: Tracks file changes in the workspace directory
-- **KiroCliOrchestrator**: Coordinates all components and manages execution flow
-
-### Execution Flow
-
-```
-1. Load configuration
-2. Initialize components (ProcessWrapper, OutputParser, CallbackHandler, FileSystemMonitor)
-3. Register callbacks for state changes
-4. Scan workspace (before snapshot)
-5. Start Kiro CLI in persistent interactive mode
-   ├─▶ Trigger OnStarted callback
-   └─▶ Begin output capture
-6. For each prompt:
-   ├─▶ Send prompt to stdin
-   ├─▶ Process output in real-time
-   │   ├─▶ Parse each line for patterns
-   │   ├─▶ Detect state changes
-   │   └─▶ Trigger appropriate callbacks
-   └─▶ Wait for response completion (silence detection)
-7. Scan workspace (after snapshot)
-8. Compare snapshots and trigger OnFilesChanged
-9. Trigger OnCompleted callback
-10. Return exit code
-```
-
-## Configuration
-
-Configuration is loaded from `config/appsettings.json`:
-
-```json
-{
-  "KiroCliPath": "/root/.local/bin/kiro-cli",
-  "UseWsl": true,
-  "WorkspaceDirectory": "./workspace",
-  "AgentName": "feature-developer",
-  "Timeout": "00:30:00",
-  "LogLevel": "Information",
-  "LogFilePath": null
-}
-```
-
-### Configuration Options
-
-- **KiroCliPath**: Path to Kiro CLI executable
-- **UseWsl**: Auto-detects Windows, set to `false` to disable WSL
-- **WorkspaceDirectory**: Directory where Kiro CLI executes
-- **AgentName**: Kiro CLI agent to use
-- **Timeout**: Maximum execution time (format: `HH:MM:SS`)
-- **LogLevel**: Logging verbosity (Verbose, Debug, Information, Warning, Error, Fatal)
-- **LogFilePath**: Optional path for log file output
-
-## Exit Codes
-
-- **0**: Success
-- **1**: Generic error
-- **124**: Timeout
-- **130**: Cancelled (Ctrl+C)
-
-## Logging
-
-The application uses Serilog for structured logging:
-
-- **Console**: Formatted output with timestamps and log levels
-- **File** (optional): Rolling daily logs with detailed information
-
-Log levels:
-- **Information**: Normal execution flow
-- **Warning**: Non-critical issues (timeouts, missing files)
-- **Error**: Execution failures
-- **Debug**: Detailed output parsing information
-
-## KiroWebUI (Blazor Server)
-
-The KiroWebUI application provides a web-based interface for the automated development pipeline. It runs as a Blazor Server app inside a Docker container.
-
-### Docker Build & Run
+### Build the Docker image
 
 ```powershell
 docker build -f webUI.Dockerfile -t kiro-webui:latest .
-
-docker run -it --rm -p 5000:5000 -v ${PWD}/config/kiro-cli-data:/home/ubuntu/.local/share/kiro-cli -v "$env:USERPROFILE\.aws:/home/ubuntu/.aws" -v ${PWD}/config/kiro-settings:/home/ubuntu/.kiro/settings -v ${PWD}/config/pipeline:/app/config/pipeline kiro-webui:latest 2>&1 | Tee-Object -FilePath .kiro/debug.log
-
-
 ```
 
-### Required Volume Mounts
+### Run the container
+
+```powershell
+docker run -it --rm -p 5000:5000 -v ${PWD}/config/kiro-cli-data:/home/ubuntu/.local/share/kiro-cli -v "$env:USERPROFILE\.aws:/home/ubuntu/.aws" -v ${PWD}/config/kiro-settings:/home/ubuntu/.kiro/settings -v ${PWD}/config/pipeline:/app/config/pipeline kiro-webui:latest
+```
+
+Open `http://localhost:5000` in your browser.
+
+### First-time setup
+
+1. **Authenticate Kiro CLI** — On first run, exec into the container and run `kiro-cli login`. The auth tokens are persisted via the `kiro-cli-data` volume mount, so you only need to do this once.
+2. **Configure providers** — Go to **Settings** in the web UI and set up your Issue Provider (GitHub App), Repository Provider, Agent Provider, and Pipeline Provider.
+3. **Start a run** — Go to **Agent Coding**, select an issue, and click Start.
+
+## Volume Mounts
 
 | Mount | Container Path | Purpose |
 |-------|---------------|---------|
-| Kiro CLI auth | `/home/ubuntu/.local/share/kiro-cli` | Kiro CLI login tokens (persists auth across container restarts) |
+| Kiro CLI auth | `/home/ubuntu/.local/share/kiro-cli` | Kiro CLI login tokens (persists across container restarts) |
 | AWS SSO | `/home/ubuntu/.aws` | AWS SSO cache and config for Kiro CLI auth |
-| Kiro settings | `/home/ubuntu/.kiro/settings` | MCP and CLI settings |
-| Pipeline config | `/app/config/pipeline` | Provider configs and pipeline settings (persists across restarts) |
+| Kiro settings | `/home/ubuntu/.kiro/settings` | MCP server config and CLI settings |
+| Pipeline config | `/app/config/pipeline` | Provider configs, pipeline settings, run history (persists across restarts) |
 
-The pipeline config volume is important — without it, any providers you configure in the Settings page will be lost when the container restarts.
+Without the pipeline config mount, any providers configured in Settings will be lost when the container restarts.
 
-Workspaces are created inside the container at `/app/workspaces/` (configurable via `WorkspaceBaseDirectory` in pipeline config). The pipeline clones a fresh copy of the repository for each run, so no workspace volume mount is needed. Successful workspaces are cleaned up automatically; failed ones are retained based on the `FailedWorkspaceRetentionDays` setting.
+Workspaces are created inside the container at `/app/workspaces/` (configurable via `workspaceBaseDirectory` in pipeline config). The pipeline clones a fresh copy of the repository for each run, so no workspace volume mount is needed. Successful workspaces are cleaned up automatically; failed ones are retained based on the `failedWorkspaceRetentionDays` setting.
 
-### First-Time Setup
+## Project Structure
 
-1. Start the container with the command above
-2. Open `http://localhost:5000` in your browser
-3. Go to **Settings** and configure your providers (Issue, Repository, Agent)
-4. Go to **Agent Coding** to select an issue and start a pipeline run
+<!-- TODO: Update after ARC-11 (#146) and ARC-12 (#147) refactoring -->
 
-### MCP Server Support
+```
+src/
+  KiroCliLib/          — Shared library: process management, output parsing, configuration
+  KiroWebUI/           — Blazor Server app: UI, pipeline engine, providers, persistence
+tests/
+  KiroWebUI.Tests/     — Unit, property, integration, and smoke tests
+config/
+  pipeline/            — Provider configs and pipeline run history
+  appsettings.json     — Application configuration
+```
 
-Kiro CLI natively supports [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) servers via `~/.kiro/settings/mcp.json`. The Docker image includes `uv` and `uvx` (Python package manager) so that stdio-based MCP servers can run inside the container.
+## Architecture
 
-The existing Kiro settings volume mount (`/home/ubuntu/.kiro/settings`) already covers `mcp.json` — no additional mount is needed.
+<!-- TODO: Add architecture diagram after ARC-12 (#147) refactoring completes.
+     Target structure:
+       KiroWebUI (Presentation) → KiroWebUI.Pipeline (Core) + KiroWebUI.Infrastructure
+       See #147 for the full dependency graph and migration plan. -->
 
-**Setup**: Create an `mcp.json` file in your local Kiro settings directory:
+The application follows Clean Architecture principles:
+
+- **Pipeline (Core)** — Interfaces, models, and orchestration services. Defines the pipeline steps, provider contracts, and data models. Zero infrastructure dependencies.
+- **Infrastructure** — Provider implementations (GitHub API via Octokit, Kiro CLI agent, JSON config store, Git operations via LibGit2Sharp). Implements the interfaces defined in Pipeline.
+- **WebUI (Presentation)** — Blazor Server components, DI wiring, and the application entry point.
+- **KiroCliLib** — Shared library for Kiro CLI process management, output parsing, and configuration. Used by the agent provider to invoke Kiro CLI.
+
+## Pipeline Configuration
+
+Pipeline behavior is configured in `config/pipeline/pipeline-config.json`:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `maxRetries` | 3 | Max retry attempts when quality gates fail |
+| `agentTimeout` | 01:00:00 | Maximum time for a single agent invocation |
+| `minCoverageThreshold` | 40 | Minimum test coverage percentage |
+| `codeReview.enabled` | true | Enable multi-agent code review |
+| `codeReview.maxIterations` | 2 | Max review → fix cycles |
+| `externalCiEnabled` | true | Wait for GitHub Actions CI to pass |
+| `externalCiTimeout` | 00:15:00 | Max wait time for external CI |
+| `blacklistedPaths` | .kiro, .github, .brain | Paths excluded from agent commits |
+| `cleanupSuccessfulWorkspaces` | true | Auto-delete workspaces after successful runs |
+| `failedWorkspaceRetentionDays` | 7 | Days to keep failed workspaces |
+
+### Closed-loop mode
+
+The pipeline can run autonomously, polling for `agent:next` labeled issues and processing them sequentially:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `closedLoopPollInterval` | 00:01:00 | How often to check for new issues |
+| `closedLoopMaxRunsPerCycle` | 0 | Max issues per cycle (0 = unlimited) |
+| `closedLoopMaxConsecutivePollFailures` | 5 | Failures before backing off |
+| `closedLoopMaxBackoffInterval` | 00:15:00 | Max backoff between poll attempts |
+
+## MCP Server Support
+
+Kiro CLI supports [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) servers for extending agent capabilities. The Docker image includes `uv`/`uvx` (Python) and `npm`/`npx` (Node.js) for running MCP servers.
+
+Configure MCP servers in your Kiro settings directory (mounted at `/home/ubuntu/.kiro/settings/mcp.json`):
 
 ```json
 {
@@ -277,49 +127,53 @@ The existing Kiro settings volume mount (`/home/ubuntu/.kiro/settings`) already 
       "env": {},
       "disabled": false,
       "autoApprove": []
-    },
-    "aws-docs": {
-      "command": "uvx",
-      "args": ["awslabs.aws-documentation-mcp-server@latest"],
-      "env": {
-        "FASTMCP_LOG_LEVEL": "ERROR"
-      },
-      "disabled": false,
-      "autoApprove": []
     }
   }
 }
 ```
 
-Place this file so it is mounted into the container at `/home/ubuntu/.kiro/settings/mcp.json`. With the default `docker run` command above, save it to your local `.kiro/settings/mcp.json` directory (the one mapped via the Kiro settings volume mount).
-
-Kiro CLI will automatically discover and start the configured MCP servers, making their tools available to the agent during pipeline runs.
-
-**Security note**: The `.kiro/` directory is in the pipeline's blacklisted paths (`PipelineConfiguration.BlacklistedPaths`). Any files under `.kiro/`, including `mcp.json` and any credentials it contains, are automatically excluded from commits and will never be pushed to the repository.
+Kiro CLI automatically discovers and starts configured MCP servers during pipeline runs. The `.kiro/` directory is in the pipeline's blacklisted paths, so MCP config and any credentials it contains are never committed.
 
 ## Testing
 
-### Run Unit Tests
+### Run all tests
 
 ```bash
 dotnet test
 ```
 
-### Run Tests on Linux (via Docker)
+### Run tests in Docker (Linux)
 
 ```bash
 docker run --rm -v "${PWD}:/app" -w /app mcr.microsoft.com/dotnet/sdk:10.0 dotnet test
 ```
 
-### Code Quality
+## Development
 
-All code follows:
+### Local development
+
+```bash
+dotnet build
+dotnet run --project src/KiroWebUI
+```
+
+### Code conventions
+
 - Microsoft C# coding conventions
 - SOLID principles
-- Immutability patterns (init-only properties)
-- Comprehensive XML documentation
-- Input validation with ArgumentNullException.ThrowIfNull
+- Immutability patterns (`init`-only properties, `IReadOnlyList<T>`)
+- Input validation with `ArgumentNullException.ThrowIfNull`
+- Async I/O with `CancellationToken` propagation
+
+## Roadmap
+
+See [open issues](https://github.com/Chemsorly/coding-agent-automation/issues) for planned features. Key upcoming work:
+
+- [ARC-11](https://github.com/Chemsorly/coding-agent-automation/issues/146) — Remove legacy KiroCliPoc console app
+- [ARC-12](https://github.com/Chemsorly/coding-agent-automation/issues/147) — Split KiroWebUI into Pipeline, Infrastructure, and WebUI projects
+- [ARC-08a](https://github.com/Chemsorly/coding-agent-automation/issues/142) — Confidence gate for issue quality assessment
+- [AGT-01](https://github.com/Chemsorly/coding-agent-automation/issues/10) — Crush as alternative agent provider
 
 ## License
 
-This is a proof-of-concept project for internal use.
+This project is for internal use.

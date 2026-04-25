@@ -201,6 +201,9 @@ public class AgentCodingPageComponentTests : BunitContext
         var select = component.Find("select");
         await component.InvokeAsync(() => select.Change("ip-1"));
 
+        // Wait for async issue loading to complete
+        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup));
+
         // Default mock has no agent:next labels — all issues should show
         Assert.Contains("#42", component.Markup);
         Assert.Contains("#43", component.Markup);
@@ -273,6 +276,9 @@ public class AgentCodingPageComponentTests : BunitContext
         // IssueListPanel.OnParametersSetAsync should sync and load issues automatically.
         var component = Render<AgentCoding>();
 
+        // Wait for async lifecycle (OnInitializedAsync → auto-select → load issues) to complete
+        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup));
+
         // Issues should be loaded without manual dropdown interaction
         Assert.Contains("#42", component.Markup);
         Assert.Contains("Test Issue", component.Markup);
@@ -299,6 +305,9 @@ public class AgentCodingPageComponentTests : BunitContext
             });
 
         var component = Render<AgentCoding>();
+
+        // Wait for async lifecycle (OnInitializedAsync → last-used restore → load issues) to complete
+        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup));
 
         // Issues should load automatically from the last-used provider
         Assert.Contains("#42", component.Markup);
