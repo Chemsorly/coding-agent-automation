@@ -584,7 +584,11 @@ internal class AgentExecutionOrchestrator
                     _logger.Information("Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected across {AgentCount} agent(s), sending fix prompt",
                         run.RunId, i + 1, iterationCriticalCount, agents.Count);
 
-                    var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt, iterationFindingsText);
+                    // Write concatenated findings from all agents to the file so the fix agent can read it
+                    var findingsFileForFix = Path.Combine(run.WorkspacePath!, PromptBuilder.ReviewFindingsFilePath);
+                    await File.WriteAllTextAsync(findingsFileForFix, iterationFindingsText, ct);
+
+                    var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt);
                     _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
 
                     await agentProvider.ExecuteAsync(

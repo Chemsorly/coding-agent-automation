@@ -25,6 +25,12 @@ public static class PromptBuilder
     public const string ReviewFindingsFilePath = ".kiro/review-findings.md";
 
     /// <summary>
+    /// The directory (relative to workspace) where quality gate output files are written.
+    /// Each gate writes its stdout/stderr here; the agent discovers files by listing the directory.
+    /// </summary>
+    public const string QualityGatesOutputDirectory = ".kiro/quality-gates";
+
+    /// <summary>
     /// Constructs an analysis-only prompt. The agent examines the codebase in context of the
     /// issue and writes its recommendation to .kiro/analysis.md without making any other changes.
     /// The configurable analysis instructions are prepended, followed by pipeline mechanics.
@@ -165,21 +171,19 @@ public static class PromptBuilder
     ];
 
     /// <summary>
-    /// Constructs a fix prompt that includes the configurable fix instructions and the raw
-    /// review findings so the agent knows what to fix.
+    /// Constructs a fix prompt that references the review findings file instead of inlining
+    /// the raw findings. The agent reads .kiro/review-findings.md on demand.
     /// </summary>
-    public static string BuildFixPrompt(string fixInstructions, string rawFindings)
+    public static string BuildFixPrompt(string fixInstructions)
     {
         ArgumentNullException.ThrowIfNull(fixInstructions);
-        ArgumentNullException.ThrowIfNull(rawFindings);
 
         var sb = new StringBuilder();
         sb.AppendLine(fixInstructions);
         sb.AppendLine();
         sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). The pipeline handles all version control operations. Read-only git commands are fine.");
         sb.AppendLine();
-        sb.AppendLine("## Review Findings");
-        sb.AppendLine(rawFindings);
+        sb.AppendLine($"Review findings have been written to `{ReviewFindingsFilePath}`. Read the file, then fix only items marked [CRITICAL].");
         return sb.ToString().TrimEnd();
     }
 

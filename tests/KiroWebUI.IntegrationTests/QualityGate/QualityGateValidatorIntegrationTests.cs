@@ -78,8 +78,32 @@ public class QualityGateValidatorIntegrationTests : IDisposable
         var report = await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
 
         report.Compilation.Passed.Should().BeFalse();
-        // TODO: Assert Compilation.Details contains actual error text (e.g., "CS0103" or "UndefinedType") for stronger regression coverage
         report.Compilation.Details.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task FailingBuildProject_WritesOutputToQualityGatesDirectory()
+    {
+        var workspace = CopyFixtureToTemp("FailingBuildProject");
+
+        await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
+
+        var gatesDir = Path.Combine(workspace, PromptBuilder.QualityGatesOutputDirectory);
+        Directory.Exists(gatesDir).Should().BeTrue();
+        File.Exists(Path.Combine(gatesDir, "compilation-stdout.txt")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task FailingBuildProject_DetailsContainsSummaryOnly()
+    {
+        var workspace = CopyFixtureToTemp("FailingBuildProject");
+
+        var report = await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
+
+        // Details should be a short summary, not contain raw stderr
+        report.Compilation.Details.Should().Contain("Build failed with exit code");
+        report.Compilation.Details.Should().Contain("error(s)");
+        report.Compilation.Details.Should().NotContain("error CS");
     }
 
     [Fact]
@@ -93,6 +117,46 @@ public class QualityGateValidatorIntegrationTests : IDisposable
         report.Tests.Passed.Should().BeFalse();
         report.Tests.TestsFailed.Should().BeGreaterThanOrEqualTo(1);
         report.Tests.Details.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task FailingTestProject_WritesTestOutputToQualityGatesDirectory()
+    {
+        var workspace = CopyFixtureToTemp("FailingTestProject");
+
+        await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
+
+        var gatesDir = Path.Combine(workspace, PromptBuilder.QualityGatesOutputDirectory);
+        Directory.Exists(gatesDir).Should().BeTrue();
+        File.Exists(Path.Combine(gatesDir, "tests-stderr.txt")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task FailingTestProject_DetailsDoesNotContainRawStderr()
+    {
+        var workspace = CopyFixtureToTemp("FailingTestProject");
+
+        var report = await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
+
+        // Details should end with a period after the counts, not contain raw stderr
+        report.Compilation.Details.Should().Be("Build succeeded");
+        report.Tests.Details.Should().StartWith("Tests failed:");
+        report.Tests.Details.Should().EndWith("skipped.");
+    }
+
+    [Fact]
+    public async Task QualityGatesDirectory_ClearedOnEachRun()
+    {
+        var workspace = CopyFixtureToTemp("FailingBuildProject");
+        var gatesDir = Path.Combine(workspace, PromptBuilder.QualityGatesOutputDirectory);
+
+        // Create a stale file that should be cleaned up
+        Directory.CreateDirectory(gatesDir);
+        File.WriteAllText(Path.Combine(gatesDir, "stale-file.txt"), "old data");
+
+        await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
+
+        File.Exists(Path.Combine(gatesDir, "stale-file.txt")).Should().BeFalse();
     }
 
     [Fact]
