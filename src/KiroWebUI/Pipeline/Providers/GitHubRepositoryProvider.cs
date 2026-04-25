@@ -180,15 +180,21 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                 Serilog.Log.Debug("CommitAllAsync status: {FilePath} = {State}", entry.FilePath, entry.State);
             }
 
-            // Stage workdir changes using repo.Index.Add() + repo.Index.Write().
-            // This is the pattern from the libgit2sharp wiki (git-add, git-commit)
-            // and is more reliable than Commands.Stage() which can silently fail.
+            // Stage workdir changes using repo.Index.Add()/Remove() + repo.Index.Write().
+            // Deleted files must use Index.Remove() — Index.Add() tries to stat the file
+            // on disk and throws NotFoundException for files that no longer exist.
+            // This matches the pattern in LibGit2Sharp's own Commands.Stage implementation.
             var stagedAny = false;
             foreach (var entry in preStatus)
             {
-                if (entry.State.HasFlag(FileStatus.NewInWorkdir)
+                if (entry.State.HasFlag(FileStatus.DeletedFromWorkdir))
+                {
+                    Serilog.Log.Debug("CommitAllAsync staging deleted file via Index.Remove: {FilePath}", entry.FilePath);
+                    repo.Index.Remove(entry.FilePath);
+                    stagedAny = true;
+                }
+                else if (entry.State.HasFlag(FileStatus.NewInWorkdir)
                     || entry.State.HasFlag(FileStatus.ModifiedInWorkdir)
-                    || entry.State.HasFlag(FileStatus.DeletedFromWorkdir)
                     || entry.State.HasFlag(FileStatus.RenamedInWorkdir)
                     || entry.State.HasFlag(FileStatus.TypeChangeInWorkdir))
                 {
