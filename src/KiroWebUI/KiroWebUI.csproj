@@ -7,7 +7,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="KiroCliPoc.Tests" />
     <InternalsVisibleTo Include="KiroWebUI.Tests" />
   </ItemGroup>
 

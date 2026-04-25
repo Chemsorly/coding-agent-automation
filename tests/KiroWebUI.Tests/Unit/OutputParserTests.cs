@@ -1,14 +1,14 @@
 using FsCheck;
-using FsCheck.Xunit;
 using FsCheck.Fluent;
+using FsCheck.Xunit;
 using Xunit;
 using TestResult = KiroCliLib.Models.TestResult;
 
-namespace KiroCliPoc.Tests.Unit;
+namespace KiroWebUI.Tests.Unit;
 
 /// <summary>
 /// Property-based tests for OutputParser.
-/// Feature: kiro-cli-poc
+/// Migrated from KiroCliPoc.Tests as part of ARC-11 (#146).
 /// </summary>
 public class OutputParserTests
 {

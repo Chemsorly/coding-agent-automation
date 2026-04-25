@@ -169,7 +169,6 @@ dotnet run --project src/KiroWebUI
 
 See [open issues](https://github.com/Chemsorly/coding-agent-automation/issues) for planned features. Key upcoming work:
 
-- [ARC-11](https://github.com/Chemsorly/coding-agent-automation/issues/146) — Remove legacy KiroCliPoc console app
 - [ARC-12](https://github.com/Chemsorly/coding-agent-automation/issues/147) — Split KiroWebUI into Pipeline, Infrastructure, and WebUI projects
 - [ARC-08a](https://github.com/Chemsorly/coding-agent-automation/issues/142) — Confidence gate for issue quality assessment
 - [AGT-01](https://github.com/Chemsorly/coding-agent-automation/issues/10) — Crush as alternative agent provider

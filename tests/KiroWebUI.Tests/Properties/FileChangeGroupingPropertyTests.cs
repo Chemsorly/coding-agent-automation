@@ -4,11 +4,11 @@ using FsCheck.Xunit;
 using KiroCliLib.Models;
 using Xunit;
 
-namespace KiroCliPoc.Tests.Properties;
+namespace KiroWebUI.Tests.Properties;
 
 /// <summary>
 /// Property 7: File Change Grouping by Type
-/// Feature: kiro-web-ui, Property 7: File Change Grouping by Type
+/// Migrated from KiroCliPoc.Tests as part of ARC-11 (#146).
 /// Validates: Requirements 8.1
 /// </summary>
 public class FileChangeGroupingPropertyTests

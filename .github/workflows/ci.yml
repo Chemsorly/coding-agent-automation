@@ -56,9 +56,6 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Build CLI PoC image
-        run: docker build -f cliPoc.Dockerfile -t kiro-cli-poc:ci .
-
       - name: Build Web UI image
         run: docker build -f webUI.Dockerfile -t kiro-webui:ci .
 
