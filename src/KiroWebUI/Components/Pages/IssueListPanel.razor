@@ -1,3 +1,4 @@
+@implements IAsyncDisposable
 @using KiroWebUI.Pipeline.Interfaces
 @using KiroWebUI.Pipeline.Models
 
@@ -127,7 +128,6 @@
 </div>
 
 @code {
-    // TODO: [ARC-10] LoadIssuePage and SelectIssue pass CancellationToken.None — should use component-scoped CTS cancelled on Dispose
     [Parameter, EditorRequired] public IReadOnlyList<ProviderConfig> IssueProviders { get; set; } = Array.Empty<ProviderConfig>();
     [Parameter, EditorRequired] public IProviderFactory ProviderFactory { get; set; } = default!;
     [Parameter] public string InitialIssueProviderId { get; set; } = "";
@@ -149,6 +149,7 @@
     private string _selectedIssueProviderId = "";
     private int _currentPage = 1;
     private bool _hasMoreIssues;
+    private CancellationTokenSource _cts = new();
 
     private IReadOnlyList<IssueSummary> FilteredIssues =>
         _filteredIssuesCache ??= _selectedLabels.Count == 0
@@ -209,6 +210,7 @@
 
     private async Task LoadIssuePage()
     {
+        if (_loadingIssues) return;
         _loadingIssues = true;
         _filteredIssuesCache = null;
         _selectedIssueDetail = null;
@@ -220,7 +222,7 @@
             if (providerConfig == null) return;
 
             await using var issueProvider = ProviderFactory.CreateIssueProvider(providerConfig);
-            var result = await issueProvider.ListOpenIssuesAsync(_currentPage, IssuePageSize, CancellationToken.None);
+            var result = await issueProvider.ListOpenIssuesAsync(_currentPage, IssuePageSize, _cts.Token);
             _issues = result.Items.ToList();
             _hasMoreIssues = result.HasMore;
             var issueLabels = _issues.SelectMany(i => i.Labels).Distinct().ToList();
@@ -236,6 +238,7 @@
                 _selectedLabels.Add(AgentLabels.Next);
             _filteredIssuesCache = null;
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             await OnError.InvokeAsync($"Failed to fetch issues: {ex.Message}");
@@ -272,10 +275,11 @@
             if (providerConfig != null)
             {
                 await using var issueProvider = ProviderFactory.CreateIssueProvider(providerConfig);
-                _selectedIssueDetail = await issueProvider.GetIssueAsync(issueId, CancellationToken.None);
+                _selectedIssueDetail = await issueProvider.GetIssueAsync(issueId, _cts.Token);
             }
             await OnIssueSelected.InvokeAsync((issueId, _selectedIssueDetail));
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             await OnError.InvokeAsync($"Failed to load issue details: {ex.Message}");
@@ -285,5 +289,11 @@
         {
             _loadingIssueDetail = false;
         }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
     }
 }
