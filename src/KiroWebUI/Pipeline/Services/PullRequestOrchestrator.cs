@@ -30,7 +30,6 @@ internal class PullRequestOrchestrator
         bool isDraft,
         IRepositoryProvider repoProvider,
         IssueDetail? issue,
-        ParsedIssue? parsedIssue,
         IReadOnlyList<IssueComment>? issueComments,
         PipelineConfiguration config,
         CancellationToken ct)
@@ -77,9 +76,6 @@ internal class PullRequestOrchestrator
         var fileChanges = await repoProvider.GetFileChangesAsync(run.WorkspacePath!, ct);
 
         var issueTitle = issue?.Title ?? run.IssueTitle;
-        var issueDescription = issue?.Description ?? string.Empty;
-        var acceptanceCriteria = parsedIssue?.AcceptanceCriteria
-            ?? (IReadOnlyList<string>)Array.Empty<string>();
 
         var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, run.IssueIdentifier);
 
@@ -96,8 +92,7 @@ internal class PullRequestOrchestrator
 
         var prBody = PipelineFormatting.GeneratePrBody(
             run.IssueIdentifier, testsPassed, testsFailed, testsSkipped,
-            coverage, fileChanges, issueTitle, issueDescription,
-            acceptanceCriteria, isDraft, issueComments,
+            coverage, fileChanges, issueTitle, isDraft, issueComments,
             run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
             run.ModelName,
             codeReviewSummary);

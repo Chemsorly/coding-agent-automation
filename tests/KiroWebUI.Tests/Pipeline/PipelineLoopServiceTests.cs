@@ -566,7 +566,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     }
 
     [Fact]
-    public void PipelineConfiguration_WithLastUsedProviderIds_PreservesClosedLoopFields()
+    public void PipelineConfiguration_WithExpression_PreservesClosedLoopFields()
     {
         var config = new PipelineConfiguration
         {
@@ -576,7 +576,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(30),
             ClosedLoopMaxPagesToFetch = 20
         };
-        var copy = config.WithLastUsedProviderIds(new Dictionary<string, string>());
+        var copy = config with { LastUsedProviderIds = new Dictionary<string, string>() };
         Assert.Equal(TimeSpan.FromSeconds(120), copy.ClosedLoopPollInterval);
         Assert.Equal(5, copy.ClosedLoopMaxRunsPerCycle);
         Assert.Equal(10, copy.ClosedLoopMaxConsecutivePollFailures);

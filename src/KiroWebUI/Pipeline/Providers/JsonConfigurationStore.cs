@@ -7,6 +7,7 @@ namespace KiroWebUI.Pipeline.Providers;
 public class JsonConfigurationStore : IConfigurationStore
 {
     private readonly string _baseDirectory;
+    private readonly SemaphoreSlim _pipelineConfigLock = new(1, 1);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -33,6 +34,39 @@ public class JsonConfigurationStore : IConfigurationStore
         ArgumentNullException.ThrowIfNull(config);
         var path = Path.Combine(_baseDirectory, "pipeline-config.json");
         await SaveJsonAsync(path, config, ct);
+    }
+
+    public async Task UpdatePipelineConfigAsync(Func<PipelineConfiguration, PipelineConfiguration> transform, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(transform);
+
+        await _pipelineConfigLock.WaitAsync(ct);
+        try
+        {
+            var path = Path.Combine(_baseDirectory, "pipeline-config.json");
+
+            PipelineConfiguration current;
+            if (File.Exists(path))
+            {
+                var loaded = await LoadJsonAsync<PipelineConfiguration>(path, ct);
+                if (loaded is null)
+                    throw new InvalidOperationException(
+                        $"Pipeline configuration file '{path}' exists but contains invalid JSON. " +
+                        "Fix or delete the file before saving.");
+                current = loaded;
+            }
+            else
+            {
+                current = new PipelineConfiguration();
+            }
+
+            var updated = transform(current);
+            await SaveJsonAsync(path, updated, ct);
+        }
+        finally
+        {
+            _pipelineConfigLock.Release();
+        }
     }
 
     public async Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct)

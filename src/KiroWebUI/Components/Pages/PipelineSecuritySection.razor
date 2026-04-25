@@ -1,0 +1,92 @@
+@using KiroWebUI.Pipeline.Interfaces
+@using KiroWebUI.Pipeline.Models
+
+<section class="settings-section">
+    <h2>Security &amp; Cleanup</h2>
+    <div class="provider-form">
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Blacklisted Paths</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Comma-separated path prefixes excluded from agent commits (e.g. .kiro, .github)">?</span>
+            </div>
+            <input type="text" @bind="_blacklistedPathsText" placeholder=".kiro, .github" />
+        </div>
+        <div class="form-group">
+            <label>Blacklist Mode</label>
+            <select @bind="_blacklistMode">
+                <option value="@BlacklistMode.WarnAndExclude">Warn &amp; Exclude (unstage and continue)</option>
+                <option value="@BlacklistMode.Fail">Fail (stop pipeline on violation)</option>
+            </select>
+        </div>
+        <div class="form-group form-checkbox">
+            <label>
+                <input type="checkbox" @bind="_cleanupSuccessfulWorkspaces" />
+                Delete Workspace After Successful PR
+                <span class="form-hint-icon" aria-hidden="true" title="Automatically remove workspace folders after a non-draft PR is created">?</span>
+            </label>
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Failed Run Workspace Retention (days)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Days to keep workspaces for failed/cancelled runs. 0 = delete immediately, -1 = keep forever">?</span>
+            </div>
+            <input type="number" @bind="_failedWorkspaceRetentionDays" min="-1" />
+        </div>
+        <div class="form-group form-checkbox">
+            <label>
+                <input type="checkbox" @bind="_brainReadOnly" />
+                Brain Repository Read-Only
+                <span class="form-hint-icon" aria-hidden="true" title="When enabled, the brain repo is cloned and read by the agent but no changes are written back. Useful for shared brain repos.">?</span>
+            </label>
+        </div>
+        <div class="pipeline-form-actions">
+            <button class="btn-save" @onclick="SaveAsync">Save Security Settings</button>
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private string _blacklistedPathsText = ".kiro, .github, .brain";
+    private BlacklistMode _blacklistMode = BlacklistMode.WarnAndExclude;
+    private bool _cleanupSuccessfulWorkspaces = true;
+    private int _failedWorkspaceRetentionDays = 7;
+    private bool _brainReadOnly = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        _blacklistedPathsText = string.Join(", ", config.BlacklistedPaths);
+        _blacklistMode = config.BlacklistMode;
+        _cleanupSuccessfulWorkspaces = config.CleanupSuccessfulWorkspaces;
+        _failedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays;
+        _brainReadOnly = config.BrainReadOnly;
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            await ConfigStore.UpdatePipelineConfigAsync(
+                current => current with
+                {
+                    BlacklistedPaths = _blacklistedPathsText
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Where(s => !string.IsNullOrWhiteSpace(s))
+                        .ToArray(),
+                    BlacklistMode = _blacklistMode,
+                    CleanupSuccessfulWorkspaces = _cleanupSuccessfulWorkspaces,
+                    FailedWorkspaceRetentionDays = _failedWorkspaceRetentionDays,
+                    BrainReadOnly = _brainReadOnly
+                },
+                CancellationToken.None);
+            await OnShowStatus.InvokeAsync(("Security settings saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+}

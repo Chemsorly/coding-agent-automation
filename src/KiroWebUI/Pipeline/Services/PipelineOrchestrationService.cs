@@ -343,7 +343,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         try
         {
             var prUrl = await _prOrchestrator.CreatePullRequestAsync(
-                run, report, isDraft, _activeRepoProvider!, _activeIssue, _activeParsedIssue,
+                run, report, isDraft, _activeRepoProvider!, _activeIssue,
                 _activeIssueComments, _activeConfig!, ct);
 
             if (prUrl == null && _activeConfig?.BlacklistMode == BlacklistMode.Fail
@@ -458,8 +458,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             lastUsed["agent"] = agentId;
             if (!string.IsNullOrEmpty(brainId)) lastUsed["brain"] = brainId;
             if (!string.IsNullOrEmpty(pipelineId)) lastUsed["pipeline"] = pipelineId;
-            await _configStore.SavePipelineConfigAsync(
-                _activeConfig.WithLastUsedProviderIds(lastUsed), ct);
+            await _configStore.UpdatePipelineConfigAsync(
+                current => current with { LastUsedProviderIds = lastUsed }, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         { _logger.Warning(ex, "Pipeline {RunId} failed to persist last-used provider IDs", ActiveRun?.RunId); }

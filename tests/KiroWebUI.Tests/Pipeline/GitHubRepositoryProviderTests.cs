@@ -76,15 +76,11 @@ public class GitHubRepositoryProviderTests
             testsSkipped: 1,
             coveragePercent: 87.3,
             fileChanges: fileChanges,
-            issueTitle: "Add new feature",
-            issueDescription: "Implement the new feature as described.",
-            acceptanceCriteria: new[] { "Must compile", "Tests pass" });
+            issueTitle: "Add new feature");
 
         body.Should().Contain("## Issue Context");
         body.Should().Contain("Add new feature");
-        body.Should().Contain("Implement the new feature as described.");
-        body.Should().Contain("Must compile");
-        body.Should().Contain("Tests pass");
+        body.Should().Contain("(#42)");
         body.Should().Contain("## Files Changed");
         body.Should().Contain("Added");
         body.Should().Contain("src/NewFile.cs");
@@ -109,9 +105,7 @@ public class GitHubRepositoryProviderTests
             testsSkipped: 0,
             coveragePercent: null,
             fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Fix bug",
-            issueDescription: "Fix the bug.",
-            acceptanceCriteria: Array.Empty<string>());
+            issueTitle: "Fix bug");
 
         body.Should().Contain("Not available");
     }
@@ -127,8 +121,6 @@ public class GitHubRepositoryProviderTests
             coveragePercent: 40.0,
             fileChanges: new[] { new FileChangeSummary("Modified", "src/Foo.cs") },
             issueTitle: "Partial feature",
-            issueDescription: "Partial implementation.",
-            acceptanceCriteria: Array.Empty<string>(),
             isDraft: true);
 
         body.Should().Contain("draft PR");
@@ -148,8 +140,7 @@ public class GitHubRepositoryProviderTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "42", testsPassed: 5, testsFailed: 0, testsSkipped: 0,
             coveragePercent: 90.0, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Feature", issueDescription: "Desc",
-            acceptanceCriteria: Array.Empty<string>(), isDraft: false, comments: comments);
+            issueTitle: "Feature", isDraft: false, comments: comments);
 
         body.Should().Contain("## Input Comments");
         body.Should().Contain("@alice");
@@ -165,8 +156,7 @@ public class GitHubRepositoryProviderTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug", issueDescription: "Fix",
-            acceptanceCriteria: Array.Empty<string>());
+            issueTitle: "Bug");
 
         body.Should().NotContain("## Input Comments");
     }
@@ -183,8 +173,7 @@ public class GitHubRepositoryProviderTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "5", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Test", issueDescription: "Desc",
-            acceptanceCriteria: Array.Empty<string>(), isDraft: false, comments: comments);
+            issueTitle: "Test", isDraft: false, comments: comments);
 
         body.Should().Contain("@alice");
         body.Should().Contain("Real feedback");
@@ -204,8 +193,7 @@ public class GitHubRepositoryProviderTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 0, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "T", issueDescription: "D",
-            acceptanceCriteria: Array.Empty<string>(), isDraft: false, comments: comments);
+            issueTitle: "T", isDraft: false, comments: comments);
 
         body.Should().Contain("…");
         body.Should().NotContain(longBody);
@@ -257,8 +245,6 @@ public class GitHubRepositoryProviderTests
             coveragePercent: 90.0,
             fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Test",
-            issueDescription: "Test desc.",
-            acceptanceCriteria: Array.Empty<string>(),
             modelName: "claude-sonnet-4.6");
 
         body.Should().Contain("Model: claude-sonnet-4.6");
@@ -274,9 +260,7 @@ public class GitHubRepositoryProviderTests
             testsSkipped: 0,
             coveragePercent: 90.0,
             fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Test",
-            issueDescription: "Test desc.",
-            acceptanceCriteria: Array.Empty<string>());
+            issueTitle: "Test");
 
         body.Should().Contain("Automated implementation via pipeline");
         body.Should().NotContain("Model:");
@@ -290,8 +274,7 @@ public class GitHubRepositoryProviderTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug", issueDescription: "Fix",
-            acceptanceCriteria: Array.Empty<string>(),
+            issueTitle: "Bug",
             codeReviewSummary: null);
 
         body.Should().NotContain("AI Code Review Findings");
@@ -308,8 +291,7 @@ public class GitHubRepositoryProviderTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug", issueDescription: "Fix",
-            acceptanceCriteria: Array.Empty<string>(),
+            issueTitle: "Bug",
             codeReviewSummary: summary);
 
         body.Should().Contain("## AI Code Review Findings");
@@ -327,8 +309,7 @@ public class GitHubRepositoryProviderTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug", issueDescription: "Fix",
-            acceptanceCriteria: Array.Empty<string>(),
+            issueTitle: "Bug",
             codeReviewSummary: summary);
 
         body.Should().Contain("**Agents**: Correctness, DotNetSpecialist");
@@ -345,8 +326,7 @@ public class GitHubRepositoryProviderTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug", issueDescription: "Fix",
-            acceptanceCriteria: Array.Empty<string>(),
+            issueTitle: "Bug",
             codeReviewSummary: summary);
 
         body.Should().Contain("| CRITICAL | 2 | Fixed |");
@@ -370,8 +350,7 @@ public class GitHubRepositoryProviderTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug", issueDescription: "Fix",
-            acceptanceCriteria: Array.Empty<string>(),
+            issueTitle: "Bug",
             codeReviewSummary: summary);
 
         body.Should().Contain("<details>");
@@ -394,8 +373,7 @@ public class GitHubRepositoryProviderTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug", issueDescription: "Fix",
-            acceptanceCriteria: Array.Empty<string>(),
+            issueTitle: "Bug",
             codeReviewSummary: summary);
 
         body.Should().NotContain(longFindings);
@@ -413,8 +391,7 @@ public class GitHubRepositoryProviderTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug", issueDescription: "Fix",
-            acceptanceCriteria: Array.Empty<string>(),
+            issueTitle: "Bug",
             codeReviewSummary: summary);
 
         body.Should().NotContain("CRITICAL");
@@ -433,8 +410,7 @@ public class GitHubRepositoryProviderTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug", issueDescription: "Fix",
-            acceptanceCriteria: Array.Empty<string>(),
+            issueTitle: "Bug",
             codeReviewSummary: summary);
 
         body.Should().NotContain("**Agents**");

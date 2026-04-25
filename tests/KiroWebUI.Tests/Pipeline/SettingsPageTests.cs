@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Moq;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
+using KiroWebUI.Pipeline.Providers;
 
 namespace KiroWebUI.Tests.Pipeline;
 
@@ -639,5 +640,110 @@ public class SettingsPageTests
         var act = () => _mockStore.Object.SaveProviderConfigAsync(config, CancellationToken.None);
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("Write failed");
+    }
+
+    // --- REQ-8: Merge-Save Correctness Tests ---
+
+    [Fact]
+    public async Task MergeSave_GeneralThenSecurity_PreservesGeneralValues()
+    {
+        // Use a real JsonConfigurationStore with a temp directory
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var store = new JsonConfigurationStore(tempDir);
+
+            // Save General section (MaxRetries=7, AgentTimeout=45min)
+            await store.UpdatePipelineConfigAsync(
+                c => c with { MaxRetries = 7, AgentTimeout = TimeSpan.FromMinutes(45) },
+                CancellationToken.None);
+
+            // Save Security section (BrainReadOnly=true)
+            await store.UpdatePipelineConfigAsync(
+                c => c with { BrainReadOnly = true },
+                CancellationToken.None);
+
+            // Verify General values are preserved
+            var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
+            loaded.MaxRetries.Should().Be(7);
+            loaded.AgentTimeout.Should().Be(TimeSpan.FromMinutes(45));
+            loaded.BrainReadOnly.Should().BeTrue();
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task MergeSave_PreservesNonUiFields()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var store = new JsonConfigurationStore(tempDir);
+
+            // Set non-default values for all 7 non-UI properties
+            await store.SavePipelineConfigAsync(new PipelineConfiguration
+            {
+                IssuePageSize = 50,
+                WorkspaceBaseDirectory = "/custom/workspaces",
+                StallWarningInterval = TimeSpan.FromMinutes(5),
+                StallPollInterval = TimeSpan.FromSeconds(10),
+                LastUsedProviderIds = new Dictionary<string, string> { ["issue"] = "test-id" },
+                SecurityScanEnabled = true,
+                ClosedLoopMaxPagesToFetch = 20
+            }, CancellationToken.None);
+
+            // Save any sub-section (General)
+            await store.UpdatePipelineConfigAsync(
+                c => c with { MaxRetries = 5 },
+                CancellationToken.None);
+
+            // Verify all 7 non-UI fields survive
+            var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
+            loaded.IssuePageSize.Should().Be(50);
+            loaded.WorkspaceBaseDirectory.Should().Be("/custom/workspaces");
+            loaded.StallWarningInterval.Should().Be(TimeSpan.FromMinutes(5));
+            loaded.StallPollInterval.Should().Be(TimeSpan.FromSeconds(10));
+            loaded.LastUsedProviderIds.Should().ContainKey("issue");
+            loaded.SecurityScanEnabled.Should().BeTrue();
+            loaded.ClosedLoopMaxPagesToFetch.Should().Be(20);
+            // Also verify the saved field
+            loaded.MaxRetries.Should().Be(5);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task UpdatePipelineConfigAsync_CorruptedFile_ThrowsInvalidOperationException()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var store = new JsonConfigurationStore(tempDir);
+
+            // Write invalid JSON to the config file
+            var configPath = Path.Combine(tempDir, "pipeline-config.json");
+            await File.WriteAllTextAsync(configPath, "{ this is not valid json }}}");
+
+            // UpdatePipelineConfigAsync should throw instead of silently overwriting
+            var act = () => store.UpdatePipelineConfigAsync(
+                c => c with { MaxRetries = 5 },
+                CancellationToken.None);
+
+            await act.Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("*invalid JSON*");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
     }
 }

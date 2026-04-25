@@ -15,13 +15,13 @@ public enum BlacklistMode
 /// <summary>
 /// Configuration for a single specialized review agent.
 /// </summary>
-public sealed class ReviewAgentConfig
+public sealed record ReviewAgentConfig
 {
     public required string Name { get; init; }
     public required string Prompt { get; init; }
 }
 
-public sealed class CodeReviewConfiguration
+public sealed record CodeReviewConfiguration
 {
     public bool Enabled { get; init; } = true;
     public int MaxIterations { get; init; } = 1;
@@ -42,7 +42,7 @@ public sealed class CodeReviewConfiguration
     public IReadOnlyList<ReviewAgentConfig>? Agents { get; init; }
 }
 
-public sealed class PipelineConfiguration
+public sealed record PipelineConfiguration
 {
     public const string DefaultCodeReviewPrompt =
         "Review the changes against the original issue requirements. Use a sub-agent for the review.\n" +
@@ -218,25 +218,4 @@ public sealed class PipelineConfiguration
     /// </summary>
     // TODO: [REF-01] Add server-side validation to reject values < 1 — values ≤ 0 silently fetch only 1 page (review finding #2)
     public int ClosedLoopMaxPagesToFetch { get; init; } = 10;
-
-    /// <summary>
-    /// Returns a copy of this configuration with the specified last-used provider IDs.
-    /// </summary>
-    public PipelineConfiguration WithLastUsedProviderIds(IReadOnlyDictionary<string, string> lastUsed) => new()
-    {
-        MaxRetries = MaxRetries, IssuePageSize = IssuePageSize, AgentTimeout = AgentTimeout,
-        MinCoverageThreshold = MinCoverageThreshold, SecurityScanEnabled = SecurityScanEnabled,
-        WorkspaceBaseDirectory = WorkspaceBaseDirectory, CodeReview = CodeReview,
-        AnalysisPrompt = AnalysisPrompt, ImplementationPrompt = ImplementationPrompt,
-        ExternalCiEnabled = ExternalCiEnabled, ExternalCiTimeout = ExternalCiTimeout,
-        ExternalCiPollInterval = ExternalCiPollInterval, StallWarningInterval = StallWarningInterval,
-        StallPollInterval = StallPollInterval, BlacklistedPaths = BlacklistedPaths,
-        BlacklistMode = BlacklistMode, CleanupSuccessfulWorkspaces = CleanupSuccessfulWorkspaces,
-        FailedWorkspaceRetentionDays = FailedWorkspaceRetentionDays, LastUsedProviderIds = lastUsed,
-        BrainReadOnly = BrainReadOnly,
-        ClosedLoopPollInterval = ClosedLoopPollInterval, ClosedLoopMaxRunsPerCycle = ClosedLoopMaxRunsPerCycle,
-        ClosedLoopMaxConsecutivePollFailures = ClosedLoopMaxConsecutivePollFailures,
-        ClosedLoopMaxBackoffInterval = ClosedLoopMaxBackoffInterval,
-        ClosedLoopMaxPagesToFetch = ClosedLoopMaxPagesToFetch
-    };
 }

@@ -99,8 +99,7 @@ public class GitHubRepositoryProviderPropertyTests
         NonNegativeInt passed,
         NonNegativeInt failed,
         NonNegativeInt skipped,
-        NonEmptyString title,
-        NonEmptyString description)
+        NonEmptyString title)
     {
         var number = issueNum.Get.ToString();
         var fileChanges = new List<FileChangeSummary>
@@ -108,7 +107,6 @@ public class GitHubRepositoryProviderPropertyTests
             new("Added", "src/Test.cs"),
             new("Modified", "src/Other.cs")
         };
-        var criteria = new[] { "Must compile" };
 
         var body = PipelineFormatting.GeneratePrBody(
             number,
@@ -117,13 +115,11 @@ public class GitHubRepositoryProviderPropertyTests
             skipped.Get,
             coveragePercent: 85.5,
             fileChanges: fileChanges,
-            issueTitle: title.Get,
-            issueDescription: description.Get,
-            acceptanceCriteria: criteria);
+            issueTitle: title.Get);
 
         body.Should().Contain("## Issue Context");
         body.Should().Contain(title.Get);
-        body.Should().Contain("Must compile");
+        body.Should().Contain($"(#{number})");
         body.Should().Contain("## Files Changed");
         body.Should().Contain("src/Test.cs");
         body.Should().Contain("## Test Results");

@@ -1,0 +1,79 @@
+@using KiroWebUI.Pipeline.Interfaces
+@using KiroWebUI.Pipeline.Models
+
+<section class="settings-section">
+    <h2>Pipeline Loop</h2>
+    <div class="provider-form">
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Poll Interval (seconds)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="How often the loop checks for new agent:next issues when idle">?</span>
+            </div>
+            <input type="number" @bind="_closedLoopPollIntervalSeconds" min="10" max="600" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Max Runs Per Cycle</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum issues to process per poll cycle. 0 = unlimited (process entire backlog)">?</span>
+            </div>
+            <input type="number" @bind="_closedLoopMaxRunsPerCycle" min="0" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Max Consecutive Poll Failures</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Number of consecutive poll failures before the loop pauses (circuit breaker). Default: 5">?</span>
+            </div>
+            <input type="number" @bind="_closedLoopMaxConsecutivePollFailures" min="1" max="50" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Max Backoff Interval (seconds)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum delay between poll retries after consecutive failures. Default: 900s (15 min)">?</span>
+            </div>
+            <input type="number" @bind="_closedLoopMaxBackoffIntervalSeconds" min="10" max="3600" />
+        </div>
+        <div class="pipeline-form-actions">
+            <button class="btn-save" @onclick="SaveAsync">Save Pipeline Loop Settings</button>
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private int _closedLoopPollIntervalSeconds = 60;
+    private int _closedLoopMaxRunsPerCycle = 0;
+    private int _closedLoopMaxConsecutivePollFailures = 5;
+    private int _closedLoopMaxBackoffIntervalSeconds = 900;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        _closedLoopPollIntervalSeconds = (int)config.ClosedLoopPollInterval.TotalSeconds;
+        _closedLoopMaxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
+        _closedLoopMaxConsecutivePollFailures = config.ClosedLoopMaxConsecutivePollFailures;
+        _closedLoopMaxBackoffIntervalSeconds = (int)config.ClosedLoopMaxBackoffInterval.TotalSeconds;
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            await ConfigStore.UpdatePipelineConfigAsync(
+                current => current with
+                {
+                    ClosedLoopPollInterval = TimeSpan.FromSeconds(_closedLoopPollIntervalSeconds),
+                    ClosedLoopMaxRunsPerCycle = _closedLoopMaxRunsPerCycle,
+                    ClosedLoopMaxConsecutivePollFailures = _closedLoopMaxConsecutivePollFailures,
+                    ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(_closedLoopMaxBackoffIntervalSeconds)
+                },
+                CancellationToken.None);
+            await OnShowStatus.InvokeAsync(("Pipeline loop settings saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+}

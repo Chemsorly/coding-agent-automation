@@ -115,8 +115,7 @@ public class BlacklistEnforcementTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "42", testsPassed: 5, testsFailed: 0, testsSkipped: 0,
             coveragePercent: 90.0, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Feature", issueDescription: "Desc",
-            acceptanceCriteria: Array.Empty<string>(),
+            issueTitle: "Feature",
             blacklistedFilesDetected: blacklisted);
 
         body.Should().Contain("## ⚠️ Blacklisted Files Excluded");
@@ -130,8 +129,7 @@ public class BlacklistEnforcementTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug", issueDescription: "Fix",
-            acceptanceCriteria: Array.Empty<string>());
+            issueTitle: "Bug");
 
         body.Should().NotContain("Blacklisted Files Excluded");
     }
@@ -142,8 +140,7 @@ public class BlacklistEnforcementTests
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug", issueDescription: "Fix",
-            acceptanceCriteria: Array.Empty<string>(),
+            issueTitle: "Bug",
             blacklistedFilesDetected: null);
 
         body.Should().NotContain("Blacklisted Files Excluded");

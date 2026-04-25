@@ -38,6 +38,8 @@ public class SettingsPageComponentTests : BunitContext
             .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
+        _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
     }
 
     [Fact]
@@ -50,24 +52,28 @@ public class SettingsPageComponentTests : BunitContext
     }
 
     [Fact]
-    public void Settings_RendersAllProviderSections()
+    public void Settings_RendersTreeNavAndDefaultSection()
     {
         var component = Render<Settings>();
 
-        Assert.Contains("Issue Providers", component.Markup);
-        Assert.Contains("Repository Providers", component.Markup);
-        Assert.Contains("Agent Providers", component.Markup);
+        // Tree nav contains group headers
+        Assert.Contains("Providers", component.Markup);
         Assert.Contains("Pipeline Configuration", component.Markup);
+
+        // Default selected node is Issue Providers — its section is visible
+        Assert.Contains("Issue Providers", component.Markup);
+
+        // Tree nav is rendered
+        Assert.NotNull(component.Find(".settings-tree"));
     }
 
     [Fact]
-    public void Settings_RendersAddButtons_WhenNoProviders()
+    public void Settings_RendersAddButton_ForDefaultSection()
     {
         var component = Render<Settings>();
 
+        // Default section is Issue Providers — its add button is visible
         Assert.Contains("+ Add Issue Provider", component.Markup);
-        Assert.Contains("+ Add Repository Provider", component.Markup);
-        Assert.Contains("+ Add Agent Provider", component.Markup);
     }
 
     [Fact]
@@ -128,6 +134,10 @@ public class SettingsPageComponentTests : BunitContext
     {
         var component = Render<Settings>();
 
+        // Navigate to Repository Providers section via tree nav
+        var repoNode = component.FindAll(".tree-node").First(n => n.TextContent.Contains("Repository"));
+        repoNode.Click();
+
         var addButton = component.FindAll(".btn-add").First(b => b.TextContent.Contains("Repository"));
         addButton.Click();
 
@@ -140,6 +150,10 @@ public class SettingsPageComponentTests : BunitContext
     {
         var component = Render<Settings>();
 
+        // Navigate to Agent Providers section via tree nav
+        var agentNode = component.FindAll(".tree-node").First(n => n.TextContent.Contains("Agent"));
+        agentNode.Click();
+
         var addButton = component.FindAll(".btn-add").First(b => b.TextContent.Contains("Agent"));
         addButton.Click();
 
@@ -150,27 +164,17 @@ public class SettingsPageComponentTests : BunitContext
     }
 
     [Fact]
-    public void Settings_PipelineConfigSection_ShowsDefaultValues()
+    public void Settings_DefaultLoad_ShowsIssueProviders_NotPipelineConfig()
     {
         var component = Render<Settings>();
 
-        Assert.Contains("Max Retries", component.Markup);
-        Assert.Contains("Agent Timeout", component.Markup);
-        Assert.Contains("Min Coverage Threshold", component.Markup);
-        Assert.DoesNotContain("Security Scan Enabled", component.Markup);
-        Assert.Contains("Save Pipeline Configuration", component.Markup);
-    }
+        // Default node is Issue Providers — its section is visible
+        Assert.Contains("Issue Providers", component.Markup);
 
-    [Fact]
-    public void Settings_PipelineConfigSection_ShowsPromptTextareas()
-    {
-        var component = Render<Settings>();
-
-        Assert.Contains("Analysis Prompt", component.Markup);
-        Assert.Contains("Implementation Prompt", component.Markup);
-        // Verify reset buttons are rendered (disabled when at default)
-        var revertButtons = component.FindAll(".btn-revert");
-        Assert.True(revertButtons.Count >= 2, "Expected at least 2 reset-to-default buttons for prompt fields");
+        // Pipeline config fields should NOT be visible on default load
+        Assert.DoesNotContain("Max Retries", component.Markup);
+        Assert.DoesNotContain("Agent Timeout", component.Markup);
+        Assert.DoesNotContain("Min Coverage Threshold", component.Markup);
     }
 
     [Fact]
@@ -243,9 +247,11 @@ public class SettingsPageComponentTests : BunitContext
         // we verify the modal remains hidden when the page loads with existing providers.
         var component = Render<Settings>();
 
+        // Default section (Issue Providers) is visible
         Assert.Contains("Issue Providers", component.Markup);
-        Assert.Contains("Repository Providers", component.Markup);
-        Assert.Contains("Pipeline Providers", component.Markup);
+        // Tree nav contains other provider nodes
+        Assert.Contains("Repository", component.Markup);
+        Assert.Contains("Pipeline", component.Markup);
         Assert.DoesNotContain("modal-overlay", component.Markup);
         Assert.DoesNotContain("Create Related Providers", component.Markup);
     }
@@ -270,7 +276,12 @@ public class SettingsPageComponentTests : BunitContext
 
         var component = Render<Settings>();
 
+        // Default section is Issue Providers — issue provider is visible
         Assert.Contains("My Issues", component.Markup);
+
+        // Navigate to Repository section to see repo provider
+        var repoNode = component.FindAll(".tree-node").First(n => n.TextContent.Contains("Repository"));
+        repoNode.Click();
         Assert.Contains("My Repo", component.Markup);
     }
 

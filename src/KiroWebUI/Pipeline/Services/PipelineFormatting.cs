@@ -63,8 +63,6 @@ public static partial class PipelineFormatting
         double? coveragePercent,
         IReadOnlyList<FileChangeSummary> fileChanges,
         string issueTitle,
-        string issueDescription,
-        IReadOnlyList<string> acceptanceCriteria,
         bool isDraft = false,
         IReadOnlyList<IssueComment>? comments = null,
         IReadOnlyList<string>? blacklistedFilesDetected = null,
@@ -79,25 +77,10 @@ public static partial class PipelineFormatting
             sb.AppendLine();
         }
 
-        // Issue context
+        // Issue context — link to the issue instead of duplicating its body
         sb.AppendLine("## Issue Context");
         sb.AppendLine($"**{issueTitle}** (#{issueNumber})");
         sb.AppendLine();
-        if (!string.IsNullOrWhiteSpace(issueDescription))
-        {
-            var desc = issueDescription.Length > 500
-                ? issueDescription[..500] + "…"
-                : issueDescription;
-            sb.AppendLine(desc);
-            sb.AppendLine();
-        }
-        if (acceptanceCriteria.Count > 0)
-        {
-            sb.AppendLine("**Acceptance Criteria:**");
-            foreach (var criterion in acceptanceCriteria)
-                sb.AppendLine($"- {criterion}");
-            sb.AppendLine();
-        }
 
         // Input comments
         AppendInputComments(sb, comments);
@@ -219,9 +202,7 @@ public static partial class PipelineFormatting
             if (string.IsNullOrEmpty(agent.Findings))
                 continue;
 
-            var truncated = agent.Findings.Length > maxFindingsPerAgent
-                ? agent.Findings[..maxFindingsPerAgent] + "…"
-                : agent.Findings;
+            var truncated = TruncateMarkdown(agent.Findings, maxFindingsPerAgent);
             sb.AppendLine("<details>");
             sb.AppendLine($"<summary>{agent.AgentName}</summary>");
             sb.AppendLine();
@@ -248,12 +229,36 @@ public static partial class PipelineFormatting
         sb.AppendLine("## Input Comments");
         foreach (var comment in filtered)
         {
-            var body = comment.Body.Length > MaxCommentLength
-                ? comment.Body[..MaxCommentLength] + "…"
-                : comment.Body;
+            var body = TruncateMarkdown(comment.Body, MaxCommentLength);
             sb.AppendLine($"- **@{comment.Author}** ({comment.CreatedAt:yyyy-MM-dd HH:mm} UTC): {body}");
         }
         sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Truncates a markdown string to the specified length and ensures any open
+    /// code fences (```) are properly closed so downstream markdown isn't swallowed.
+    /// </summary>
+    private static string TruncateMarkdown(string text, int maxLength)
+    {
+        if (text.Length <= maxLength)
+            return text;
+
+        var truncated = text[..maxLength] + "…";
+
+        // Count code fence markers (``` at line start) in the truncated text.
+        // An odd count means a fence was left open.
+        var fenceCount = 0;
+        foreach (var line in truncated.Split('\n'))
+        {
+            if (line.TrimStart().StartsWith("```", StringComparison.Ordinal))
+                fenceCount++;
+        }
+
+        if (fenceCount % 2 != 0)
+            truncated += "\n```";
+
+        return truncated;
     }
 
     [GeneratedRegex(@"[^a-z0-9]+")]

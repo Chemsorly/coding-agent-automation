@@ -17,43 +17,74 @@
         <div class="settings-status @(_isError ? "status-error" : "status-success")">@_statusMessage</div>
     }
 
-    <div class="settings-columns">
-        <div class="settings-col-providers">
-            <IssueProviderSection
-                Providers="_issueProviders"
-                ConfigStore="ConfigStore"
-                GitHubValidator="GitHubValidator"
-                ProviderFactory="ProviderFactory"
-                OnDelete="id => DeleteProvider(id, ProviderKind.Issue)"
-                OnSaved="OnIssueProviderSaved" />
+    <div class="settings-layout">
+        <SettingsTreeNav SelectedNode="@_selectedNode"
+                         OnNodeSelected="SelectNode"
+                         PipelineProviderCount="_pipelineProviders.Count" />
 
-            <RepoProviderSection
-                Providers="_repoProviders"
-                ConfigStore="ConfigStore"
-                GitHubValidator="GitHubValidator"
-                OnDelete="id => DeleteProvider(id, ProviderKind.Repository)"
-                OnSaved="OnGitHubProviderSaved" />
-
-            <AgentProviderSection
-                Providers="_agentProviders"
-                ConfigStore="ConfigStore"
-                OnDelete="id => DeleteProvider(id, ProviderKind.Agent)"
-                OnSaved="OnAgentProviderSaved"
-                OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
-
-            <PipelineProviderSection
-                Providers="_pipelineProviders"
-                ConfigStore="ConfigStore"
-                GitHubValidator="GitHubValidator"
-                OnDelete="id => DeleteProvider(id, ProviderKind.Pipeline)"
-                OnSaved="OnGitHubProviderSaved" />
-        </div>
-
-        <div class="settings-col-pipeline">
-            <PipelineConfigSection @ref="_pipelineConfigSection"
-                ConfigStore="ConfigStore"
-                PipelineProviderCount="_pipelineProviders.Count"
-                OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+        <div class="settings-content">
+            @switch (_selectedNode)
+            {
+                case SettingsNodes.ProvidersIssue:
+                    <IssueProviderSection
+                        Providers="_issueProviders"
+                        ConfigStore="ConfigStore"
+                        GitHubValidator="GitHubValidator"
+                        ProviderFactory="ProviderFactory"
+                        OnDelete="id => DeleteProvider(id, ProviderKind.Issue)"
+                        OnSaved="OnIssueProviderSaved" />
+                    break;
+                case SettingsNodes.ProvidersRepository:
+                    <RepoProviderSection
+                        Providers="_repoProviders"
+                        ConfigStore="ConfigStore"
+                        GitHubValidator="GitHubValidator"
+                        OnDelete="id => DeleteProvider(id, ProviderKind.Repository)"
+                        OnSaved="OnGitHubProviderSaved" />
+                    break;
+                case SettingsNodes.ProvidersAgent:
+                    <AgentProviderSection
+                        Providers="_agentProviders"
+                        ConfigStore="ConfigStore"
+                        OnDelete="id => DeleteProvider(id, ProviderKind.Agent)"
+                        OnSaved="OnAgentProviderSaved"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
+                case SettingsNodes.ProvidersPipeline:
+                    <PipelineProviderSection
+                        Providers="_pipelineProviders"
+                        ConfigStore="ConfigStore"
+                        GitHubValidator="GitHubValidator"
+                        OnDelete="id => DeleteProvider(id, ProviderKind.Pipeline)"
+                        OnSaved="OnGitHubProviderSaved" />
+                    break;
+                case SettingsNodes.PipelineGeneral:
+                    <PipelineGeneralSection
+                        ConfigStore="ConfigStore"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
+                case SettingsNodes.PipelineLoop:
+                    <PipelineLoopSection
+                        ConfigStore="ConfigStore"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
+                case SettingsNodes.PipelinePrompts:
+                    <PipelinePromptsSection
+                        ConfigStore="ConfigStore"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
+                case SettingsNodes.PipelineQuality:
+                    <PipelineQualityGatesSection
+                        ConfigStore="ConfigStore"
+                        PipelineProviderCount="_pipelineProviders.Count"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
+                case SettingsNodes.PipelineSecurity:
+                    <PipelineSecuritySection
+                        ConfigStore="ConfigStore"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
+            }
         </div>
     </div>
 </div>
@@ -69,8 +100,8 @@
 
 @code {
     // TODO: [ARC-10] All ConfigStore/ProviderFactory calls use CancellationToken.None — should use component-scoped CTS
-    private PipelineConfigSection? _pipelineConfigSection;
     private SettingsModals? _modals;
+    private string _selectedNode = SettingsNodes.ProvidersIssue;
 
     private List<ProviderConfig> _issueProviders = new();
     private List<ProviderConfig> _repoProviders = new();
@@ -93,9 +124,6 @@
             _repoProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
             _agentProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None)).ToList();
             _pipelineProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
-
-            if (_pipelineConfigSection is not null)
-                await _pipelineConfigSection.LoadConfigAsync();
         }
         catch (Exception ex)
         {
@@ -159,5 +187,10 @@
     {
         _statusMessage = message;
         _isError = isError;
+    }
+
+    private void SelectNode(string nodeId)
+    {
+        _selectedNode = nodeId;
     }
 }
