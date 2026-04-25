@@ -168,10 +168,13 @@
         try
         {
             await using var provider = ProviderFactory.CreateIssueProvider(_configureLabelsProviderConfig);
-            await provider.EnsureAgentLabelsAsync(CancellationToken.None);
-            _configureLabelsStatus = "Agent labels configured successfully.";
-            _configureLabelsIsError = false;
+            var success = await provider.EnsureAgentLabelsAsync(CancellationToken.None);
+            _configureLabelsStatus = success
+                ? "Agent labels configured successfully."
+                : "Some labels could not be created. Check app permissions.";
+            _configureLabelsIsError = !success;
 
+            // TODO: [GH-06] When success is false, the modal auto-dismisses after 1200ms hiding the partial failure. Should only auto-dismiss and fire OnLabelsConfigured when success is true; on false, keep modal open for retry.
             StateHasChanged();
             await Task.Delay(1200);
             _showConfigureLabelsModal = false;

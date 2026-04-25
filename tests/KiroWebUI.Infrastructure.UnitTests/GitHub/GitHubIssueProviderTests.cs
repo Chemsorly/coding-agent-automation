@@ -5,6 +5,7 @@ using KiroWebUI.Infrastructure.GitHub;
 using KiroWebUI.Infrastructure.Agent;
 using KiroWebUI.Infrastructure.Persistence;
 using KiroWebUI.Infrastructure;
+using KiroWebUI.Pipeline.Interfaces;
 
 namespace KiroWebUI.Infrastructure.UnitTests;
 
@@ -298,8 +299,9 @@ public class GitHubIssueProviderTests
         var mockLabels = new Mock<IIssuesLabelsClient>();
         _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
 
-        await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
+        var result = await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
 
+        result.Should().BeTrue();
         mockLabels.Verify(l => l.Create("owner", "repo",
             It.Is<NewLabel>(nl => nl.Name == "agent:next" && nl.Color == "0e8a16")), Times.Once);
         mockLabels.Verify(l => l.Create("owner", "repo",
@@ -320,8 +322,9 @@ public class GitHubIssueProviderTests
             .ThrowsAsync(new ApiValidationException());
         _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
 
-        // Should not throw — all labels already exist
-        await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
+        var result = await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
+
+        result.Should().BeTrue();
     }
 
     [Fact]
@@ -335,10 +338,155 @@ public class GitHubIssueProviderTests
             .ThrowsAsync(new ApiValidationException());
         _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
 
-        await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
+        var result = await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
 
+        result.Should().BeTrue();
         // All five should be attempted
         mockLabels.Verify(l => l.Create("owner", "repo", It.IsAny<NewLabel>()), Times.Exactly(5));
+    }
+
+    [Fact]
+    public async Task EnsureAgentLabelsAsync_ReturnsFalse_WhenLabelCreationFails()
+    {
+        var mockLabels = new Mock<IIssuesLabelsClient>();
+        mockLabels.Setup(l => l.Create("owner", "repo", It.Is<NewLabel>(nl => nl.Name == "agent:next")))
+            .ThrowsAsync(new HttpRequestException("Network error"));
+        _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
+
+        var result = await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ValidateAsync_Success_DoesNotThrow()
+    {
+        var mockRepos = new Mock<IRepositoriesClient>();
+        mockRepos.Setup(r => r.Get("owner", "repo")).ReturnsAsync(CreateMockRepository());
+        _mockClient.Setup(c => c.Repository).Returns(mockRepos.Object);
+
+        await _provider.Invoking(p => p.ValidateAsync(CancellationToken.None)).Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task ValidateAsync_AuthorizationException_ThrowsUserFriendlyMessage()
+    {
+        var mockRepos = new Mock<IRepositoriesClient>();
+        mockRepos.Setup(r => r.Get("owner", "repo")).ThrowsAsync(new AuthorizationException());
+        _mockClient.Setup(c => c.Repository).Returns(mockRepos.Object);
+
+        var act = () => _provider.ValidateAsync(CancellationToken.None);
+        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+        ex.Which.Message.Should().Contain("Authentication failed: installation token was rejected");
+    }
+
+    [Fact]
+    public async Task ValidateAsync_NotFoundException_ThrowsUserFriendlyMessage()
+    {
+        var mockRepos = new Mock<IRepositoriesClient>();
+        mockRepos.Setup(r => r.Get("owner", "repo")).ThrowsAsync(new NotFoundException("Not found", System.Net.HttpStatusCode.NotFound));
+        _mockClient.Setup(c => c.Repository).Returns(mockRepos.Object);
+
+        var act = () => _provider.ValidateAsync(CancellationToken.None);
+        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+        ex.Which.Message.Should().Contain("Repository not found or app lacks access");
+    }
+
+    [Fact]
+    public async Task ValidateAsync_PrivateKeyDecodeFailure_ThrowsUserFriendlyMessage()
+    {
+        var mockRepos = new Mock<IRepositoriesClient>();
+        mockRepos.Setup(r => r.Get("owner", "repo")).ThrowsAsync(new InvalidOperationException("Failed to decode private key from base64"));
+        _mockClient.Setup(c => c.Repository).Returns(mockRepos.Object);
+
+        var act = () => _provider.ValidateAsync(CancellationToken.None);
+        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+        ex.Which.Message.Should().Contain("Invalid private key: could not decode from base64");
+    }
+
+    [Fact]
+    public async Task ValidateAsync_TokenExchangeFailure_ThrowsUserFriendlyMessage()
+    {
+        var mockRepos = new Mock<IRepositoriesClient>();
+        mockRepos.Setup(r => r.Get("owner", "repo")).ThrowsAsync(new InvalidOperationException("token exchange failed", new Exception("bad credentials")));
+        _mockClient.Setup(c => c.Repository).Returns(mockRepos.Object);
+
+        var act = () => _provider.ValidateAsync(CancellationToken.None);
+        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+        ex.Which.Message.Should().Contain("Authentication failed: bad credentials");
+    }
+
+    [Fact]
+    public async Task InitializeAsync_Success_ReturnsTrue()
+    {
+        IIssueProvider provider = _provider;
+        var mockRepos = new Mock<IRepositoriesClient>();
+        mockRepos.Setup(r => r.Get("owner", "repo")).ReturnsAsync(CreateMockRepository());
+        _mockClient.Setup(c => c.Repository).Returns(mockRepos.Object);
+        var mockLabels = new Mock<IIssuesLabelsClient>();
+        _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
+
+        var result = await provider.InitializeAsync(CancellationToken.None);
+
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task InitializeAsync_LabelCreationFails_ReturnsFalse()
+    {
+        IIssueProvider provider = _provider;
+        var mockRepos = new Mock<IRepositoriesClient>();
+        mockRepos.Setup(r => r.Get("owner", "repo")).ReturnsAsync(CreateMockRepository());
+        _mockClient.Setup(c => c.Repository).Returns(mockRepos.Object);
+        var mockLabels = new Mock<IIssuesLabelsClient>();
+        mockLabels.Setup(l => l.Create("owner", "repo", It.IsAny<NewLabel>()))
+            .ThrowsAsync(new HttpRequestException("Network error"));
+        _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
+
+        var result = await provider.InitializeAsync(CancellationToken.None);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task InitializeAsync_CredentialFailure_Throws()
+    {
+        IIssueProvider provider = _provider;
+        var mockRepos = new Mock<IRepositoriesClient>();
+        mockRepos.Setup(r => r.Get("owner", "repo")).ThrowsAsync(new AuthorizationException());
+        _mockClient.Setup(c => c.Repository).Returns(mockRepos.Object);
+
+        Func<Task> act = async () => await provider.InitializeAsync(CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*Authentication failed*");
+    }
+
+    [Fact]
+    public async Task InitializeAsync_IsIdempotent_SecondCallSucceeds()
+    {
+        IIssueProvider provider = _provider;
+        var mockRepos = new Mock<IRepositoriesClient>();
+        mockRepos.Setup(r => r.Get("owner", "repo")).ReturnsAsync(CreateMockRepository());
+        _mockClient.Setup(c => c.Repository).Returns(mockRepos.Object);
+        var mockLabels = new Mock<IIssuesLabelsClient>();
+        _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
+
+        var result1 = await provider.InitializeAsync(CancellationToken.None);
+        // Second call — labels already exist (ApiValidationException)
+        mockLabels.Setup(l => l.Create("owner", "repo", It.IsAny<NewLabel>()))
+            .ThrowsAsync(new ApiValidationException());
+        var result2 = await provider.InitializeAsync(CancellationToken.None);
+
+        result1.Should().BeTrue();
+        result2.Should().BeTrue();
+    }
+
+    private static Repository CreateMockRepository()
+    {
+#pragma warning disable SYSLIB0050 // FormatterServices is obsolete — used only in tests to create uninitialized Octokit objects
+        return (Repository)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(Repository));
+#pragma warning restore SYSLIB0050
     }
 
     [Fact]

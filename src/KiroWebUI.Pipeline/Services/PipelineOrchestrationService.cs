@@ -179,13 +179,18 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 else
                     _logger.Warning("Pipeline {RunId} external CI enabled but no pipeline provider configured", run.RunId);
             }
-            await ValidateProvidersAsync(issueProvider, issueProviderConfig, _activeRepoProvider, repoProviderConfig,
+            await ValidateProvidersAsync(_activeRepoProvider, repoProviderConfig,
                 _activeAgentProvider, agentProviderConfig, _activePipelineProvider, linkedCt);
             _logger.Information("Pipeline {RunId} created for issue {IssueIdentifier}", run.RunId, issueIdentifier);
             NotifyChange();
-            try { await issueProvider.EnsureAgentLabelsAsync(linkedCt); }
+            try
+            {
+                var labelsOk = await issueProvider.InitializeAsync(linkedCt);
+                if (!labelsOk)
+                    _logger.Warning("Pipeline {RunId} issue provider label creation partially failed, continuing", run.RunId);
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
-            { _logger.Warning(ex, "Pipeline {RunId} failed to ensure agent labels, continuing", run.RunId); }
+            { throw new InvalidOperationException($"Issue provider initialization failed: {ex.Message}", ex); }
             await PersistLastUsedProviderIdsAsync(issueProviderId, repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, linkedCt);
             await ExecutePipelineStepsAsync(run, issueProvider, linkedCt);
             return run;
@@ -428,14 +433,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         catch (Exception ex) { _logger.Warning(ex, "Failed to dispose previous {ProviderKind} provider", providerKind); }
     }
     private async Task ValidateProvidersAsync(
-        IIssueProvider issueProvider, ProviderConfig issueConfig,
         IRepositoryProvider repoProvider, ProviderConfig repoConfig,
         IAgentProvider agentProvider, ProviderConfig agentConfig,
         IPipelineProvider? pipelineProvider, CancellationToken ct)
     {
-        try { await issueProvider.ValidateAsync(ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        { throw new InvalidOperationException($"Issue provider ({issueConfig.ProviderType}) validation failed: {ex.Message}", ex); }
         try { await repoProvider.ValidateAsync(ct); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         { throw new InvalidOperationException($"Repository provider ({repoConfig.ProviderType}) validation failed: {ex.Message}", ex); }

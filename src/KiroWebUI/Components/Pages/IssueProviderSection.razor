@@ -14,9 +14,18 @@
                     <span class="provider-detail">@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "")</span>
                 </div>
                 <div class="provider-actions">
+                    @* TODO: [GH-06] Button only disables for the current provider — concurrent clicks on different providers race on shared state. Disable all buttons while any initialization is in progress. *@
+                    <button class="btn-edit" @onclick="() => InitializeRepository(p)"
+                            disabled="@(_initializingProviderId == p.Id)">
+                        @(_initializingProviderId == p.Id ? "Initializing..." : "Initialize Repository")
+                    </button>
                     <button class="btn-edit" @onclick="() => EditProvider(p)">Edit</button>
                     <button class="btn-delete" @onclick="() => OnDelete.InvokeAsync(p.Id)">Delete</button>
                 </div>
+                @if (_initializeStatusProviderId == p.Id && !string.IsNullOrEmpty(_initializeStatus))
+                {
+                    <div class="settings-status @(_initializeIsError ? "status-error" : "status-success")">@_initializeStatus</div>
+                }
             </div>
         }
     </div>
@@ -85,6 +94,39 @@
     private string? _validationMessage;
     private bool _validationSuccess;
     private bool _saving;
+    private string? _initializingProviderId;
+    private string? _initializeStatusProviderId;
+    private string? _initializeStatus;
+    private bool _initializeIsError;
+
+    private async Task InitializeRepository(ProviderConfig config)
+    {
+        // TODO: [GH-06] Uses CancellationToken.None — if user navigates away mid-operation, StateHasChanged() in finally throws ObjectDisposedException. Implement IDisposable with component-scoped CTS.
+        _initializingProviderId = config.Id;
+        _initializeStatusProviderId = config.Id;
+        _initializeStatus = null;
+        StateHasChanged();
+
+        try
+        {
+            await using var provider = ProviderFactory.CreateIssueProvider(config);
+            var labelsOk = await provider.InitializeAsync(CancellationToken.None);
+            _initializeStatus = labelsOk
+                ? "✅ Repository initialized successfully."
+                : "⚠️ Credentials validated but some labels could not be created.";
+            _initializeIsError = !labelsOk;
+        }
+        catch (Exception ex)
+        {
+            _initializeStatus = $"❌ Initialization failed: {ex.Message}";
+            _initializeIsError = true;
+        }
+        finally
+        {
+            _initializingProviderId = null;
+            StateHasChanged();
+        }
+    }
 
     private void ShowAddForm()
     {

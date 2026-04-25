@@ -86,6 +86,8 @@ public class PipelineOrchestrationServiceTests
             .Returns(Task.CompletedTask);
         _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());
+        _mockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         _mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
@@ -837,14 +839,14 @@ public class PipelineOrchestrationServiceTests
     public async Task StartPipeline_ValidatesAllProvidersBeforeClone()
     {
         var callOrder = new List<string>();
-        _mockIssueProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Callback(() => callOrder.Add("IssueProvider.ValidateAsync")).Returns(Task.CompletedTask);
+        _mockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>())).Callback(() => callOrder.Add("IssueProvider.InitializeAsync")).ReturnsAsync(true);
         _mockRepoProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Callback(() => callOrder.Add("RepoProvider.ValidateAsync")).Returns(Task.CompletedTask);
         _mockAgentProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Callback(() => callOrder.Add("AgentProvider.ValidateAsync")).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Callback(() => callOrder.Add("RepoProvider.CloneAsync")).Returns(Task.CompletedTask);
 
         await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        var lastValidateIndex = Math.Max(Math.Max(callOrder.IndexOf("IssueProvider.ValidateAsync"), callOrder.IndexOf("RepoProvider.ValidateAsync")), callOrder.IndexOf("AgentProvider.ValidateAsync"));
+        var lastValidateIndex = Math.Max(Math.Max(callOrder.IndexOf("IssueProvider.InitializeAsync"), callOrder.IndexOf("RepoProvider.ValidateAsync")), callOrder.IndexOf("AgentProvider.ValidateAsync"));
         callOrder.IndexOf("RepoProvider.CloneAsync").Should().BeGreaterThan(lastValidateIndex);
     }
 
@@ -857,14 +859,16 @@ public class PipelineOrchestrationServiceTests
         var failureMessage = $"Invalid credentials for {providerKind}";
         switch (providerKind)
         {
-            case "Issue": _mockIssueProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new HttpRequestException(failureMessage)); break;
+            case "Issue":
+                _mockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new InvalidOperationException(failureMessage));
+                break;
             case "Repository": _mockRepoProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new HttpRequestException(failureMessage)); break;
             case "Agent": _mockAgentProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new HttpRequestException(failureMessage)); break;
         }
 
         var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         var ex = await act.Should().ThrowAsync<InvalidOperationException>();
-        ex.Which.Message.Should().Contain("validation failed");
         ex.Which.Message.Should().Contain(failureMessage);
         _service.ActiveRun!.CurrentStep.Should().Be(PipelineStep.Failed);
         _mockRepoProvider.Verify(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -934,6 +938,7 @@ public class PipelineOrchestrationServiceTests
         firstIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = Array.Empty<string>() });
         firstIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<IssueComment>());
         firstIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        firstIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
         firstRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         firstRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
         firstRepoProvider.Setup(p => p.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
@@ -1174,22 +1179,35 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task StartPipeline_CallsEnsureAgentLabelsAsync()
+    public async Task StartPipeline_CallsInitializeAsync()
     {
         await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        _mockIssueProvider.Verify(p => p.EnsureAgentLabelsAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _mockIssueProvider.Verify(p => p.InitializeAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task StartPipeline_EnsureAgentLabelsFailure_PipelineContinues()
+    public async Task StartPipeline_InitializeAsyncLabelFailure_PipelineContinues()
     {
-        _mockIssueProvider.Setup(p => p.EnsureAgentLabelsAsync(It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("API error"));
+        _mockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
+    }
+
+    [Fact]
+    public async Task StartPipeline_InitializeAsyncCredentialFailure_PipelineFails()
+    {
+        _mockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Authentication failed: installation token was rejected"));
+
+        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+        ex.Which.Message.Should().Contain("Issue provider initialization failed");
+        _service.ActiveRun!.CurrentStep.Should().Be(PipelineStep.Failed);
     }
 
     [Fact]

@@ -89,6 +89,8 @@ public class AgentCodingPageTests
             });
         _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());
+        _mockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         _mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");

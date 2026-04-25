@@ -219,8 +219,35 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         return AgentLabels.All.All(name => repoLabelNames.Contains(name));
     }
 
-    public async Task EnsureAgentLabelsAsync(CancellationToken ct)
+    /// <inheritdoc />
+    public override async Task ValidateAsync(CancellationToken ct)
     {
+        // TODO: [GH-06] Exception filters match on message substrings — fragile if upstream wording changes. Consider defining sentinel exception types in GitHubAppAuthService instead.
+        try
+        {
+            await base.ValidateAsync(ct);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Failed to decode private key"))
+        {
+            throw new InvalidOperationException("Invalid private key: could not decode from base64", ex);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("token exchange failed"))
+        {
+            throw new InvalidOperationException($"Authentication failed: {ex.InnerException?.Message ?? ex.Message}", ex);
+        }
+        catch (AuthorizationException ex)
+        {
+            throw new InvalidOperationException("Authentication failed: installation token was rejected", ex);
+        }
+        catch (NotFoundException ex)
+        {
+            throw new InvalidOperationException("Repository not found or app lacks access", ex);
+        }
+    }
+
+    public async Task<bool> EnsureAgentLabelsAsync(CancellationToken ct)
+    {
+        var allSucceeded = true;
         var client = await GetClientAsync(ct);
         foreach (var (name, color) in AgentLabels.Definitions)
         {
@@ -232,7 +259,12 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
             {
                 // Label already exists — skip
             }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                allSucceeded = false;
+            }
         }
+        return allSucceeded;
     }
 
     /// <inheritdoc />

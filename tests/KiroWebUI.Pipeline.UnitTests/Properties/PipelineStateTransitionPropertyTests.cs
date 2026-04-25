@@ -95,6 +95,8 @@ public class PipelineStateTransitionPropertyTests
             .Returns(Task.CompletedTask);
         mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());
+        mockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
         var mockRepoProvider = new Mock<IRepositoryProvider>();
         mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");

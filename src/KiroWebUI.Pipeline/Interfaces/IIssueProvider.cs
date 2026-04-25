@@ -56,12 +56,25 @@ public interface IIssueProvider : IAsyncDisposable
     /// <summary>
     /// Ensures the agent status labels exist in the repository. Creates any that are missing.
     /// Idempotent — safe to call multiple times.
+    /// Returns <c>true</c> if all labels were created or already exist, <c>false</c> if any label creation failed.
     /// </summary>
-    Task EnsureAgentLabelsAsync(CancellationToken ct);
+    Task<bool> EnsureAgentLabelsAsync(CancellationToken ct);
 
     /// <summary>
     /// Validates that the provider is correctly configured and can communicate with its
     /// backing service. Called at pipeline start before any work begins.
     /// </summary>
     Task ValidateAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Performs provider initialization: validates credentials/access and creates required resources.
+    /// Idempotent — safe to call multiple times.
+    /// Returns <c>true</c> if all initialization steps succeeded, <c>false</c> if label creation partially failed.
+    /// Throws on credential or access validation failure.
+    /// </summary>
+    async Task<bool> InitializeAsync(CancellationToken ct)
+    {
+        await ValidateAsync(ct);
+        return await EnsureAgentLabelsAsync(ct);
+    }
 }
