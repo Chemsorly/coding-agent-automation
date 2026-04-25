@@ -57,6 +57,15 @@ public sealed class PipelineRun
     /// <summary>Whether existing analysis was reused (skipped agent analysis).</summary>
     public bool AnalysisSkipped { get; set; }
 
+    /// <summary>Analysis gate recommendation: "ready", "not_ready", "wont_do", or null (no assessment).</summary>
+    public string? AnalysisRecommendation { get; set; }
+
+    /// <summary>Non-blocking concerns from the analysis assessment.</summary>
+    public IReadOnlyList<string> AnalysisConcerns { get; set; } = Array.Empty<string>();
+
+    /// <summary>Hard blockers from the analysis assessment.</summary>
+    public IReadOnlyList<string> AnalysisBlockingIssues { get; set; } = Array.Empty<string>();
+
     /// <summary>Whether the PR is a draft (quality gates failed after max retries).</summary>
     public bool IsDraftPr { get; set; }
 
@@ -121,6 +130,7 @@ public sealed class PipelineRun
         ModelName = ModelName,
         BrainRepoUsed = BrainProviderConfigId != null,
         BrainUpdatesPushed = BrainUpdatesPushed,
-        InitiatedBy = InitiatedBy
+        InitiatedBy = InitiatedBy,
+        AnalysisRecommendation = AnalysisRecommendation
     };
 }

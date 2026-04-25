@@ -308,6 +308,8 @@ public class GitHubIssueProviderTests
             It.Is<NewLabel>(nl => nl.Name == "agent:error" && nl.Color == "d73a4a")), Times.Once);
         mockLabels.Verify(l => l.Create("owner", "repo",
             It.Is<NewLabel>(nl => nl.Name == "agent:needs-refinement" && nl.Color == "fbca04")), Times.Once);
+        mockLabels.Verify(l => l.Create("owner", "repo",
+            It.Is<NewLabel>(nl => nl.Name == "agent:wont-do" && nl.Color == "cfd3d7")), Times.Once);
     }
 
     [Fact]
@@ -326,7 +328,7 @@ public class GitHubIssueProviderTests
     public async Task EnsureAgentLabelsAsync_CreatesOnlyMissingLabels()
     {
         var mockLabels = new Mock<IIssuesLabelsClient>();
-        // First two labels already exist, last two are new
+        // First two labels already exist, rest are new
         mockLabels.Setup(l => l.Create("owner", "repo", It.Is<NewLabel>(nl => nl.Name == "agent:next")))
             .ThrowsAsync(new ApiValidationException());
         mockLabels.Setup(l => l.Create("owner", "repo", It.Is<NewLabel>(nl => nl.Name == "agent:in-progress")))
@@ -335,8 +337,8 @@ public class GitHubIssueProviderTests
 
         await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
 
-        // All four should be attempted
-        mockLabels.Verify(l => l.Create("owner", "repo", It.IsAny<NewLabel>()), Times.Exactly(4));
+        // All five should be attempted
+        mockLabels.Verify(l => l.Create("owner", "repo", It.IsAny<NewLabel>()), Times.Exactly(5));
     }
 
     [Fact]
