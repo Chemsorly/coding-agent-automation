@@ -79,15 +79,17 @@ internal class QualityGateOrchestrator
                 _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}",
                     run.RunId, run.RetryCount, config.MaxRetries);
 
+                var retryPromptSummary = BuildQualityGateRetryPrompt(report, run.RetryCount, config.MaxRetries);
+
                 run.ChatHistory.Enqueue(new ChatEntry
                 {
                     Role = ChatRole.System,
-                    Content = $"Quality gates failed (attempt {run.RetryCount}/{config.MaxRetries}):\n{errorSummary}"
+                    Content = retryPromptSummary
                 });
 
                 transitionTo(PipelineStep.GeneratingCode);
 
-                var fixPrompt = $"The quality gates failed. Please fix the following issues:\n{errorSummary}\n\nDo NOT run git write commands (git add, git commit, git push, etc.). The pipeline handles version control automatically.";
+                var fixPrompt = $"{retryPromptSummary}\n\nDo NOT run git write commands (git add, git commit, git push, etc.). The pipeline handles version control automatically.";
                 run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = fixPrompt });
                 onChange();
 
@@ -327,5 +329,23 @@ internal class QualityGateOrchestrator
         if (report.ExternalCi is { Passed: false })
             errors.Add($"External CI: {report.ExternalCi.Details}");
         return string.Join(Environment.NewLine, errors);
+    }
+
+    internal static string BuildQualityGateRetryPrompt(QualityGateReport report, int attempt, int maxRetries)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"Quality gates failed (attempt {attempt}/{maxRetries}):");
+        sb.AppendLine($"- Compilation: {(report.Compilation.Passed ? "PASSED" : "FAILED")} ({report.Compilation.Details})");
+        sb.AppendLine($"- Tests: {(report.Tests.Passed ? "PASSED" : "FAILED")} ({report.Tests.Details})");
+        if (report.Coverage != null)
+            sb.AppendLine($"- Coverage: {(report.Coverage.Passed ? "PASSED" : "FAILED")} ({report.Coverage.Details})");
+        if (report.SecurityScan != null)
+            sb.AppendLine($"- Security: {(report.SecurityScan.Passed ? "PASSED" : "FAILED")} ({report.SecurityScan.Details})");
+        if (report.ExternalCi != null)
+            sb.AppendLine($"- External CI: {(report.ExternalCi.Passed ? "PASSED" : "FAILED")} ({report.ExternalCi.Details})");
+        sb.AppendLine();
+        sb.AppendLine($"Diagnostic output has been written to `{PromptBuilder.QualityGatesOutputDirectory}/`.");
+        sb.Append("List the files there and read the relevant ones to diagnose and fix the failures.");
+        return sb.ToString();
     }
 }

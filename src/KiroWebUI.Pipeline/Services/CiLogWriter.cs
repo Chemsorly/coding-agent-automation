@@ -17,7 +17,7 @@ public class CiLogWriter
     }
 
     /// <summary>
-    /// Writes log content for failed jobs to .kiro/ci-logs/{runId}/ and returns
+    /// Writes log content for failed jobs to .kiro/quality-gates/ and returns
     /// a dictionary mapping jobId to the workspace-relative file path.
     /// </summary>
     public IReadOnlyDictionary<long, string> WriteJobLogs(
@@ -36,18 +36,14 @@ public class CiLogWriter
         if (failedJobs.Count == 0)
             return result;
 
-        var logsDir = Path.Combine(workspacePath, ".kiro", "ci-logs", runId);
+        var logsDir = Path.Combine(workspacePath, PromptBuilder.QualityGatesOutputDirectory);
         try
         {
-            // Clean previous logs for this run (handles retries writing to the same runId directory)
-            if (Directory.Exists(logsDir))
-                Directory.Delete(logsDir, recursive: true);
-
             Directory.CreateDirectory(logsDir);
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Failed to prepare CI logs directory {LogsDir}", logsDir);
+            _logger.Warning(ex, "Failed to prepare quality gates output directory {LogsDir}", logsDir);
             return result;
         }
 
@@ -60,13 +56,13 @@ public class CiLogWriter
                 if (string.IsNullOrWhiteSpace(safeJobName))
                     safeJobName = $"job_{job.JobId}";
 
-                var fileName = $"{safeJobName}_{job.JobId}.log";
+                var fileName = $"ci-{safeJobName}_{job.JobId}.log";
                 var fullPath = Path.Combine(logsDir, fileName);
 
                 File.WriteAllText(fullPath, job.LogContent);
 
                 // Store the workspace-relative path
-                var relativePath = Path.Combine(".kiro", "ci-logs", runId, fileName).Replace('\\', '/');
+                var relativePath = Path.Combine(PromptBuilder.QualityGatesOutputDirectory, fileName).Replace('\\', '/');
                 result[job.JobId] = relativePath;
 
                 _logger.Debug("Wrote CI log for job '{JobName}' to {LogPath}", job.Name, relativePath);

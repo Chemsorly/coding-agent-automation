@@ -231,6 +231,47 @@ public class QualityGateValidatorTests
         skipped.Should().Be(expectedSkipped);
     }
 
+    // --- Build Error Count Parsing Tests ---
+
+    [Theory]
+    [InlineData("Build FAILED.\n    3 Error(s)\n    2 Warning(s)", 3, 2)]
+    [InlineData("Build FAILED.\n    0 Error(s)\n    0 Warning(s)", 0, 0)]
+    [InlineData("Build succeeded.\n    0 Error(s)\n    1 Warning(s)", 0, 1)]
+    [InlineData("no match here", 0, 0)]
+    [InlineData("", 0, 0)]
+    public void ParseBuildErrorCounts_ExtractsCorrectValues(
+        string output, int expectedErrors, int expectedWarnings)
+    {
+        var (errors, warnings) = QualityGateValidator.ParseBuildErrorCounts(output);
+
+        errors.Should().Be(expectedErrors);
+        warnings.Should().Be(expectedWarnings);
+    }
+
+    // --- BuildCiFailureDetails Tests ---
+
+    [Fact]
+    public void BuildCiFailureDetails_ReturnsSummaryOnly()
+    {
+        var status = new PipelineRunStatus
+        {
+            State = PipelineRunState.Failed,
+            Jobs = new[]
+            {
+                new PipelineJobResult { Name = "build-and-test", State = PipelineRunState.Failed, FailureReason = "Process completed with exit code 1", JobId = 123, LogUrl = "https://example.com/logs" },
+                new PipelineJobResult { Name = "lint", State = PipelineRunState.Passed, JobId = 456 }
+            }
+        };
+
+        var details = QualityGateValidator.BuildCiFailureDetails(status);
+
+        details.Should().Contain("1 job(s) failed");
+        details.Should().Contain("'build-and-test'");
+        // Should NOT contain verbose per-job details, log URLs, or file paths
+        details.Should().NotContain("https://example.com/logs");
+        details.Should().NotContain("Full CI log saved to");
+    }
+
     [Fact]
     public void ParseTestCountsFromStdout_MultipleAssemblyLines_SumsAll()
     {
