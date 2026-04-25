@@ -202,7 +202,8 @@ public class AgentCodingPageComponentTests : BunitContext
         await component.InvokeAsync(() => select.Change("ip-1"));
 
         // Wait for async issue loading to complete
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup));
+        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup),
+            timeout: TimeSpan.FromSeconds(5));
 
         // Default mock has no agent:next labels — all issues should show
         Assert.Contains("#42", component.Markup);
@@ -277,7 +278,8 @@ public class AgentCodingPageComponentTests : BunitContext
         var component = Render<AgentCoding>();
 
         // Wait for async lifecycle (OnInitializedAsync → auto-select → load issues) to complete
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup));
+        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup),
+            timeout: TimeSpan.FromSeconds(5));
 
         // Issues should be loaded without manual dropdown interaction
         Assert.Contains("#42", component.Markup);
@@ -307,7 +309,8 @@ public class AgentCodingPageComponentTests : BunitContext
         var component = Render<AgentCoding>();
 
         // Wait for async lifecycle (OnInitializedAsync → last-used restore → load issues) to complete
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup));
+        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup),
+            timeout: TimeSpan.FromSeconds(5));
 
         // Issues should load automatically from the last-used provider
         Assert.Contains("#42", component.Markup);

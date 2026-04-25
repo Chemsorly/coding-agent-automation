@@ -230,7 +230,10 @@
                 .Concat(issueLabels.Where(l => !AgentLabels.All.Contains(l)))
                 .OrderBy(l => l)
                 .ToList();
-            _selectedLabels.Add(AgentLabels.Next);
+            // Only auto-select agent:next filter if at least one issue has that label;
+            // otherwise show all issues unfiltered.
+            if (issueLabels.Contains(AgentLabels.Next))
+                _selectedLabels.Add(AgentLabels.Next);
             _filteredIssuesCache = null;
         }
         catch (Exception ex)
