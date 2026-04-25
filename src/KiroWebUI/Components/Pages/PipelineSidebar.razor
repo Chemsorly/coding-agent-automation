@@ -22,7 +22,7 @@
         @foreach (var step in _steps)
         {
             var state = GetStepState(step);
-            var isExpanded = state is StepState.Active or StepState.Failed
+            var isExpanded = state is StepState.Active or StepState.Failed or StepState.Revisited
                 || _expandedSteps.Contains(step)
                 || (state == StepState.Completed && HasDetails(step));
 
@@ -258,7 +258,7 @@
         PipelineStep.SyncingBrainRepoPostRun
     };
 
-    private enum StepState { Completed, Active, Pending, Failed, Cancelled }
+    private enum StepState { Completed, Active, Pending, Failed, Cancelled, Revisited }
 
     protected override void OnParametersSet()
     {
@@ -287,6 +287,10 @@
             return (int)step <= (int)PipelineStep.SyncingBrainRepoPostRun ? StepState.Completed : StepState.Pending;
 
         if (step == current) return StepState.Active;
+
+        if ((int)step > (int)current && (int)step <= (int)Run.HighWaterMark)
+            return StepState.Revisited;
+
         return (int)step < (int)current ? StepState.Completed : StepState.Pending;
     }
 
@@ -312,6 +316,7 @@
         StepState.Active => "▶",
         StepState.Failed => "❌",
         StepState.Cancelled => "⊘",
+        StepState.Revisited => "🔄",
         _ => "○"
     };
 

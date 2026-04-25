@@ -10,6 +10,9 @@ public sealed class PipelineRun
     public required string IssueProviderConfigId { get; init; }
     public required string RepoProviderConfigId { get; init; }
     public PipelineStep CurrentStep { get; set; }
+
+    /// <summary>Highest pipeline step ever reached during this run (excludes terminal states). Used by the sidebar to show revisited steps.</summary>
+    public PipelineStep HighWaterMark { get; set; }
     public DateTime StartedAt { get; init; }
     public DateTime? CompletedAt { get; set; }
     public string? WorkspacePath { get; set; }
