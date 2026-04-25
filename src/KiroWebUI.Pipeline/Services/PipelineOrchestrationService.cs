@@ -473,6 +473,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     {
         var previousStep = run.CurrentStep;
         run.CurrentStep = step;
+        if (step is not (PipelineStep.Failed or PipelineStep.Cancelled)
+            && (int)step > (int)run.HighWaterMark)
+            run.HighWaterMark = step;
         _logger.Information("Pipeline {RunId} transitioned from {PreviousStep} to {Step}", run.RunId, previousStep, step);
         NotifyChange();
     }
