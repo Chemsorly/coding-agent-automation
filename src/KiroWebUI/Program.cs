@@ -67,7 +67,8 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopServic
 builder.Services.AddTransient<IQualityGateValidator>(sp => new QualityGateValidator(Serilog.Log.Logger));
 builder.Services.AddTransient<IssueDescriptionParser>();
 builder.Services.AddSingleton(sp => new CiLogWriter(Serilog.Log.Logger));
-builder.Services.AddTransient<GitHubValidationService>();
+builder.Services.AddTransient<GitHubValidationService>(sp =>
+    new GitHubValidationService(sp.GetRequiredService<IProviderFactory>()));
 
 // Configure Serilog
 builder.Host.UseSerilog((ctx, lc) => lc

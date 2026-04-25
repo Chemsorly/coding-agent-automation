@@ -57,6 +57,8 @@ public class IntegrationTestBase : IDisposable
             .Returns(Task.CompletedTask);
         MockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());
+        MockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         MockRepoProvider.Setup(p => p.RepositoryFullName).Returns("test-org/test-repo");
         MockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);

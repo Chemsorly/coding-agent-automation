@@ -1,5 +1,6 @@
 using Octokit;
 using Serilog;
+using KiroWebUI.Pipeline.Interfaces;
 using ILogger = Serilog.ILogger;
 
 namespace KiroWebUI.Infrastructure.GitHub;
@@ -11,11 +12,22 @@ namespace KiroWebUI.Infrastructure.GitHub;
 public class GitHubValidationService
 {
     private readonly ILogger _logger = Log.Logger;
+    private readonly IProviderFactory? _providerFactory;
+
+    public GitHubValidationService() { }
+
+    public GitHubValidationService(IProviderFactory providerFactory)
+    {
+        // TODO: [GH-06] Add ArgumentNullException.ThrowIfNull(providerFactory) per project convention
+        _providerFactory = providerFactory;
+    }
 
     /// <summary>
     /// Validates GitHub App credentials by generating a JWT, exchanging it for an installation token,
     /// and verifying access by listing installation repositories or checking specific repository access.
     /// Returns user-friendly error messages for all failure modes.
+    /// When owner/repo are provided and a provider factory is available, delegates the credential +
+    /// repo access check to the provider's <see cref="IIssueProvider.ValidateAsync"/>.
     /// </summary>
     public async Task<(bool Success, string Message)> ValidateAppCredentialsAsync(
         string apiUrl, string clientId, long installationId, string privateKeyBase64, CancellationToken ct,
@@ -64,6 +76,37 @@ public class GitHubValidationService
         }
 
         // Step 3: owner/repo provided — verify repository access and permissions
+        // TODO: [GH-06] Provider delegation (below) already validates credentials + repo access via provider.ValidateAsync. The subsequent Repository.Get call is redundant for access validation — only the permission extraction (read/write/admin) is needed. Refactor to skip the redundant API call.
+        // Delegate basic credential + repo access check to the provider's ValidateAsync when available
+        if (_providerFactory is not null)
+        {
+            try
+            {
+                var config = new Pipeline.Models.ProviderConfig
+                {
+                    Id = "validation-temp",
+                    Kind = Pipeline.Models.ProviderKind.Issue,
+                    ProviderType = "GitHub",
+                    DisplayName = "Validation",
+                    Settings = new Dictionary<string, string>
+                    {
+                        ["apiUrl"] = apiUrl,
+                        ["clientId"] = clientId,
+                        ["installationId"] = installationId.ToString(),
+                        ["privateKeyBase64"] = privateKeyBase64,
+                        ["owner"] = owner,
+                        ["repo"] = repo
+                    }
+                };
+                await using var provider = _providerFactory.CreateIssueProvider(config);
+                await provider.ValidateAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                return (false, ex.Message);
+            }
+        }
+
         try
         {
             var client = CreateClient(apiUrl, token);
