@@ -12,8 +12,13 @@ WORKDIR /src
 # Copy solution and project files first for layer caching
 COPY KiroCliPoc.sln ./
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
+COPY src/KiroWebUI.Pipeline/KiroWebUI.Pipeline.csproj src/KiroWebUI.Pipeline/
+COPY src/KiroWebUI.Infrastructure/KiroWebUI.Infrastructure.csproj src/KiroWebUI.Infrastructure/
 COPY src/KiroWebUI/KiroWebUI.csproj src/KiroWebUI/
-COPY tests/KiroWebUI.Tests/KiroWebUI.Tests.csproj tests/KiroWebUI.Tests/
+COPY tests/KiroWebUI.Pipeline.UnitTests/KiroWebUI.Pipeline.UnitTests.csproj tests/KiroWebUI.Pipeline.UnitTests/
+COPY tests/KiroWebUI.Infrastructure.UnitTests/KiroWebUI.Infrastructure.UnitTests.csproj tests/KiroWebUI.Infrastructure.UnitTests/
+COPY tests/KiroWebUI.UnitTests/KiroWebUI.UnitTests.csproj tests/KiroWebUI.UnitTests/
+COPY tests/KiroWebUI.IntegrationTests/KiroWebUI.IntegrationTests.csproj tests/KiroWebUI.IntegrationTests/
 RUN dotnet restore
 
 # Copy everything else and publish
