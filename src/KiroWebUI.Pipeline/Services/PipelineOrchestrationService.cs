@@ -277,7 +277,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             // Code generation phase
             var shouldContinue = await _agentExecution.ExecuteCodeGenerationAsync(
                 run, _activeConfig, _activeAgentProvider!,
-                issue, parsed, issueComments, _brainSync,
+                issue, parsed, _brainSync,
                 _cancellationTokenSource,
                 step => TransitionTo(run, step),
                 line => OnOutputLine?.Invoke(line), () => NotifyChange(),
@@ -295,7 +295,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             // Code review phase
             await _agentExecution.ExecuteCodeReviewAsync(
                 run, _activeConfig!, _activeAgentProvider!,
-                _activeIssue!, _activeParsedIssue!, _activeIssueComments,
+                _activeIssue!, _activeParsedIssue!,
                 _cancellationTokenSource,
                 step => TransitionTo(run, step),
                 line => OnOutputLine?.Invoke(line), () => NotifyChange(), ct);

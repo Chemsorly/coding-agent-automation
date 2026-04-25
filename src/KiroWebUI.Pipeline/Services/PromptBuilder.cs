@@ -31,12 +31,24 @@ public static class PromptBuilder
     public const string QualityGatesOutputDirectory = ".kiro/quality-gates";
 
     /// <summary>
+    /// The file path (relative to workspace) where the pipeline writes issue context
+    /// (description + comments) for the agent to read on demand.
+    /// </summary>
+    public const string IssueContextFilePath = ".kiro/issue-context.md";
+
+    /// <summary>
+    /// The file path (relative to workspace) where the pipeline writes brain context
+    /// for the agent to read on demand.
+    /// </summary>
+    public const string BrainContextFilePath = ".kiro/brain-context.md";
+
+    /// <summary>
     /// Constructs an analysis-only prompt. The agent examines the codebase in context of the
     /// issue and writes its recommendation to .kiro/analysis.md without making any other changes.
     /// The configurable analysis instructions are prepended, followed by pipeline mechanics.
     /// </summary>
     public static string BuildAnalysisPrompt(string analysisInstructions, IssueDetail issue, ParsedIssue parsed,
-        IReadOnlyList<IssueComment>? comments = null, string? brainContextSection = null)
+        bool brainContextWritten = false)
     {
         ArgumentNullException.ThrowIfNull(analysisInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -55,6 +67,8 @@ public static class PromptBuilder
         sb.AppendLine();
         sb.AppendLine("Use sub-agents to cover more ground and provide a thorough analysis. For example, delegate parallel investigations to explore different parts of the codebase — one sub-agent could examine the data layer while another looks at the UI components, or one traces the call chain while another checks for test coverage gaps. This produces a more complete picture than a single-threaded read-through.");
         sb.AppendLine();
+
+        AppendIssueContext(sb, issue, parsed);
 
         sb.AppendLine($"After writing your analysis to `{AnalysisFilePath}`, also write a structured assessment to `{AnalysisAssessmentFilePath}` with this exact JSON schema:");
         sb.AppendLine();
@@ -75,11 +89,9 @@ public static class PromptBuilder
         sb.AppendLine("- `\"wont_do\"` if, after analyzing the codebase, you determine no code changes are needed. This includes: bugs that can't be reproduced, issues that are already fixed, features that are already implemented, or behavior that is working as designed. Explain your reasoning in `reason`.");
         sb.AppendLine();
 
-        AppendIssueContext(sb, issue, parsed, comments);
-
-        if (!string.IsNullOrEmpty(brainContextSection))
+        if (brainContextWritten)
         {
-            sb.AppendLine(brainContextSection);
+            sb.AppendLine($"Project knowledge and conventions are at `{BrainContextFilePath}` — consult it for coding standards and patterns.");
             sb.AppendLine();
         }
 
@@ -95,8 +107,7 @@ public static class PromptBuilder
     /// The configurable implementation instructions are prepended, followed by pipeline mechanics.
     /// </summary>
     public static string BuildPrompt(string implementationInstructions, IssueDetail issue, ParsedIssue parsed,
-        IReadOnlyList<IssueComment>? comments = null, string? brainContextSection = null,
-        string? brainWriteInstructions = null)
+        string? brainWriteInstructions = null, bool brainContextWritten = false)
     {
         ArgumentNullException.ThrowIfNull(implementationInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -113,11 +124,11 @@ public static class PromptBuilder
         sb.AppendLine($"The analysis for this issue is at `{AnalysisFilePath}` — read it before implementing.");
         sb.AppendLine();
 
-        AppendIssueContext(sb, issue, parsed, comments);
+        AppendIssueContext(sb, issue, parsed);
 
-        if (!string.IsNullOrEmpty(brainContextSection))
+        if (brainContextWritten)
         {
-            sb.AppendLine(brainContextSection);
+            sb.AppendLine($"Project knowledge and conventions are at `{BrainContextFilePath}` — consult it for coding standards and patterns.");
             sb.AppendLine();
         }
 
@@ -139,7 +150,7 @@ public static class PromptBuilder
     /// details (title, description, requirements, acceptance criteria, and comments).
     /// </summary>
     public static string BuildReviewPrompt(string reviewInstructions, IssueDetail issue,
-        ParsedIssue parsed, IReadOnlyList<IssueComment>? comments = null)
+        ParsedIssue parsed)
     {
         ArgumentNullException.ThrowIfNull(reviewInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -156,7 +167,7 @@ public static class PromptBuilder
         sb.AppendLine("Below is the original issue for reference. Review the changes against these requirements.");
         sb.AppendLine();
 
-        AppendIssueContext(sb, issue, parsed, comments);
+        AppendIssueContext(sb, issue, parsed);
 
         return sb.ToString().TrimEnd();
     }
@@ -187,9 +198,35 @@ public static class PromptBuilder
         return sb.ToString().TrimEnd();
     }
 
-    private static void AppendIssueContext(StringBuilder sb, IssueDetail issue, ParsedIssue parsed,
+    private static void AppendIssueContext(StringBuilder sb, IssueDetail issue, ParsedIssue parsed)
+    {
+        sb.AppendLine($"# Issue #{issue.Identifier}: {issue.Title}");
+        sb.AppendLine();
+        sb.AppendLine($"The full issue description and discussion thread are at `{IssueContextFilePath}` — read it for context.");
+        sb.AppendLine();
+
+        if (parsed.AcceptanceCriteria.Count > 0)
+        {
+            sb.AppendLine("## Acceptance Criteria");
+            foreach (var criterion in parsed.AcceptanceCriteria)
+            {
+                sb.AppendLine($"- {criterion}");
+            }
+            sb.AppendLine();
+        }
+    }
+
+    /// <summary>
+    /// Builds the markdown content for the issue context file (.kiro/issue-context.md).
+    /// Contains the full issue description, requirements, and filtered comments.
+    /// </summary>
+    public static string BuildIssueContextFileContent(IssueDetail issue, ParsedIssue parsed,
         IReadOnlyList<IssueComment>? comments = null)
     {
+        ArgumentNullException.ThrowIfNull(issue);
+        ArgumentNullException.ThrowIfNull(parsed);
+
+        var sb = new StringBuilder();
         sb.AppendLine($"# Issue: {issue.Title}");
         sb.AppendLine();
         sb.AppendLine("## Description");
@@ -214,6 +251,8 @@ public static class PromptBuilder
         }
 
         AppendComments(sb, comments);
+
+        return sb.ToString().TrimEnd();
     }
 
     private static void AppendComments(StringBuilder sb, IReadOnlyList<IssueComment>? comments)
