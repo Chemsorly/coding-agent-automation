@@ -1,3 +1,4 @@
+using System.Text.Json;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
 
@@ -19,22 +20,36 @@ internal class AgentExecutionOrchestrator
 
     /// <summary>
     /// Executes the analysis phase: checks for existing analysis, runs agent analysis if needed,
-    /// reads the analysis file, and posts the analysis comment.
+    /// reads the analysis file, evaluates the confidence gate, and posts the analysis comment.
+    /// Returns true if the pipeline should continue to code generation, false if it should stop.
     /// </summary>
     // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
-    public async Task ExecuteAnalysisPhaseAsync(
+    public async Task<bool> ExecuteAnalysisPhaseAsync(
         PipelineRun run, PipelineConfiguration config,
         IAgentProvider agentProvider, IIssueProvider issueProvider,
         IssueDetail issue, ParsedIssue parsed,
         IReadOnlyList<IssueComment> issueComments,
         BrainSyncOrchestrator brainSync,
         Action<PipelineStep> transitionTo,
+        Func<string, string, CancellationToken, Task> swapAgentLabel,
+        Action<PipelineRun> addRunToHistory,
         Action? onOutputLine, Action? onChange,
         CancellationToken ct)
     {
         string? existingAnalysis = null;
         var analysisComment = issueComments.FirstOrDefault(c => c.Body.Contains("## 🤖 Agent Analysis"));
-        if (analysisComment != null)
+        var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains("<!-- agent:gate-rejection -->"));
+        var gateWontDo = issueComments.FirstOrDefault(c => c.Body.Contains("<!-- agent:gate-wont-do -->"));
+
+        var latestGateComment = new[] { gateRejection, gateWontDo }
+            .Where(c => c != null)
+            .OrderByDescending(c => c!.CreatedAt)
+            .FirstOrDefault();
+
+        bool forceRefresh = latestGateComment != null
+            && (analysisComment == null || latestGateComment.CreatedAt > analysisComment.CreatedAt);
+
+        if (analysisComment != null && !forceRefresh)
         {
             existingAnalysis = analysisComment.Body;
             _logger.Information("Pipeline {RunId} found existing analysis comment on issue {IssueIdentifier}, skipping agent analysis",
@@ -98,21 +113,164 @@ internal class AgentExecutionOrchestrator
                 run.AnalysisContent = null;
             }
 
-            transitionTo(PipelineStep.PostingAnalysis);
-            try
-            {
-                var analysis = !string.IsNullOrWhiteSpace(run.AnalysisContent)
-                    ? IssueAnalysisComment.FromAgentAnalysis(issue, run.AnalysisContent)
-                    : IssueAnalysisComment.FromIssue(issue, parsed);
+            // Read and evaluate the confidence gate assessment
+            var assessment = await ReadAssessmentAsync(run, ct);
+            run.AnalysisRecommendation = assessment?.Recommendation;
+            run.AnalysisConcerns = assessment?.Concerns ?? Array.Empty<string>();
+            run.AnalysisBlockingIssues = assessment?.BlockingIssues ?? Array.Empty<string>();
 
-                await issueProvider.PostCommentAsync(run.IssueIdentifier, analysis.ToMarkdown(), ct);
-                _logger.Information("Pipeline {RunId} posted analysis comment on issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            var isWontDo = assessment != null
+                && string.Equals(assessment.Recommendation, "wont_do", StringComparison.OrdinalIgnoreCase);
+
+            // isNotReady is checked first: non-empty blockingIssues forces not_ready regardless of recommendation
+            var isNotReady = assessment != null && (
+                string.Equals(assessment.Recommendation, "not_ready", StringComparison.OrdinalIgnoreCase)
+                || (assessment.BlockingIssues.Count > 0));
+
+            if (isNotReady)
             {
-                _logger.Warning(ex, "Pipeline {RunId} failed to post analysis comment on issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
+                // Post analysis comment first
+                transitionTo(PipelineStep.PostingAnalysis);
+                await PostAnalysisCommentAsync(run, issue, parsed, issueProvider, ct);
+
+                var abortComment = BuildNotReadyComment(assessment!);
+                try { await issueProvider.PostCommentAsync(run.IssueIdentifier, abortComment, ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                { _logger.Warning(ex, "Pipeline {RunId} failed to post not-ready comment", run.RunId); }
+
+                run.FailureReason = $"Analysis gate: needs refinement — {assessment?.Reason ?? "issue not ready"}";
+                run.CompletedAt = DateTime.UtcNow;
+                await swapAgentLabel(run.IssueIdentifier, AgentLabels.NeedsRefinement, ct);
+                transitionTo(PipelineStep.Failed);
+                addRunToHistory(run);
+                return false;
             }
+
+            if (isWontDo)
+            {
+                // Post analysis comment first
+                transitionTo(PipelineStep.PostingAnalysis);
+                await PostAnalysisCommentAsync(run, issue, parsed, issueProvider, ct);
+
+                var wontDoComment = BuildWontDoComment(assessment!);
+                try { await issueProvider.PostCommentAsync(run.IssueIdentifier, wontDoComment, ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                { _logger.Warning(ex, "Pipeline {RunId} failed to post won't-do comment", run.RunId); }
+
+                run.FailureReason = $"Analysis gate: won't do — {assessment?.Reason ?? "no code changes needed"}";
+                run.CompletedAt = DateTime.UtcNow;
+                await swapAgentLabel(run.IssueIdentifier, AgentLabels.WontDo, ct);
+                transitionTo(PipelineStep.Completed);
+                addRunToHistory(run);
+                return false;
+            }
+
+            // Ready path — post analysis and continue
+            transitionTo(PipelineStep.PostingAnalysis);
+            await PostAnalysisCommentAsync(run, issue, parsed, issueProvider, ct);
         }
+
+        return true;
+    }
+
+    private async Task<AnalysisAssessment?> ReadAssessmentAsync(PipelineRun run, CancellationToken ct)
+    {
+        var assessmentPath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisAssessmentFilePath);
+        if (!File.Exists(assessmentPath))
+        {
+            _logger.Warning("Pipeline {RunId} no analysis assessment file found at {Path}, defaulting to proceed",
+                run.RunId, assessmentPath);
+            return null;
+        }
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(assessmentPath, ct);
+            // TODO: [ARC-08a] Extract JsonSerializerOptions to a private static readonly field — per-call allocation bypasses System.Text.Json type metadata cache
+            var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+            return JsonSerializer.Deserialize<AnalysisAssessment>(json, options);
+        }
+        catch (JsonException ex)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} failed to parse analysis assessment, defaulting to proceed", run.RunId);
+            return null;
+        }
+        // TODO: [ARC-08a] Catch IOException to maintain fail-open contract when file is locked/inaccessible
+    }
+
+    private async Task PostAnalysisCommentAsync(
+        PipelineRun run, IssueDetail issue, ParsedIssue parsed,
+        IIssueProvider issueProvider, CancellationToken ct)
+    {
+        try
+        {
+            var analysis = !string.IsNullOrWhiteSpace(run.AnalysisContent)
+                ? IssueAnalysisComment.FromAgentAnalysis(issue, run.AnalysisContent)
+                : IssueAnalysisComment.FromIssue(issue, parsed);
+
+            await issueProvider.PostCommentAsync(run.IssueIdentifier, analysis.ToMarkdown(), ct);
+            _logger.Information("Pipeline {RunId} posted analysis comment on issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} failed to post analysis comment on issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
+        }
+    }
+
+    internal static string BuildNotReadyComment(AnalysisAssessment assessment)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("## ⚠️ Analysis Gate: Needs Refinement");
+        sb.AppendLine();
+        if (!string.IsNullOrWhiteSpace(assessment.Reason))
+            sb.AppendLine(assessment.Reason);
+
+        if (assessment.BlockingIssues.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("### Blocking Issues");
+            foreach (var issue in assessment.BlockingIssues)
+                sb.AppendLine($"- {issue}");
+        }
+
+        if (assessment.Concerns.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("### Concerns");
+            foreach (var concern in assessment.Concerns)
+                sb.AppendLine($"- {concern}");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("---");
+        sb.AppendLine("*The issue has been labeled `agent:needs-refinement`. Refine the issue description addressing the blocking issues above, then re-apply `agent:next` to retry.*");
+        sb.AppendLine();
+        sb.AppendLine("<!-- agent:gate-rejection -->");
+        return sb.ToString().TrimEnd();
+    }
+
+    internal static string BuildWontDoComment(AnalysisAssessment assessment)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("## 🚫 Analysis Gate: Won't Do");
+        sb.AppendLine();
+        if (!string.IsNullOrWhiteSpace(assessment.Reason))
+            sb.AppendLine(assessment.Reason);
+
+        if (assessment.Concerns.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("### Concerns");
+            foreach (var concern in assessment.Concerns)
+                sb.AppendLine($"- {concern}");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("---");
+        sb.AppendLine("*The agent analyzed the codebase and determined no code changes are needed. The issue has been labeled `agent:wont-do`. If you disagree with this assessment, remove the label and re-apply `agent:next` to retry with a fresh analysis.*");
+        sb.AppendLine();
+        sb.AppendLine("<!-- agent:gate-wont-do -->");
+        return sb.ToString().TrimEnd();
     }
 
     /// <summary>

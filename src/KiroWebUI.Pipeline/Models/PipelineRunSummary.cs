@@ -22,4 +22,7 @@ public sealed class PipelineRunSummary
 
     /// <summary>How this run was initiated: "manual" or "loop".</summary>
     public string InitiatedBy { get; init; } = "manual";
+
+    /// <summary>Analysis gate recommendation: "ready", "not_ready", "wont_do", or null.</summary>
+    public string? AnalysisRecommendation { get; init; }
 }

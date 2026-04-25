@@ -15,6 +15,11 @@ public static class PromptBuilder
     public const string AnalysisFilePath = ".kiro/analysis.md";
 
     /// <summary>
+    /// The file path (relative to workspace) where the agent writes its structured assessment.
+    /// </summary>
+    public const string AnalysisAssessmentFilePath = ".kiro/analysis-assessment.json";
+
+    /// <summary>
     /// The file path (relative to workspace) where review agents write their findings.
     /// </summary>
     public const string ReviewFindingsFilePath = ".kiro/review-findings.md";
@@ -43,6 +48,25 @@ public static class PromptBuilder
         sb.AppendLine($"Write your analysis to the file `{AnalysisFilePath}` in the workspace. Do NOT print the analysis to stdout — only write it to that file.");
         sb.AppendLine();
         sb.AppendLine("Use sub-agents to cover more ground and provide a thorough analysis. For example, delegate parallel investigations to explore different parts of the codebase — one sub-agent could examine the data layer while another looks at the UI components, or one traces the call chain while another checks for test coverage gaps. This produces a more complete picture than a single-threaded read-through.");
+        sb.AppendLine();
+
+        sb.AppendLine($"After writing your analysis to `{AnalysisFilePath}`, also write a structured assessment to `{AnalysisAssessmentFilePath}` with this exact JSON schema:");
+        sb.AppendLine();
+        sb.AppendLine("```json");
+        sb.AppendLine("{");
+        sb.AppendLine("  \"recommendation\": \"ready\",");
+        sb.AppendLine("  \"reason\": \"Issue is well-scoped with clear acceptance criteria\",");
+        sb.AppendLine("  \"concerns\": [\"Non-blocking concern\"],");
+        sb.AppendLine("  \"blockingIssues\": [],");
+        sb.AppendLine("  \"plannedApproach\": \"One-line implementation strategy\",");
+        sb.AppendLine("  \"estimatedComplexity\": \"moderate\"");
+        sb.AppendLine("}");
+        sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine("Set `recommendation` to:");
+        sb.AppendLine("- `\"ready\"` if the issue is clear, well-scoped, and you have a concrete implementation plan.");
+        sb.AppendLine("- `\"not_ready\"` if the issue is too vague, contradictory, has hard blockers, or requires information you can't determine from the codebase. Add any blocking issues to `blockingIssues`.");
+        sb.AppendLine("- `\"wont_do\"` if, after analyzing the codebase, you determine no code changes are needed. This includes: bugs that can't be reproduced, issues that are already fixed, features that are already implemented, or behavior that is working as designed. Explain your reasoning in `reason`.");
         sb.AppendLine();
 
         AppendIssueContext(sb, issue, parsed, comments);
@@ -132,7 +156,13 @@ public static class PromptBuilder
     }
 
     /// <summary>Markers identifying bot-generated comments that should be excluded from context.</summary>
-    internal static readonly string[] ExcludedCommentMarkers = ["## 🤖 Agent Analysis"];
+    // TODO: [ARC-08a] Gate comment markers rely on exact substring match — if a human edits the comment to remove the HTML marker, the gate comment leaks into prompt context
+    internal static readonly string[] ExcludedCommentMarkers =
+    [
+        "## 🤖 Agent Analysis",
+        "<!-- agent:gate-rejection -->",
+        "<!-- agent:gate-wont-do -->"
+    ];
 
     /// <summary>
     /// Constructs a fix prompt that includes the configurable fix instructions and the raw

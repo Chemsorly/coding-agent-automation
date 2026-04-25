@@ -1280,4 +1280,261 @@ public class PipelineOrchestrationServiceTests
 
         _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
+
+    // --- Confidence gate tests ---
+
+    /// <summary>
+    /// Helper: writes an analysis-assessment.json file into the workspace so the orchestrator can read it.
+    /// </summary>
+    private static void WriteAssessmentFile(string workspacePath, string recommendation, string? reason = null,
+        string[]? concerns = null, string[]? blockingIssues = null)
+    {
+        var dir = Path.Combine(workspacePath, ".kiro");
+        Directory.CreateDirectory(dir);
+        var obj = new
+        {
+            recommendation,
+            reason = reason ?? "Test reason",
+            concerns = concerns ?? Array.Empty<string>(),
+            blockingIssues = blockingIssues ?? Array.Empty<string>()
+        };
+        File.WriteAllText(Path.Combine(dir, "analysis-assessment.json"),
+            System.Text.Json.JsonSerializer.Serialize(obj, new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase }));
+    }
+
+    /// <summary>
+    /// Helper: sets up the analysis agent call to write an assessment file with the given recommendation.
+    /// </summary>
+    private void SetupAnalysisAgentWithAssessment(string recommendation, string? reason = null,
+        string[]? concerns = null, string[]? blockingIssues = null)
+    {
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                WriteAssessmentFile(req.WorkspacePath, recommendation, reason, concerns, blockingIssues);
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+    }
+
+    [Fact]
+    public async Task ConfidenceGate_ReadyAssessment_ProceedsToCodeGeneration()
+    {
+        SetupAnalysisAgentWithAssessment("ready", "Issue is well-scoped");
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.AnalysisRecommendation.Should().Be("ready");
+        run.PullRequestUrl.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task ConfidenceGate_NotReadyAssessment_AbortsPipelineWithNeedsRefinement()
+    {
+        SetupAnalysisAgentWithAssessment("not_ready", "Issue is too vague",
+            blockingIssues: new[] { "No acceptance criteria" });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("needs refinement");
+        run.AnalysisRecommendation.Should().Be("not_ready");
+        run.AnalysisBlockingIssues.Should().Contain("No acceptance criteria");
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:needs-refinement", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        _mockIssueProvider.Verify(p => p.PostCommentAsync("42", It.Is<string>(s => s.Contains("<!-- agent:gate-rejection -->")), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ConfidenceGate_WontDoAssessment_CompletesWithWontDoLabel()
+    {
+        SetupAnalysisAgentWithAssessment("wont_do", "Bug already fixed in PR #134");
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.FailureReason.Should().Contain("won't do");
+        run.AnalysisRecommendation.Should().Be("wont_do");
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:wont-do", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        _mockIssueProvider.Verify(p => p.PostCommentAsync("42", It.Is<string>(s => s.Contains("<!-- agent:gate-wont-do -->")), It.IsAny<CancellationToken>()), Times.Once);
+        // Should NOT proceed to code generation
+        _mockAgentProvider.Verify(p => p.ExecuteAsync(
+            It.Is<AgentRequest>(r => r.Prompt.Contains("Implement")),
+            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ConfidenceGate_MissingAssessmentFile_ProceedsAsReady()
+    {
+        // Default mock doesn't write assessment file — should proceed
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.AnalysisRecommendation.Should().BeNull();
+        run.PullRequestUrl.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task ConfidenceGate_MalformedJson_ProceedsAsReady()
+    {
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                var dir = Path.Combine(req.WorkspacePath, ".kiro");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, "analysis-assessment.json"), "{ invalid json }}}");
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.AnalysisRecommendation.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ConfidenceGate_BlockingIssuesOverridesReady()
+    {
+        SetupAnalysisAgentWithAssessment("ready", "Looks good",
+            blockingIssues: new[] { "Missing API endpoint" });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("needs refinement");
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:needs-refinement", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task ConfidenceGate_BlockingIssuesOverridesWontDo()
+    {
+        SetupAnalysisAgentWithAssessment("wont_do", "Not needed",
+            blockingIssues: new[] { "Contradictory requirements" });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("needs refinement");
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:needs-refinement", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        // Should NOT get wont-do label
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:wont-do", It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ConfidenceGate_UnexpectedRecommendation_ProceedsAsReady()
+    {
+        SetupAnalysisAgentWithAssessment("maybe", "Not sure about this");
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.AnalysisRecommendation.Should().Be("maybe");
+        run.PullRequestUrl.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task ConfidenceGate_WontDoRunInHistory_ShowsCompleted()
+    {
+        SetupAnalysisAgentWithAssessment("wont_do", "Already implemented");
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        var history = _service.GetRunHistory();
+        history.Should().HaveCount(1);
+        history[0].FinalStep.Should().Be(PipelineStep.Completed);
+        history[0].AnalysisRecommendation.Should().Be("wont_do");
+    }
+
+    [Fact]
+    public async Task ConfidenceGate_RequeuedAfterRejection_ForcesRefreshAnalysis()
+    {
+        // Simulate a previous gate rejection comment that is newer than the analysis comment
+        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>
+            {
+                new() { Id = "1", Body = "## 🤖 Agent Analysis\n\nOld analysis.", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-2) },
+                new() { Id = "2", Body = "## ⚠️ Analysis Gate: Needs Refinement\n\n<!-- agent:gate-rejection -->", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-1) }
+            });
+
+        SetupAnalysisAgentWithAssessment("ready", "Now it's good");
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Should have run fresh analysis (not skipped)
+        run.AnalysisSkipped.Should().BeFalse();
+        run.AnalysisRecommendation.Should().Be("ready");
+        _mockAgentProvider.Verify(p => p.ExecuteAsync(
+            It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
+            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ConfidenceGate_RequeuedAfterWontDo_ForcesRefreshAnalysis()
+    {
+        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>
+            {
+                new() { Id = "1", Body = "## 🤖 Agent Analysis\n\nOld analysis.", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-2) },
+                new() { Id = "2", Body = "## 🚫 Analysis Gate: Won't Do\n\n<!-- agent:gate-wont-do -->", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-1) }
+            });
+
+        SetupAnalysisAgentWithAssessment("ready", "Re-evaluated");
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.AnalysisSkipped.Should().BeFalse();
+        _mockAgentProvider.Verify(p => p.ExecuteAsync(
+            It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
+            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ConfidenceGate_ExistingAnalysisWithNoGateMarker_SkipsAnalysis()
+    {
+        // Analysis comment exists, no gate markers — should reuse existing analysis
+        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>
+            {
+                new() { Id = "1", Body = "## 🤖 Agent Analysis\n\nExisting analysis.", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-1) }
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.AnalysisSkipped.Should().BeTrue();
+        run.AnalysisContent.Should().Contain("Existing analysis.");
+    }
+
+    [Fact]
+    public async Task ConfidenceGate_NotReadyPostsAnalysisCommentFirst()
+    {
+        SetupAnalysisAgentWithAssessment("not_ready", "Vague issue",
+            blockingIssues: new[] { "No AC" });
+
+        var commentOrder = new List<string>();
+        _mockIssueProvider.Setup(p => p.PostCommentAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, CancellationToken>((_, body, _) => commentOrder.Add(body.Contains("Agent Analysis") ? "analysis" : "gate"))
+            .Returns(Task.CompletedTask);
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        commentOrder.Should().ContainInOrder("analysis", "gate");
+    }
+
+    [Fact]
+    public async Task ConfidenceGate_WontDoPostsAnalysisCommentFirst()
+    {
+        SetupAnalysisAgentWithAssessment("wont_do", "Already fixed");
+
+        var commentOrder = new List<string>();
+        _mockIssueProvider.Setup(p => p.PostCommentAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, CancellationToken>((_, body, _) => commentOrder.Add(body.Contains("Agent Analysis") ? "analysis" : "gate"))
+            .Returns(Task.CompletedTask);
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        commentOrder.Should().ContainInOrder("analysis", "gate");
+    }
 }
