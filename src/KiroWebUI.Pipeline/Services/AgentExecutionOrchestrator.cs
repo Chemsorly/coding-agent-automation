@@ -56,6 +56,15 @@ internal class AgentExecutionOrchestrator
                 run.RunId, run.IssueIdentifier);
         }
 
+        // Write issue context file before analysis
+        // TODO: [AGT-12] Wrap in try/catch for graceful fallback if file write fails (IOException could abort pipeline)
+        var kiroDir = Path.Combine(run.WorkspacePath!, ".kiro");
+        Directory.CreateDirectory(kiroDir);
+
+        var issueContextContent = PromptBuilder.BuildIssueContextFileContent(issue, parsed, issueComments);
+        await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, PromptBuilder.IssueContextFilePath), issueContextContent, ct);
+        _logger.Debug("Pipeline {RunId} wrote issue context to {FilePath}", run.RunId, PromptBuilder.IssueContextFilePath);
+
         if (existingAnalysis != null)
         {
             run.AnalysisContent = existingAnalysis;
@@ -77,7 +86,14 @@ internal class AgentExecutionOrchestrator
                     null,
                     brainSync.GetPreviousBrainWarnings(run.BrainProviderConfigId));
 
-                var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, issue, parsed, issueComments, brainContextForAnalysis);
+                var brainContextWrittenForAnalysis = !string.IsNullOrEmpty(brainContextForAnalysis);
+                if (brainContextWrittenForAnalysis)
+                {
+                    await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, PromptBuilder.BrainContextFilePath), brainContextForAnalysis, ct);
+                    _logger.Debug("Pipeline {RunId} wrote brain context to {FilePath}", run.RunId, PromptBuilder.BrainContextFilePath);
+                }
+
+                var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, issue, parsed, brainContextWrittenForAnalysis);
                 _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
 
                 await agentProvider.ExecuteAsync(
@@ -282,7 +298,6 @@ internal class AgentExecutionOrchestrator
         PipelineRun run, PipelineConfiguration config,
         IAgentProvider agentProvider,
         IssueDetail issue, ParsedIssue parsed,
-        IReadOnlyList<IssueComment>? issueComments,
         BrainSyncOrchestrator brainSync,
         CancellationTokenSource? orchestratorCts,
         Action<PipelineStep> transitionTo,
@@ -300,10 +315,20 @@ internal class AgentExecutionOrchestrator
                 run.RepositoryName?.Split('/').LastOrDefault(),
                 null,
                 brainSync.GetPreviousBrainWarnings(run.BrainProviderConfigId));
+
+            var brainContextWritten = !string.IsNullOrEmpty(brainContextSection);
+            if (brainContextWritten)
+            {
+                var kiroDir = Path.Combine(run.WorkspacePath!, ".kiro");
+                Directory.CreateDirectory(kiroDir);
+                await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, PromptBuilder.BrainContextFilePath), brainContextSection, ct);
+                _logger.Debug("Pipeline {RunId} wrote brain context to {FilePath}", run.RunId, PromptBuilder.BrainContextFilePath);
+            }
+
             var brainWriteInstructions = PromptBuilder.BuildBrainWriteInstructions(
                 run.BrainContextLoaded, run.RunId, run.IssueIdentifier, config.BrainReadOnly);
 
-            var prompt = PromptBuilder.BuildPrompt(config.ImplementationPrompt, issue, parsed, issueComments, brainContextSection, brainWriteInstructions);
+            var prompt = PromptBuilder.BuildPrompt(config.ImplementationPrompt, issue, parsed, brainWriteInstructions, brainContextWritten);
             _logger.Debug("Pipeline {RunId} implementation prompt:\n{Prompt}", run.RunId, prompt);
 
             using var stallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -456,7 +481,6 @@ internal class AgentExecutionOrchestrator
         PipelineRun run, PipelineConfiguration config,
         IAgentProvider agentProvider,
         IssueDetail issue, ParsedIssue parsed,
-        IReadOnlyList<IssueComment>? issueComments,
         CancellationTokenSource? orchestratorCts,
         Action<PipelineStep> transitionTo,
         Action<string> onOutputLine, Action onChange,
@@ -507,7 +531,7 @@ internal class AgentExecutionOrchestrator
                     if (File.Exists(findingsFilePath))
                         File.Delete(findingsFilePath);
 
-                    var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, issue, parsed, issueComments);
+                    var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, issue, parsed);
                     _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, i + 1, agent.Name, reviewPrompt);
 
                     var reviewResult = await agentProvider.ExecuteAsync(
