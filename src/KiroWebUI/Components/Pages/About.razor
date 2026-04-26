@@ -1,10 +1,12 @@
 @page "/about"
 @rendermode InteractiveServer
+@using KiroWebUI.Models
 @using KiroWebUI.Pipeline.Models
 @using KiroWebUI.Pipeline.Services
 @using System.Reflection
 @using System.Runtime.InteropServices
 @inject PipelineOrchestrationService PipelineService
+@inject BuildInfo BuildInfo
 
 <div class="about-page">
     <header class="about-header">
@@ -29,6 +31,40 @@
                 <span class="about-value">@_appVersion</span>
                 <span class="about-label">.NET Runtime</span>
                 <span class="about-value">@_runtimeVersion</span>
+            </div>
+        </section>
+
+        <section class="about-section">
+            <h2>Build Info</h2>
+            <div class="about-info-grid">
+                <span class="about-label">Commit</span>
+                <span class="about-value">
+                    @if (BuildInfo.IsCI)
+                    {
+                        <a href="@BuildInfo.CommitUrl" target="_blank" rel="noopener noreferrer">@BuildInfo.ShortSha</a>
+                    }
+                    else
+                    {
+                        @BuildInfo.ShortSha
+                    }
+                </span>
+                <span class="about-label">Branch</span>
+                <span class="about-value">@BuildInfo.Branch</span>
+                <span class="about-label">Built</span>
+                <span class="about-value">@BuildInfo.BuildTimestamp</span>
+                <span class="about-label">CI Run</span>
+                <span class="about-value">
+                    @if (!string.IsNullOrEmpty(BuildInfo.RunUrl))
+                    {
+                        <a href="@BuildInfo.RunUrl" target="_blank" rel="noopener noreferrer">#@BuildInfo.RunNumber</a>
+                    }
+                    else
+                    {
+                        <text>—</text>
+                    }
+                </span>
+                <span class="about-label">Image</span>
+                <span class="about-value">@BuildInfo.ImageTag</span>
             </div>
         </section>
 

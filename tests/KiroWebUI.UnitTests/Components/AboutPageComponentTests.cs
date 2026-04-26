@@ -1,5 +1,6 @@
 using Bunit;
 using KiroWebUI.Components.Pages;
+using KiroWebUI.Models;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Models;
 using KiroWebUI.Pipeline.Services;
@@ -11,6 +12,12 @@ namespace KiroWebUI.UnitTests.Components;
 
 public class AboutPageComponentTests : BunitContext
 {
+    private void RegisterDefaults(IReadOnlyList<PipelineRunSummary>? history = null)
+    {
+        Services.AddSingleton(CreateService(history));
+        Services.AddSingleton(new BuildInfo());
+    }
+
     private PipelineOrchestrationService CreateService(IReadOnlyList<PipelineRunSummary>? history = null)
     {
         var store = new Mock<IConfigurationStore>();
@@ -33,7 +40,7 @@ public class AboutPageComponentTests : BunitContext
     [Fact]
     public void Renders_IntroSection()
     {
-        Services.AddSingleton(CreateService());
+        RegisterDefaults();
         var cut = Render<About>();
 
         cut.Find(".about-oneliner").MarkupMatches(
@@ -44,7 +51,7 @@ public class AboutPageComponentTests : BunitContext
     [Fact]
     public void Renders_VersionInfo()
     {
-        Services.AddSingleton(CreateService());
+        RegisterDefaults();
         var cut = Render<About>();
 
         var values = cut.FindAll(".about-value");
@@ -56,7 +63,7 @@ public class AboutPageComponentTests : BunitContext
     [Fact]
     public void Renders_EmptyStats_WhenNoHistory()
     {
-        Services.AddSingleton(CreateService());
+        RegisterDefaults();
         var cut = Render<About>();
 
         Assert.Equal("No pipeline runs yet.", cut.Find(".about-muted").TextContent);
@@ -65,7 +72,7 @@ public class AboutPageComponentTests : BunitContext
     [Fact]
     public void Renders_Links()
     {
-        Services.AddSingleton(CreateService());
+        RegisterDefaults();
         var cut = Render<About>();
 
         var links = cut.FindAll(".about-links a");
@@ -88,14 +95,14 @@ public class AboutPageComponentTests : BunitContext
                 FinalStep = PipelineStep.Cancelled, StartedAt = now.AddMinutes(-60), CompletedAt = now.AddMinutes(-58) }
         };
 
-        Services.AddSingleton(CreateService(summaries));
+        RegisterDefaults(summaries);
         var cut = Render<About>();
 
         // Should NOT show the empty-state message
         Assert.Empty(cut.FindAll(".about-muted"));
 
-        // Stats grid is the second .about-info-grid (first is version info)
-        var statsValues = cut.FindAll(".about-info-grid")[1].QuerySelectorAll(".about-value");
+        // Stats grid is the third .about-info-grid (first is version info, second is build info)
+        var statsValues = cut.FindAll(".about-info-grid")[2].QuerySelectorAll(".about-value");
         Assert.Equal("3", statsValues[0].TextContent);  // total
         Assert.Equal("1", statsValues[1].TextContent);  // success
         Assert.Equal("1", statsValues[2].TextContent);  // failed
@@ -107,7 +114,7 @@ public class AboutPageComponentTests : BunitContext
     [Fact]
     public void Renders_TechBadges()
     {
-        Services.AddSingleton(CreateService());
+        RegisterDefaults();
         var cut = Render<About>();
 
         var badges = cut.FindAll(".tech-badge");

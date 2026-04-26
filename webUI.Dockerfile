@@ -77,6 +77,7 @@ EXPOSE 5000
 # Copy published app and Docker-specific config (owned by ubuntu user)
 COPY --from=build --chown=ubuntu:ubuntu /app/publish .
 COPY --chown=ubuntu:ubuntu config/appsettings.docker.json config/appsettings.json
+COPY --chown=ubuntu:ubuntu build-info.json build-info.json
 
 # Mount points:
 #   /home/ubuntu/.kiro   - Kiro CLI auth/session data (REQUIRED)

@@ -5,6 +5,7 @@ using KiroWebUI.Infrastructure;
 using KiroWebUI.Infrastructure.GitHub;
 using KiroWebUI.Infrastructure.Git;
 using KiroWebUI.Infrastructure.Persistence;
+using KiroWebUI.Models;
 using KiroWebUI.Pipeline.Interfaces;
 using KiroWebUI.Pipeline.Services;
 using KiroWebUI.Services;
@@ -18,6 +19,7 @@ var config = await KiroCliLib.Configuration.ConfigurationManager.LoadAsync("conf
 // Register services
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddSingleton(config);
+builder.Services.AddSingleton(BuildInfo.Load());
 builder.Services.AddScoped<KiroExecutionService>();
 
 // Pipeline — Configuration Store
