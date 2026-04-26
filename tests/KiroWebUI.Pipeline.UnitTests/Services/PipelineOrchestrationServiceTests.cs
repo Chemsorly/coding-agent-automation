@@ -430,7 +430,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, Agents = null }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -458,7 +458,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 3 }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 3, Agents = null }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -474,7 +474,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 3 }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 3, Agents = null }
             });
 
         var callCount = 0;
@@ -502,7 +502,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, Prompt = customPrompt }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, Prompt = customPrompt, Agents = null }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -519,10 +519,14 @@ public class PipelineOrchestrationServiceTests
     {
         var config = new PipelineConfiguration();
         config.CodeReview.Enabled.Should().BeTrue();
-        config.CodeReview.MaxIterations.Should().Be(1);
+        config.CodeReview.MaxIterations.Should().Be(2);
         config.CodeReview.Prompt.Should().Contain("sub-agent");
         config.CodeReview.Prompt.Should().Contain("[CRITICAL]");
         config.CodeReview.FixPrompt.Should().BeNull();
+        config.CodeReview.Agents.Should().NotBeNull();
+        config.CodeReview.Agents!.Count.Should().Be(2);
+        config.CodeReview.Agents[0].Name.Should().Be("Correctness");
+        config.CodeReview.Agents[1].Name.Should().Be("DotNetSpecialist");
     }
 
     // --- Fix prompt tests ---
@@ -534,7 +538,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt, Agents = null }
             });
 
         SetupReviewAgentWithFindings("Review the changes", "[CRITICAL] Missing null check\n[WARNING] Consider renaming");
@@ -555,7 +559,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt, Agents = null }
             });
 
         SetupReviewAgentWithFindings("Review the changes", "[WARNING] Consider renaming\n[SUGGESTION] Use var");
@@ -575,7 +579,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = null }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = null, Agents = null }
             });
 
         SetupReviewAgentWithFindings("Review the changes", "[CRITICAL] Missing null check");
@@ -595,7 +599,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, Agents = null }
             });
 
         SetupReviewAgentWithFindings("Review the changes",
@@ -745,8 +749,7 @@ public class PipelineOrchestrationServiceTests
                 CodeReview = new CodeReviewConfiguration { Enabled = false },
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
-                AgentTimeout = TimeSpan.FromMinutes(5),
-                StallKillTimeout = TimeSpan.FromHours(1)
+                AgentTimeout = TimeSpan.FromMinutes(5)
             });
 
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
@@ -830,8 +833,7 @@ public class PipelineOrchestrationServiceTests
                 CodeReview = new CodeReviewConfiguration { Enabled = false },
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
-                AgentTimeout = TimeSpan.FromMinutes(5),
-                StallKillTimeout = TimeSpan.FromHours(1)
+                AgentTimeout = TimeSpan.FromHours(1)
             });
 
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
@@ -1377,6 +1379,153 @@ public class PipelineOrchestrationServiceTests
                 WriteAssessmentFile(req.WorkspacePath, recommendation, reason, concerns, blockingIssues);
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
+    }
+
+    /// <summary>
+    /// Holds all mocks and the service instance for brain-related tests (REQ-3, REQ-4, REQ-8, REQ-9).
+    /// </summary>
+    private record BrainTestContext(
+        PipelineOrchestrationService Service,
+        Mock<IIssueProvider> MockIssueProvider,
+        Mock<IRepositoryProvider> MockRepoProvider,
+        Mock<IRepositoryProvider> MockBrainProvider,
+        Mock<IAgentProvider> MockAgentProvider,
+        Mock<IQualityGateValidator> MockValidator,
+        Mock<IBrainUpdateService> MockBrainUpdateService,
+        Mock<IPipelineRunHistoryService> MockHistoryService);
+
+    /// <summary>
+    /// Creates a fully-configured service instance for brain tests.
+    /// All mocks are set up for the happy-path brain sync scenario (REQ-3).
+    /// Individual tests override only the 1-3 mocks that differ.
+    /// </summary>
+    private static BrainTestContext CreateBrainTestService()
+    {
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        var mockFactory = new Mock<IProviderFactory>();
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        var mockBrainProvider = new Mock<IRepositoryProvider>();
+        var mockAgentProvider = new Mock<IAgentProvider>();
+        var mockValidator = new Mock<IQualityGateValidator>();
+        var mockBrainUpdateService = new Mock<IBrainUpdateService>();
+        var mockLogger = new Mock<Serilog.ILogger>();
+
+        // Config store: pipeline config with BrainReadOnly = false
+        mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.Default());
+        mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test" }
+            });
+        mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Test" },
+                new() { Id = "brain-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain" }
+            });
+        mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test" }
+            });
+
+        // Issue provider
+        mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "42", Title = "Test Issue", Description = "Test description",
+                Labels = Array.Empty<string>()
+            });
+        mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
+        mockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // Main repo provider
+        mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
+        mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+        mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockRepoProvider.Setup(p => p.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>())).ReturnsAsync("https://github.com/test/pr/1");
+        mockRepoProvider.Setup(p => p.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<FileChangeSummary>() as IReadOnlyList<FileChangeSummary>);
+
+        // Brain provider: CloneAsync succeeds
+        mockBrainProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockBrainProvider.Setup(p => p.PullAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        // Agent provider: writes analysis files for analysis prompt, succeeds for all others
+        mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                if (req.Prompt.Contains("Analyze the codebase"))
+                {
+                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
+                }
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+        mockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockAgentProvider.Setup(p => p.GetHealthStatus())
+            .Returns(new AgentHealthStatus { IsExecuting = false });
+
+        // Quality gate validator: all pass
+        mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+                Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
+            });
+
+        // Factory: config-specific matching to distinguish brain provider from main repo provider
+        mockFactory.Setup(f => f.CreateRepositoryProvider(
+            It.Is<ProviderConfig>(c => c.Id == "brain-1")))
+            .Returns(mockBrainProvider.Object);
+        mockFactory.Setup(f => f.CreateRepositoryProvider(
+            It.Is<ProviderConfig>(c => c.Id == "repo-1")))
+            .Returns(mockRepoProvider.Object);
+        mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockIssueProvider.Object);
+        mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>())).Returns(mockAgentProvider.Object);
+
+        // IBrainUpdateService: DetectChangesAsync returns changed files, Validate returns success, CommitAndPushAsync succeeds
+        mockBrainUpdateService.Setup(b => b.DetectChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string> { "sessions/session-1.md" } as IReadOnlyList<string>);
+        mockBrainUpdateService.Setup(b => b.Validate(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
+            .Returns(new BrainValidationResult { SessionLogCreated = true, OperationLogUpdated = true, EntryFormatValid = true });
+        mockBrainUpdateService.Setup(b => b.CommitAndPushAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrainSyncResult { Success = true, FilesCommitted = 1 });
+
+        // History service
+        var runHistory = new List<PipelineRunSummary>();
+        var mockHistoryService = new Mock<IPipelineRunHistoryService>();
+        mockHistoryService.Setup(h => h.GetRunHistory()).Returns(() => runHistory.AsReadOnly());
+        mockHistoryService.Setup(h => h.AddRunToHistory(It.IsAny<PipelineRun>()))
+            .Callback<PipelineRun>(run => runHistory.Add(run.ToSummary()));
+        mockHistoryService.Setup(h => h.TryDeleteWorkspace(It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Callback<string?, string, string>((path, _, _) =>
+            {
+                if (path != null && Directory.Exists(path))
+                    Directory.Delete(path, true);
+            });
+
+        var service = new PipelineOrchestrationService(
+            mockConfigStore.Object,
+            mockFactory.Object,
+            new IssueDescriptionParser(),
+            mockValidator.Object,
+            new CiLogWriter(mockLogger.Object),
+            mockLogger.Object,
+            brainUpdateService: mockBrainUpdateService.Object,
+            historyService: mockHistoryService.Object);
+
+        return new BrainTestContext(service, mockIssueProvider, mockRepoProvider, mockBrainProvider,
+            mockAgentProvider, mockValidator, mockBrainUpdateService, mockHistoryService);
     }
 
     [Fact]
@@ -1944,5 +2093,634 @@ public class PipelineOrchestrationServiceTests
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("Analysis failed after 1 attempt(s)");
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenBranchCreationFails_TransitionsToFailed()
+    {
+        // Track all state transitions
+        var transitions = new List<PipelineStep>();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+                transitions.Add(_service.ActiveRun.CurrentStep);
+        };
+
+        // Override CreateBranchAsync to throw after clone succeeds
+        _mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("ref already exists"));
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Verify full transition sequence: Created → CloningRepository → CreatingBranch → Failed
+        transitions.Should().ContainInOrder(
+            PipelineStep.CloningRepository,
+            PipelineStep.CreatingBranch,
+            PipelineStep.Failed);
+
+        // Verify terminal state and metadata
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("Branch creation failed");
+        run.CompletedAt.Should().NotBeNull();
+
+        // Verify agent:in-progress label was set during CloningRepository (before failure)
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:in-progress", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        // Verify agent:error label was set after failure
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+
+        // Verify run added to history with Failed status
+        _service.GetRunHistory().Should().HaveCount(1);
+        _service.GetRunHistory()[0].FinalStep.Should().Be(PipelineStep.Failed);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenNoCommitsAhead_FailsWithNoChangesMessage()
+    {
+        // Track all state transitions
+        var transitions = new List<PipelineStep>();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+                transitions.Add(_service.ActiveRun.CurrentStep);
+        };
+
+        // Override HasCommitsAheadAsync to return false (no changes produced)
+        _mockRepoProvider.Setup(p => p.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Verify pipeline reaches CreatingPullRequest then transitions to Failed
+        transitions.Should().ContainInOrder(
+            PipelineStep.CreatingPullRequest,
+            PipelineStep.Failed);
+
+        // Verify terminal state and metadata
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("did not produce any changes");
+        run.PullRequestUrl.Should().BeNull();
+        run.CompletedAt.Should().NotBeNull();
+
+        // Verify agent:error label was set
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WithBrainProvider_IncludesBrainSyncSteps()
+    {
+        // REQ-3: Happy path with brain sync — no overrides needed (baseline)
+        var ctx = CreateBrainTestService();
+
+        // Track all state transitions
+        var transitions = new List<PipelineStep>();
+        ctx.Service.OnChange += () =>
+        {
+            if (ctx.Service.ActiveRun != null)
+                transitions.Add(ctx.Service.ActiveRun.CurrentStep);
+        };
+
+        var run = await ctx.Service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
+
+        // Assert: transition sequence includes brain sync steps in correct order
+        transitions.Should().ContainInOrder(
+            PipelineStep.CloningRepository,
+            PipelineStep.SyncingBrainRepoPreRun,
+            PipelineStep.CreatingBranch);
+
+        transitions.Should().ContainInOrder(
+            PipelineStep.CreatingPullRequest,
+            PipelineStep.ReflectingOnRun,
+            PipelineStep.SyncingBrainRepoPostRun,
+            PipelineStep.Completed);
+
+        run.BrainContextLoaded.Should().BeTrue();
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+
+        ctx.MockBrainProvider.Verify(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        ctx.MockAgentProvider.Verify(p => p.ExecuteAsync(
+            It.Is<AgentRequest>(r => r.Prompt.Contains("Reflect on This Run") && r.UseResume),
+            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
+
+        ctx.MockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.Never);
+        foreach (var label in AgentLabels.All)
+            ctx.MockIssueProvider.Verify(p => p.RemoveLabelAsync("42", label, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenBrainPreRunSyncFails_ContinuesWithoutBrain()
+    {
+        // REQ-4: Brain pre-run sync failure — override brain provider CloneAsync to throw
+        var ctx = CreateBrainTestService();
+        ctx.MockBrainProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Brain repo unavailable"));
+
+        var transitions = new List<PipelineStep>();
+        ctx.Service.OnChange += () =>
+        {
+            if (ctx.Service.ActiveRun != null)
+                transitions.Add(ctx.Service.ActiveRun.CurrentStep);
+        };
+
+        var run = await ctx.Service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
+
+        transitions.Should().ContainInOrder(
+            PipelineStep.SyncingBrainRepoPreRun,
+            PipelineStep.CreatingBranch);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.BrainContextLoaded.Should().BeFalse();
+        transitions.Should().NotContain(PipelineStep.Failed);
+        ctx.MockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenAgentTimesOut_TransitionsToFailed()
+    {
+        // Track all state transitions
+        var transitions = new List<PipelineStep>();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+                transitions.Add(_service.ActiveRun.CurrentStep);
+        };
+
+        // Override agent: analysis prompt succeeds (writes files, returns 0),
+        // implementation prompt returns ExitCode 124 (timeout)
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                if (req.Prompt.Contains("Analyze the codebase"))
+                {
+                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
+                // Implementation prompt: return ExitCode 124 (agent timeout)
+                return Task.FromResult(new AgentResult { ExitCode = 124, OutputLines = Array.Empty<string>() });
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Verify transition sequence ends at Failed after GeneratingCode
+        transitions.Should().ContainInOrder(
+            PipelineStep.GeneratingCode,
+            PipelineStep.Failed);
+
+        // Verify terminal state and metadata
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("timed out");
+        run.CompletedAt.Should().NotBeNull();
+
+        // Verify pipeline did NOT reach RunningQualityGates
+        transitions.Should().NotContain(PipelineStep.RunningQualityGates);
+
+        // Verify agent:error label was set
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenAgentExitsNonZero_ContinuesToQualityGates()
+    {
+        // Track all state transitions
+        var transitions = new List<PipelineStep>();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+                transitions.Add(_service.ActiveRun.CurrentStep);
+        };
+
+        // Override agent: analysis prompt succeeds (writes files, returns 0),
+        // implementation prompt returns ExitCode 1 (non-zero but not 124)
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                if (req.Prompt.Contains("Analyze the codebase"))
+                {
+                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
+                // Implementation prompt: return ExitCode 1 (non-zero, not timeout)
+                return Task.FromResult(new AgentResult { ExitCode = 1, OutputLines = Array.Empty<string>() });
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Verify pipeline continued past GeneratingCode to RunningQualityGates and Completed
+        transitions.Should().ContainInOrder(
+            PipelineStep.GeneratingCode,
+            PipelineStep.RunningQualityGates,
+            PipelineStep.Completed);
+
+        // Verify terminal state: quality gates pass, pipeline completes
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+
+        // Verify transitions contain RunningQualityGates (pipeline continued past non-zero exit)
+        transitions.Should().Contain(PipelineStep.RunningQualityGates);
+
+        // Verify ChatHistory contains system message about non-zero exit code
+        run.ChatHistory.Where(c => c.Role == ChatRole.System).Select(c => c.Content)
+            .Should().Contain(msg => msg.Contains("exited with code 1"));
+
+        // Verify no agent:error label set
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenReflectionFails_StillCompletes()
+    {
+        // REQ-8: Reflection step failure — override agent to throw on reflection prompt
+        var ctx = CreateBrainTestService();
+        ctx.MockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                if (req.Prompt.Contains("Analyze the codebase"))
+                {
+                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
+                if (req.Prompt.Contains("Reflect on This Run"))
+                    throw new InvalidOperationException("Reflection crashed");
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
+        var transitions = new List<PipelineStep>();
+        ctx.Service.OnChange += () =>
+        {
+            if (ctx.Service.ActiveRun != null)
+                transitions.Add(ctx.Service.ActiveRun.CurrentStep);
+        };
+
+        var run = await ctx.Service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
+
+        transitions.Should().ContainInOrder(
+            PipelineStep.ReflectingOnRun,
+            PipelineStep.SyncingBrainRepoPostRun,
+            PipelineStep.Completed);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        ctx.MockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenBrainPostRunSyncFails_StillCompletes()
+    {
+        // REQ-9: Brain post-run sync failure — override CommitAndPushAsync to throw
+        var ctx = CreateBrainTestService();
+        ctx.MockBrainUpdateService.Setup(b => b.CommitAndPushAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Push rejected"));
+
+        var transitions = new List<PipelineStep>();
+        ctx.Service.OnChange += () =>
+        {
+            if (ctx.Service.ActiveRun != null)
+                transitions.Add(ctx.Service.ActiveRun.CurrentStep);
+        };
+
+        var run = await ctx.Service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
+
+        transitions.Should().ContainInOrder(
+            PipelineStep.SyncingBrainRepoPostRun,
+            PipelineStep.Completed);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.BrainUpdatesPushed.Should().BeFalse();
+        ctx.MockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenQualityGateValidatorThrows_TransitionsToFailedWithReason()
+    {
+        // Track all state transitions
+        var transitions = new List<PipelineStep>();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+                transitions.Add(_service.ActiveRun.CurrentStep);
+        };
+
+        // Override validator to throw IOException("Disk full")
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("Disk full"));
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Verify transition sequence: ... → RunningQualityGates → Failed
+        transitions.Should().ContainInOrder(
+            PipelineStep.RunningQualityGates,
+            PipelineStep.Failed);
+
+        // Verify terminal state and metadata
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("Quality gate validation error");
+        run.FailureReason.Should().Contain("Disk full");
+
+        // Note: CompletedAt is not set by QualityGateOrchestrator's exception handler
+        // (unlike FailRunAsync which sets it). This is the actual production behavior.
+        // TODO: Consider fixing production code to set CompletedAt on all terminal states.
+
+        // Verify agent:error label was set
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+
+        // Verify run added to history with Failed status
+        _service.GetRunHistory().Should().HaveCount(1);
+        _service.GetRunHistory()[0].FinalStep.Should().Be(PipelineStep.Failed);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenExternalCiFails_CreatesDraftPr()
+    {
+        // Track all state transitions
+        var transitions = new List<PipelineStep>();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+                transitions.Add(_service.ActiveRun.CurrentStep);
+        };
+
+        // Configure ExternalCiEnabled = true and MaxRetries = 0
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.Default() with { ExternalCiEnabled = true, MaxRetries = 0 });
+
+        // Add pipeline provider config to config store
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "pipeline-1", Kind = ProviderKind.Pipeline, ProviderType = "GitHubActions", DisplayName = "CI" }
+            });
+
+        // Create mock pipeline provider returning failed CI status
+        var mockPipelineProvider = new Mock<IPipelineProvider>();
+        mockPipelineProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Failed,
+                Jobs = Array.Empty<PipelineJobResult>()
+            });
+        _mockFactory.Setup(f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>())).Returns(mockPipelineProvider.Object);
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Verify transition sequence: ... → RunningQualityGates → CreatingPullRequest → Failed
+        transitions.Should().ContainInOrder(
+            PipelineStep.RunningQualityGates,
+            PipelineStep.CreatingPullRequest,
+            PipelineStep.Failed);
+
+        // Verify draft PR was created
+        run.IsDraftPr.Should().BeTrue();
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.PullRequestUrl.Should().NotBeNull();
+
+        // Verify agent:error label was set
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task CancelPipeline_DuringQualityGates_TransitionsToCancelled()
+    {
+        // Track all state transitions
+        var transitions = new List<PipelineStep>();
+        var reachedQualityGates = new TaskCompletionSource();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+            {
+                transitions.Add(_service.ActiveRun.CurrentStep);
+                if (_service.ActiveRun.CurrentStep == PipelineStep.RunningQualityGates)
+                    reachedQualityGates.TrySetResult();
+            }
+        };
+
+        // Block the validator with a TaskCompletionSource so the pipeline stays in RunningQualityGates
+        var validatorTcs = new TaskCompletionSource<QualityGateReport>();
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .Returns(validatorTcs.Task);
+
+        // Start the pipeline (analysis writes files and succeeds, code gen succeeds, then blocks at quality gates)
+        var pipelineTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Wait for pipeline to reach RunningQualityGates using event-based synchronization (not Task.Delay)
+        await reachedQualityGates.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Cancel the pipeline while quality gates are running
+        await _service.CancelPipelineAsync();
+
+        // Complete the validator TCS with TrySetCanceled() — NOT SetResult — to propagate cancellation
+        validatorTcs.TrySetCanceled();
+
+        // Await the pipeline task (may throw due to cancellation)
+        try { await pipelineTask; } catch { }
+
+        var run = _service.ActiveRun!;
+
+        // Verify transition sequence: ... → RunningQualityGates → Cancelled
+        transitions.Should().ContainInOrder(
+            PipelineStep.RunningQualityGates,
+            PipelineStep.Cancelled);
+
+        // Verify terminal state
+        run.CurrentStep.Should().Be(PipelineStep.Cancelled);
+
+        // Verify labels cleaned up (agent:cancelled set, other labels removed)
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:cancelled", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        _mockIssueProvider.Verify(p => p.RemoveLabelAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+
+        // Verify run added to history
+        _service.GetRunHistory().Should().HaveCount(1);
+        _service.GetRunHistory()[0].FinalStep.Should().Be(PipelineStep.Cancelled);
+    }
+
+    // --- REQ-12: HighWaterMark monotonicity during quality gate retries ---
+
+    [Fact]
+    public async Task QualityGateRetry_HighWaterMark_DoesNotRegress()
+    {
+        // Quality gates fail on first call, pass on second
+        var callCount = 0;
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                var idx = Interlocked.Increment(ref callCount);
+                return idx == 1
+                    ? new QualityGateReport
+                    {
+                        Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build failed" },
+                        Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
+                    }
+                    : new QualityGateReport
+                    {
+                        Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+                        Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
+                    };
+            });
+
+        // Track HighWaterMark and CurrentStep at every OnChange event
+        var highWaterMarks = new List<PipelineStep>();
+        var transitions = new List<(PipelineStep Current, PipelineStep HWM)>();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+            {
+                highWaterMarks.Add(_service.ActiveRun.HighWaterMark);
+                transitions.Add((_service.ActiveRun.CurrentStep, _service.ActiveRun.HighWaterMark));
+            }
+        };
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // 1. HighWaterMark values form a monotonically non-decreasing sequence
+        for (var i = 1; i < highWaterMarks.Count; i++)
+            ((int)highWaterMarks[i]).Should().BeGreaterThanOrEqualTo((int)highWaterMarks[i - 1],
+                $"HighWaterMark at index {i} ({highWaterMarks[i]}) should not regress below index {i - 1} ({highWaterMarks[i - 1]})");
+
+        // 2. After stepping back to GeneratingCode, HighWaterMark stays at RunningQualityGates (or higher)
+        var retryEntries = transitions.Where(t => t.Current == PipelineStep.GeneratingCode
+            && (int)t.HWM >= (int)PipelineStep.RunningQualityGates).ToList();
+        retryEntries.Should().NotBeEmpty("pipeline should step back to GeneratingCode with HighWaterMark at RunningQualityGates during retry");
+        foreach (var entry in retryEntries)
+            ((int)entry.HWM).Should().BeGreaterThanOrEqualTo((int)PipelineStep.RunningQualityGates,
+                "HighWaterMark should stay at RunningQualityGates (or higher) when stepping back to GeneratingCode");
+
+        // 3. After CreatingPullRequest, HighWaterMark advances to CreatingPullRequest (or higher)
+        var prEntries = transitions.Where(t => t.Current == PipelineStep.CreatingPullRequest).ToList();
+        prEntries.Should().NotBeEmpty("pipeline should reach CreatingPullRequest");
+        foreach (var entry in prEntries)
+            ((int)entry.HWM).Should().BeGreaterThanOrEqualTo((int)PipelineStep.CreatingPullRequest,
+                "HighWaterMark should advance to CreatingPullRequest after reaching that step");
+
+        // 4. Final state should be Completed (quality gates passed on retry)
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.HighWaterMark.Should().Be(PipelineStep.Completed);
+    }
+
+    // --- REQ-13: Agent CancellationToken timeout during code generation ---
+
+    [Fact]
+    public async Task StartPipeline_WhenAgentCancellationTokenTimesOut_TransitionsToFailed()
+    {
+        // Track all state transitions
+        var transitions = new List<PipelineStep>();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+                transitions.Add(_service.ActiveRun.CurrentStep);
+        };
+
+        // Override agent: analysis prompt succeeds (writes files, returns 0),
+        // implementation prompt throws OperationCanceledException (agent-level timeout)
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                if (req.Prompt.Contains("Analyze the codebase"))
+                {
+                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
+                // Implementation prompt: throw OperationCanceledException (agent-level timeout, NOT orchestrator cancellation)
+                throw new OperationCanceledException("The operation was canceled.");
+            });
+
+        // Pass CancellationToken.None — orchestrator CTS is NOT cancelled (simulates agent-level timeout)
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Verify transition sequence ends at Failed after GeneratingCode
+        transitions.Should().ContainInOrder(
+            PipelineStep.GeneratingCode,
+            PipelineStep.Failed);
+
+        // Verify terminal state and metadata
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("timed out");
+        run.CompletedAt.Should().NotBeNull();
+
+        // Verify pipeline did NOT reach RunningQualityGates
+        transitions.Should().NotContain(PipelineStep.RunningQualityGates);
+
+        // Verify agent:error label was set
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenCodeGenThrowsGenericException_ContinuesToQualityGates()
+    {
+        // Track all state transitions
+        var transitions = new List<PipelineStep>();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+                transitions.Add(_service.ActiveRun.CurrentStep);
+        };
+
+        // Override agent: analysis prompt succeeds (writes files, returns 0),
+        // implementation prompt throws InvalidOperationException (generic exception, not timeout/cancellation)
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                if (req.Prompt.Contains("Analyze the codebase"))
+                {
+                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
+                // Implementation prompt: throw InvalidOperationException (generic exception)
+                throw new InvalidOperationException("Agent process crashed");
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Verify pipeline continued past GeneratingCode to RunningQualityGates and Completed
+        transitions.Should().ContainInOrder(
+            PipelineStep.GeneratingCode,
+            PipelineStep.RunningQualityGates,
+            PipelineStep.Completed);
+
+        // Verify terminal state: quality gates pass, pipeline completes
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+
+        // Verify transitions contain RunningQualityGates (pipeline continued past generic exception)
+        transitions.Should().Contain(PipelineStep.RunningQualityGates);
+
+        // Verify ChatHistory contains system message about agent failure
+        run.ChatHistory.Where(c => c.Role == ChatRole.System).Select(c => c.Content)
+            .Should().Contain(msg => msg.Contains("Agent process failed"));
+
+        // Verify no agent:error label set
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenPrCreationThrows_TransitionsToFailed()
+    {
+        // Track all state transitions
+        var transitions = new List<PipelineStep>();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+                transitions.Add(_service.ActiveRun.CurrentStep);
+        };
+
+        // Override PushBranchAsync to throw (called inside PullRequestOrchestrator.CreatePullRequestAsync)
+        _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Remote rejected push"));
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Verify transition sequence: ... → CreatingPullRequest → Failed
+        transitions.Should().ContainInOrder(
+            PipelineStep.CreatingPullRequest,
+            PipelineStep.Failed);
+
+        // Verify terminal state and metadata
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("PR creation failed");
+        run.CompletedAt.Should().NotBeNull();
+
+        // Verify agent:error label was set
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 }

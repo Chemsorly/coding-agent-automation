@@ -35,8 +35,7 @@ public class AgentStallMonitorTests
         var config = new PipelineConfiguration
         {
             StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1),
-            StallKillTimeout = TimeSpan.FromHours(1)
+            StallWarningInterval = TimeSpan.FromHours(1)
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
@@ -69,8 +68,7 @@ public class AgentStallMonitorTests
         {
             StallPollInterval = TimeSpan.FromMilliseconds(50),
             StallWarningInterval = TimeSpan.FromMilliseconds(50),
-            AgentTimeout = TimeSpan.FromMinutes(30),
-            StallKillTimeout = TimeSpan.FromHours(1)
+            AgentTimeout = TimeSpan.FromMinutes(30)
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
@@ -106,7 +104,7 @@ public class AgentStallMonitorTests
         {
             StallPollInterval = TimeSpan.FromMilliseconds(50),
             StallWarningInterval = TimeSpan.FromHours(1),
-            StallKillTimeout = TimeSpan.FromMilliseconds(100)
+            AgentTimeout = TimeSpan.FromMilliseconds(100)
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
@@ -142,8 +140,7 @@ public class AgentStallMonitorTests
         var config = new PipelineConfiguration
         {
             StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1),
-            StallKillTimeout = TimeSpan.FromHours(1)
+            StallWarningInterval = TimeSpan.FromHours(1)
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
@@ -167,8 +164,7 @@ public class AgentStallMonitorTests
         var config = new PipelineConfiguration
         {
             StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1),
-            StallKillTimeout = TimeSpan.FromHours(1)
+            StallWarningInterval = TimeSpan.FromHours(1)
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())

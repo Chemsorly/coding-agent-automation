@@ -32,7 +32,7 @@ public class JsonConfigurationStoreTests : IDisposable
 
         Assert.Equal(3, config.MaxRetries);
         Assert.Equal(TimeSpan.FromMinutes(30), config.AgentTimeout);
-        Assert.Equal(80.0, config.MinCoverageThreshold);
+        Assert.Equal(50.0, config.MinCoverageThreshold);
         Assert.False(config.SecurityScanEnabled);
         Assert.Equal("./workspaces", config.WorkspaceBaseDirectory);
     }

@@ -51,7 +51,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
             ExternalCiPollInterval = TimeSpan.FromSeconds(45),
             StallWarningInterval = TimeSpan.FromMinutes(5),
             StallPollInterval = TimeSpan.FromSeconds(15),
-            StallKillTimeout = TimeSpan.FromMinutes(10),
             BlacklistedPaths = new[] { ".kiro", ".github", ".secret" },
             BlacklistMode = BlacklistMode.Fail,
             CleanupSuccessfulWorkspaces = false,
@@ -87,7 +86,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
         loaded.ExternalCiPollInterval.Should().Be(original.ExternalCiPollInterval);
         loaded.StallWarningInterval.Should().Be(original.StallWarningInterval);
         loaded.StallPollInterval.Should().Be(original.StallPollInterval);
-        loaded.StallKillTimeout.Should().Be(original.StallKillTimeout);
         loaded.BlacklistedPaths.Should().BeEquivalentTo(original.BlacklistedPaths);
         loaded.BlacklistMode.Should().Be(original.BlacklistMode);
         loaded.CleanupSuccessfulWorkspaces.Should().Be(original.CleanupSuccessfulWorkspaces);
@@ -299,7 +297,8 @@ public class PipelineIntegrationTests : IntegrationTestBase
             {
                 Enabled = true,
                 MaxIterations = 1,
-                FixPrompt = PipelineConfiguration.DefaultFixPrompt
+                FixPrompt = PipelineConfiguration.DefaultFixPrompt,
+                Agents = null
             }
         };
 

@@ -24,7 +24,7 @@ public sealed record ReviewAgentConfig
 public sealed record CodeReviewConfiguration
 {
     public bool Enabled { get; init; } = true;
-    public int MaxIterations { get; init; } = 1;
+    public int MaxIterations { get; init; } = 2;
     public string Prompt { get; init; } = PipelineConfiguration.DefaultCodeReviewPrompt;
 
     /// <summary>
@@ -39,7 +39,7 @@ public sealed record CodeReviewConfiguration
     /// single <see cref="Prompt"/>. The second agent onwards sees previous findings via
     /// <c>--resume</c>. When null or empty, falls back to the single <see cref="Prompt"/>.
     /// </summary>
-    public IReadOnlyList<ReviewAgentConfig>? Agents { get; init; }
+    public IReadOnlyList<ReviewAgentConfig>? Agents { get; init; } = PipelineConfiguration.DefaultReviewAgents;
 }
 
 public sealed record PipelineConfiguration
@@ -141,11 +141,11 @@ public sealed record PipelineConfiguration
     /// Default 1 = 2 total attempts (initial + 1 retry).
     /// Set to 0 to disable retry (fail on first failure).
     /// </summary>
-    public int MaxAnalysisRetries { get; init; } = 1;
+    public int MaxAnalysisRetries { get; init; } = 2;
 
     public int IssuePageSize { get; init; } = 25;
     public TimeSpan AgentTimeout { get; init; } = TimeSpan.FromMinutes(30);
-    public double MinCoverageThreshold { get; init; } = 80.0;
+    public double MinCoverageThreshold { get; init; } = 50.0;
     public bool SecurityScanEnabled { get; init; } = false;
     public string WorkspaceBaseDirectory { get; init; } = "./workspaces";
     public CodeReviewConfiguration CodeReview { get; init; } = new();
@@ -164,14 +164,6 @@ public sealed record PipelineConfiguration
     /// Default is 30 seconds. Tests can set a shorter interval for faster execution.
     /// </summary>
     public TimeSpan StallPollInterval { get; init; } = TimeSpan.FromSeconds(30);
-    /// <summary>
-    /// How long the agent can be continuously silent before the stall monitor forcefully
-    /// kills the process via <see cref="IAgentProvider.KillAsync"/>. Defaults to
-    /// <see cref="AgentTimeout"/>. Set independently for scenarios where a shorter silence
-    /// threshold is desired (e.g., kill after 10 minutes of silence even if the 30-minute
-    /// total timeout hasn't elapsed).
-    /// </summary>
-    public TimeSpan? StallKillTimeout { get; init; }
     public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".kiro", ".github", ".brain" };
     public BlacklistMode BlacklistMode { get; init; } = BlacklistMode.WarnAndExclude;
 

@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using FsCheck;
 using FsCheck.Xunit;
 using Moq;
 using KiroWebUI.Pipeline.Interfaces;
@@ -63,11 +64,56 @@ public class PipelineStateTransitionPropertyTests
         }
     }
 
-    private static PipelineOrchestrationService CreateServiceWithMocks(bool allGatesPass)
+    /// <summary>
+    /// Property: For any random sequence of quality gate pass/fail results,
+    /// the HighWaterMark values recorded at every OnChange event form a
+    /// monotonically non-decreasing sequence.
+    /// **Validates: Requirements 12**
+    /// </summary>
+    [Property(MaxTest = 20)]
+    public void HighWaterMark_IsMonotonicallyNonDecreasing(NonEmptyArray<bool> gateResultsWrapper)
+    {
+        var gateResults = gateResultsWrapper.Get;
+
+        // Clamp to reasonable length for test speed (1-5 gate attempts)
+        var maxRetries = Math.Min(gateResults.Length, 5);
+        var results = gateResults.Take(maxRetries).ToArray();
+
+        var highWaterMarks = new List<PipelineStep>();
+        var service = CreateServiceWithRandomGateResults(results);
+
+        service.OnChange += () =>
+        {
+            if (service.ActiveRun != null)
+                highWaterMarks.Add(service.ActiveRun.HighWaterMark);
+        };
+
+        // Run the pipeline end-to-end
+        var run = service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None)
+            .GetAwaiter().GetResult();
+
+        // Core property: HighWaterMark values never decrease
+        for (var i = 1; i < highWaterMarks.Count; i++)
+            ((int)highWaterMarks[i]).Should().BeGreaterThanOrEqualTo((int)highWaterMarks[i - 1],
+                $"HighWaterMark at index {i} ({highWaterMarks[i]}) should not regress below index {i - 1} ({highWaterMarks[i - 1]})");
+
+        // HighWaterMark should never be a terminal state (Failed/Cancelled)
+        foreach (var hwm in highWaterMarks)
+        {
+            hwm.Should().NotBe(PipelineStep.Failed);
+            hwm.Should().NotBe(PipelineStep.Cancelled);
+        }
+    }
+
+    /// <summary>
+    /// Creates the common mock setup shared by all property test service factories.
+    /// Returns all mocks needed to construct a PipelineOrchestrationService.
+    /// </summary>
+    private static (Mock<IConfigurationStore> ConfigStore, Mock<IProviderFactory> Factory,
+        Mock<IIssueProvider> IssueProvider, Mock<IRepositoryProvider> RepoProvider,
+        Mock<IAgentProvider> AgentProvider, Mock<Serilog.ILogger> Logger) CreateBaseMocks()
     {
         var mockConfigStore = new Mock<IConfigurationStore>();
-        mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestPipelineConfig.NonAutonomous());
         mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
@@ -97,6 +143,7 @@ public class PipelineStateTransitionPropertyTests
             .ReturnsAsync(new List<IssueComment>());
         mockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+
         var mockRepoProvider = new Mock<IRepositoryProvider>();
         mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
@@ -133,6 +180,60 @@ public class PipelineStateTransitionPropertyTests
         mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>())).Returns(mockAgentProvider.Object);
 
         var mockLogger = new Mock<Serilog.ILogger>();
+
+        return (mockConfigStore, mockFactory, mockIssueProvider, mockRepoProvider, mockAgentProvider, mockLogger);
+    }
+
+    /// <summary>
+    /// Creates a service where quality gate results follow the provided random sequence.
+    /// Each element in gateResults determines whether that attempt passes (true) or fails (false).
+    /// MaxRetries is set to gateResults.Length - 1 (first call is the initial attempt, rest are retries).
+    /// </summary>
+    private static PipelineOrchestrationService CreateServiceWithRandomGateResults(bool[] gateResults)
+    {
+        var maxRetries = gateResults.Length - 1; // first call is initial, rest are retries
+        var (mockConfigStore, mockFactory, _, _, _, mockLogger) = CreateBaseMocks();
+
+        mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                MaxRetries = maxRetries,
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                CodeReview = new CodeReviewConfiguration { Enabled = false }
+            });
+
+        var mockValidator = new Mock<IQualityGateValidator>();
+        var callIndex = 0;
+        mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                var idx = Interlocked.Increment(ref callIndex) - 1;
+                var passed = idx < gateResults.Length && gateResults[idx];
+                return new QualityGateReport
+                {
+                    Compilation = new GateResult { GateName = "Compilation", Passed = passed, Details = passed ? "OK" : $"Build failed: attempt {idx}" },
+                    Tests = new GateResult { GateName = "Tests", Passed = true, Details = "Tests passed" }
+                };
+            });
+
+        return new PipelineOrchestrationService(
+            mockConfigStore.Object,
+            mockFactory.Object,
+            new IssueDescriptionParser(),
+            mockValidator.Object,
+            new CiLogWriter(mockLogger.Object),
+            mockLogger.Object,
+            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+            historyService: new Mock<IPipelineRunHistoryService>().Object);
+    }
+
+    private static PipelineOrchestrationService CreateServiceWithMocks(bool allGatesPass)
+    {
+        var (mockConfigStore, mockFactory, _, _, _, mockLogger) = CreateBaseMocks();
+
+        mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.NonAutonomous());
+
         var mockValidator = new Mock<IQualityGateValidator>();
         mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport

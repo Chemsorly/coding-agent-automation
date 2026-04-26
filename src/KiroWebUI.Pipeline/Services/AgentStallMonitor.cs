@@ -78,7 +78,7 @@ internal static class AgentStallMonitor
         Serilog.ILogger logger,
         CancellationToken stallToken)
     {
-        var killTimeout = config.StallKillTimeout ?? config.AgentTimeout;
+        var killTimeout = config.AgentTimeout;
 
         return Task.Run(async () =>
         {
