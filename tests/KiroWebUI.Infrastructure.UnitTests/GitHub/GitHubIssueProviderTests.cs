@@ -312,6 +312,8 @@ public class GitHubIssueProviderTests
             It.Is<NewLabel>(nl => nl.Name == "agent:needs-refinement" && nl.Color == "fbca04")), Times.Once);
         mockLabels.Verify(l => l.Create("owner", "repo",
             It.Is<NewLabel>(nl => nl.Name == "agent:wont-do" && nl.Color == "cfd3d7")), Times.Once);
+        mockLabels.Verify(l => l.Create("owner", "repo",
+            It.Is<NewLabel>(nl => nl.Name == "agent:cancelled" && nl.Color == "c5def5")), Times.Once);
     }
 
     [Fact]
@@ -341,8 +343,8 @@ public class GitHubIssueProviderTests
         var result = await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
 
         result.Should().BeTrue();
-        // All five should be attempted
-        mockLabels.Verify(l => l.Create("owner", "repo", It.IsAny<NewLabel>()), Times.Exactly(5));
+        // All six should be attempted
+        mockLabels.Verify(l => l.Create("owner", "repo", It.IsAny<NewLabel>()), Times.Exactly(6));
     }
 
     [Fact]

@@ -77,6 +77,17 @@ builder.Host.UseSerilog((ctx, lc) => lc
 
 var app = builder.Build();
 
+// Graceful shutdown: swap to agent:cancelled label before exit
+var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+lifetime.ApplicationStopping.Register(() =>
+{
+    var pipeline = app.Services.GetRequiredService<PipelineOrchestrationService>();
+    if (pipeline.IsRunning)
+    {
+        pipeline.CancelPipelineAsync().GetAwaiter().GetResult();
+    }
+});
+
 // Validate workspace directory
 var workspace = config.WorkspaceDirectory;
 if (!Directory.Exists(workspace))

@@ -334,7 +334,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             {
                 _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
                 run.CompletedAt = DateTime.UtcNow;
-                await RemoveAllAgentLabelsAsync(run.IssueIdentifier, CancellationToken.None);
+                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
                 EmitOutputLine("🚫 Pipeline cancelled");
                 TransitionTo(run, PipelineStep.Cancelled);
                 AddRunToHistory(run);
@@ -351,7 +351,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         _cancellationTokenSource?.Cancel();
         run.CompletedAt = DateTime.UtcNow;
         if (_activeIssueProvider != null)
-            await RemoveAllAgentLabelsAsync(run.IssueIdentifier, CancellationToken.None);
+            await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
         EmitOutputLine("🚫 Pipeline cancelled");
         TransitionTo(run, PipelineStep.Cancelled);
         AddRunToHistory(run);
