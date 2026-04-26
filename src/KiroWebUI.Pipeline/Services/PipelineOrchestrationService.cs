@@ -203,6 +203,12 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             throw;
         }
     }
+    private void EmitOutputLine(string message)
+    {
+        try { OnOutputLine?.Invoke(message); }
+        catch (Exception ex) { _logger.Warning(ex, "OnOutputLine handler threw an exception"); }
+    }
+
     private async Task ExecutePipelineStepsAsync(
         PipelineRun run, IIssueProvider issueProvider, CancellationToken ct)
     {
@@ -228,6 +234,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             var parsed = _issueParser.Parse(issue.Description);
             _activeIssue = issue;
             _activeParsedIssue = parsed;
+
+            EmitOutputLine($"🚀 Pipeline started for issue #{run.IssueIdentifier} — {issue.Title}");
+
             IReadOnlyList<IssueComment> issueComments = Array.Empty<IssueComment>();
             try
             {
@@ -244,6 +253,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             run.WorkspacePath = workspacePath;
 
             TransitionTo(run, PipelineStep.CloningRepository);
+            EmitOutputLine($"📋 Cloning repository {run.RepositoryName}...");
             await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.InProgress, ct);
             try { await _activeRepoProvider!.CloneAsync(workspacePath, ct); }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -252,7 +262,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             if (_activeBrainProvider != null)
             {
                 TransitionTo(run, PipelineStep.SyncingBrainRepoPreRun);
-                try { await _brainSync.SyncPreRunAsync(run, _activeBrainProvider, workspacePath, ct); }
+                try { await _brainSync.SyncPreRunAsync(run, _activeBrainProvider, workspacePath, ct, line => EmitOutputLine(line)); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _logger.Warning(ex, "Pipeline {RunId} brain sync failed, continuing without brain context", run.RunId);
@@ -261,16 +271,19 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             }
             // Create branch
             TransitionTo(run, PipelineStep.CreatingBranch);
+            EmitOutputLine("🌿 Creating branch...");
             try
             {
                 var branchName = PipelineFormatting.GenerateBranchName(run.IssueIdentifier, issue.Title, run.RunId);
                 run.BranchName = await _activeRepoProvider.CreateBranchAsync(workspacePath, branchName, ct);
                 _logger.Information("Pipeline {RunId} branch {BranchName} created", run.RunId, run.BranchName);
+                EmitOutputLine($"🌿 Created branch {run.BranchName}");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             { _logger.Error(ex, "Pipeline {RunId} failed to create branch", run.RunId); await FailRunAsync(run, $"Branch creation failed: {ex.Message}"); return; }
             // Analysis phase
             // TODO: [ARC-10] OnOutputLine fires with empty string instead of actual line content — behavioral difference from code generation/review phases
+            EmitOutputLine("🔍 Starting analysis...");
             var analysisShouldContinue = await _agentExecution.ExecuteAnalysisPhaseAsync(
                 run, _activeConfig, _activeAgentProvider!, _activeIssueProvider!,
                 issue, parsed, issueComments, _brainSync,
@@ -280,6 +293,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 () => OnOutputLine?.Invoke(string.Empty), () => NotifyChange(), ct);
             if (!analysisShouldContinue) return;
             // Code generation phase
+            EmitOutputLine("⚙️ Starting code generation...");
             var shouldContinue = await _agentExecution.ExecuteCodeGenerationAsync(
                 run, _activeConfig, _activeAgentProvider!,
                 issue, parsed, _brainSync,
@@ -322,6 +336,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
                 run.CompletedAt = DateTime.UtcNow;
                 await RemoveAllAgentLabelsAsync(run.IssueIdentifier, CancellationToken.None);
+                EmitOutputLine("🚫 Pipeline cancelled");
                 TransitionTo(run, PipelineStep.Cancelled);
                 AddRunToHistory(run);
             }
@@ -338,6 +353,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         run.CompletedAt = DateTime.UtcNow;
         if (_activeIssueProvider != null)
             await RemoveAllAgentLabelsAsync(run.IssueIdentifier, CancellationToken.None);
+        EmitOutputLine("🚫 Pipeline cancelled");
         TransitionTo(run, PipelineStep.Cancelled);
         AddRunToHistory(run);
     }
@@ -352,7 +368,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         {
             var prUrl = await _prOrchestrator.CreatePullRequestAsync(
                 run, report, isDraft, _activeRepoProvider!, _activeIssue,
-                _activeIssueComments, _activeConfig!, ct);
+                _activeIssueComments, _activeConfig!, ct, line => EmitOutputLine(line));
 
             if (prUrl == null && _activeConfig?.BlacklistMode == BlacklistMode.Fail
                 && run.BlacklistedFilesDetected.Count > 0)
@@ -374,6 +390,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             {
                 // Reflection step: ask the agent to review the entire run and enrich .brain/ knowledge
                 TransitionTo(run, PipelineStep.ReflectingOnRun);
+                EmitOutputLine("🧠 Reflecting on run and updating brain knowledge...");
                 try
                 {
                     var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
@@ -403,13 +420,21 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 }
 
                 TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
-                try { await _brainSync.SyncPostRunAsync(run, _activeBrainProvider, ct); }
+                try { await _brainSync.SyncPostRunAsync(run, _activeBrainProvider, ct, line => EmitOutputLine(line)); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 { _logger.Warning(ex, "Pipeline {RunId} brain post-run sync failed", run.RunId); run.BrainUpdatesPushed = false; }
             }
 
             TransitionTo(run, finalStep);
             AddRunToHistory(run);
+
+            // TODO: [UX-16] duration.TotalMinutes:F0 rounds instead of truncating — use (int)duration.TotalMinutes
+            var duration = run.CompletedAt!.Value - run.StartedAt;
+            if (finalStep == PipelineStep.Completed)
+                EmitOutputLine($"✅ Pipeline completed in {duration.TotalMinutes:F0}m {duration.Seconds}s");
+            else
+                EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
+
             if (finalStep == PipelineStep.Completed && _activeConfig!.CleanupSuccessfulWorkspaces)
                 _historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig.WorkspaceBaseDirectory);
             _logger.Information("Pipeline {RunId} {Outcome} in {Duration}. Retries: {RetryCount}. PR: {PullRequestUrl}",
@@ -522,6 +547,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         run.FailureReason = reason;
         run.CompletedAt = DateTime.UtcNow;
         await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
+        EmitOutputLine($"❌ Pipeline failed: {reason}");
         TransitionTo(run, PipelineStep.Failed);
         AddRunToHistory(run);
     }

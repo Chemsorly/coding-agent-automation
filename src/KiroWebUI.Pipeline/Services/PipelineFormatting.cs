@@ -261,6 +261,36 @@ public static partial class PipelineFormatting
         return truncated;
     }
 
+    /// <summary>
+    /// Formats a one-line quality gate summary with emoji status indicators.
+    /// Example: "🏗️ Quality gates: Compilation ✅ | Tests ✅ (42 passed, 0 failed) | Coverage ❌ (26.7%, threshold 40%)"
+    /// </summary>
+    public static string FormatQualityGateSummary(QualityGateReport report)
+    {
+        var parts = new List<string>
+        {
+            $"Compilation {(report.Compilation.Passed ? "✅" : "❌")}",
+            FormatTestGateSummary(report.Tests)
+        };
+
+        if (report.Coverage is not null)
+            parts.Add($"Coverage {(report.Coverage.Passed ? "✅" : "❌")} ({report.Coverage.Details})");
+        if (report.SecurityScan is not null)
+            parts.Add($"Security {(report.SecurityScan.Passed ? "✅" : "❌")}");
+        if (report.ExternalCi is not null)
+            parts.Add($"External CI {(report.ExternalCi.Passed ? "✅" : "❌")}");
+
+        return $"🏗️ Quality gates: {string.Join(" | ", parts)}";
+    }
+
+    private static string FormatTestGateSummary(GateResult tests)
+    {
+        var status = tests.Passed ? "✅" : "❌";
+        if (tests.TestsPassed.HasValue || tests.TestsFailed.HasValue)
+            return $"Tests {status} ({tests.TestsPassed ?? 0} passed, {tests.TestsFailed ?? 0} failed)";
+        return $"Tests {status}";
+    }
+
     [GeneratedRegex(@"[^a-z0-9]+")]
     private static partial Regex NonAlphanumericPattern();
 

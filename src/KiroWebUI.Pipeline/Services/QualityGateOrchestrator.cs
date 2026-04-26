@@ -58,14 +58,16 @@ internal class QualityGateOrchestrator
                 : null;
             var linkedCt = linkedCts?.Token ?? ct;
 
+            onOutputLine("🏗️ Running quality gates...");
             var report = await _qualityGateValidator.ValidateAsync(run.WorkspacePath!, config, linkedCt);
 
             report = await AppendExternalCiIfNeededAsync(run, report, config, repoProvider, pipelineProvider,
-                transitionTo, swapAgentLabel, addRunToHistory, onChange, allowEmptyCommit: false, linkedCt);
+                transitionTo, swapAgentLabel, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: false, linkedCt);
             if (run.CurrentStep == PipelineStep.Failed) return;
 
             run.LatestQualityReport = report;
             run.QualityGateHistory.Enqueue(report);
+            onOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
 
             _logger.Information("Pipeline {RunId} quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}",
                 run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed);
@@ -78,6 +80,7 @@ internal class QualityGateOrchestrator
 
                 _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}",
                     run.RunId, run.RetryCount, config.MaxRetries);
+                onOutputLine($"🔄 Quality gates failed, retrying (attempt {run.RetryCount}/{config.MaxRetries})");
 
                 var retryPromptSummary = BuildQualityGateRetryPrompt(report, run.RetryCount, config.MaxRetries);
 
@@ -132,11 +135,12 @@ internal class QualityGateOrchestrator
                 report = await _qualityGateValidator.ValidateAsync(run.WorkspacePath!, config, linkedCt);
 
                 report = await AppendExternalCiIfNeededAsync(run, report, config, repoProvider, pipelineProvider,
-                    transitionTo, swapAgentLabel, addRunToHistory, onChange, allowEmptyCommit: true, linkedCt);
+                    transitionTo, swapAgentLabel, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: true, linkedCt);
                 if (run.CurrentStep == PipelineStep.Failed) return;
 
                 run.LatestQualityReport = report;
                 run.QualityGateHistory.Enqueue(report);
+                onOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
 
                 _logger.Information("Pipeline {RunId} retry quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}",
                     run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed);
@@ -150,6 +154,7 @@ internal class QualityGateOrchestrator
             {
                 _logger.Warning("Pipeline {RunId} max retries ({MaxRetries}) exhausted, creating draft PR",
                     run.RunId, config.MaxRetries);
+                onOutputLine($"⚠️ Quality gates failed after {config.MaxRetries} retries, creating draft PR");
 
                 var errorSummary = BuildQualityGateErrorSummary(report);
                 run.RetryErrors.Add(errorSummary);
@@ -164,6 +169,7 @@ internal class QualityGateOrchestrator
                 _logger.Information("Pipeline {RunId} was cancelled during quality gates", run.RunId);
                 run.CompletedAt = DateTime.UtcNow;
                 await removeAllAgentLabels(run.IssueIdentifier, CancellationToken.None);
+                // TODO: [UX-16] Emit onOutputLine("🚫 Pipeline cancelled") for output log consistency
                 transitionTo(PipelineStep.Cancelled);
                 addRunToHistory(run);
             }
@@ -173,6 +179,7 @@ internal class QualityGateOrchestrator
             _logger.Error(ex, "Pipeline {RunId} quality gate validation failed", run.RunId);
             run.FailureReason = $"Quality gate validation error: {ex.Message}";
             await swapAgentLabel(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
+            // TODO: [UX-16] Emit onOutputLine($"❌ Pipeline failed: {run.FailureReason}") for output log consistency
             transitionTo(PipelineStep.Failed);
             addRunToHistory(run);
         }
@@ -192,6 +199,7 @@ internal class QualityGateOrchestrator
         Func<string, string, CancellationToken, Task> swapAgentLabel,
         Action<PipelineRun> addRunToHistory,
         Action onChange,
+        Action<string> onOutputLine,
         bool allowEmptyCommit, CancellationToken ct)
     {
         if (!report.Compilation.Passed || !report.Tests.Passed
@@ -233,11 +241,14 @@ internal class QualityGateOrchestrator
 
             await repoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, ct);
             _logger.Information("Pipeline {RunId} pushed branch {BranchName} for CI validation", run.RunId, run.BranchName);
+            onOutputLine($"📦 Committed changes for CI validation");
+            onOutputLine($"🔀 Pushed to origin/{run.BranchName}");
 
             string? commitSha = null;
             try { commitSha = await repoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
             catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA", run.RunId); }
 
+            onOutputLine("⏳ Waiting for external CI...");
             var ciStatus = await pipelineProvider.WaitForCompletionAsync(
                 run.BranchName!, commitSha, config.ExternalCiTimeout, ct);
 
@@ -254,6 +265,10 @@ internal class QualityGateOrchestrator
                     ? $"CI passed. {ciStatus.Jobs.Count} job(s) completed."
                     : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
             };
+
+            onOutputLine(ciPassed
+                ? $"✅ External CI passed ({ciStatus.Jobs.Count} jobs)"
+                : $"❌ External CI failed: {ciGate.Details}");
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {

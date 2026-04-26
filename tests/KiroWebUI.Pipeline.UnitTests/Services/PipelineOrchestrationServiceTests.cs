@@ -1555,4 +1555,130 @@ public class PipelineOrchestrationServiceTests
 
         commentOrder.Should().ContainInOrder("analysis", "gate");
     }
+
+    // --- Pipeline event output tests ---
+
+    [Fact]
+    public async Task PipelineEvents_HappyPath_EmitsExpectedOutputLines()
+    {
+        var outputLines = new List<string>();
+        _service.OnOutputLine += line => outputLines.Add(line);
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+
+        outputLines.Should().Contain(l => l.StartsWith("🚀 Pipeline started"));
+        outputLines.Should().Contain(l => l.StartsWith("📋 Cloning repository"));
+        outputLines.Should().Contain(l => l.StartsWith("🌿 Creating branch"));
+        outputLines.Should().Contain(l => l.StartsWith("🌿 Created branch"));
+        outputLines.Should().Contain(l => l.StartsWith("🔍 Starting analysis"));
+        outputLines.Should().Contain(l => l.StartsWith("⚙️ Starting code generation"));
+        outputLines.Should().Contain(l => l.StartsWith("🏗️ Running quality gates"));
+        outputLines.Should().Contain(l => l.StartsWith("🏗️ Quality gates:"));
+        outputLines.Should().Contain(l => l.StartsWith("✅ Pipeline completed"));
+    }
+
+    [Fact]
+    public async Task PipelineEvents_StartMessage_ContainsIssueIdentifierAndTitle()
+    {
+        var outputLines = new List<string>();
+        _service.OnOutputLine += line => outputLines.Add(line);
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        outputLines.Should().Contain(l => l.Contains("#42") && l.Contains("Test Issue"));
+    }
+
+    [Fact]
+    public async Task PipelineEvents_QualityGateSummary_ContainsGateStatuses()
+    {
+        var outputLines = new List<string>();
+        _service.OnOutputLine += line => outputLines.Add(line);
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        var qgLine = outputLines.FirstOrDefault(l => l.StartsWith("🏗️ Quality gates:"));
+        qgLine.Should().NotBeNull();
+        qgLine.Should().Contain("Compilation ✅");
+        qgLine.Should().Contain("Tests ✅");
+    }
+
+    [Fact]
+    public async Task PipelineEvents_FailedRun_EmitsFailureMessage()
+    {
+        _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "", Description = "desc", Labels = Array.Empty<string>() });
+
+        var outputLines = new List<string>();
+        _service.OnOutputLine += line => outputLines.Add(line);
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        outputLines.Should().Contain(l => l.StartsWith("❌ Pipeline failed:"));
+    }
+
+    [Fact]
+    public async Task PipelineEvents_CancelledRun_EmitsCancelMessage()
+    {
+        var (pipelineTask, agentTcs) = StartBlockingPipeline();
+        await Task.Delay(200);
+
+        var outputLines = new List<string>();
+        _service.OnOutputLine += line => outputLines.Add(line);
+
+        await _service.CancelPipelineAsync();
+        agentTcs.TrySetCanceled();
+        try { await pipelineTask; } catch { }
+
+        outputLines.Should().Contain(l => l.StartsWith("🚫 Pipeline cancelled"));
+    }
+
+    [Fact]
+    public async Task PipelineEvents_QualityGateRetry_EmitsRetryMessage()
+    {
+        var callCount = 0;
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return callCount == 1
+                    ? new QualityGateReport
+                    {
+                        Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build failed" },
+                        Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
+                    }
+                    : new QualityGateReport
+                    {
+                        Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+                        Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
+                    };
+            });
+
+        var outputLines = new List<string>();
+        _service.OnOutputLine += line => outputLines.Add(line);
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        outputLines.Should().Contain(l => l.StartsWith("🔄 Quality gates failed, retrying (attempt 1/"));
+        // Should have two QG summary lines (initial fail + retry pass)
+        outputLines.Where(l => l.StartsWith("🏗️ Quality gates:")).Should().HaveCountGreaterThanOrEqualTo(2);
+    }
+
+    [Fact]
+    public async Task PipelineEvents_CodeReview_EmitsReviewMessages()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.WithCodeReview());
+
+        SetupReviewAgentWithFindings("Review the following", "[CRITICAL] Test finding\n[WARNING] Another finding");
+
+        var outputLines = new List<string>();
+        _service.OnOutputLine += line => outputLines.Add(line);
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        outputLines.Should().Contain(l => l.StartsWith("🔍 Starting code review iteration"));
+        outputLines.Should().Contain(l => l.StartsWith("📝 Code review:") && l.Contains("critical"));
+    }
 }
