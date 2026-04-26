@@ -234,7 +234,7 @@ public class PipelineStateTransitionPropertyTests
         var (mockConfigStore, mockFactory, _, _, _, mockLogger) = CreateBaseMocks();
 
         mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestPipelineConfig.NonAutonomous());
+            .ReturnsAsync(TestPipelineConfig.Default());
 
         var mockValidator = new Mock<IQualityGateValidator>();
         mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
