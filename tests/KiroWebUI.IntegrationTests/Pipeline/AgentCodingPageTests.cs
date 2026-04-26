@@ -52,7 +52,7 @@ public class AgentCodingPageTests
     private void SetupDefaultMocks()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestPipelineConfig.NonAutonomous());
+            .ReturnsAsync(TestPipelineConfig.Default());
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {

@@ -52,33 +52,6 @@ public partial class BrainUpdateService : IBrainUpdateService
     }
 
     /// <summary>
-    /// Pure function that returns the gitignore content with the entry added if not already present.
-    /// Idempotent — applying it twice produces identical content.
-    /// </summary>
-    public static string EnsureGitignoreEntry(string gitignoreContent, string entry)
-    {
-        ArgumentNullException.ThrowIfNull(gitignoreContent);
-        ArgumentNullException.ThrowIfNull(entry);
-
-        var lines = gitignoreContent.Split('\n');
-        var trimmedEntry = entry.Trim();
-
-        foreach (var line in lines)
-        {
-            if (line.Trim() == trimmedEntry)
-                return gitignoreContent;
-        }
-
-        // Append entry, ensuring there's a newline before it if the file doesn't end with one
-        var sb = new StringBuilder(gitignoreContent);
-        if (gitignoreContent.Length > 0 && !gitignoreContent.EndsWith('\n'))
-            sb.Append('\n');
-        sb.Append(trimmedEntry);
-        sb.Append('\n');
-        return sb.ToString();
-    }
-
-    /// <summary>
     /// Validates brain updates: checks for session log, log.md update,
     /// and proper entry format. Returns validation result with warnings.
     /// </summary>

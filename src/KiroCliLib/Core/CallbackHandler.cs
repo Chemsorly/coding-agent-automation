@@ -25,19 +25,7 @@ public class CallbackHandler
         _callbacks[state].Add(callback);
     }
 
-    public void RegisterOnStarted(Action<CallbackContext> callback) => RegisterCallback(KiroState.Started, callback);
     public void RegisterOnCompleted(Action<CallbackContext> callback) => RegisterCallback(KiroState.Completed, callback);
-    public void RegisterOnError(Action<CallbackContext> callback) => RegisterCallback(KiroState.Error, callback);
-    public void RegisterOnNeedsInput(Action<CallbackContext> callback) => RegisterCallback(KiroState.NeedsInput, callback);
-    public void RegisterOnTimeout(Action<CallbackContext> callback) => RegisterCallback(KiroState.Timeout, callback);
-
-    public void RegisterOnProgress(Action<CallbackContext> callback)
-    {
-        RegisterCallback(KiroState.ResearchPhase, callback);
-        RegisterCallback(KiroState.PlanPhase, callback);
-        RegisterCallback(KiroState.ImplementPhase, callback);
-        RegisterCallback(KiroState.TestPhase, callback);
-    }
 
     public void Invoke(KiroState state, CallbackContext context)
     {
@@ -50,9 +38,4 @@ public class CallbackHandler
             catch (Exception ex) { _logger.Error(ex, "Callback for state {State} threw an exception.", state); }
         }
     }
-
-    public int GetCallbackCount(KiroState state) =>
-        _callbacks.TryGetValue(state, out var callbacks) ? callbacks.Count : 0;
-
-    public void ClearAll() => _callbacks.Clear();
 }

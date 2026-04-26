@@ -82,16 +82,6 @@ public abstract class WireMockTestBase : IDisposable
             .RespondWith(Response.Create().WithStatusCode(statusCode));
     }
 
-    /// <summary>Stubs a PUT endpoint returning JSON.</summary>
-    protected void StubPut(string path, object responseBody, int statusCode = 200)
-    {
-        Server.Given(Request.Create().WithPath(path).UsingPut())
-            .RespondWith(Response.Create()
-                .WithStatusCode(statusCode)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody(JsonSerializer.Serialize(responseBody, JsonOptions)));
-    }
-
     // TODO: StubError and StubRateLimited match any HTTP method. If a test stubs both a happy path
     // and an error on the same path, the last-registered stub wins for all methods. Consider adding
     // method-specific error stubs if this causes issues in more complex test scenarios.

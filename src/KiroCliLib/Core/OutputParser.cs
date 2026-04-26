@@ -9,16 +9,12 @@ namespace KiroCliLib.Core;
 public class OutputParser
 {
     private KiroState _currentState = KiroState.Started;
-    private readonly List<string> _detectedFiles = new();
     private TestResult? _testResults;
 
     public event EventHandler<KiroState>? StateChanged;
-    public event EventHandler<string>? ProgressUpdate;
     public event EventHandler<FileChange>? FileDetected;
     public event EventHandler<TestResult>? TestResultDetected;
 
-    public KiroState CurrentState => _currentState;
-    public IReadOnlyList<string> DetectedFiles => _detectedFiles.AsReadOnly();
     public TestResult? TestResults => _testResults;
 
     public void ProcessLine(string line)
@@ -36,7 +32,6 @@ public class OutputParser
         var fileChange = DetectFileOperation(line);
         if (fileChange != null)
         {
-            _detectedFiles.Add(fileChange.Path);
             FileDetected?.Invoke(this, fileChange);
         }
 
@@ -46,9 +41,6 @@ public class OutputParser
             _testResults = testResult;
             TestResultDetected?.Invoke(this, testResult);
         }
-
-        if (IsProgressLine(line))
-            ProgressUpdate?.Invoke(this, line);
     }
 
     private KiroState? DetectState(string line)
@@ -78,15 +70,15 @@ public class OutputParser
     {
         var createdMatch = Regex.Match(line, @"Created:\s+(.+)", RegexOptions.IgnoreCase);
         if (createdMatch.Success)
-            return new FileChange { Path = createdMatch.Groups[1].Value.Trim(), Type = FileChangeType.Created, Timestamp = DateTime.UtcNow };
+            return new FileChange { Path = createdMatch.Groups[1].Value.Trim(), Type = FileChangeType.Created };
 
         var modifiedMatch = Regex.Match(line, @"Modified:\s+(.+)", RegexOptions.IgnoreCase);
         if (modifiedMatch.Success)
-            return new FileChange { Path = modifiedMatch.Groups[1].Value.Trim(), Type = FileChangeType.Modified, Timestamp = DateTime.UtcNow };
+            return new FileChange { Path = modifiedMatch.Groups[1].Value.Trim(), Type = FileChangeType.Modified };
 
         var writingMatch = Regex.Match(line, @"Writing to\s+(.+)", RegexOptions.IgnoreCase);
         if (writingMatch.Success)
-            return new FileChange { Path = writingMatch.Groups[1].Value.Trim(), Type = FileChangeType.Modified, Timestamp = DateTime.UtcNow };
+            return new FileChange { Path = writingMatch.Groups[1].Value.Trim(), Type = FileChangeType.Modified };
 
         return null;
     }
@@ -108,21 +100,6 @@ public class OutputParser
             return new TestResult { TotalTests = total, PassedTests = total, FailedTests = 0 };
         }
 
-        var coverageMatch = Regex.Match(line, @"Coverage:\s*(\d+(?:\.\d+)?)%", RegexOptions.IgnoreCase);
-        if (coverageMatch.Success && _testResults != null)
-        {
-            var coverage = double.Parse(coverageMatch.Groups[1].Value);
-            return new TestResult { TotalTests = _testResults.TotalTests, PassedTests = _testResults.PassedTests, FailedTests = _testResults.FailedTests, Coverage = coverage };
-        }
-
         return null;
-    }
-
-    private bool IsProgressLine(string line)
-    {
-        var lowerLine = line.ToLowerInvariant();
-        return lowerLine.Contains("processing") || lowerLine.Contains("analyzing") ||
-               lowerLine.Contains("generating") || lowerLine.Contains("building") ||
-               lowerLine.Contains("running");
     }
 }

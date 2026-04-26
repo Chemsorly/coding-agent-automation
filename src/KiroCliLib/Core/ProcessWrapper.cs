@@ -18,7 +18,6 @@ public class ProcessWrapper : IDisposable
 
     public event EventHandler<string>? OutputReceived;
     public event EventHandler<string>? ErrorReceived;
-    public event EventHandler<int>? ProcessExited;
 
     public bool IsRunning => _process != null && !_process.HasExited;
     public int? ExitCode => _process?.HasExited == true ? _process.ExitCode : null;
@@ -32,73 +31,6 @@ public class ProcessWrapper : IDisposable
         _config = config;
         _logger = logger;
         _useWsl = config.UseWsl && OperatingSystem.IsWindows();
-    }
-
-    public async Task StartInteractiveAsync(string workspaceDirectory, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(workspaceDirectory);
-        if (_process != null)
-            throw new InvalidOperationException("Process is already running. Call Kill() first.");
-
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = _useWsl ? "wsl" : _config.KiroCliPath,
-            Arguments = _useWsl ? $"{_config.KiroCliPath} chat --no-interactive" : "chat --no-interactive",
-            WorkingDirectory = workspaceDirectory,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        _logger.Information("Starting Kiro CLI in interactive mode: {FileName} {Arguments}", startInfo.FileName, startInfo.Arguments);
-        _process = new Process { StartInfo = startInfo };
-        _process.OutputDataReceived += OnOutputDataReceived;
-        _process.ErrorDataReceived += OnErrorDataReceived;
-        _process.Exited += OnProcessExited;
-        _process.EnableRaisingEvents = true;
-
-        try
-        {
-            if (!_process.Start())
-                throw new InvalidOperationException("Failed to start Kiro CLI process.");
-            _logger.Information("Kiro CLI process started with PID: {ProcessId}", _process.Id);
-            _process.BeginOutputReadLine();
-            _process.BeginErrorReadLine();
-            await Task.Delay(1000, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Error starting Kiro CLI process");
-            Kill();
-            throw new InvalidOperationException("Failed to start Kiro CLI process", ex);
-        }
-    }
-
-    public async Task SendPromptAsync(string prompt)
-    {
-        ArgumentNullException.ThrowIfNull(prompt);
-        if (_process == null || _process.HasExited)
-            throw new InvalidOperationException("Process is not running.");
-
-        _lastOutputTime = DateTime.UtcNow;
-        await _process.StandardInput.WriteLineAsync(prompt);
-        await _process.StandardInput.FlushAsync();
-    }
-
-    public async Task<bool> WaitForResponseAsync(TimeSpan silenceDuration, TimeSpan maxWaitTime, CancellationToken cancellationToken)
-    {
-        if (_process == null || _process.HasExited) return false;
-        var startTime = DateTime.UtcNow;
-
-        while (DateTime.UtcNow - startTime < maxWaitTime)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (DateTime.UtcNow - _lastOutputTime >= silenceDuration) return true;
-            await Task.Delay(100, cancellationToken);
-        }
-        return false;
     }
 
     public async Task<int> StartAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken)
@@ -129,7 +61,6 @@ public class ProcessWrapper : IDisposable
         _process = new Process { StartInfo = startInfo };
         _process.OutputDataReceived += OnOutputDataReceived;
         _process.ErrorDataReceived += OnErrorDataReceived;
-        _process.Exited += OnProcessExited;
         _process.EnableRaisingEvents = true;
 
         try
@@ -195,11 +126,6 @@ public class ProcessWrapper : IDisposable
         if (e.Data != null) { _lastOutputTime = DateTime.UtcNow; ErrorReceived?.Invoke(this, e.Data); }
     }
 
-    private void OnProcessExited(object? sender, EventArgs e)
-    {
-        if (_process != null) ProcessExited?.Invoke(this, _process.ExitCode);
-    }
-
     public void Dispose()
     {
         if (_disposed) return;
@@ -208,7 +134,6 @@ public class ProcessWrapper : IDisposable
         {
             _process.OutputDataReceived -= OnOutputDataReceived;
             _process.ErrorDataReceived -= OnErrorDataReceived;
-            _process.Exited -= OnProcessExited;
             _process.Dispose();
             _process = null;
         }
