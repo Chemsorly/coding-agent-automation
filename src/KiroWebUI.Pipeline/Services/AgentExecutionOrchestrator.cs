@@ -70,13 +70,17 @@ internal class AgentExecutionOrchestrator
             run.AnalysisContent = existingAnalysis;
             run.AnalysisSkipped = true;
             transitionTo(PipelineStep.AnalyzingCode);
-            await agentProvider.EnsureSessionAsync(run.WorkspacePath!, ct);
+            await AgentStallMonitor.MonitorAsync(agentProvider,
+                () => agentProvider.EnsureSessionAsync(run.WorkspacePath!, ct),
+                run, config, "Session warm-up", onChange, _logger, ct);
             transitionTo(PipelineStep.PostingAnalysis);
         }
         else
         {
             transitionTo(PipelineStep.AnalyzingCode);
-            await agentProvider.EnsureSessionAsync(run.WorkspacePath!, ct);
+            await AgentStallMonitor.MonitorAsync(agentProvider,
+                () => agentProvider.EnsureSessionAsync(run.WorkspacePath!, ct),
+                run, config, "Session warm-up", onChange, _logger, ct);
 
             try
             {
@@ -96,7 +100,8 @@ internal class AgentExecutionOrchestrator
                 var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, issue, parsed, brainContextWrittenForAnalysis);
                 _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
 
-                await agentProvider.ExecuteAsync(
+                await AgentStallMonitor.ExecuteWithMonitoringAsync(
+                    agentProvider,
                     new AgentRequest
                     {
                         Prompt = analysisPrompt,
@@ -104,7 +109,7 @@ internal class AgentExecutionOrchestrator
                         Timeout = config.AgentTimeout,
                         UseResume = true
                     },
-                    ct,
+                    run, config, "Analysis agent", onChange, _logger, ct,
                     line =>
                     {
                         run.OutputLines.Enqueue(line);
@@ -331,81 +336,22 @@ internal class AgentExecutionOrchestrator
             var prompt = PromptBuilder.BuildPrompt(config.ImplementationPrompt, issue, parsed, brainWriteInstructions, brainContextWritten);
             _logger.Debug("Pipeline {RunId} implementation prompt:\n{Prompt}", run.RunId, prompt);
 
-            using var stallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var lastWarnTime = DateTime.UtcNow;
-            var stallMonitorTask = Task.Run(async () =>
-            {
-                try
-                {
-                    while (!stallCts.Token.IsCancellationRequested)
-                    {
-                        await Task.Delay(config.StallPollInterval, stallCts.Token);
-
-                        AgentHealthStatus health;
-                        try { health = agentProvider.GetHealthStatus(); }
-                        catch (Exception ex)
-                        {
-                            _logger.Warning(ex, "Pipeline {RunId} GetHealthStatus() call failed, continuing to poll", run.RunId);
-                            continue;
-                        }
-
-                        if (health.IsProcessAlive == false)
-                        {
-                            var errorMsg = $"Agent process is no longer alive (PID {health.ProcessId}). " +
-                                           $"Total elapsed: {(DateTime.UtcNow - run.StartedAt):hh\\:mm\\:ss}.";
-                            _logger.Error("Pipeline {RunId} {StallMessage}", run.RunId, errorMsg);
-                            run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = errorMsg });
-                            onChange();
-                            break;
-                        }
-
-                        if (health.LastOutputTime.HasValue)
-                        {
-                            var silence = DateTime.UtcNow - health.LastOutputTime.Value;
-                            var stallWarningInterval = config.StallWarningInterval;
-                            var timeSinceLastWarn = DateTime.UtcNow - lastWarnTime;
-
-                            if (silence >= stallWarningInterval && timeSinceLastWarn >= stallWarningInterval)
-                            {
-                                var elapsed = DateTime.UtcNow - run.StartedAt;
-                                var msg = $"No agent output for {silence.TotalMinutes:F0}m. " +
-                                          $"Agent call still in progress. " +
-                                          $"Total elapsed: {elapsed:hh\\:mm\\:ss}. Timeout: {config.AgentTimeout:hh\\:mm\\:ss}.";
-                                _logger.Warning("Pipeline {RunId} {StallMessage}", run.RunId, msg);
-                                run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = msg });
-                                onChange();
-                                lastWarnTime = DateTime.UtcNow;
-                            }
-                        }
-                    }
-                }
-                catch (OperationCanceledException) { }
-                catch (ObjectDisposedException) { }
-            }, CancellationToken.None);
-
             AgentResult agentResult;
-            try
-            {
-                agentResult = await agentProvider.ExecuteAsync(
-                    new AgentRequest
-                    {
-                        Prompt = prompt,
-                        WorkspacePath = run.WorkspacePath!,
-                        Timeout = config.AgentTimeout,
-                        UseResume = true
-                    },
-                    ct,
-                    line =>
-                    {
-                        run.OutputLines.Enqueue(line);
-                        onOutputLine(line);
-                    });
-            }
-            finally
-            {
-                await stallCts.CancelAsync();
-                try { await stallMonitorTask; } catch (OperationCanceledException) { }
-            }
+            agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+                agentProvider,
+                new AgentRequest
+                {
+                    Prompt = prompt,
+                    WorkspacePath = run.WorkspacePath!,
+                    Timeout = config.AgentTimeout,
+                    UseResume = true
+                },
+                run, config, "Code generation agent", onChange, _logger, ct,
+                line =>
+                {
+                    run.OutputLines.Enqueue(line);
+                    onOutputLine(line);
+                });
 
             var outputSummary = agentResult.OutputLines.Count > 0
                 ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
@@ -534,7 +480,8 @@ internal class AgentExecutionOrchestrator
                     var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, issue, parsed);
                     _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, i + 1, agent.Name, reviewPrompt);
 
-                    var reviewResult = await agentProvider.ExecuteAsync(
+                    var reviewResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+                        agentProvider,
                         new AgentRequest
                         {
                             Prompt = reviewPrompt,
@@ -542,7 +489,7 @@ internal class AgentExecutionOrchestrator
                             Timeout = config.AgentTimeout,
                             UseResume = true
                         },
-                        ct,
+                        run, config, $"Code review agent '{agent.Name}'", onChange, _logger, ct,
                         line =>
                         {
                             run.OutputLines.Enqueue(line);
@@ -615,7 +562,8 @@ internal class AgentExecutionOrchestrator
                     var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt);
                     _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
 
-                    await agentProvider.ExecuteAsync(
+                    await AgentStallMonitor.ExecuteWithMonitoringAsync(
+                        agentProvider,
                         new AgentRequest
                         {
                             Prompt = fixPrompt,
@@ -623,7 +571,7 @@ internal class AgentExecutionOrchestrator
                             Timeout = config.AgentTimeout,
                             UseResume = true
                         },
-                        ct,
+                        run, config, $"Code review fix agent (iteration {i + 1})", onChange, _logger, ct,
                         line =>
                         {
                             run.OutputLines.Enqueue(line);

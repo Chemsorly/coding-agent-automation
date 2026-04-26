@@ -156,6 +156,14 @@ public sealed record PipelineConfiguration
     /// Default is 30 seconds. Tests can set a shorter interval for faster execution.
     /// </summary>
     public TimeSpan StallPollInterval { get; init; } = TimeSpan.FromSeconds(30);
+    /// <summary>
+    /// How long the agent can be continuously silent before the stall monitor forcefully
+    /// kills the process via <see cref="IAgentProvider.KillAsync"/>. Defaults to
+    /// <see cref="AgentTimeout"/>. Set independently for scenarios where a shorter silence
+    /// threshold is desired (e.g., kill after 10 minutes of silence even if the 30-minute
+    /// total timeout hasn't elapsed).
+    /// </summary>
+    public TimeSpan? StallKillTimeout { get; init; }
     public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".kiro", ".github", ".brain" };
     public BlacklistMode BlacklistMode { get; init; } = BlacklistMode.WarnAndExclude;
 

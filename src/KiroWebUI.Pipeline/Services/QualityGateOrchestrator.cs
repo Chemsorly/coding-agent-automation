@@ -95,7 +95,8 @@ internal class QualityGateOrchestrator
 
                 try
                 {
-                    var agentResult = await agentProvider.ExecuteAsync(
+                    var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+                        agentProvider,
                         new AgentRequest
                         {
                             Prompt = fixPrompt,
@@ -103,7 +104,7 @@ internal class QualityGateOrchestrator
                             Timeout = config.AgentTimeout,
                             UseResume = true
                         },
-                        linkedCt,
+                        run, config, $"Quality gate retry agent (attempt {run.RetryCount})", onChange, _logger, linkedCt,
                         line =>
                         {
                             run.OutputLines.Enqueue(line);
