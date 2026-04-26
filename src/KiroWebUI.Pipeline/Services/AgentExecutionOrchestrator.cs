@@ -33,7 +33,7 @@ internal class AgentExecutionOrchestrator
         Action<PipelineStep> transitionTo,
         Func<string, string, CancellationToken, Task> swapAgentLabel,
         Action<PipelineRun> addRunToHistory,
-        Action? onOutputLine, Action? onChange,
+        Action<string>? onOutputLine, Action? onChange,
         CancellationToken ct)
     {
         string? existingAnalysis = null;
@@ -108,7 +108,7 @@ internal class AgentExecutionOrchestrator
                     line =>
                     {
                         run.OutputLines.Enqueue(line);
-                        onOutputLine?.Invoke();
+                        onOutputLine?.Invoke(line);
                     });
 
                 var analysisFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisFilePath);

@@ -115,8 +115,12 @@
                     <div class="progress-view">
                         <h2>Pipeline in Progress</h2>
 
+                        @{
+                            List<string> outputSnapshot;
+                            lock (_outputLock) { outputSnapshot = _outputLines.TakeLast(200).ToList(); }
+                        }
                         <div class="output-panel" id="outputPanel">
-                            @foreach (var line in _outputLines.TakeLast(200))
+                            @foreach (var line in outputSnapshot)
                             {
                                 <div class="output-line">@line</div>
                             }
@@ -140,6 +144,7 @@
     private List<ProviderConfig> _agentProviders = new();
     private List<ProviderConfig> _pipelineProviders = new();
     private List<ProviderConfig> _brainProviders = new();
+    private readonly object _outputLock = new();
     private List<string> _outputLines = new();
 
     private string _selectedIssueProviderId = "";
@@ -247,7 +252,7 @@
                 var run = PipelineService.ActiveRun;
                 if (run != null && run.RunId != _lastRunId)
                 {
-                    _outputLines.Clear();
+                    lock (_outputLock) { _outputLines.Clear(); }
                     _showCompletionOnly = false;
                     _lastRunId = run.RunId;
                 }
@@ -270,7 +275,7 @@
     private async void HandleOutputLine(string line)
     {
         if (_disposed) return;
-        _outputLines.Add(line);
+        lock (_outputLock) { _outputLines.Add(line); }
         try
         {
             await InvokeAsync(async () =>
@@ -314,7 +319,7 @@
             return;
         }
 
-        _outputLines.Clear();
+        lock (_outputLock) { _outputLines.Clear(); }
         _showCompletionOnly = false;
 
         try

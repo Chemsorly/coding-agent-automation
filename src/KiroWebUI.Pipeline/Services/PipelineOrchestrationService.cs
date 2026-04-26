@@ -282,7 +282,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             catch (Exception ex) when (ex is not OperationCanceledException)
             { _logger.Error(ex, "Pipeline {RunId} failed to create branch", run.RunId); await FailRunAsync(run, $"Branch creation failed: {ex.Message}"); return; }
             // Analysis phase
-            // TODO: [ARC-10] OnOutputLine fires with empty string instead of actual line content — behavioral difference from code generation/review phases
             EmitOutputLine("🔍 Starting analysis...");
             var analysisShouldContinue = await _agentExecution.ExecuteAnalysisPhaseAsync(
                 run, _activeConfig, _activeAgentProvider!, _activeIssueProvider!,
@@ -290,7 +289,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 step => TransitionTo(run, step),
                 (id, label, token) => SwapAgentLabelAsync(id, label, token),
                 r => AddRunToHistory(r),
-                () => OnOutputLine?.Invoke(string.Empty), () => NotifyChange(), ct);
+                line => EmitOutputLine(line), () => NotifyChange(), ct);
             if (!analysisShouldContinue) return;
             // Code generation phase
             EmitOutputLine("⚙️ Starting code generation...");
