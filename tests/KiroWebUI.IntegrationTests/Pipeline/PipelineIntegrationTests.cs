@@ -308,12 +308,19 @@ public class PipelineIntegrationTests : IntegrationTestBase
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
                 Interlocked.Increment(ref callCount);
-                // Review call uses --resume
-                if (req.UseResume)
+                var kiroDir = Path.Combine(req.WorkspacePath, ".kiro");
+                Directory.CreateDirectory(kiroDir);
+
+                if (req.Prompt.Contains("Analyze the codebase"))
                 {
-                    var findingsDir = Path.Combine(req.WorkspacePath, ".kiro");
-                    Directory.CreateDirectory(findingsDir);
-                    File.WriteAllText(Path.Combine(findingsDir, "review-findings.md"),
+                    File.WriteAllText(Path.Combine(kiroDir, "analysis.md"), new string('x', 200));
+                    var assessment = new { recommendation = "ready", reason = "Test", concerns = Array.Empty<string>(), blockingIssues = Array.Empty<string>() };
+                    File.WriteAllText(Path.Combine(kiroDir, "analysis-assessment.json"),
+                        System.Text.Json.JsonSerializer.Serialize(assessment, new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase }));
+                }
+                else if (req.Prompt.Contains("Review the changes"))
+                {
+                    File.WriteAllText(Path.Combine(kiroDir, "review-findings.md"),
                         "1. [CRITICAL] Missing null check in ProcessOrder\n" +
                         "2. [CRITICAL] SQL injection in SearchUsers\n" +
                         "3. [WARNING] Consider using StringBuilder\n" +

@@ -10,6 +10,11 @@ namespace KiroWebUI.Pipeline.Services;
 /// </summary>
 internal class AgentExecutionOrchestrator
 {
+    /// <summary>Minimum length in bytes for analysis.md to be considered valid.</summary>
+    internal const int MinAnalysisLength = 100;
+
+    private static readonly JsonSerializerOptions s_camelCaseOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
     private readonly Serilog.ILogger _logger;
 
     public AgentExecutionOrchestrator(Serilog.ILogger logger)
@@ -76,61 +81,128 @@ internal class AgentExecutionOrchestrator
         else
         {
             transitionTo(PipelineStep.AnalyzingCode);
-            await agentProvider.EnsureSessionAsync(run.WorkspacePath!, ct);
 
-            try
+            var analysisFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisFilePath);
+            var assessmentFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisAssessmentFilePath);
+            AnalysisAssessment? assessment = null;
+            var maxRetries = Math.Max(0, config.MaxAnalysisRetries);
+
+            for (int attempt = 0; attempt <= maxRetries; attempt++)
             {
-                var brainContextForAnalysis = PromptBuilder.BuildBrainContextSection(
-                    run.BrainContextLoaded,
-                    run.RepositoryName?.Split('/').LastOrDefault(),
-                    null,
-                    brainSync.GetPreviousBrainWarnings(run.BrainProviderConfigId));
+                // Delete stale artifacts before each attempt
+                DeleteIfExists(analysisFilePath);
+                DeleteIfExists(assessmentFilePath);
 
-                var brainContextWrittenForAnalysis = !string.IsNullOrEmpty(brainContextForAnalysis);
-                if (brainContextWrittenForAnalysis)
+                try
                 {
-                    await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, PromptBuilder.BrainContextFilePath), brainContextForAnalysis, ct);
-                    _logger.Debug("Pipeline {RunId} wrote brain context to {FilePath}", run.RunId, PromptBuilder.BrainContextFilePath);
-                }
+                    await agentProvider.EnsureSessionAsync(run.WorkspacePath!, ct);
 
-                var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, issue, parsed, brainContextWrittenForAnalysis);
-                _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
+                    var brainContextForAnalysis = PromptBuilder.BuildBrainContextSection(
+                        run.BrainContextLoaded,
+                        run.RepositoryName?.Split('/').LastOrDefault(),
+                        null,
+                        brainSync.GetPreviousBrainWarnings(run.BrainProviderConfigId));
 
-                await agentProvider.ExecuteAsync(
-                    new AgentRequest
+                    var brainContextWrittenForAnalysis = !string.IsNullOrEmpty(brainContextForAnalysis);
+                    if (brainContextWrittenForAnalysis)
                     {
-                        Prompt = analysisPrompt,
-                        WorkspacePath = run.WorkspacePath!,
-                        Timeout = config.AgentTimeout,
-                        UseResume = true
-                    },
-                    ct,
-                    line =>
-                    {
-                        run.OutputLines.Enqueue(line);
-                        onOutputLine?.Invoke();
-                    });
+                        await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, PromptBuilder.BrainContextFilePath), brainContextForAnalysis, ct);
+                        _logger.Debug("Pipeline {RunId} wrote brain context to {FilePath}", run.RunId, PromptBuilder.BrainContextFilePath);
+                    }
 
-                var analysisFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisFilePath);
-                if (File.Exists(analysisFilePath))
-                {
+                    var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, issue, parsed, brainContextWrittenForAnalysis);
+                    _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
+
+                    await agentProvider.ExecuteAsync(
+                        new AgentRequest
+                        {
+                            Prompt = analysisPrompt,
+                            WorkspacePath = run.WorkspacePath!,
+                            Timeout = config.AgentTimeout,
+                            UseResume = true
+                        },
+                        ct,
+                        line =>
+                        {
+                            run.OutputLines.Enqueue(line);
+                            onOutputLine?.Invoke();
+                        });
+
+                    // Hard gate: analysis.md must exist and be non-trivial
+                    if (!File.Exists(analysisFilePath))
+                        throw new AnalysisIncompleteException("analysis.md not found after agent execution");
+
+                    var analysisLength = new FileInfo(analysisFilePath).Length;
+                    if (analysisLength < MinAnalysisLength)
+                        throw new AnalysisIncompleteException($"analysis.md too short ({analysisLength} bytes, minimum {MinAnalysisLength})");
+
                     run.AnalysisContent = await File.ReadAllTextAsync(analysisFilePath, ct);
                     _logger.Information("Pipeline {RunId} read analysis from {AnalysisFilePath}", run.RunId, analysisFilePath);
+
+                    // Hard gate: assessment.json must exist and be valid
+                    assessment = await ReadAssessmentAsync(run, ct);
+
+                    // Success — exit retry loop
+                    break;
                 }
-                else
+                catch (AnalysisIncompleteException ex) when (attempt < maxRetries)
                 {
-                    _logger.Warning("Pipeline {RunId} agent did not write analysis file at {AnalysisFilePath}", run.RunId, analysisFilePath);
+                    _logger.Warning(ex, "Pipeline {RunId} analysis attempt {Attempt}/{MaxAttempts} failed, retrying",
+                        run.RunId, attempt + 1, maxRetries + 1);
+                    run.ChatHistory.Enqueue(new ChatEntry
+                    {
+                        Role = ChatRole.System,
+                        Content = $"Analysis attempt {attempt + 1} failed: {ex.Message}. Retrying..."
+                    });
+                    onChange?.Invoke();
                     run.AnalysisContent = null;
+                    continue;
                 }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Warning(ex, "Pipeline {RunId} code analysis failed, falling back to issue-based analysis", run.RunId);
-                run.AnalysisContent = null;
+                catch (AnalysisIncompleteException ex)
+                {
+                    // Budget exhausted — terminal failure
+                    _logger.Error(ex, "Pipeline {RunId} analysis failed after {Attempts} attempt(s)",
+                        run.RunId, attempt + 1);
+                    run.FailureReason = $"Analysis failed after {attempt + 1} attempt(s): {ex.Message}";
+                    run.CompletedAt = DateTime.UtcNow;
+                    // TODO: [RES-06] Use CancellationToken.None for failure-path label swap — ct may already be cancelled (review finding .NET #1)
+                    await swapAgentLabel(run.IssueIdentifier, AgentLabels.Error, ct);
+                    transitionTo(PipelineStep.Failed);
+                    addRunToHistory(run);
+                    return false;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // TODO: [RES-06] Simplify by re-throwing as AnalysisIncompleteException instead of duplicating retry/fail logic (review finding #2)
+                    // Wrap non-cancellation exceptions as AnalysisIncompleteException for uniform retry handling
+                    var wrapped = new AnalysisIncompleteException($"Agent execution failed: {ex.Message}", ex);
+                    if (attempt < maxRetries)
+                    {
+                        _logger.Warning(ex, "Pipeline {RunId} analysis attempt {Attempt}/{MaxAttempts} failed, retrying",
+                            run.RunId, attempt + 1, maxRetries + 1);
+                        run.ChatHistory.Enqueue(new ChatEntry
+                        {
+                            Role = ChatRole.System,
+                            Content = $"Analysis attempt {attempt + 1} failed: {wrapped.Message}. Retrying..."
+                        });
+                        onChange?.Invoke();
+                        run.AnalysisContent = null;
+                        continue;
+                    }
+
+                    _logger.Error(ex, "Pipeline {RunId} analysis failed after {Attempts} attempt(s)",
+                        run.RunId, attempt + 1);
+                    run.FailureReason = $"Analysis failed after {attempt + 1} attempt(s): {wrapped.Message}";
+                    run.CompletedAt = DateTime.UtcNow;
+                    // TODO: [RES-06] Use CancellationToken.None for failure-path label swap — ct may already be cancelled (review finding .NET #1)
+                    await swapAgentLabel(run.IssueIdentifier, AgentLabels.Error, ct);
+                    transitionTo(PipelineStep.Failed);
+                    addRunToHistory(run);
+                    return false;
+                }
             }
 
             // Read and evaluate the confidence gate assessment
-            var assessment = await ReadAssessmentAsync(run, ct);
             run.AnalysisRecommendation = assessment?.Recommendation;
             run.AnalysisConcerns = assessment?.Concerns ?? Array.Empty<string>();
             run.AnalysisBlockingIssues = assessment?.BlockingIssues ?? Array.Empty<string>();
@@ -147,7 +219,7 @@ internal class AgentExecutionOrchestrator
             {
                 // Post analysis comment first
                 transitionTo(PipelineStep.PostingAnalysis);
-                await PostAnalysisCommentAsync(run, issue, parsed, issueProvider, ct);
+                await PostAnalysisCommentAsync(run, issue, issueProvider, ct);
 
                 var abortComment = BuildNotReadyComment(assessment!);
                 try { await issueProvider.PostCommentAsync(run.IssueIdentifier, abortComment, ct); }
@@ -166,7 +238,7 @@ internal class AgentExecutionOrchestrator
             {
                 // Post analysis comment first
                 transitionTo(PipelineStep.PostingAnalysis);
-                await PostAnalysisCommentAsync(run, issue, parsed, issueProvider, ct);
+                await PostAnalysisCommentAsync(run, issue, issueProvider, ct);
 
                 var wontDoComment = BuildWontDoComment(assessment!);
                 try { await issueProvider.PostCommentAsync(run.IssueIdentifier, wontDoComment, ct); }
@@ -183,47 +255,47 @@ internal class AgentExecutionOrchestrator
 
             // Ready path — post analysis and continue
             transitionTo(PipelineStep.PostingAnalysis);
-            await PostAnalysisCommentAsync(run, issue, parsed, issueProvider, ct);
+            await PostAnalysisCommentAsync(run, issue, issueProvider, ct);
         }
 
         return true;
     }
 
-    private async Task<AnalysisAssessment?> ReadAssessmentAsync(PipelineRun run, CancellationToken ct)
+    private async Task<AnalysisAssessment> ReadAssessmentAsync(PipelineRun run, CancellationToken ct)
     {
         var assessmentPath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisAssessmentFilePath);
         if (!File.Exists(assessmentPath))
-        {
-            _logger.Warning("Pipeline {RunId} no analysis assessment file found at {Path}, defaulting to proceed",
-                run.RunId, assessmentPath);
-            return null;
-        }
+            throw new AnalysisIncompleteException("analysis-assessment.json not found after agent execution");
 
         try
         {
             var json = await File.ReadAllTextAsync(assessmentPath, ct);
-            // TODO: [ARC-08a] Extract JsonSerializerOptions to a private static readonly field — per-call allocation bypasses System.Text.Json type metadata cache
-            var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-            return JsonSerializer.Deserialize<AnalysisAssessment>(json, options);
+            var result = JsonSerializer.Deserialize<AnalysisAssessment>(json, s_camelCaseOptions);
+            return result ?? throw new AnalysisIncompleteException("analysis-assessment.json deserialized to null");
         }
         catch (JsonException ex)
         {
-            _logger.Warning(ex, "Pipeline {RunId} failed to parse analysis assessment, defaulting to proceed", run.RunId);
-            return null;
+            throw new AnalysisIncompleteException("analysis-assessment.json contains malformed JSON", ex);
         }
-        // TODO: [ARC-08a] Catch IOException to maintain fail-open contract when file is locked/inaccessible
+        catch (IOException ex)
+        {
+            throw new AnalysisIncompleteException($"Failed to read analysis-assessment.json: {ex.Message}", ex);
+        }
     }
 
     private async Task PostAnalysisCommentAsync(
-        PipelineRun run, IssueDetail issue, ParsedIssue parsed,
+        PipelineRun run, IssueDetail issue,
         IIssueProvider issueProvider, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(run.AnalysisContent))
+        {
+            _logger.Warning("Pipeline {RunId} skipping analysis comment — no content", run.RunId);
+            return;
+        }
+
         try
         {
-            var analysis = !string.IsNullOrWhiteSpace(run.AnalysisContent)
-                ? IssueAnalysisComment.FromAgentAnalysis(issue, run.AnalysisContent)
-                : IssueAnalysisComment.FromIssue(issue, parsed);
-
+            var analysis = IssueAnalysisComment.FromAgentAnalysis(issue, run.AnalysisContent);
             await issueProvider.PostCommentAsync(run.IssueIdentifier, analysis.ToMarkdown(), ct);
             _logger.Information("Pipeline {RunId} posted analysis comment on issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
         }
@@ -231,6 +303,12 @@ internal class AgentExecutionOrchestrator
         {
             _logger.Warning(ex, "Pipeline {RunId} failed to post analysis comment on issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
         }
+    }
+
+    private static void DeleteIfExists(string path)
+    {
+        if (File.Exists(path))
+            File.Delete(path);
     }
 
     internal static string BuildNotReadyComment(AnalysisAssessment assessment)

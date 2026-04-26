@@ -99,7 +99,16 @@ public class PipelineOrchestrationServiceTests
         _mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<FileChangeSummary>() as IReadOnlyList<FileChangeSummary>);
 
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                // Write default analysis artifacts when the analysis prompt is detected
+                if (req.Prompt.Contains("Analyze the codebase"))
+                {
+                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
+                }
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
         _mockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
@@ -127,7 +136,11 @@ public class PipelineOrchestrationServiceTests
             {
                 callCount++;
                 if (callCount <= 1) // analysis call completes immediately
+                {
+                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
                     return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
                 return agentTcs.Task; // code generation blocks
             });
 
@@ -466,13 +479,13 @@ public class PipelineOrchestrationServiceTests
 
         var callCount = 0;
         _mockAgentProvider.Setup(p => p.ExecuteAsync(
-                It.Is<AgentRequest>(r => r.Prompt.Contains("sub-agent") && r.UseResume),
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Review the changes") && r.UseResume),
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(() =>
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
                 callCount++;
-                if (callCount >= 3) throw new InvalidOperationException("Agent crashed");
-                return new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() };
+                if (callCount >= 2) throw new InvalidOperationException("Agent crashed");
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -524,7 +537,7 @@ public class PipelineOrchestrationServiceTests
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
             });
 
-        SetupReviewAgentWithFindings("sub-agent", "[CRITICAL] Missing null check\n[WARNING] Consider renaming");
+        SetupReviewAgentWithFindings("Review the changes", "[CRITICAL] Missing null check\n[WARNING] Consider renaming");
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
@@ -545,7 +558,7 @@ public class PipelineOrchestrationServiceTests
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
             });
 
-        SetupReviewAgentWithFindings("sub-agent", "[WARNING] Consider renaming\n[SUGGESTION] Use var");
+        SetupReviewAgentWithFindings("Review the changes", "[WARNING] Consider renaming\n[SUGGESTION] Use var");
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
@@ -565,7 +578,7 @@ public class PipelineOrchestrationServiceTests
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = null }
             });
 
-        SetupReviewAgentWithFindings("sub-agent", "[CRITICAL] Missing null check");
+        SetupReviewAgentWithFindings("Review the changes", "[CRITICAL] Missing null check");
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
@@ -585,7 +598,7 @@ public class PipelineOrchestrationServiceTests
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
             });
 
-        SetupReviewAgentWithFindings("sub-agent",
+        SetupReviewAgentWithFindings("Review the changes",
             "[CRITICAL] Bug A\n[CRITICAL] Bug B\n[WARNING] Style issue\n[SUGGESTION] Rename X\n[SUGGESTION] Rename Y\n[SUGGESTION] Rename Z");
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -744,7 +757,12 @@ public class PipelineOrchestrationServiceTests
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, ct, onLine) =>
             {
                 callCount++;
-                if (callCount <= 1) return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                if (callCount <= 1)
+                {
+                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
                 return agentTcs.Task;
             });
 
@@ -781,7 +799,12 @@ public class PipelineOrchestrationServiceTests
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, ct, onLine) =>
             {
                 callCount++;
-                if (callCount <= 1) return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                if (callCount <= 1)
+                {
+                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
                 return agentTcs.Task;
             });
 
@@ -818,7 +841,12 @@ public class PipelineOrchestrationServiceTests
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, ct, onLine) =>
             {
                 callCount++;
-                if (callCount <= 1) return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                if (callCount <= 1)
+                {
+                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
                 return agentTcs.Task;
             });
 
@@ -1302,6 +1330,16 @@ public class PipelineOrchestrationServiceTests
     // --- Confidence gate tests ---
 
     /// <summary>
+    /// Helper: writes an analysis.md file into the workspace so the orchestrator can read it.
+    /// </summary>
+    private static void WriteAnalysisFile(string workspacePath, string content)
+    {
+        var dir = Path.Combine(workspacePath, ".kiro");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "analysis.md"), content);
+    }
+
+    /// <summary>
     /// Helper: writes an analysis-assessment.json file into the workspace so the orchestrator can read it.
     /// </summary>
     private static void WriteAssessmentFile(string workspacePath, string recommendation, string? reason = null,
@@ -1321,7 +1359,7 @@ public class PipelineOrchestrationServiceTests
     }
 
     /// <summary>
-    /// Helper: sets up the analysis agent call to write an assessment file with the given recommendation.
+    /// Helper: sets up the analysis agent call to write an analysis file and assessment file with the given recommendation.
     /// </summary>
     private void SetupAnalysisAgentWithAssessment(string recommendation, string? reason = null,
         string[]? concerns = null, string[]? blockingIssues = null)
@@ -1331,6 +1369,7 @@ public class PipelineOrchestrationServiceTests
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
+                WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
                 WriteAssessmentFile(req.WorkspacePath, recommendation, reason, concerns, blockingIssues);
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
@@ -1383,24 +1422,34 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task ConfidenceGate_MissingAssessmentFile_ProceedsAsReady()
+    public async Task ConfidenceGate_MissingAssessmentFile_FailsPipeline()
     {
-        // Default mock doesn't write assessment file — should proceed
+        // Agent writes analysis.md but not assessment.json — should retry then fail
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                // No assessment file written
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        run.CurrentStep.Should().Be(PipelineStep.Completed);
-        run.AnalysisRecommendation.Should().BeNull();
-        run.PullRequestUrl.Should().NotBeNullOrEmpty();
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("analysis-assessment.json");
     }
 
     [Fact]
-    public async Task ConfidenceGate_MalformedJson_ProceedsAsReady()
+    public async Task ConfidenceGate_MalformedJson_FailsPipeline()
     {
         _mockAgentProvider.Setup(p => p.ExecuteAsync(
                 It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
+                WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
                 var dir = Path.Combine(req.WorkspacePath, ".kiro");
                 Directory.CreateDirectory(dir);
                 File.WriteAllText(Path.Combine(dir, "analysis-assessment.json"), "{ invalid json }}}");
@@ -1409,8 +1458,8 @@ public class PipelineOrchestrationServiceTests
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        run.CurrentStep.Should().Be(PipelineStep.Completed);
-        run.AnalysisRecommendation.Should().BeNull();
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("malformed JSON");
     }
 
     [Fact]
@@ -1554,5 +1603,216 @@ public class PipelineOrchestrationServiceTests
         await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         commentOrder.Should().ContainInOrder("analysis", "gate");
+    }
+
+    // --- Analysis failure hardening tests (RES-06) ---
+
+    [Fact]
+    public async Task Analysis_MissingAnalysisMd_RetriesAndSucceeds()
+    {
+        var attempt = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                attempt++;
+                if (attempt >= 2)
+                {
+                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
+                }
+                // First attempt: no files written
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.AnalysisRecommendation.Should().Be("ready");
+    }
+
+    [Fact]
+    public async Task Analysis_MissingAssessmentJson_RetriesAndSucceeds()
+    {
+        var attempt = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                attempt++;
+                WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                if (attempt >= 2)
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
+                // First attempt: analysis.md written but no assessment
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.AnalysisRecommendation.Should().Be("ready");
+    }
+
+    [Fact]
+    public async Task Analysis_PartialAnalysisMd_RetriesAndSucceeds()
+    {
+        var attempt = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                attempt++;
+                if (attempt >= 2)
+                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                else
+                    WriteAnalysisFile(req.WorkspacePath, "short"); // < 100 chars
+                WriteAssessmentFile(req.WorkspacePath, "ready");
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+    }
+
+    [Fact]
+    public async Task Analysis_RetryBudgetExhausted_PipelineFails()
+    {
+        // Agent never writes analysis files
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("Analysis failed after 2 attempt(s)");
+        run.CompletedAt.Should().NotBeNull();
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task Analysis_StaleArtifactsDeletedBeforeRetry()
+    {
+        var attempt = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                attempt++;
+                if (attempt == 1)
+                {
+                    // Write stale artifacts that should be cleaned up
+                    WriteAnalysisFile(req.WorkspacePath, "stale short content");
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
+                // Second attempt: verify stale files were deleted, then write valid ones
+                var analysisPath = Path.Combine(req.WorkspacePath, ".kiro", "analysis.md");
+                var assessmentPath = Path.Combine(req.WorkspacePath, ".kiro", "analysis-assessment.json");
+                File.Exists(analysisPath).Should().BeFalse("stale analysis.md should be deleted before retry");
+                File.Exists(assessmentPath).Should().BeFalse("stale assessment.json should be deleted before retry");
+
+                WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                WriteAssessmentFile(req.WorkspacePath, "ready");
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        attempt.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Analysis_CommentNotPostedWhenContentEmpty()
+    {
+        // Agent never writes files → pipeline fails → no analysis comment posted
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.Default() with { MaxAnalysisRetries = 0 });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        // Analysis comment should NOT have been posted (no content)
+        _mockIssueProvider.Verify(
+            p => p.PostCommentAsync("42", It.Is<string>(s => s.Contains("Agent Analysis")), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Analysis_ChatHistoryUpdatedOnRetry()
+    {
+        var attempt = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                attempt++;
+                if (attempt >= 2)
+                {
+                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                    WriteAssessmentFile(req.WorkspacePath, "ready");
+                }
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.ChatHistory.Where(c => c.Role == ChatRole.System)
+            .Should().Contain(c => c.Content.Contains("Analysis attempt 1 failed") && c.Content.Contains("Retrying"));
+    }
+
+    [Fact]
+    public async Task Analysis_AgentExceptionTriggersRetry()
+    {
+        var attempt = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                attempt++;
+                if (attempt == 1)
+                    throw new InvalidOperationException("Agent crashed");
+                WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
+                WriteAssessmentFile(req.WorkspacePath, "ready");
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        attempt.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Analysis_MaxAnalysisRetriesZero_FailsOnFirstFailure()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.Default() with { MaxAnalysisRetries = 0 });
+
+        // Agent doesn't write analysis files
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("Analysis failed after 1 attempt(s)");
     }
 }

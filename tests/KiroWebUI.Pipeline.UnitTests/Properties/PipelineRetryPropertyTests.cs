@@ -117,7 +117,19 @@ public class PipelineRetryPropertyTests
 
         var mockAgentProvider = new Mock<IAgentProvider>();
         mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                if (req.Prompt.Contains("Analyze the codebase"))
+                {
+                    var dir = Path.Combine(req.WorkspacePath, ".kiro");
+                    Directory.CreateDirectory(dir);
+                    File.WriteAllText(Path.Combine(dir, "analysis.md"), new string('x', 200));
+                    var assessment = new { recommendation = "ready", reason = "Test", concerns = Array.Empty<string>(), blockingIssues = Array.Empty<string>() };
+                    File.WriteAllText(Path.Combine(dir, "analysis-assessment.json"),
+                        System.Text.Json.JsonSerializer.Serialize(assessment, new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase }));
+                }
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
         mockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         mockAgentProvider.Setup(p => p.GetHealthStatus())
