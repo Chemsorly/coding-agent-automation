@@ -113,6 +113,13 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// <inheritdoc />
     public Task ValidateAsync(CancellationToken ct) => Task.CompletedTask;
 
+    /// <inheritdoc />
+    public Task KillAsync()
+    {
+        _orchestrator.Kill();
+        return Task.CompletedTask;
+    }
+
     /// <summary>
     /// Runs <c>kiro-cli settings chat.defaultModel "model"</c> if a specific (non-auto) model is configured.
     /// </summary>

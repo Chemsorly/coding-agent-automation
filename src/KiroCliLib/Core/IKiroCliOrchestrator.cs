@@ -23,4 +23,10 @@ public interface IKiroCliOrchestrator
         bool useResume,
         CancellationToken cancellationToken,
         Action<string>? onOutputLine = null);
+
+    /// <summary>
+    /// Forcefully terminates the currently running agent process.
+    /// No-op if no process is running.
+    /// </summary>
+    void Kill();
 }

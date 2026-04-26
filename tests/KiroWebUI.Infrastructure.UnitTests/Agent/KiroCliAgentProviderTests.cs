@@ -211,6 +211,25 @@ public class KiroCliAgentProviderTests
     // --- Model configuration tests ---
 
     [Fact]
+    public async Task KillAsync_DelegatesToOrchestrator()
+    {
+        await _provider.KillAsync();
+
+        _mockOrchestrator.Verify(o => o.Kill(), Times.Once);
+    }
+
+    [Fact]
+    public async Task KillAsync_NoOpWhenNoProcess()
+    {
+        // Kill() on orchestrator is a no-op when no process is running.
+        // Verify it doesn't throw.
+        var act = () => _provider.KillAsync();
+        await act.Should().NotThrowAsync();
+    }
+
+    // --- Model configuration tests (continued) ---
+
+    [Fact]
     public void Model_WhenNotProvided_ReturnsNull()
     {
         var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object);

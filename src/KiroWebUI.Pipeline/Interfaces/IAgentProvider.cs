@@ -21,6 +21,13 @@ public interface IAgentProvider : IAsyncDisposable
     Task<AgentResult> ExecuteAsync(AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null);
 
     /// <summary>
+    /// Forcefully terminates the currently running agent process.
+    /// Called by the stall monitor when the agent is unresponsive.
+    /// No-op if no process is running.
+    /// </summary>
+    Task KillAsync();
+
+    /// <summary>
     /// Validates that the provider is correctly configured and can communicate with its
     /// backing service. Called at pipeline start before any work begins.
     /// </summary>

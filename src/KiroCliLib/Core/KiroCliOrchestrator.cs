@@ -114,4 +114,11 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
             _activeProcess = null;
         }
     }
+
+    /// <inheritdoc />
+    public void Kill()
+    {
+        var p = _activeProcess;
+        p?.Kill();
+    }
 }

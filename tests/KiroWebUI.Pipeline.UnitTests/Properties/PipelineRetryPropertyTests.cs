@@ -45,11 +45,10 @@ public class PipelineRetryPropertyTests
         // RetryErrors: one per failed attempt (initial + maxRetries retries)
         run.RetryErrors.Should().HaveCount(maxRetries + 1);
 
-        // All error messages accumulated in order
-        var retryErrorsList = run.RetryErrors.Reverse().ToList(); // ConcurrentBag is LIFO, reverse for insertion order
+        // All error messages accumulated (ConcurrentBag does not guarantee order)
         for (var i = 0; i <= maxRetries; i++)
         {
-            retryErrorsList[i].Should().Contain($"Error-{i}");
+            run.RetryErrors.Should().Contain(e => e.Contains($"Error-{i}"));
         }
 
         // Run history should contain the completed run
