@@ -147,7 +147,7 @@ internal class AgentExecutionOrchestrator
             {
                 // Post analysis comment first
                 transitionTo(PipelineStep.PostingAnalysis);
-                await PostAnalysisCommentAsync(run, issue, parsed, issueProvider, ct);
+                await PostAnalysisCommentAsync(run, issue, parsed, issueProvider, assessment, ct);
 
                 var abortComment = BuildNotReadyComment(assessment!);
                 try { await issueProvider.PostCommentAsync(run.IssueIdentifier, abortComment, ct); }
@@ -166,7 +166,7 @@ internal class AgentExecutionOrchestrator
             {
                 // Post analysis comment first
                 transitionTo(PipelineStep.PostingAnalysis);
-                await PostAnalysisCommentAsync(run, issue, parsed, issueProvider, ct);
+                await PostAnalysisCommentAsync(run, issue, parsed, issueProvider, assessment, ct);
 
                 var wontDoComment = BuildWontDoComment(assessment!);
                 try { await issueProvider.PostCommentAsync(run.IssueIdentifier, wontDoComment, ct); }
@@ -183,7 +183,7 @@ internal class AgentExecutionOrchestrator
 
             // Ready path — post analysis and continue
             transitionTo(PipelineStep.PostingAnalysis);
-            await PostAnalysisCommentAsync(run, issue, parsed, issueProvider, ct);
+            await PostAnalysisCommentAsync(run, issue, parsed, issueProvider, assessment, ct);
         }
 
         return true;
@@ -216,12 +216,12 @@ internal class AgentExecutionOrchestrator
 
     private async Task PostAnalysisCommentAsync(
         PipelineRun run, IssueDetail issue, ParsedIssue parsed,
-        IIssueProvider issueProvider, CancellationToken ct)
+        IIssueProvider issueProvider, AnalysisAssessment? assessment, CancellationToken ct)
     {
         try
         {
             var analysis = !string.IsNullOrWhiteSpace(run.AnalysisContent)
-                ? IssueAnalysisComment.FromAgentAnalysis(issue, run.AnalysisContent)
+                ? IssueAnalysisComment.FromAgentAnalysis(issue, run.AnalysisContent, assessment)
                 : IssueAnalysisComment.FromIssue(issue, parsed);
 
             await issueProvider.PostCommentAsync(run.IssueIdentifier, analysis.ToMarkdown(), ct);
