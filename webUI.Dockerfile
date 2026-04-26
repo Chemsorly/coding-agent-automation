@@ -47,12 +47,17 @@ RUN mkdir -p /home/ubuntu/.local/bin /home/ubuntu/.kiro && \
 # Install Kiro CLI as non-root user
 USER ubuntu
 ENV PATH="/home/ubuntu/.local/bin:${PATH}"
+# Pinned — 2.1.x has a subagent deadlock in --no-interactive mode
+# (parent agent hangs indefinitely after dispatching parallel subagents, 2/3 runs affected)
+# Tested: 2.1.0 and 2.1.1 both reproduce. Falling back to 2.0.1.
+ARG KIRO_CLI_VERSION=2.0.1
 RUN curl --proto '=https' --tlsv1.2 -sSf \
-        'https://desktop-release.q.us-east-1.amazonaws.com/latest/kirocli-x86_64-linux.zip' \
+        "https://desktop-release.q.us-east-1.amazonaws.com/${KIRO_CLI_VERSION}/kirocli-x86_64-linux.zip" \
         -o /tmp/kirocli.zip && \
     unzip /tmp/kirocli.zip -d /tmp/kirocli && \
     /tmp/kirocli/kirocli/install.sh --no-confirm && \
-    rm -rf /tmp/kirocli /tmp/kirocli.zip
+    rm -rf /tmp/kirocli /tmp/kirocli.zip && \
+    kiro-cli settings "app.disableAutoupdates" "true"
 
 # Install uv (Python package manager) for MCP server support
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
