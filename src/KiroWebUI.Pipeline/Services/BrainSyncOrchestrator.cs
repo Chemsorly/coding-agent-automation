@@ -124,14 +124,4 @@ internal class BrainSyncOrchestrator
             onOutputLine?.Invoke("🧠 No brain changes detected");
         }
     }
-
-    /// <summary>
-    /// Retrieves validation warnings from previous runs. Currently a stub.
-    /// </summary>
-    public IReadOnlyList<string>? GetPreviousBrainWarnings(string? brainProviderConfigId)
-    {
-        if (string.IsNullOrEmpty(brainProviderConfigId))
-            return null;
-        return null; // Feedback loop requires persisted validation — deferred to future enhancement
-    }
 }

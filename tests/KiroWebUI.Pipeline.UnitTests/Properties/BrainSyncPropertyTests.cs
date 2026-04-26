@@ -164,20 +164,7 @@ public class BrainSyncPropertyTests
 
     // Property 8 (FallbackLogEntryContainsRunIdAndModifiedFiles) moved to Infrastructure.UnitTests
 
-    /// <summary>
-    /// Property 9: Feedback loop prompt includes previous warnings.
-    /// </summary>
-    [Fact]
-    public void FeedbackLoopPromptIncludesPreviousWarnings()
-    {
-        var warnings = new List<string> { "session log", "log.md entry", "proper entry format" };
-        var context = PromptBuilder.BuildBrainContextSection(true, previousWarnings: warnings);
-
-        context.Should().Contain("session log");
-        context.Should().Contain("log.md entry");
-        context.Should().Contain("proper entry format");
-        context.Should().Contain("previous brain repo update was missing");
-    }
+    // Property 9 (FeedbackLoopPromptIncludesPreviousWarnings) removed — feature #150 closed as not-planned
 
     /// <summary>
     /// Property 10: No credentials in brain prompts.

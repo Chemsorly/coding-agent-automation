@@ -34,7 +34,6 @@ internal class AgentExecutionOrchestrator
         IAgentProvider agentProvider, IIssueProvider issueProvider,
         IssueDetail issue, ParsedIssue parsed,
         IReadOnlyList<IssueComment> issueComments,
-        BrainSyncOrchestrator brainSync,
         Action<PipelineStep> transitionTo,
         Func<string, string, CancellationToken, Task> swapAgentLabel,
         Action<PipelineRun> addRunToHistory,
@@ -103,9 +102,7 @@ internal class AgentExecutionOrchestrator
 
                     var brainContextForAnalysis = PromptBuilder.BuildBrainContextSection(
                         run.BrainContextLoaded,
-                        run.RepositoryName?.Split('/').LastOrDefault(),
-                        null,
-                        brainSync.GetPreviousBrainWarnings(run.BrainProviderConfigId));
+                        run.RepositoryName?.Split('/').LastOrDefault());
 
                     var brainContextWrittenForAnalysis = !string.IsNullOrEmpty(brainContextForAnalysis);
                     if (brainContextWrittenForAnalysis)
@@ -381,7 +378,6 @@ internal class AgentExecutionOrchestrator
         PipelineRun run, PipelineConfiguration config,
         IAgentProvider agentProvider,
         IssueDetail issue, ParsedIssue parsed,
-        BrainSyncOrchestrator brainSync,
         CancellationTokenSource? orchestratorCts,
         Action<PipelineStep> transitionTo,
         Action<string> onOutputLine, Action onChange,
@@ -395,9 +391,7 @@ internal class AgentExecutionOrchestrator
         {
             var brainContextSection = PromptBuilder.BuildBrainContextSection(
                 run.BrainContextLoaded,
-                run.RepositoryName?.Split('/').LastOrDefault(),
-                null,
-                brainSync.GetPreviousBrainWarnings(run.BrainProviderConfigId));
+                run.RepositoryName?.Split('/').LastOrDefault());
 
             var brainContextWritten = !string.IsNullOrEmpty(brainContextSection);
             if (brainContextWritten)
