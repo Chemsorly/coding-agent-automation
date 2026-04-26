@@ -114,6 +114,7 @@ public sealed class IssueAnalysisComment
     /// <summary>
     /// Fallback: creates an analysis comment from issue metadata when agent analysis is unavailable.
     /// </summary>
+    [Obsolete("Fail-open fallback removed in RES-06. Use FromAgentAnalysis instead.")]
     public static IssueAnalysisComment FromIssue(IssueDetail issue, ParsedIssue parsed)
     {
         ArgumentNullException.ThrowIfNull(issue);

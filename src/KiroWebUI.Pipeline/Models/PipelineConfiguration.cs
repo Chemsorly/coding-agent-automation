@@ -135,6 +135,14 @@ public sealed record PipelineConfiguration
         "Keep working until the implementation is complete. If something fails, diagnose and fix it rather than stopping.";
 
     public int MaxRetries { get; init; } = 3;
+
+    /// <summary>
+    /// Maximum number of retry attempts for the analysis phase.
+    /// Default 1 = 2 total attempts (initial + 1 retry).
+    /// Set to 0 to disable retry (fail on first failure).
+    /// </summary>
+    public int MaxAnalysisRetries { get; init; } = 1;
+
     public int IssuePageSize { get; init; } = 25;
     public TimeSpan AgentTimeout { get; init; } = TimeSpan.FromMinutes(30);
     public double MinCoverageThreshold { get; init; } = 80.0;

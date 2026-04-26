@@ -30,6 +30,7 @@ public static class TestPipelineConfig
     public static PipelineConfiguration Default(string? workspaceBaseDirectory = null) => new()
     {
         MaxRetries = 3,
+        MaxAnalysisRetries = 1,
         IssuePageSize = 25,
         AgentTimeout = TimeSpan.FromMinutes(30),
         MinCoverageThreshold = 80.0,
@@ -67,6 +68,7 @@ public static class TestPipelineConfig
     public static PipelineConfiguration WithCodeReview(string? workspaceBaseDirectory = null) => new()
     {
         MaxRetries = 3,
+        MaxAnalysisRetries = 1,
         IssuePageSize = 25,
         AgentTimeout = TimeSpan.FromMinutes(30),
         MinCoverageThreshold = 80.0,

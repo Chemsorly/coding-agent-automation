@@ -72,7 +72,19 @@ public class IntegrationTestBase : IDisposable
         MockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<FileChangeSummary>() as IReadOnlyList<FileChangeSummary>);
 
         MockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                if (req.Prompt.Contains("Analyze the codebase"))
+                {
+                    var dir = Path.Combine(req.WorkspacePath, ".kiro");
+                    Directory.CreateDirectory(dir);
+                    File.WriteAllText(Path.Combine(dir, "analysis.md"), new string('x', 200));
+                    var assessment = new { recommendation = "ready", reason = "Test", concerns = Array.Empty<string>(), blockingIssues = Array.Empty<string>() };
+                    File.WriteAllText(Path.Combine(dir, "analysis-assessment.json"),
+                        System.Text.Json.JsonSerializer.Serialize(assessment, new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase }));
+                }
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
         MockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         MockAgentProvider.Setup(p => p.GetHealthStatus())

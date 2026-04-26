@@ -2,6 +2,8 @@ using AwesomeAssertions;
 using KiroWebUI.Pipeline.Models;
 using KiroWebUI.Pipeline.Services;
 
+#pragma warning disable CS0618 // Testing obsolete FromIssue method intentionally
+
 namespace KiroWebUI.Pipeline.UnitTests;
 
 public class IssueAnalysisCommentTests
