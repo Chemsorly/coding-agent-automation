@@ -497,16 +497,18 @@ internal class AgentExecutionOrchestrator
             _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
                 run.RunId, i + 1, config.CodeReview.MaxIterations);
 
+            var agents = config.CodeReview.Agents is { Count: > 0 } configuredAgents
+                ? configuredAgents
+                : (IReadOnlyList<ReviewAgentConfig>)new[] { new ReviewAgentConfig { Name = "Review", Prompt = config.CodeReview.Prompt } };
+
+            onOutputLine($"🔍 Starting code review iteration {i + 1}/{config.CodeReview.MaxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
+
             run.ChatHistory.Enqueue(new ChatEntry
             {
                 Role = ChatRole.System,
                 Content = $"Code review iteration {i + 1}/{config.CodeReview.MaxIterations} starting..."
             });
             onChange();
-
-            var agents = config.CodeReview.Agents is { Count: > 0 } configuredAgents
-                ? configuredAgents
-                : (IReadOnlyList<ReviewAgentConfig>)new[] { new ReviewAgentConfig { Name = "Review", Prompt = config.CodeReview.Prompt } };
 
             var iterationFindings = new System.Text.StringBuilder();
             var iterationCriticalCount = 0;
@@ -603,10 +605,14 @@ internal class AgentExecutionOrchestrator
                 var iterationFindingsText = iterationFindings.ToString();
                 run.CodeReviewIterationsCompleted++;
 
+                // TODO: [UX-16] run.CodeReview*Count fields are cumulative across iterations — use per-iteration counters for this output line
+                onOutputLine($"📝 Code review: {run.CodeReviewCriticalCount} critical, {run.CodeReviewWarningCount} warning, {run.CodeReviewSuggestionCount} suggestion");
+
                 if (!string.IsNullOrEmpty(config.CodeReview.FixPrompt) && iterationCriticalCount > 0)
                 {
                     _logger.Information("Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected across {AgentCount} agent(s), sending fix prompt",
                         run.RunId, i + 1, iterationCriticalCount, agents.Count);
+                    onOutputLine($"📝 Code review: {iterationCriticalCount} critical findings — sending fix prompt");
 
                     // Write concatenated findings from all agents to the file so the fix agent can read it
                     var findingsFileForFix = Path.Combine(run.WorkspacePath!, PromptBuilder.ReviewFindingsFilePath);

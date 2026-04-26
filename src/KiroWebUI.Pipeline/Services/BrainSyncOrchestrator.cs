@@ -27,8 +27,10 @@ internal class BrainSyncOrchestrator
     /// </summary>
     // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public async Task SyncPreRunAsync(
-        PipelineRun run, IRepositoryProvider brainProvider, string workspacePath, CancellationToken ct)
+        PipelineRun run, IRepositoryProvider brainProvider, string workspacePath,
+        CancellationToken ct, Action<string>? onOutputLine = null)
     {
+        onOutputLine?.Invoke("🧠 Syncing brain repository...");
         var brainSw = System.Diagnostics.Stopwatch.StartNew();
         var brainPath = Path.Combine(workspacePath, ".brain");
 
@@ -67,6 +69,7 @@ internal class BrainSyncOrchestrator
         _logger.Information(
             "Pipeline {RunId} brain sync complete: {BrainFileCount} knowledge files in {Duration}ms",
             run.RunId, run.BrainKnowledgeFileCount, brainSw.ElapsedMilliseconds);
+        onOutputLine?.Invoke($"🧠 Brain context loaded: {run.BrainKnowledgeFileCount} knowledge files");
     }
 
     /// <summary>
@@ -86,7 +89,8 @@ internal class BrainSyncOrchestrator
     /// </summary>
     // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public async Task SyncPostRunAsync(
-        PipelineRun run, IRepositoryProvider brainProvider, CancellationToken ct)
+        PipelineRun run, IRepositoryProvider brainProvider,
+        CancellationToken ct, Action<string>? onOutputLine = null)
     {
         var brainSw = System.Diagnostics.Stopwatch.StartNew();
         var brainPath = Path.Combine(run.WorkspacePath!, ".brain");
@@ -111,11 +115,13 @@ internal class BrainSyncOrchestrator
             _logger.Information(
                 "Pipeline {RunId} brain post-run sync: {Success}, {FileCount} files in {Duration}ms",
                 run.RunId, syncResult.Success, syncResult.FilesCommitted, brainSw.ElapsedMilliseconds);
+            onOutputLine?.Invoke($"🧠 Brain updates pushed: {syncResult.FilesCommitted} files committed");
         }
         else
         {
             run.BrainUpdatesPushed = false;
             _logger.Information("Pipeline {RunId} no brain changes detected, skipping commit", run.RunId);
+            onOutputLine?.Invoke("🧠 No brain changes detected");
         }
     }
 

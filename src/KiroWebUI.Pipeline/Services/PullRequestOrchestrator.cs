@@ -32,7 +32,8 @@ internal class PullRequestOrchestrator
         IssueDetail? issue,
         IReadOnlyList<IssueComment>? issueComments,
         PipelineConfiguration config,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action<string>? onOutputLine = null)
     {
         // Commit any uncommitted changes
         try
@@ -47,6 +48,8 @@ internal class PullRequestOrchestrator
                 if (config.BlacklistMode == BlacklistMode.Fail)
                     return null; // Caller handles failure transition
             }
+            // TODO: [UX-16] File counts may be stale — UpdateFileChangeStatsAsync runs after push, not before this line
+            onOutputLine?.Invoke($"📦 Committed {run.FilesChangedCount} files (+{run.LinesAdded} -{run.LinesRemoved})");
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
         {
@@ -55,6 +58,7 @@ internal class PullRequestOrchestrator
 
         // Push
         await repoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, ct);
+        onOutputLine?.Invoke($"🔀 Pushed to origin/{run.BranchName}");
 
         // Refresh file change stats
         await UpdateFileChangeStatsAsync(run, repoProvider);
@@ -64,6 +68,7 @@ internal class PullRequestOrchestrator
         {
             _logger.Warning("Pipeline {RunId} branch has no commits ahead of {BaseBranch}",
                 run.RunId, repoProvider.BaseBranch);
+            onOutputLine?.Invoke("⚠️ No commits ahead of base branch");
             return null;
         }
 
@@ -111,6 +116,9 @@ internal class PullRequestOrchestrator
         run.IsDraftPr = isDraft;
         run.PullRequestNumber = ExtractPrNumber(prUrl);
         run.CompletedAt = DateTime.UtcNow;
+
+        var prLabel = isDraft ? "Draft pull request" : "Pull request";
+        onOutputLine?.Invoke($"🔗 {prLabel} #{run.PullRequestNumber} created");
 
         return prUrl;
     }
