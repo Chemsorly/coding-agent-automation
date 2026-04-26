@@ -151,6 +151,7 @@
     private string _selectedBrainProviderId = "";
     private string? _errorMessage;
     private bool _showCompletionOnly;
+    private string? _lastRunId;
     private bool _disposed;
     private Timer? _elapsedTimer;
     private int _maxRetries = 3;
@@ -244,6 +245,13 @@
                 if (_disposed) return;
 
                 var run = PipelineService.ActiveRun;
+                if (run != null && run.RunId != _lastRunId)
+                {
+                    _outputLines.Clear();
+                    _showCompletionOnly = false;
+                    _lastRunId = run.RunId;
+                }
+
                 if (run is { CurrentStep: PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled })
                     _showCompletionOnly = true;
 
