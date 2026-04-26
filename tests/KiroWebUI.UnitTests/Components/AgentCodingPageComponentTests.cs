@@ -340,6 +340,62 @@ public class AgentCodingPageComponentTests : BunitContext
     }
 
     [Fact]
+    public async Task AgentCoding_WhenNewRunStarts_ClearsOutputLines()
+    {
+        var component = Render<AgentCoding>();
+
+        // Simulate first run: set ActiveRun and fire events
+        var run1 = new PipelineRun
+        {
+            RunId = "run-1",
+            IssueIdentifier = "1",
+            IssueTitle = "First",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            CurrentStep = PipelineStep.GeneratingCode,
+            StartedAt = DateTime.UtcNow
+        };
+        SetActiveRun(run1);
+        RaiseEvent(_pipelineService, "OnChange");
+        RaiseEvent(_pipelineService, "OnOutputLine", "output from run 1");
+
+        component.WaitForAssertion(() => Assert.Contains("output from run 1", component.Markup),
+            timeout: TimeSpan.FromSeconds(5));
+
+        // Simulate second run starting (as the loop service would)
+        var run2 = new PipelineRun
+        {
+            RunId = "run-2",
+            IssueIdentifier = "2",
+            IssueTitle = "Second",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            CurrentStep = PipelineStep.CloningRepository,
+            StartedAt = DateTime.UtcNow
+        };
+        SetActiveRun(run2);
+        RaiseEvent(_pipelineService, "OnChange");
+
+        // Output from run 1 should be cleared
+        component.WaitForAssertion(() => Assert.DoesNotContain("output from run 1", component.Markup),
+            timeout: TimeSpan.FromSeconds(5));
+    }
+
+    private void SetActiveRun(PipelineRun run)
+    {
+        var prop = typeof(PipelineOrchestrationService).GetProperty("ActiveRun")!;
+        prop.SetValue(_pipelineService, run);
+    }
+
+    private static void RaiseEvent(object target, string eventName, params object[] args)
+    {
+        var field = typeof(PipelineOrchestrationService)
+            .GetField(eventName, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var del = field?.GetValue(target) as Delegate;
+        del?.DynamicInvoke(args.Length > 0 ? args : []);
+    }
+
+    [Fact]
     public void AgentCoding_LoopButton_DisabledWhenRepoAndAgentMissing()
     {
         // Issue provider auto-selects (single provider), but repo/agent are empty
