@@ -286,8 +286,7 @@ public static class PromptBuilder
     public static string BuildBrainContextSection(
         bool brainAvailable,
         string? projectName = null,
-        string? techStack = null,
-        IReadOnlyList<string>? previousWarnings = null)
+        string? techStack = null)
     {
         if (!brainAvailable)
             return string.Empty;
@@ -310,12 +309,6 @@ public static class PromptBuilder
         sb.AppendLine();
         sb.AppendLine("Do NOT run git commands (commit, push, pull) inside the `.brain/` directory.");
         sb.AppendLine("The orchestrator handles all git operations on the brain repository.");
-
-        if (previousWarnings != null && previousWarnings.Count > 0)
-        {
-            sb.AppendLine();
-            sb.AppendLine($"Note: your previous brain repo update was missing {string.Join(", ", previousWarnings)}. Please follow the format in .brain/AGENTS.md.");
-        }
 
         return sb.ToString().TrimEnd();
     }
