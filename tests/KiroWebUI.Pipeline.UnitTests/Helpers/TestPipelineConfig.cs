@@ -12,18 +12,6 @@ namespace KiroWebUI.Pipeline.UnitTests.Helpers;
 public static class TestPipelineConfig
 {
     /// <summary>
-    /// Creates a PipelineConfiguration for tests that expect the standard pipeline flow
-    /// (code review disabled). All properties are explicitly set to prevent default-change regressions.
-    /// </summary>
-    public static PipelineConfiguration NonAutonomous(string? workspaceBaseDirectory = null) => Default(workspaceBaseDirectory);
-
-    /// <summary>
-    /// Creates a PipelineConfiguration for tests that expect the standard pipeline flow
-    /// (code review enabled). All properties are explicitly set to prevent default-change regressions.
-    /// </summary>
-    public static PipelineConfiguration Autonomous(string? workspaceBaseDirectory = null) => WithCodeReview(workspaceBaseDirectory);
-
-    /// <summary>
     /// Creates a default PipelineConfiguration with code review disabled.
     /// All properties are explicitly set to prevent default-change regressions.
     /// </summary>

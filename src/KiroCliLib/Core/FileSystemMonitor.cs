@@ -41,15 +41,15 @@ public class FileSystemMonitor
         foreach (var afterFile in after)
         {
             if (!beforeDict.TryGetValue(afterFile.Path, out var beforeTime))
-                changes.Add(new FileChange { Path = afterFile.Path, Type = FileChangeType.Created, Timestamp = afterFile.LastModified });
+                changes.Add(new FileChange { Path = afterFile.Path, Type = FileChangeType.Created });
             else if (afterFile.LastModified > beforeTime)
-                changes.Add(new FileChange { Path = afterFile.Path, Type = FileChangeType.Modified, Timestamp = afterFile.LastModified });
+                changes.Add(new FileChange { Path = afterFile.Path, Type = FileChangeType.Modified });
         }
 
         foreach (var beforeFile in before)
         {
             if (!afterDict.ContainsKey(beforeFile.Path))
-                changes.Add(new FileChange { Path = beforeFile.Path, Type = FileChangeType.Deleted, Timestamp = DateTime.UtcNow });
+                changes.Add(new FileChange { Path = beforeFile.Path, Type = FileChangeType.Deleted });
         }
 
         return changes;

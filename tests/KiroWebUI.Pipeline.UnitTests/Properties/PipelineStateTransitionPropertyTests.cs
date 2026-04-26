@@ -67,7 +67,7 @@ public class PipelineStateTransitionPropertyTests
     {
         var mockConfigStore = new Mock<IConfigurationStore>();
         mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestPipelineConfig.NonAutonomous());
+            .ReturnsAsync(TestPipelineConfig.Default());
         mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {

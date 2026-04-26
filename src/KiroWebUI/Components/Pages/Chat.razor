@@ -53,8 +53,8 @@
 
                 @if (message.TestResults is not null)
                 {
-                    <div class="test-results @(message.TestResults.AllPassed ? "tests-passed" : "tests-failed")">
-                        <span class="test-icon">@(message.TestResults.AllPassed ? "✅" : "❌")</span>
+                    <div class="test-results @(message.TestResults.FailedTests == 0 && message.TestResults.TotalTests > 0 ? "tests-passed" : "tests-failed")">
+                        <span class="test-icon">@(message.TestResults.FailedTests == 0 && message.TestResults.TotalTests > 0 ? "✅" : "❌")</span>
                         Tests: @message.TestResults.PassedTests/@message.TestResults.TotalTests passed
                         @if (message.TestResults.FailedTests > 0)
                         {

@@ -62,20 +62,4 @@ public static class ConfigurationManager
         }
     }
 
-    public static Configuration Merge(Configuration fileConfig, CommandLineArgs cliArgs)
-    {
-        ArgumentNullException.ThrowIfNull(fileConfig);
-        ArgumentNullException.ThrowIfNull(cliArgs);
-
-        return new Configuration
-        {
-            KiroCliPath = fileConfig.KiroCliPath,
-            UseWsl = fileConfig.UseWsl,
-            WorkspaceDirectory = cliArgs.WorkspaceDirectory ?? fileConfig.WorkspaceDirectory,
-            AgentName = cliArgs.AgentName ?? fileConfig.AgentName,
-            Timeout = cliArgs.Timeout ?? fileConfig.Timeout,
-            LogLevel = cliArgs.LogLevel ?? fileConfig.LogLevel,
-            LogFilePath = fileConfig.LogFilePath
-        };
-    }
 }

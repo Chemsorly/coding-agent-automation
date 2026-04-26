@@ -34,8 +34,6 @@ public class DisposalSafetyPropertyTests
         var mockOrchestrator = new Mock<IKiroCliOrchestrator>();
 
         var executionStarted = new TaskCompletionSource<bool>();
-        var outputCallbackFired = false;
-        var stateChangeFired = false;
         var onChangeFired = false;
 
         CallbackHandler? capturedHandler = null;
@@ -81,8 +79,6 @@ public class DisposalSafetyPropertyTests
             });
 
         // Subscribe to events to track if they fire after disposal
-        service.OnOutputLineReceived += _ => outputCallbackFired = true;
-        service.OnStateChanged += _ => stateChangeFired = true;
         service.OnChange += () => onChangeFired = true;
 
         // Start execution
@@ -92,8 +88,6 @@ public class DisposalSafetyPropertyTests
         await executionStarted.Task;
 
         // Reset flags (events may have fired during startup)
-        outputCallbackFired = false;
-        stateChangeFired = false;
         onChangeFired = false;
 
         // Dispose the service mid-execution
@@ -103,8 +97,6 @@ public class DisposalSafetyPropertyTests
         var result = await executionTask;
 
         // After disposal, events should NOT have fired (events nulled in Dispose)
-        Assert.False(outputCallbackFired, "OnOutputLineReceived should not fire after disposal");
-        Assert.False(stateChangeFired, "OnStateChanged should not fire after disposal");
         Assert.False(onChangeFired, "OnChange should not fire after disposal");
 
         // Exit code should indicate cancellation
