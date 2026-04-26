@@ -732,7 +732,8 @@ public class PipelineOrchestrationServiceTests
                 CodeReview = new CodeReviewConfiguration { Enabled = false },
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
-                AgentTimeout = TimeSpan.FromMinutes(5)
+                AgentTimeout = TimeSpan.FromMinutes(5),
+                StallKillTimeout = TimeSpan.FromHours(1)
             });
 
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
@@ -756,7 +757,7 @@ public class PipelineOrchestrationServiceTests
 
         var run = _service.ActiveRun!;
         run.ChatHistory.Where(c => c.Role == ChatRole.System).Select(c => c.Content)
-            .Should().Contain(msg => msg.Contains("No agent output for"));
+            .Should().Contain(msg => msg.Contains("no output for"));
     }
 
     [Fact]
@@ -793,7 +794,7 @@ public class PipelineOrchestrationServiceTests
 
         var run = _service.ActiveRun!;
         run.ChatHistory.Where(c => c.Role == ChatRole.System).Select(c => c.Content)
-            .Should().Contain(msg => msg.Contains("Agent process is no longer alive") && msg.Contains("99999"));
+            .Should().Contain(msg => msg.Contains("agent process is no longer alive") && msg.Contains("99999"));
     }
 
     [Fact]
@@ -806,7 +807,8 @@ public class PipelineOrchestrationServiceTests
                 CodeReview = new CodeReviewConfiguration { Enabled = false },
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
-                AgentTimeout = TimeSpan.FromMinutes(5)
+                AgentTimeout = TimeSpan.FromMinutes(5),
+                StallKillTimeout = TimeSpan.FromHours(1)
             });
 
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
@@ -829,7 +831,7 @@ public class PipelineOrchestrationServiceTests
         await pipelineTask;
 
         var run = _service.ActiveRun!;
-        run.ChatHistory.Where(c => c.Role == ChatRole.System && c.Content.Contains("No agent output for"))
+        run.ChatHistory.Where(c => c.Role == ChatRole.System && c.Content.Contains("no output for"))
             .Should().HaveCountGreaterThanOrEqualTo(2);
     }
 
