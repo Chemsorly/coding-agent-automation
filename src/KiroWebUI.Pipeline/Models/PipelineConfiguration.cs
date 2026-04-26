@@ -218,4 +218,11 @@ public sealed record PipelineConfiguration
     /// </summary>
     // TODO: [REF-01] Add server-side validation to reject values < 1 — values ≤ 0 silently fetch only 1 page (review finding #2)
     public int ClosedLoopMaxPagesToFetch { get; init; } = 10;
+
+    /// <summary>
+    /// Persisted brain validation warnings from the most recent run, keyed by brain provider config ID.
+    /// Used to nudge the agent in the next run if it forgot to write session logs or update log.md.
+    /// Cleared automatically after a clean run with no warnings.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> BrainWarnings { get; init; } = new Dictionary<string, IReadOnlyList<string>>();
 }

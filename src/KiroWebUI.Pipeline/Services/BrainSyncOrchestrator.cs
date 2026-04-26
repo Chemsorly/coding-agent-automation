@@ -11,13 +11,16 @@ namespace KiroWebUI.Pipeline.Services;
 internal class BrainSyncOrchestrator
 {
     private readonly IBrainUpdateService _brainUpdateService;
+    private readonly IConfigurationStore _configStore;
     private readonly Serilog.ILogger _logger;
 
-    public BrainSyncOrchestrator(IBrainUpdateService brainUpdateService, Serilog.ILogger logger)
+    public BrainSyncOrchestrator(IBrainUpdateService brainUpdateService, IConfigurationStore configStore, Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(brainUpdateService);
+        ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(logger);
         _brainUpdateService = brainUpdateService;
+        _configStore = configStore;
         _logger = logger;
     }
 
@@ -108,6 +111,8 @@ internal class BrainSyncOrchestrator
             run.BrainUpdatesPushed = syncResult.Success;
             run.BrainFilesCommitted = syncResult.FilesCommitted;
 
+            await PersistBrainWarningsAsync(run.BrainProviderConfigId, validation.Warnings, ct);
+
             _logger.Information(
                 "Pipeline {RunId} brain post-run sync: {Success}, {FileCount} files in {Duration}ms",
                 run.RunId, syncResult.Success, syncResult.FilesCommitted, brainSw.ElapsedMilliseconds);
@@ -120,12 +125,36 @@ internal class BrainSyncOrchestrator
     }
 
     /// <summary>
-    /// Retrieves validation warnings from previous runs. Currently a stub.
+    /// Retrieves validation warnings from the previous run, persisted in pipeline configuration.
     /// </summary>
-    public IReadOnlyList<string>? GetPreviousBrainWarnings(string? brainProviderConfigId)
+    public async Task<IReadOnlyList<string>?> GetPreviousBrainWarningsAsync(string? brainProviderConfigId, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(brainProviderConfigId))
             return null;
-        return null; // Feedback loop requires persisted validation — deferred to future enhancement
+
+        var config = await _configStore.LoadPipelineConfigAsync(ct);
+        if (config.BrainWarnings.TryGetValue(brainProviderConfigId, out var warnings) && warnings.Count > 0)
+            return warnings;
+
+        return null;
+    }
+
+    private async Task PersistBrainWarningsAsync(string? brainProviderConfigId, IReadOnlyList<string> warnings, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(brainProviderConfigId))
+            return;
+
+        await _configStore.UpdatePipelineConfigAsync(config =>
+        {
+            var dict = new Dictionary<string, IReadOnlyList<string>>(config.BrainWarnings);
+            if (warnings.Count > 0)
+                dict[brainProviderConfigId] = warnings;
+            else
+                dict.Remove(brainProviderConfigId);
+            return config with { BrainWarnings = dict };
+        }, ct);
+
+        _logger.Debug("Persisted {WarningCount} brain warnings for provider {ConfigId}",
+            warnings.Count, brainProviderConfigId);
     }
 }

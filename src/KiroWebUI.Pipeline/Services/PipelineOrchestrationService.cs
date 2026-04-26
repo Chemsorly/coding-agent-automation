@@ -72,7 +72,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         _logger = logger;
 
         ArgumentNullException.ThrowIfNull(brainUpdateService);
-        _brainSync = new BrainSyncOrchestrator(brainUpdateService, logger);
+        _brainSync = new BrainSyncOrchestrator(brainUpdateService, configStore, logger);
         _prOrchestrator = new PullRequestOrchestrator(logger);
         _historyService = historyService ?? throw new ArgumentNullException(nameof(historyService));
         _agentExecution = new AgentExecutionOrchestrator(logger);

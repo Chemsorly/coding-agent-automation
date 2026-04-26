@@ -84,7 +84,7 @@ internal class AgentExecutionOrchestrator
                     run.BrainContextLoaded,
                     run.RepositoryName?.Split('/').LastOrDefault(),
                     null,
-                    brainSync.GetPreviousBrainWarnings(run.BrainProviderConfigId));
+                    await brainSync.GetPreviousBrainWarningsAsync(run.BrainProviderConfigId, ct));
 
                 var brainContextWrittenForAnalysis = !string.IsNullOrEmpty(brainContextForAnalysis);
                 if (brainContextWrittenForAnalysis)
@@ -314,7 +314,7 @@ internal class AgentExecutionOrchestrator
                 run.BrainContextLoaded,
                 run.RepositoryName?.Split('/').LastOrDefault(),
                 null,
-                brainSync.GetPreviousBrainWarnings(run.BrainProviderConfigId));
+                await brainSync.GetPreviousBrainWarningsAsync(run.BrainProviderConfigId, ct));
 
             var brainContextWritten = !string.IsNullOrEmpty(brainContextSection);
             if (brainContextWritten)

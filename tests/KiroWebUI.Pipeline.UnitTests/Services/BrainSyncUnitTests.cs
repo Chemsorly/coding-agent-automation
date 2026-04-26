@@ -202,6 +202,95 @@ public class BrainSyncUnitTests
         result.HasWarnings.Should().BeFalse();
     }
 
+    // --- Brain warning persistence tests ---
+
+    [Fact]
+    public async Task GetPreviousBrainWarningsAsync_NullConfigId_ReturnsNull()
+    {
+        var mockBrainService = new Mock<IBrainUpdateService>();
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        var orchestrator = new BrainSyncOrchestrator(
+            mockBrainService.Object, mockConfigStore.Object, Serilog.Log.Logger);
+
+        var result = await orchestrator.GetPreviousBrainWarningsAsync(null, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetPreviousBrainWarningsAsync_EmptyConfigId_ReturnsNull()
+    {
+        var mockBrainService = new Mock<IBrainUpdateService>();
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        var orchestrator = new BrainSyncOrchestrator(
+            mockBrainService.Object, mockConfigStore.Object, Serilog.Log.Logger);
+
+        var result = await orchestrator.GetPreviousBrainWarningsAsync("", CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetPreviousBrainWarningsAsync_NoPreviousRun_ReturnsNull()
+    {
+        var mockBrainService = new Mock<IBrainUpdateService>();
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        var orchestrator = new BrainSyncOrchestrator(
+            mockBrainService.Object, mockConfigStore.Object, Serilog.Log.Logger);
+
+        var result = await orchestrator.GetPreviousBrainWarningsAsync("brain-1", CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetPreviousBrainWarningsAsync_WithPersistedWarnings_ReturnsWarnings()
+    {
+        var mockBrainService = new Mock<IBrainUpdateService>();
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        var warnings = new List<string> { "session log", "log.md entry" };
+        var config = new PipelineConfiguration
+        {
+            BrainWarnings = new Dictionary<string, IReadOnlyList<string>>
+            {
+                ["brain-1"] = warnings
+            }
+        };
+        mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+        var orchestrator = new BrainSyncOrchestrator(
+            mockBrainService.Object, mockConfigStore.Object, Serilog.Log.Logger);
+
+        var result = await orchestrator.GetPreviousBrainWarningsAsync("brain-1", CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result.Should().BeEquivalentTo(new[] { "session log", "log.md entry" });
+    }
+
+    [Fact]
+    public async Task GetPreviousBrainWarningsAsync_EmptyWarningsList_ReturnsNull()
+    {
+        var mockBrainService = new Mock<IBrainUpdateService>();
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        var config = new PipelineConfiguration
+        {
+            BrainWarnings = new Dictionary<string, IReadOnlyList<string>>
+            {
+                ["brain-1"] = Array.Empty<string>()
+            }
+        };
+        mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+        var orchestrator = new BrainSyncOrchestrator(
+            mockBrainService.Object, mockConfigStore.Object, Serilog.Log.Logger);
+
+        var result = await orchestrator.GetPreviousBrainWarningsAsync("brain-1", CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
     [Fact]
     public void BrainSyncResult_WasSkipped_IndicatesNoChanges()
     {

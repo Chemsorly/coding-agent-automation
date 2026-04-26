@@ -167,4 +167,46 @@ public class JsonConfigurationStoreTests : IDisposable
         // Should not throw when deleting a non-existent config
         await _store.DeleteProviderConfigAsync("does-not-exist", ProviderKind.Agent, CancellationToken.None);
     }
+
+    [Fact]
+    public async Task SaveThenLoad_BrainWarnings_RoundTrips()
+    {
+        var original = new PipelineConfiguration
+        {
+            BrainWarnings = new Dictionary<string, IReadOnlyList<string>>
+            {
+                ["brain-1"] = new[] { "session log", "log.md entry" }
+            }
+        };
+
+        await _store.SavePipelineConfigAsync(original, CancellationToken.None);
+        var loaded = await _store.LoadPipelineConfigAsync(CancellationToken.None);
+
+        Assert.Single(loaded.BrainWarnings);
+        Assert.True(loaded.BrainWarnings.ContainsKey("brain-1"));
+        Assert.Equal(new[] { "session log", "log.md entry" }, loaded.BrainWarnings["brain-1"]);
+    }
+
+    [Fact]
+    public async Task UpdatePipelineConfig_ClearsBrainWarnings_WhenEmpty()
+    {
+        var initial = new PipelineConfiguration
+        {
+            BrainWarnings = new Dictionary<string, IReadOnlyList<string>>
+            {
+                ["brain-1"] = new[] { "session log" }
+            }
+        };
+        await _store.SavePipelineConfigAsync(initial, CancellationToken.None);
+
+        await _store.UpdatePipelineConfigAsync(config =>
+        {
+            var dict = new Dictionary<string, IReadOnlyList<string>>(config.BrainWarnings);
+            dict.Remove("brain-1");
+            return config with { BrainWarnings = dict };
+        }, CancellationToken.None);
+
+        var loaded = await _store.LoadPipelineConfigAsync(CancellationToken.None);
+        Assert.Empty(loaded.BrainWarnings);
+    }
 }
