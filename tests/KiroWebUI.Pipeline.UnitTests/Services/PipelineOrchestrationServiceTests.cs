@@ -1266,7 +1266,9 @@ public class PipelineOrchestrationServiceTests
         try { await pipelineTask; } catch { }
 
         _service.ActiveRun!.CurrentStep.Should().Be(PipelineStep.Cancelled);
-        // Verify removal was attempted
+        // Verify agent:cancelled label is applied
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:cancelled", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        // Verify removal of other labels was attempted
         _mockIssueProvider.Verify(p => p.RemoveLabelAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
