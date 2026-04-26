@@ -21,13 +21,6 @@
             <label>Client ID</label>
             <input type="text" @bind="ClientId" @bind:event="oninput" @bind:after="() => ClientIdChanged.InvokeAsync(ClientId)" placeholder="Iv1.abc123..." />
         </div>
-        @if (ShowAppId)
-        {
-            <div class="form-group">
-                <label>App ID</label>
-                <input type="text" @bind="AppId" @bind:event="oninput" @bind:after="() => AppIdChanged.InvokeAsync(AppId)" placeholder="123456" />
-            </div>
-        }
         <div class="form-group">
             <label>Installation ID</label>
             <input type="text" @bind="InstallationId" @bind:event="oninput" @bind:after="() => InstallationIdChanged.InvokeAsync(InstallationId)" placeholder="78901234" />
@@ -96,7 +89,6 @@
     [Parameter] public string SectionTitle { get; set; } = "";
     [Parameter] public string DisplayNamePlaceholder { get; set; } = "";
     [Parameter] public bool IsEditing { get; set; }
-    [Parameter] public bool ShowAppId { get; set; }
 
     [Parameter] public string ProviderType { get; set; } = "GitHub";
     [Parameter] public EventCallback<string> ProviderTypeChanged { get; set; }
@@ -106,8 +98,6 @@
     [Parameter] public EventCallback<string> ApiUrlChanged { get; set; }
     [Parameter] public string ClientId { get; set; } = "";
     [Parameter] public EventCallback<string> ClientIdChanged { get; set; }
-    [Parameter] public string AppId { get; set; } = "";
-    [Parameter] public EventCallback<string> AppIdChanged { get; set; }
     [Parameter] public string InstallationId { get; set; } = "";
     [Parameter] public EventCallback<string> InstallationIdChanged { get; set; }
     [Parameter] public string PrivateKeyBase64 { get; set; } = "";

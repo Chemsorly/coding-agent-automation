@@ -26,12 +26,10 @@
             SectionTitle="Pipeline Provider"
             DisplayNamePlaceholder="My GitHub CI"
             IsEditing="@(_editingProvider is not null)"
-            ShowAppId="true"
             ProviderType="@_form.ProviderType" ProviderTypeChanged="v => _form.ProviderType = v"
             DisplayName="@_form.DisplayName" DisplayNameChanged="v => _form.DisplayName = v"
             ApiUrl="@_form.ApiUrl" ApiUrlChanged="v => _form.ApiUrl = v"
             ClientId="@_form.ClientId" ClientIdChanged="v => _form.ClientId = v"
-            AppId="@_form.AppId" AppIdChanged="v => _form.AppId = v"
             InstallationId="@_form.InstallationId" InstallationIdChanged="v => _form.InstallationId = v"
             PrivateKeyBase64="@_form.PrivateKeyBase64" PrivateKeyBase64Changed="v => _form.PrivateKeyBase64 = v"
             Owner="@_form.Owner" OwnerChanged="v => _form.Owner = v"
@@ -98,7 +96,6 @@
             DisplayName = p.DisplayName,
             ApiUrl = p.Settings.GetValueOrDefault("apiUrl", ""),
             ClientId = p.Settings.GetValueOrDefault("clientId", ""),
-            AppId = p.Settings.GetValueOrDefault("appId", ""),
             InstallationId = p.Settings.GetValueOrDefault("installationId", ""),
             PrivateKeyBase64 = p.Settings.GetValueOrDefault("privateKeyBase64", ""),
             Owner = p.Settings.GetValueOrDefault("owner", ""),
@@ -185,7 +182,6 @@
             {
                 ["apiUrl"] = _form.ApiUrl,
                 ["clientId"] = _form.ClientId,
-                ["appId"] = _form.AppId,
                 ["installationId"] = _form.InstallationId,
                 ["privateKeyBase64"] = _form.PrivateKeyBase64,
                 ["owner"] = _form.Owner,
@@ -266,7 +262,6 @@
         public string DisplayName { get; set; } = "";
         public string ApiUrl { get; set; } = "https://api.github.com";
         public string ClientId { get; set; } = "";
-        public string AppId { get; set; } = "";
         public string InstallationId { get; set; } = "";
         public string PrivateKeyBase64 { get; set; } = "";
         public string Owner { get; set; } = "";
