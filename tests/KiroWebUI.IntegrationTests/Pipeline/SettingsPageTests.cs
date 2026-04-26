@@ -85,7 +85,6 @@ public class SettingsPageTests
             {
                 ["apiUrl"] = "https://api.github.com",
                 ["clientId"] = "Iv1.abc123",
-                ["appId"] = "123456",
                 ["installationId"] = "78901234",
                 ["privateKeyBase64"] = "LS0tLS1CRUdJTi...",
                 ["owner"] = "myorg",
@@ -101,7 +100,6 @@ public class SettingsPageTests
         savedConfig.DisplayName.Should().Be("My GitHub Issues");
         savedConfig.Settings.Should().ContainKey("apiUrl").WhoseValue.Should().Be("https://api.github.com");
         savedConfig.Settings.Should().ContainKey("clientId").WhoseValue.Should().Be("Iv1.abc123");
-        savedConfig.Settings.Should().ContainKey("appId").WhoseValue.Should().Be("123456");
         savedConfig.Settings.Should().ContainKey("installationId").WhoseValue.Should().Be("78901234");
         savedConfig.Settings.Should().ContainKey("privateKeyBase64").WhoseValue.Should().Be("LS0tLS1CRUdJTi...");
         savedConfig.Settings.Should().ContainKey("owner").WhoseValue.Should().Be("myorg");
@@ -129,7 +127,6 @@ public class SettingsPageTests
             {
                 ["apiUrl"] = "https://api.github.com",
                 ["clientId"] = "Iv1.abc123",
-                ["appId"] = "123456",
                 ["installationId"] = "78901234",
                 ["privateKeyBase64"] = "LS0tLS1CRUdJTi...",
                 ["owner"] = "org",
@@ -229,7 +226,6 @@ public class SettingsPageTests
             {
                 ["apiUrl"] = "https://api.github.com",
                 ["clientId"] = "Iv1.new123",
-                ["appId"] = "654321",
                 ["installationId"] = "11111111",
                 ["privateKeyBase64"] = "LS0tLS1CRUdJTi...",
                 ["owner"] = "neworg",
@@ -430,7 +426,7 @@ public class SettingsPageTests
     {
         // The shared settings keys used by the modal must match the fields that all three
         // GitHub provider types (Issue, Repository, Pipeline) have in common.
-        var expectedSharedKeys = new[] { "apiUrl", "clientId", "appId", "installationId", "privateKeyBase64", "owner", "repo" };
+        var expectedSharedKeys = new[] { "apiUrl", "clientId", "installationId", "privateKeyBase64", "owner", "repo" };
 
         // Verify an Issue provider config contains all shared keys
         var issueConfig = new ProviderConfig
@@ -438,7 +434,7 @@ public class SettingsPageTests
             Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com", ["clientId"] = "Iv1.abc", ["appId"] = "123",
+                ["apiUrl"] = "https://api.github.com", ["clientId"] = "Iv1.abc",
                 ["installationId"] = "456", ["privateKeyBase64"] = "key", ["owner"] = "org", ["repo"] = "repo"
             }
         };
@@ -542,7 +538,6 @@ public class SettingsPageTests
         {
             ["apiUrl"] = "https://api.github.com",
             ["clientId"] = "Iv1.abc123",
-            ["appId"] = "123456",
             ["installationId"] = "78901234",
             ["privateKeyBase64"] = "LS0tLS1CRUdJTi...",
             ["owner"] = "myorg",
@@ -573,14 +568,14 @@ public class SettingsPageTests
         repo.Kind.Should().Be(ProviderKind.Repository);
         repo.ProviderType.Should().Be("GitHub");
         repo.DisplayName.Should().Be("myorg/myrepo - Repository");
-        repo.Settings.Should().HaveCount(8); // 7 shared + baseBranch
+        repo.Settings.Should().HaveCount(7); // 6 shared + baseBranch
         repo.Settings.Should().ContainKey("baseBranch").WhoseValue.Should().Be("main");
 
         var pipeline = savedConfigs[1];
         pipeline.Kind.Should().Be(ProviderKind.Pipeline);
         pipeline.ProviderType.Should().Be("GitHub");
         pipeline.DisplayName.Should().Be("myorg/myrepo - Pipeline");
-        pipeline.Settings.Should().HaveCount(7); // 7 shared, no baseBranch
+        pipeline.Settings.Should().HaveCount(6); // 6 shared, no baseBranch
         pipeline.Settings.Should().NotContainKey("baseBranch");
 
         // Both should have all shared keys
@@ -588,7 +583,6 @@ public class SettingsPageTests
         {
             config.Settings.Should().ContainKey("apiUrl");
             config.Settings.Should().ContainKey("clientId");
-            config.Settings.Should().ContainKey("appId");
             config.Settings.Should().ContainKey("installationId");
             config.Settings.Should().ContainKey("privateKeyBase64");
             config.Settings.Should().ContainKey("owner");

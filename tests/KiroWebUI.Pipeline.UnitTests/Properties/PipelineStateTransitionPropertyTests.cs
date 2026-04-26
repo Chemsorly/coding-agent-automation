@@ -114,6 +114,8 @@ public class PipelineStateTransitionPropertyTests
         Mock<IAgentProvider> AgentProvider, Mock<Serilog.ILogger> Logger) CreateBaseMocks()
     {
         var mockConfigStore = new Mock<IConfigurationStore>();
+        mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.Default());
         mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {

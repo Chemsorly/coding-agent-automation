@@ -34,8 +34,6 @@ public sealed class KiroExecutionService : IDisposable
 
     // Events for UI binding
     public event Action? OnChange;
-    public event Action<string>? OnOutputLineReceived;
-    public event Action<KiroState>? OnStateChanged;
 
     // Public properties
     public IReadOnlyList<ChatMessage> Messages
@@ -107,7 +105,6 @@ public sealed class KiroExecutionService : IDisposable
                 {
                     if (_disposed) return;
                     CurrentState = ctx.State;
-                    OnStateChanged?.Invoke(ctx.State);
                 });
             }
 
@@ -138,7 +135,6 @@ public sealed class KiroExecutionService : IDisposable
                         assistantMessage.Content += cleanLine + "\n";
                     }
                     outputLines.Add(cleanLine);
-                    OnOutputLineReceived?.Invoke(cleanLine);
                     ThrottledNotify();
                 });
 
@@ -237,8 +233,6 @@ public sealed class KiroExecutionService : IDisposable
         _disposalCts.Dispose();
         _executionLock.Dispose();
         OnChange = null;
-        OnOutputLineReceived = null;
-        OnStateChanged = null;
     }
 
     private void AddSystemMessage(string content)

@@ -71,16 +71,16 @@ public class ProviderFactory : IProviderFactory
         });
     }
 
-    public void RegisterIssueProvider(string providerType, Func<ProviderConfig, IIssueProvider> factory)
+    private void RegisterIssueProvider(string providerType, Func<ProviderConfig, IIssueProvider> factory)
         => _issueFactories[providerType] = factory;
 
-    public void RegisterRepositoryProvider(string providerType, Func<ProviderConfig, IRepositoryProvider> factory)
+    private void RegisterRepositoryProvider(string providerType, Func<ProviderConfig, IRepositoryProvider> factory)
         => _repoFactories[providerType] = factory;
 
-    public void RegisterAgentProvider(string providerType, Func<ProviderConfig, IAgentProvider> factory)
+    private void RegisterAgentProvider(string providerType, Func<ProviderConfig, IAgentProvider> factory)
         => _agentFactories[providerType] = factory;
 
-    public void RegisterPipelineProvider(string providerType, Func<ProviderConfig, IPipelineProvider> factory)
+    private void RegisterPipelineProvider(string providerType, Func<ProviderConfig, IPipelineProvider> factory)
         => _pipelineFactories[providerType] = factory;
 
     public IIssueProvider CreateIssueProvider(ProviderConfig config)

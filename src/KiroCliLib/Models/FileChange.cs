@@ -7,7 +7,6 @@ public class FileChange
 {
     public required string Path { get; init; }
     public required FileChangeType Type { get; init; }
-    public DateTime Timestamp { get; init; } = DateTime.UtcNow;
 }
 
 /// <summary>

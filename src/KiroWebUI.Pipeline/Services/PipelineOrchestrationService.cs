@@ -285,7 +285,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             EmitOutputLine("🔍 Starting analysis...");
             var analysisShouldContinue = await _agentExecution.ExecuteAnalysisPhaseAsync(
                 run, _activeConfig, _activeAgentProvider!, _activeIssueProvider!,
-                issue, parsed, issueComments, _brainSync,
+                issue, parsed, issueComments,
                 step => TransitionTo(run, step),
                 (id, label, token) => SwapAgentLabelAsync(id, label, token),
                 r => AddRunToHistory(r),
@@ -295,7 +295,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             EmitOutputLine("⚙️ Starting code generation...");
             var shouldContinue = await _agentExecution.ExecuteCodeGenerationAsync(
                 run, _activeConfig, _activeAgentProvider!,
-                issue, parsed, _brainSync,
+                issue, parsed,
                 _cancellationTokenSource,
                 step => TransitionTo(run, step),
                 line => OnOutputLine?.Invoke(line), () => NotifyChange(),

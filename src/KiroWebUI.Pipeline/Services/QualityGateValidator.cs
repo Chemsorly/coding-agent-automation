@@ -458,16 +458,4 @@ public class QualityGateValidator : IQualityGateValidator
         var attr = element.Attribute(name);
         return attr != null && int.TryParse(attr.Value, out var val) ? val : 0;
     }
-
-    private static long ParseLongAttribute(XElement element, string name)
-    {
-        var attr = element.Attribute(name);
-        return attr != null && long.TryParse(attr.Value, out var val) ? val : 0;
-    }
-
-    private static double ParseDoubleAttribute(XElement element, string name)
-    {
-        var attr = element.Attribute(name);
-        return attr != null && double.TryParse(attr.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var val) ? val : 0.0;
-    }
 }

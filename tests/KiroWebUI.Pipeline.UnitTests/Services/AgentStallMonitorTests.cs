@@ -50,7 +50,11 @@ public class AgentStallMonitorTests
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
             _run, config, "Test phase", null, _mockLogger.Object, CancellationToken.None);
 
-        await Task.Delay(300);
+        // Wait for the monitor to detect the dead process before completing the agent call
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
 
@@ -87,7 +91,11 @@ public class AgentStallMonitorTests
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
             _run, config, "Code review agent 'Correctness'", null, _mockLogger.Object, CancellationToken.None);
 
-        await Task.Delay(300);
+        // Wait for the monitor to log the silence warning before completing the agent call
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
 
@@ -124,7 +132,11 @@ public class AgentStallMonitorTests
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
             _run, config, "Stuck agent", null, _mockLogger.Object, CancellationToken.None);
 
-        await Task.Delay(300);
+        // Wait for the monitor to kill the agent before completing the agent call
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
 
@@ -180,7 +192,11 @@ public class AgentStallMonitorTests
             () => _mockAgent.Object.EnsureSessionAsync("/ws", CancellationToken.None),
             _run, config, "Session warm-up", null, _mockLogger.Object, CancellationToken.None);
 
-        await Task.Delay(200);
+        // Wait for the monitor to detect the dead process before completing the agent call
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
         tcs.SetResult();
         await task;
 

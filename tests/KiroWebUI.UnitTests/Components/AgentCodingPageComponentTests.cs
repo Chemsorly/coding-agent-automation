@@ -396,6 +396,86 @@ public class AgentCodingPageComponentTests : BunitContext
     }
 
     [Fact]
+    public void AgentCoding_RepoDropdown_ExcludesBrainRepositories()
+    {
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "rp-work", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Work Repo", RepositoryRole = RepositoryRole.Work },
+                new() { Id = "rp-brain", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain Repo", RepositoryRole = RepositoryRole.Brain }
+            });
+
+        var component = Render<AgentCoding>();
+
+        // The Repository Provider dropdown should contain the work repo but not the brain repo
+        var repoSelect = component.FindAll("select").First(s => s.InnerHtml.Contains("-- Select Repository --"));
+        Assert.Contains("Work Repo", repoSelect.InnerHtml);
+        Assert.DoesNotContain("Brain Repo", repoSelect.InnerHtml);
+    }
+
+    [Fact]
+    public void AgentCoding_BrainDropdown_ShowsOnlyBrainRepositories()
+    {
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "rp-work", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Work Repo", RepositoryRole = RepositoryRole.Work },
+                new() { Id = "rp-brain", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain Repo", RepositoryRole = RepositoryRole.Brain }
+            });
+
+        var component = Render<AgentCoding>();
+
+        // Brain Repository dropdown should appear (since there's a brain provider)
+        Assert.Contains("Brain Repository", component.Markup);
+        // The brain repo name should appear in the brain dropdown
+        var brainSelect = component.FindAll("select").First(s => s.InnerHtml.Contains("Brain Repo"));
+        Assert.DoesNotContain("Work Repo", brainSelect.InnerHtml);
+    }
+
+    [Fact]
+    public void AgentCoding_WhenSingleWorkRepo_AutoSelectsEvenWithBrainRepo()
+    {
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "rp-work", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Work Repo", RepositoryRole = RepositoryRole.Work },
+                new() { Id = "rp-brain", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain Repo", RepositoryRole = RepositoryRole.Brain }
+            });
+
+        var component = Render<AgentCoding>();
+
+        // With 1 work repo + 1 brain repo, the work repo should be auto-selected
+        var repoSelect = component.FindAll("select").First(s => s.InnerHtml.Contains("-- Select Repository --"));
+        Assert.Contains("rp-work", repoSelect.InnerHtml);
+    }
+
+    [Fact]
+    public void AgentCoding_LastUsedBrainRepoId_NotRestoredAsWorkRepo()
+    {
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "rp-work", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Work Repo", RepositoryRole = RepositoryRole.Work },
+                new() { Id = "rp-brain", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain Repo", RepositoryRole = RepositoryRole.Brain }
+            });
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                LastUsedProviderIds = new Dictionary<string, string> { ["repository"] = "rp-brain" }
+            });
+
+        var component = Render<AgentCoding>();
+
+        // The brain repo ID should NOT be restored as the selected work repository.
+        // Instead, auto-select should kick in since there's only 1 work repo.
+        var repoSelect = component.FindAll("select").First(s => s.InnerHtml.Contains("-- Select Repository --"));
+        // The selected value should be rp-work (auto-selected), not rp-brain
+        Assert.Contains("Work Repo", repoSelect.InnerHtml);
+        Assert.DoesNotContain("Brain Repo", repoSelect.InnerHtml);
+    }
+
+    [Fact]
     public void AgentCoding_LoopButton_DisabledWhenRepoAndAgentMissing()
     {
         // Issue provider auto-selects (single provider), but repo/agent are empty

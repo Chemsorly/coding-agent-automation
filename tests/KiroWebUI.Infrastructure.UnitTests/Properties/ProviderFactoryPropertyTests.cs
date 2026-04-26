@@ -36,9 +36,9 @@ public class ProviderFactoryPropertyTests
     /// <summary>
     /// Feature: github-app-auth, Property 1: Config key correctness
     ///
-    /// For any valid set of GitHub App credentials (clientId, appId, installationId,
+    /// For any valid set of GitHub App credentials (clientId, installationId,
     /// privateKeyBase64), a GitHub issue provider ProviderConfig SHALL have a Settings
-    /// dictionary containing exactly the keys: clientId, appId, installationId,
+    /// dictionary containing exactly the keys: clientId, installationId,
     /// privateKeyBase64, apiUrl, owner, repo — and SHALL NOT contain a token key.
     /// For repository providers, the Settings dictionary SHALL additionally contain baseBranch.
     ///
@@ -61,7 +61,6 @@ public class ProviderFactoryPropertyTests
             {
                 ["apiUrl"] = input.ApiUrl,
                 ["clientId"] = input.ClientId,
-                ["appId"] = input.AppId,
                 ["installationId"] = input.InstallationId.ToString(),
                 ["privateKeyBase64"] = input.PrivateKeyBase64,
                 ["owner"] = input.Owner,
@@ -71,7 +70,6 @@ public class ProviderFactoryPropertyTests
 
         // Assert: Settings contains all required keys
         Assert.True(config.Settings.ContainsKey("clientId"), "Settings must contain 'clientId'");
-        Assert.True(config.Settings.ContainsKey("appId"), "Settings must contain 'appId'");
         Assert.True(config.Settings.ContainsKey("installationId"), "Settings must contain 'installationId'");
         Assert.True(config.Settings.ContainsKey("privateKeyBase64"), "Settings must contain 'privateKeyBase64'");
         Assert.True(config.Settings.ContainsKey("apiUrl"), "Settings must contain 'apiUrl'");
@@ -109,7 +107,6 @@ public class ProviderFactoryPropertyTests
             {
                 ["apiUrl"] = input.ApiUrl,
                 ["clientId"] = input.ClientId,
-                ["appId"] = input.AppId,
                 ["installationId"] = input.InstallationId.ToString(),
                 ["privateKeyBase64"] = input.PrivateKeyBase64,
                 ["owner"] = input.Owner,
@@ -120,7 +117,6 @@ public class ProviderFactoryPropertyTests
 
         // Assert: Settings contains all required keys including baseBranch
         Assert.True(config.Settings.ContainsKey("clientId"), "Settings must contain 'clientId'");
-        Assert.True(config.Settings.ContainsKey("appId"), "Settings must contain 'appId'");
         Assert.True(config.Settings.ContainsKey("installationId"), "Settings must contain 'installationId'");
         Assert.True(config.Settings.ContainsKey("privateKeyBase64"), "Settings must contain 'privateKeyBase64'");
         Assert.True(config.Settings.ContainsKey("apiUrl"), "Settings must contain 'apiUrl'");
@@ -265,7 +261,6 @@ public record ConfigKeyCorrectnessInput(
     string DisplayName,
     string ApiUrl,
     string ClientId,
-    string AppId,
     long InstallationId,
     string PrivateKeyBase64,
     string Owner,
@@ -322,11 +317,6 @@ public static class ConfigKeyCorrectnessArbitrary
             from chars in Gen.Elements(alphanumChars).ArrayOf(len)
             select "Iv1." + new string(chars);
 
-        // Generate App IDs: numeric strings
-        var appIdGen =
-            from id in Gen.Choose(100000, 999999)
-            select id.ToString();
-
         // Generate Installation IDs: positive longs
         var installationIdGen =
             from id in Gen.Choose(1, 999999)
@@ -354,7 +344,6 @@ public static class ConfigKeyCorrectnessArbitrary
         var combined =
             from displayName in displayNameGen
             from clientId in clientIdGen
-            from appId in appIdGen
             from installationId in installationIdGen
             from owner in nameGen
             from repo in nameGen
@@ -363,7 +352,6 @@ public static class ConfigKeyCorrectnessArbitrary
                 displayName,
                 "https://api.github.com",
                 clientId,
-                appId,
                 installationId,
                 ValidPrivateKeyBase64,
                 owner,
