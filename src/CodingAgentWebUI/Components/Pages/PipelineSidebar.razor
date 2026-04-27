@@ -44,7 +44,11 @@
                         else if (step == PipelineStep.SyncingBrainRepoPreRun && Run.BrainProviderConfigId != null)
                         {
                             <div class="step-detail">
-                                @if (Run.BrainContextLoaded)
+                                @if (state == StepState.Active)
+                                {
+                                    <span>Syncing...</span>
+                                }
+                                else if (Run.BrainContextLoaded)
                                 {
                                     <span>✅ @Run.BrainKnowledgeFileCount knowledge files loaded</span>
                                 }
@@ -197,7 +201,11 @@
                         else if (step == PipelineStep.SyncingBrainRepoPostRun && Run.BrainProviderConfigId != null)
                         {
                             <div class="step-detail">
-                                @if (Run.BrainUpdatesPushed)
+                                @if (state == StepState.Active)
+                                {
+                                    <span>Syncing...</span>
+                                }
+                                else if (Run.BrainUpdatesPushed)
                                 {
                                     <span>✅ @Run.BrainFilesCommitted file(s) pushed</span>
                                 }

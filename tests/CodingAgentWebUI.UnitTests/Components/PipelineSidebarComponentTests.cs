@@ -195,4 +195,94 @@ public class PipelineSidebarComponentTests : BunitContext
 
         Assert.Contains("Preparing for Pull Request", cut.Find("#step-PreparingForPullRequest .step-card-name").TextContent);
     }
+
+    // --- Brain sync step rendering ---
+
+    private static PipelineRun CreateBrainRun(
+        PipelineStep currentStep,
+        PipelineStep highWaterMark) => new()
+    {
+        RunId = Guid.NewGuid().ToString(),
+        IssueIdentifier = "42",
+        IssueTitle = "Test Issue",
+        IssueProviderConfigId = "ip-1",
+        RepoProviderConfigId = "rp-1",
+        StartedAt = DateTime.UtcNow.AddMinutes(-5),
+        CurrentStep = currentStep,
+        HighWaterMark = highWaterMark,
+        BrainProviderConfigId = "brain-1"
+    };
+
+    [Fact]
+    public void BrainSyncPostRun_WhenActive_ShowsSyncing()
+    {
+        var run = CreateBrainRun(PipelineStep.SyncingBrainRepoPostRun, PipelineStep.SyncingBrainRepoPostRun);
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        var stepMarkup = cut.Find("#step-SyncingBrainRepoPostRun").TextContent;
+        Assert.Contains("Syncing...", stepMarkup);
+        Assert.DoesNotContain("⚠️", stepMarkup);
+    }
+
+    [Fact]
+    public void BrainSyncPostRun_WhenCompleted_WithSuccess_ShowsFileCount()
+    {
+        var run = CreateBrainRun(PipelineStep.Completed, PipelineStep.Completed);
+        run.BrainUpdatesPushed = true;
+        run.BrainFilesCommitted = 3;
+        run.CompletedAt = DateTime.UtcNow;
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        Assert.Contains("3 file(s) pushed", cut.Find("#step-SyncingBrainRepoPostRun").TextContent);
+    }
+
+    [Fact]
+    public void BrainSyncPostRun_WhenCompleted_WithFailure_ShowsWarning()
+    {
+        var run = CreateBrainRun(PipelineStep.Completed, PipelineStep.Completed);
+        run.BrainUpdatesPushed = false;
+        run.CompletedAt = DateTime.UtcNow;
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        Assert.Contains("Brain updates not persisted", cut.Find("#step-SyncingBrainRepoPostRun").TextContent);
+    }
+
+    [Fact]
+    public void BrainSyncPreRun_WhenActive_ShowsSyncing()
+    {
+        var run = CreateBrainRun(PipelineStep.SyncingBrainRepoPreRun, PipelineStep.SyncingBrainRepoPreRun);
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        var stepMarkup = cut.Find("#step-SyncingBrainRepoPreRun").TextContent;
+        Assert.Contains("Syncing...", stepMarkup);
+        Assert.DoesNotContain("⚠️", stepMarkup);
+    }
+
+    [Fact]
+    public void BrainSyncPreRun_WhenCompleted_WithSuccess_ShowsKnowledgeFileCount()
+    {
+        var run = CreateBrainRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        run.BrainContextLoaded = true;
+        run.BrainKnowledgeFileCount = 5;
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        Assert.Contains("5 knowledge files loaded", cut.Find("#step-SyncingBrainRepoPreRun").TextContent);
+    }
+
+    [Fact]
+    public void BrainSyncPreRun_WhenCompleted_WithFailure_ShowsWarning()
+    {
+        var run = CreateBrainRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        run.BrainContextLoaded = false;
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        Assert.Contains("Brain context unavailable", cut.Find("#step-SyncingBrainRepoPreRun").TextContent);
+    }
 }
+
