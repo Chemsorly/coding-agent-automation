@@ -285,3 +285,4 @@ public class PipelineSidebarComponentTests : BunitContext
         Assert.Contains("Brain context unavailable", cut.Find("#step-SyncingBrainRepoPreRun").TextContent);
     }
 }
+
