@@ -203,7 +203,8 @@ internal class QualityGateOrchestrator
                 report = await _qualityGateValidator.ValidateAsync(run.WorkspacePath!, config, linkedCt);
 
                 report = await AppendExternalCiIfNeededAsync(run, report, config, repoProvider, pipelineProvider,
-                    transitionTo, swapAgentLabel, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: true, linkedCt);
+                    transitionTo, swapAgentLabel, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: true, linkedCt,
+                    skipCiIfNoChanges: true);
                 if (run.CurrentStep == PipelineStep.Failed) return;
 
                 run.LatestQualityReport = report;
@@ -346,7 +347,13 @@ internal class QualityGateOrchestrator
     /// If local gates passed and external CI is enabled, commits, pushes, waits for CI,
     /// and returns a new report with the external CI gate appended.
     /// </summary>
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
+    /// <summary>
+    /// Appends an external CI gate result to the quality gate report if external CI is enabled
+    /// and all local gates passed. When <paramref name="skipCiIfNoChanges"/> is true and there
+    /// are no changes to commit, skips CI entirely (used after cleanup when CI already validated
+    /// the same commit). When <paramref name="allowEmptyCommit"/> is true and there are no changes,
+    /// creates an empty commit to trigger a CI re-run (used in retry loops).
+    /// </summary>
     public async Task<QualityGateReport> AppendExternalCiIfNeededAsync(
         PipelineRun run, QualityGateReport report,
         PipelineConfiguration config,
@@ -357,7 +364,8 @@ internal class QualityGateOrchestrator
         Action<PipelineRun> addRunToHistory,
         Action onChange,
         Action<string> onOutputLine,
-        bool allowEmptyCommit, CancellationToken ct)
+        bool allowEmptyCommit, CancellationToken ct,
+        bool skipCiIfNoChanges = false)
     {
         if (!report.Compilation.Passed || !report.Tests.Passed
             || !(report.Coverage?.Passed ?? true) || !(report.SecurityScan?.Passed ?? true)
@@ -377,7 +385,15 @@ internal class QualityGateOrchestrator
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
             {
-                if (allowEmptyCommit)
+                if (skipCiIfNoChanges)
+                {
+                    // CI already validated this exact commit during the initial quality gate run.
+                    // Cleanup made no changes, so there's nothing new to validate — skip external CI.
+                    _logger.Information("Pipeline {RunId} no changes after cleanup, skipping external CI (already validated)", run.RunId);
+                    onOutputLine("✅ External CI skipped — no changes since last CI pass");
+                    return report;
+                }
+                else if (allowEmptyCommit)
                 {
                     _logger.Information("Pipeline {RunId} no changes after retry fix, creating empty commit to trigger CI", run.RunId);
                     await repoProvider.CommitAllAsync(

@@ -2878,6 +2878,70 @@ public class PipelineOrchestrationServiceTests
         outputLines.Should().Contain(l => l.Contains("Running final quality gates after cleanup"));
     }
 
+    [Fact]
+    public async Task StartPipeline_NoChangesAfterCleanup_WithExternalCi_SkipsCiAndCompletes()
+    {
+        // Configure ExternalCiEnabled = true
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.Default() with { ExternalCiEnabled = true });
+
+        // Add pipeline provider config
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "pipeline-1", Kind = ProviderKind.Pipeline, ProviderType = "GitHubActions", DisplayName = "CI" }
+            });
+
+        // Create mock pipeline provider — CI passes on initial QG run
+        var mockPipelineProvider = new Mock<IPipelineProvider>();
+        mockPipelineProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Passed,
+                Jobs = new[] { new PipelineJobResult { Name = "build", State = PipelineRunState.Passed } }
+            });
+        _mockFactory.Setup(f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>())).Returns(mockPipelineProvider.Object);
+
+        // CommitAllAsync (4-param with blacklist): succeeds on first call (initial QG),
+        // throws "No changes to commit" on second call (final QG after cleanup — no changes)
+        var commitCallCount = 0;
+        _mockRepoProvider.Setup(p => p.CommitAllAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string, IReadOnlyList<string>?, CancellationToken>((_, _, _, _) =>
+            {
+                commitCallCount++;
+                if (commitCallCount > 1)
+                    throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
+                return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+            });
+
+        _mockRepoProvider.Setup(p => p.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("abc123");
+
+        var outputLines = new List<string>();
+        _service.OnOutputLine += line => outputLines.Add(line);
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Pipeline should complete successfully — not fail with draft PR
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.IsDraftPr.Should().BeFalse();
+
+        // External CI should have been called once (initial QG) but NOT for the final QG after cleanup
+        mockPipelineProvider.Verify(p => p.WaitForCompletionAsync(
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // The 5-param CommitAllAsync (allowEmpty) should never be called — we skip CI instead
+        _mockRepoProvider.Verify(p => p.CommitAllAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        // Output should contain the skip message
+        outputLines.Should().Contain(l => l.Contains("skipped"));
+    }
+
     // --- Rework mode tests ---
 
     /// <summary>
