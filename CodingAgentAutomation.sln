@@ -1,4 +1,4 @@
-
+﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
@@ -22,6 +22,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodingAgentWebUI.UnitTests", "tests\CodingAgentWebUI.UnitTests\CodingAgentWebUI.UnitTests.csproj", "{4044C55C-9A36-4678-8737-AAA59EC4495A}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodingAgentWebUI.IntegrationTests", "tests\CodingAgentWebUI.IntegrationTests\CodingAgentWebUI.IntegrationTests.csproj", "{67E12317-5E8D-44ED-A943-FAB47A7EC6A0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KiroCliLib.UnitTests", "tests\KiroCliLib.UnitTests\KiroCliLib.UnitTests.csproj", "{7E4B0AB3-2EAD-46EB-856B-F62DEACB5639}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -129,6 +131,18 @@ Global
 		{67E12317-5E8D-44ED-A943-FAB47A7EC6A0}.Release|x64.Build.0 = Release|Any CPU
 		{67E12317-5E8D-44ED-A943-FAB47A7EC6A0}.Release|x86.ActiveCfg = Release|Any CPU
 		{67E12317-5E8D-44ED-A943-FAB47A7EC6A0}.Release|x86.Build.0 = Release|Any CPU
+		{7E4B0AB3-2EAD-46EB-856B-F62DEACB5639}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7E4B0AB3-2EAD-46EB-856B-F62DEACB5639}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7E4B0AB3-2EAD-46EB-856B-F62DEACB5639}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7E4B0AB3-2EAD-46EB-856B-F62DEACB5639}.Debug|x64.Build.0 = Debug|Any CPU
+		{7E4B0AB3-2EAD-46EB-856B-F62DEACB5639}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{7E4B0AB3-2EAD-46EB-856B-F62DEACB5639}.Debug|x86.Build.0 = Debug|Any CPU
+		{7E4B0AB3-2EAD-46EB-856B-F62DEACB5639}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7E4B0AB3-2EAD-46EB-856B-F62DEACB5639}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7E4B0AB3-2EAD-46EB-856B-F62DEACB5639}.Release|x64.ActiveCfg = Release|Any CPU
+		{7E4B0AB3-2EAD-46EB-856B-F62DEACB5639}.Release|x64.Build.0 = Release|Any CPU
+		{7E4B0AB3-2EAD-46EB-856B-F62DEACB5639}.Release|x86.ActiveCfg = Release|Any CPU
+		{7E4B0AB3-2EAD-46EB-856B-F62DEACB5639}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -142,5 +156,6 @@ Global
 		{E8B3AAE4-78E4-4B45-B075-E962A2B59A8F} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{4044C55C-9A36-4678-8737-AAA59EC4495A} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{67E12317-5E8D-44ED-A943-FAB47A7EC6A0} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{7E4B0AB3-2EAD-46EB-856B-F62DEACB5639} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
