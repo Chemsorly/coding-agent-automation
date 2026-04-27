@@ -528,9 +528,10 @@ public class PipelineOrchestrationServiceTests
         config.CodeReview.Prompt.Should().Contain("[CRITICAL]");
         config.CodeReview.FixPrompt.Should().BeNull();
         config.CodeReview.Agents.Should().NotBeNull();
-        config.CodeReview.Agents!.Count.Should().Be(2);
+        config.CodeReview.Agents!.Count.Should().Be(3);
         config.CodeReview.Agents[0].Name.Should().Be("Correctness");
         config.CodeReview.Agents[1].Name.Should().Be("DotNetSpecialist");
+        config.CodeReview.Agents[2].Name.Should().Be("SecurityReviewer");
     }
 
     // --- Fix prompt tests ---
@@ -1195,9 +1196,10 @@ public class PipelineOrchestrationServiceTests
     public void CodeReviewDefaults_IncludeDefaultAgents()
     {
         var agents = PipelineConfiguration.DefaultReviewAgents;
-        agents.Should().HaveCount(2);
+        agents.Should().HaveCount(3);
         agents[0].Name.Should().Be("Correctness");
         agents[1].Name.Should().Be("DotNetSpecialist");
+        agents[2].Name.Should().Be("SecurityReviewer");
     }
 
     [Fact]

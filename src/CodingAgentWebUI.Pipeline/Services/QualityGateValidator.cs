@@ -73,13 +73,7 @@ public class QualityGateValidator : IQualityGateValidator
         GateResult? securityScan = null;
         if (config.SecurityScanEnabled)
         {
-            _logger.Warning("Security scan not configured — returning passed as placeholder");
-            securityScan = new GateResult
-            {
-                GateName = "Security Scan",
-                Passed = true,
-                Details = "Security scan not configured"
-            };
+            securityScan = await RunSecurityScanGateAsync(workspacePath, ct);
         }
 
         // External CI gate is handled by PipelineOrchestrationService after local gates pass
@@ -141,6 +135,55 @@ public class QualityGateValidator : IQualityGateValidator
             Passed = exitCode == 0,
             Details = details
         };
+    }
+
+    private async Task<GateResult> RunSecurityScanGateAsync(string workspacePath, CancellationToken ct)
+    {
+        var (exitCode, stdout, stderr) = await RunProcessAsync(
+            "dotnet", "list package --vulnerable --include-transitive", workspacePath, ct);
+
+        WriteGateOutput(workspacePath, "security-scan", stdout, stderr);
+
+        if (exitCode != 0)
+        {
+            _logger.Warning("dotnet list package --vulnerable exited with code {ExitCode}", exitCode);
+            return new GateResult
+            {
+                GateName = "Security Scan",
+                Passed = true,
+                Details = $"Security scan skipped (exit code {exitCode}) — check security-scan-stderr.txt"
+            };
+        }
+
+        if (!string.IsNullOrWhiteSpace(stderr) && stderr.Contains("error", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.Warning("Security scan stderr contains errors: {Stderr}", stderr);
+        }
+
+        var (hasVulnerabilities, projectCount) = ParseSecurityScanOutput(stdout);
+
+        return new GateResult
+        {
+            GateName = "Security Scan",
+            Passed = !hasVulnerabilities,
+            Details = hasVulnerabilities
+                ? $"{projectCount} project(s) with vulnerable packages"
+                : "No vulnerable packages found"
+        };
+    }
+
+    /// <summary>
+    /// Parses stdout from <c>dotnet list package --vulnerable</c> to detect vulnerable packages.
+    /// The command always returns exit code 0 regardless of findings (dotnet/sdk#16852),
+    /// so detection relies on the text "has the following vulnerable packages".
+    /// </summary>
+    internal static (bool HasVulnerabilities, int ProjectCount) ParseSecurityScanOutput(string? output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+            return (false, 0);
+
+        var matches = Regex.Matches(output, @"has the following vulnerable packages", RegexOptions.IgnoreCase);
+        return matches.Count > 0 ? (true, matches.Count) : (false, 0);
     }
 
     private async Task<GateResult> RunTestGateAsync(
@@ -425,7 +468,7 @@ public class QualityGateValidator : IQualityGateValidator
         return (errors, warnings);
     }
 
-    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+    private protected virtual async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
         string fileName, string arguments, string workingDirectory, CancellationToken ct)
     {
         var psi = new ProcessStartInfo

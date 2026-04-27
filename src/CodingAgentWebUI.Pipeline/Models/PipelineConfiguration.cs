@@ -110,11 +110,36 @@ public sealed record PipelineConfiguration
         "- Suggestions to add more abstractions or interfaces\n\n" +
         "Do NOT fix anything. Only report findings.";
 
-    /// <summary>Default review agents: Correctness + .NET Specialist.</summary>
+    public const string DefaultSecurityReviewPrompt =
+        "Review the changes for security issues. The previous reviews covered correctness and .NET-specific " +
+        "patterns — do not duplicate those findings. Output findings as a numbered list with severity " +
+        "[CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
+        "CHECK FOR:\n" +
+        "- Hardcoded credentials, API keys, connection strings, or tokens\n" +
+        "- SQL injection (string concatenation or interpolation in queries)\n" +
+        "- Path traversal (user input used in file paths without validation)\n" +
+        "- Insecure deserialization of untrusted data\n" +
+        "- Missing authentication or authorization checks on new endpoints\n" +
+        "- Sensitive data logged without redaction (passwords, tokens, PII)\n" +
+        "- Insecure cryptography (MD5, SHA1 for security purposes, ECB mode)\n" +
+        "- SSRF (user-controlled URLs passed to HTTP clients)\n" +
+        "- Missing input validation or sanitization on external input boundaries\n" +
+        "- Secrets or credentials in committed files\n\n" +
+        "DO NOT FLAG:\n" +
+        "- Issues already covered by Correctness or DotNet Specialist reviews\n" +
+        "- Theoretical attacks requiring physical access or pre-existing compromise\n" +
+        "- Missing HTTPS enforcement (infrastructure concern, not code)\n" +
+        "- Test code, sample data, or placeholder values in test fixtures\n" +
+        "- Dependency vulnerabilities (covered by the quality gate)\n" +
+        "- General code quality or style issues\n\n" +
+        "Do NOT fix anything. Only report findings.";
+
+    /// <summary>Default review agents: Correctness + .NET Specialist + Security.</summary>
     public static IReadOnlyList<ReviewAgentConfig> DefaultReviewAgents { get; } = new[]
     {
         new ReviewAgentConfig { Name = "Correctness", Prompt = DefaultCorrectnessReviewPrompt },
-        new ReviewAgentConfig { Name = "DotNetSpecialist", Prompt = DefaultDotNetSpecialistReviewPrompt }
+        new ReviewAgentConfig { Name = "DotNetSpecialist", Prompt = DefaultDotNetSpecialistReviewPrompt },
+        new ReviewAgentConfig { Name = "SecurityReviewer", Prompt = DefaultSecurityReviewPrompt }
     };
 
     public const string DefaultAnalysisPrompt =
@@ -146,7 +171,7 @@ public sealed record PipelineConfiguration
     public int IssuePageSize { get; init; } = 25;
     public TimeSpan AgentTimeout { get; init; } = TimeSpan.FromMinutes(30);
     public double MinCoverageThreshold { get; init; } = 50.0;
-    public bool SecurityScanEnabled { get; init; } = false;
+    public bool SecurityScanEnabled { get; init; } = true;
     public string WorkspaceBaseDirectory { get; init; } = "./workspaces";
     public CodeReviewConfiguration CodeReview { get; init; } = new();
     public string AnalysisPrompt { get; init; } = DefaultAnalysisPrompt;
