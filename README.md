@@ -31,7 +31,7 @@ docker build -f webUI.Dockerfile -t coding-agent-webui:latest .
 ### Run the container
 
 ```powershell
-docker run -it --rm -p 5000:5000 -v ${PWD}/config/kiro-cli-data:/home/ubuntu/.local/share/kiro-cli -v "$env:USERPROFILE\.aws:/home/ubuntu/.aws" -v ${PWD}/config/kiro-settings:/home/ubuntu/.kiro/settings -v ${PWD}/config/pipeline:/app/config/pipeline coding-agent-webui:latest
+docker run -it --rm -p 5000:5000 -v ${PWD}/config/kiro-cli-data:/home/ubuntu/.local/share/kiro-cli -v "$env:USERPROFILE\.aws:/home/ubuntu/.aws" -v ${PWD}/config/kiro-settings:/home/ubuntu/.kiro/settings -v ${PWD}/config/pipeline:/app/config/pipeline coding-agent-webui:latest 2>&1 | Tee-Object -FilePath .kiro/debug.log
 ```
 
 Open `http://localhost:5000` in your browser.
