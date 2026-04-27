@@ -70,6 +70,12 @@
                             }
                         </div>
                     }
+                    @if (LinkedPullRequest != null)
+                    {
+                        <div class="rework-indicator">
+                            🔄 Open PR <a href="@LinkedPullRequest.Url" target="_blank" rel="noopener noreferrer">#@LinkedPullRequest.Number</a> found — pipeline will enter rework mode
+                        </div>
+                    }
                 </div>
             </div>
         }
@@ -175,6 +181,7 @@
     [Parameter] public string SelectedIssueProviderId { get; set; } = "";
     [Parameter] public string SelectedIssueId { get; set; } = "";
     [Parameter] public IssueDetail? SelectedIssueDetail { get; set; }
+    [Parameter] public LinkedPullRequest? LinkedPullRequest { get; set; }
     [Parameter] public string SelectedRepoProviderId { get; set; } = "";
     [Parameter] public string SelectedAgentProviderId { get; set; } = "";
     [Parameter] public string SelectedPipelineProviderId { get; set; } = "";

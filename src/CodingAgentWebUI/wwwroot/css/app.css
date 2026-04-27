@@ -274,6 +274,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
     padding: 16px; display: flex; flex-direction: column; gap: 12px;
 }
 .pipeline-selected-issue { font-size: 0.85rem; color: var(--text); line-height: 1.4; }
+.rework-indicator { margin-top: 8px; padding: 6px 10px; background: #1a2a3a; border-radius: var(--radius); font-size: 0.8rem; color: var(--accent-light); }
+.rework-indicator a { color: var(--accent-light); text-decoration: underline; }
 .pipeline-start-btn { width: 100%; padding: 12px 16px; font-size: 0.95rem; }
 .pipeline-setup-hint { font-size: 0.8rem; color: var(--text-muted); text-align: center; }
 .run-history-toggle-title { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
