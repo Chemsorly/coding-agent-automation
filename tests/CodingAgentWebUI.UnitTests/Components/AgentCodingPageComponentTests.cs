@@ -18,6 +18,7 @@ public class AgentCodingPageComponentTests : BunitContext
     private readonly Mock<IConfigurationStore> _mockStore;
     private readonly Mock<IProviderFactory> _mockFactory;
     private readonly Mock<IIssueProvider> _mockIssueProvider;
+    private readonly Mock<IRepositoryProvider> _mockRepoProvider;
     private readonly PipelineOrchestrationService _pipelineService;
 
     public AgentCodingPageComponentTests()
@@ -25,6 +26,7 @@ public class AgentCodingPageComponentTests : BunitContext
         _mockStore = new Mock<IConfigurationStore>();
         _mockFactory = new Mock<IProviderFactory>();
         _mockIssueProvider = new Mock<IIssueProvider>();
+        _mockRepoProvider = new Mock<IRepositoryProvider>();
 
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockValidator = new Mock<IQualityGateValidator>();
@@ -88,6 +90,11 @@ public class AgentCodingPageComponentTests : BunitContext
 
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(_mockIssueProvider.Object);
+
+        _mockRepoProvider.Setup(r => r.GetAgentPullRequestsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<LinkedPullRequest>());
+        _mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(_mockRepoProvider.Object);
     }
 
     [Fact]
@@ -489,5 +496,128 @@ public class AgentCodingPageComponentTests : BunitContext
         // Loop button should be disabled because repo/agent are missing
         var loopBtn = component.Find(".pipeline-loop-btn");
         Assert.True(loopBtn.HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public async Task AgentCoding_WhenIssueHasOpenAgentPr_ShowsReworkIndicator()
+    {
+        var linkedPr = new LinkedPullRequest
+        {
+            Number = 186,
+            BranchName = "feature/auto-42-test-issue-abc12345",
+            Url = "https://github.com/owner/repo/pull/186",
+            IsDraft = false
+        };
+        _mockRepoProvider.Setup(r => r.GetAgentPullRequestsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { linkedPr });
+        _mockIssueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "", Labels = Array.Empty<string>() });
+
+        var component = Render<AgentCoding>();
+        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
+
+        // Click the issue card to select it
+        var issueCard = component.Find(".issue-card");
+        await component.InvokeAsync(() => issueCard.Click());
+
+        component.WaitForAssertion(() => Assert.Contains("rework-indicator", component.Markup), timeout: TimeSpan.FromSeconds(5));
+        Assert.Contains("#186", component.Markup);
+        Assert.Contains("https://github.com/owner/repo/pull/186", component.Markup);
+        Assert.Contains("pipeline will enter rework mode", component.Markup);
+        Assert.Contains("Open PR", component.Markup);
+        Assert.DoesNotContain("draft", component.Markup);
+    }
+
+    [Fact]
+    public async Task AgentCoding_WhenIssueHasDraftAgentPr_ShowsDraftInReworkIndicator()
+    {
+        var linkedPr = new LinkedPullRequest
+        {
+            Number = 200,
+            BranchName = "feature/auto-42-test-issue-abc12345",
+            Url = "https://github.com/owner/repo/pull/200",
+            IsDraft = true
+        };
+        _mockRepoProvider.Setup(r => r.GetAgentPullRequestsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { linkedPr });
+        _mockIssueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "", Labels = Array.Empty<string>() });
+
+        var component = Render<AgentCoding>();
+        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
+
+        var issueCard = component.Find(".issue-card");
+        await component.InvokeAsync(() => issueCard.Click());
+
+        component.WaitForAssertion(() => Assert.Contains("rework-indicator", component.Markup), timeout: TimeSpan.FromSeconds(5));
+        Assert.Contains("Open draft PR", component.Markup);
+        Assert.Contains("#200", component.Markup);
+    }
+
+    [Fact]
+    public async Task AgentCoding_WhenIssueHasNoAgentPr_NoReworkIndicator()
+    {
+        _mockIssueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "", Labels = Array.Empty<string>() });
+
+        var component = Render<AgentCoding>();
+        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
+
+        var issueCard = component.Find(".issue-card");
+        await component.InvokeAsync(() => issueCard.Click());
+
+        // Wait for issue detail to render
+        component.WaitForAssertion(() => Assert.Contains("Selected Issue", component.Markup), timeout: TimeSpan.FromSeconds(5));
+        Assert.DoesNotContain("rework-indicator", component.Markup);
+        Assert.DoesNotContain("pipeline will enter rework mode", component.Markup);
+    }
+
+    [Fact]
+    public async Task AgentCoding_ReworkIndicator_LinkOpensInNewTab()
+    {
+        var linkedPr = new LinkedPullRequest
+        {
+            Number = 99,
+            BranchName = "feature/auto-42-test-abc",
+            Url = "https://github.com/owner/repo/pull/99",
+            IsDraft = false
+        };
+        _mockRepoProvider.Setup(r => r.GetAgentPullRequestsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { linkedPr });
+        _mockIssueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "", Labels = Array.Empty<string>() });
+
+        var component = Render<AgentCoding>();
+        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
+
+        var issueCard = component.Find(".issue-card");
+        await component.InvokeAsync(() => issueCard.Click());
+
+        component.WaitForAssertion(() => Assert.Contains("rework-indicator", component.Markup), timeout: TimeSpan.FromSeconds(5));
+        var link = component.Find(".rework-indicator a");
+        Assert.Equal("https://github.com/owner/repo/pull/99", link.GetAttribute("href"));
+        Assert.Equal("_blank", link.GetAttribute("target"));
+        Assert.Equal("noopener noreferrer", link.GetAttribute("rel"));
+    }
+
+    [Fact]
+    public async Task AgentCoding_WhenNoRepoProviderSelected_NoReworkCheck()
+    {
+        // Setup: no repo providers available
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+        _mockIssueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "", Labels = Array.Empty<string>() });
+
+        var component = Render<AgentCoding>();
+        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
+
+        var issueCard = component.Find(".issue-card");
+        await component.InvokeAsync(() => issueCard.Click());
+
+        component.WaitForAssertion(() => Assert.Contains("Selected Issue", component.Markup), timeout: TimeSpan.FromSeconds(5));
+        Assert.DoesNotContain("rework-indicator", component.Markup);
+        // CreateRepositoryProvider should never be called when no repo provider is selected
+        _mockFactory.Verify(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()), Times.Never);
     }
 }

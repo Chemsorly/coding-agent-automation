@@ -80,11 +80,12 @@
                                                     SelectedIssueProviderId="@_selectedIssueProviderId"
                                                     SelectedIssueId="@_selectedIssueId"
                                                     SelectedIssueDetail="_selectedIssueDetail"
+                                                    LinkedPullRequest="_linkedPullRequest"
                                                     SelectedRepoProviderId="@_selectedRepoProviderId"
                                                     SelectedAgentProviderId="@_selectedAgentProviderId"
                                                     SelectedPipelineProviderId="@_selectedPipelineProviderId"
                                                     SelectedBrainProviderId="@_selectedBrainProviderId"
-                                                    SelectedRepoProviderIdChanged="v => _selectedRepoProviderId = v"
+                                                    SelectedRepoProviderIdChanged="HandleRepoProviderIdChanged"
                                                     SelectedAgentProviderIdChanged="v => _selectedAgentProviderId = v"
                                                     SelectedPipelineProviderIdChanged="v => _selectedPipelineProviderId = v"
                                                     SelectedBrainProviderIdChanged="v => _selectedBrainProviderId = v"
@@ -151,6 +152,7 @@
     private string _selectedIssueProviderId = "";
     private string _selectedIssueId = "";
     private IssueDetail? _selectedIssueDetail;
+    private LinkedPullRequest? _linkedPullRequest;
     private string _selectedRepoProviderId = "";
     private string _selectedAgentProviderId = "";
     private string _selectedPipelineProviderId = "";
@@ -169,10 +171,37 @@
         _errorMessage = null;
     }
 
-    private void HandleIssueSelected((string IssueId, IssueDetail? Detail) selection)
+    private async Task HandleIssueSelected((string IssueId, IssueDetail? Detail) selection)
     {
         _selectedIssueId = selection.IssueId;
         _selectedIssueDetail = selection.Detail;
+        await CheckForExistingPullRequestAsync();
+    }
+
+    private async Task HandleRepoProviderIdChanged(string providerId)
+    {
+        _selectedRepoProviderId = providerId;
+        await CheckForExistingPullRequestAsync();
+    }
+
+    private async Task CheckForExistingPullRequestAsync()
+    {
+        _linkedPullRequest = null;
+
+        if (string.IsNullOrEmpty(_selectedIssueId) || string.IsNullOrEmpty(_selectedRepoProviderId))
+            return;
+
+        var repoConfig = _repoProviders.FirstOrDefault(p => p.Id == _selectedRepoProviderId);
+        if (repoConfig is null)
+            return;
+
+        try
+        {
+            await using var repoProvider = ProviderFactory.CreateRepositoryProvider(repoConfig);
+            var prs = await repoProvider.GetAgentPullRequestsAsync(_selectedIssueId, CancellationToken.None);
+            _linkedPullRequest = prs.OrderByDescending(pr => pr.Number).FirstOrDefault();
+        }
+        catch (Exception) { /* Non-critical — pipeline will detect rework at runtime */ }
     }
 
     private void HandleChildError(string? error)
