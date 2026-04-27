@@ -85,6 +85,7 @@ The pipeline uses these `agent:*` labels (created automatically on first run):
 | `agent:error` | 🔴 Red | Pipeline failed (build errors, timeout, etc.) |
 | `agent:needs-refinement` | 🟡 Yellow | Confidence gate rejected — issue needs more detail |
 | `agent:wont-do` | ⚪ Gray | Agent determined no code changes are needed |
+| `agent:done` | 🔵 Blue | Pipeline completed, PR awaiting review |
 | `agent:cancelled` | 🟣 Light blue | Pipeline run was cancelled by user |
 
 Only one `agent:*` label should be present on an issue at a time. The pipeline swaps labels atomically (removes all, then adds the new one).
@@ -95,7 +96,7 @@ Only one `agent:*` label should be present on an issue at a time. The pipeline s
 2. **Pipeline** picks it up (manually via the web UI, or automatically in closed-loop mode)
 3. **Pipeline** swaps label to `agent:in-progress`
 4. **Pipeline** analyzes the issue, generates code, runs quality gates, creates a PR
-5. **Pipeline** removes all `agent:*` labels on success
+5. **Pipeline** adds `agent:done` label on success
 6. **User** reviews and merges the PR
 
 ### Flow 2: Confidence Gate Rejection (Needs Refinement)
@@ -131,6 +132,19 @@ Only one `agent:*` label should be present on an issue at a time. The pipeline s
 1. **Pipeline** encounters an unrecoverable error (clone failure, timeout, provider error)
 2. **Pipeline** swaps label to `agent:error`, records the failure reason
 3. **User** can investigate via the web UI output log, fix the underlying issue, then remove `agent:error` and re-add `agent:next`
+
+### Flow 6: PR Rework
+
+1. **User** adds `agent:next` label to an issue that already has an open agent-created PR
+2. **Pipeline** detects the existing PR by matching the branch name pattern (`feature/auto-{issueNumber}-*`)
+3. **Pipeline** swaps label to `agent:in-progress`, enters rework mode
+4. **Pipeline** checks out the existing PR branch and merges from main
+5. **Pipeline** builds a rework prompt containing merge conflict info (if any) and/or PR review feedback
+6. **Pipeline** re-runs code generation and quality gates using the rework prompt
+7. **Pipeline** pushes to the existing branch (updates the PR automatically) and refreshes the PR body with current quality gate results
+8. **Pipeline** adds `agent:done` label on success
+
+If the user wants a fresh run instead of rework, they close the existing PR first, then add `agent:next`. The pipeline only enters rework mode when an open agent PR exists for the issue.
 
 ### Closed-Loop Mode
 
@@ -189,7 +203,7 @@ stateDiagram-v2
         Agent gets error feedback and fixes before re-check
     end note
     note left of CreatingPullRequest
-        Draft PR sets agent error label. Normal PR removes labels.
+        Draft PR sets agent error label. Normal PR adds agent done label.
     end note
     note left of ReflectingOnRun
         Only if brain repo configured and not read-only
@@ -280,7 +294,7 @@ stateDiagram-v2
     state "no label" as none
     state "agent next" as next
     state "agent in-progress" as ip
-    state "labels removed" as removed
+    state "agent done" as done
     state "agent needs-refinement" as nr
     state "agent wont-do" as wd
     state "agent error" as err
@@ -288,11 +302,12 @@ stateDiagram-v2
 
     none --> next : user adds label
     next --> ip : pipeline starts
-    ip --> removed : success
+    ip --> done : success
     ip --> nr : not_ready
     ip --> wd : wont_do
     ip --> err : error / timeout
     ip --> cancel : user cancels
+    done --> next : user requests rework
 ```
 
 ### Error Handling

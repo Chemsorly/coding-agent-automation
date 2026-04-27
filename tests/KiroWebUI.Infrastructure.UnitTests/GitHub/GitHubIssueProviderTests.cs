@@ -294,7 +294,7 @@ public class GitHubIssueProviderTests
     }
 
     [Fact]
-    public async Task EnsureAgentLabelsAsync_CreatesAllFourLabels()
+    public async Task EnsureAgentLabelsAsync_CreatesAllSevenLabels()
     {
         var mockLabels = new Mock<IIssuesLabelsClient>();
         _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
@@ -314,6 +314,8 @@ public class GitHubIssueProviderTests
             It.Is<NewLabel>(nl => nl.Name == "agent:wont-do" && nl.Color == "cfd3d7")), Times.Once);
         mockLabels.Verify(l => l.Create("owner", "repo",
             It.Is<NewLabel>(nl => nl.Name == "agent:cancelled" && nl.Color == "c5def5")), Times.Once);
+        mockLabels.Verify(l => l.Create("owner", "repo",
+            It.Is<NewLabel>(nl => nl.Name == "agent:done" && nl.Color == "0075ca")), Times.Once);
     }
 
     [Fact]
@@ -343,8 +345,8 @@ public class GitHubIssueProviderTests
         var result = await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
 
         result.Should().BeTrue();
-        // All six should be attempted
-        mockLabels.Verify(l => l.Create("owner", "repo", It.IsAny<NewLabel>()), Times.Exactly(6));
+        // All seven should be attempted (includes agent:done)
+        mockLabels.Verify(l => l.Create("owner", "repo", It.IsAny<NewLabel>()), Times.Exactly(7));
     }
 
     [Fact]

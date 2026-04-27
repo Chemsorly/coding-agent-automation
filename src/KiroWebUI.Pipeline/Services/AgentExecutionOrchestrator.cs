@@ -384,7 +384,8 @@ internal class AgentExecutionOrchestrator
         Func<PipelineRun, Task> updateFileChangeStats,
         Func<string, string, CancellationToken, Task> swapAgentLabel,
         Action<PipelineRun> addRunToHistory,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? promptOverride = null)
     {
         transitionTo(PipelineStep.GeneratingCode);
         try
@@ -405,7 +406,8 @@ internal class AgentExecutionOrchestrator
             var brainWriteInstructions = PromptBuilder.BuildBrainWriteInstructions(
                 run.BrainContextLoaded, run.RunId, run.IssueIdentifier, config.BrainReadOnly);
 
-            var prompt = PromptBuilder.BuildPrompt(config.ImplementationPrompt, issue, parsed, brainWriteInstructions, brainContextWritten);
+            var prompt = promptOverride
+                ?? PromptBuilder.BuildPrompt(config.ImplementationPrompt, issue, parsed, brainWriteInstructions, brainContextWritten);
             _logger.Debug("Pipeline {RunId} implementation prompt:\n{Prompt}", run.RunId, prompt);
 
             AgentResult agentResult;

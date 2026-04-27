@@ -269,18 +269,86 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                     run.BrainContextLoaded = false;
                 }
             }
-            // Create branch
-            TransitionTo(run, PipelineStep.CreatingBranch);
-            EmitOutputLine("🌿 Creating branch...");
+            // Rework detection: check for existing agent PRs before branch setup
             try
             {
-                var branchName = PipelineFormatting.GenerateBranchName(run.IssueIdentifier, issue.Title, run.RunId);
-                run.BranchName = await _activeRepoProvider.CreateBranchAsync(workspacePath, branchName, ct);
-                _logger.Information("Pipeline {RunId} branch {BranchName} created", run.RunId, run.BranchName);
-                EmitOutputLine($"🌿 Created branch {run.BranchName}");
+                var agentPrs = await _activeRepoProvider!.GetAgentPullRequestsAsync(run.IssueIdentifier, ct);
+                if (agentPrs.Count > 0)
+                {
+                    var selectedPr = agentPrs.OrderByDescending(pr => pr.Number).First();
+                    run.LinkedPullRequest = selectedPr;
+                    EmitOutputLine($"🔄 Rework mode: updating existing PR #{selectedPr.Number}");
+                    _logger.Information("Pipeline {RunId} detected existing agent PR #{PrNumber} for issue {IssueIdentifier}, entering rework mode",
+                        run.RunId, selectedPr.Number, run.IssueIdentifier);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
-            { _logger.Error(ex, "Pipeline {RunId} failed to create branch", run.RunId); await FailRunAsync(run, $"Branch creation failed: {ex.Message}"); return; }
+            {
+                _logger.Warning(ex, "Pipeline {RunId} failed to detect agent PRs for issue {IssueIdentifier}, falling back to new-issue flow",
+                    run.RunId, run.IssueIdentifier);
+            }
+
+            // Create branch (or checkout existing branch in rework mode)
+            TransitionTo(run, PipelineStep.CreatingBranch);
+            if (run.LinkedPullRequest != null)
+            {
+                // Rework mode: checkout existing PR branch
+                try
+                {
+                    await _activeRepoProvider!.CheckoutRemoteBranchAsync(
+                        workspacePath, run.LinkedPullRequest.BranchName, ct);
+                    run.BranchName = run.LinkedPullRequest.BranchName;
+                    EmitOutputLine($"🌿 Checked out existing branch {run.BranchName}");
+                    _logger.Information("Pipeline {RunId} checked out existing branch {BranchName}", run.RunId, run.BranchName);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Error(ex, "Pipeline {RunId} failed to checkout branch {BranchName}", run.RunId, run.LinkedPullRequest.BranchName);
+                    await FailRunAsync(run, $"Branch checkout failed: {ex.Message}");
+                    return;
+                }
+
+                // Merge from base branch
+                try
+                {
+                    var mergeResult = await _activeRepoProvider.MergeFromBaseAsync(workspacePath, ct);
+                    run.MergeConflictFiles = mergeResult.ConflictFiles;
+                    if (mergeResult.HasConflicts)
+                    {
+                        EmitOutputLine($"⚠️ Merged from {_activeRepoProvider.BaseBranch} with {mergeResult.ConflictFiles.Count} conflict(s)");
+                        _logger.Information("Pipeline {RunId} merged from base with {ConflictCount} conflict(s)", run.RunId, mergeResult.ConflictFiles.Count);
+                    }
+                    else
+                    {
+                        EmitOutputLine($"🔀 Merged from {_activeRepoProvider.BaseBranch} (no conflicts)");
+                        _logger.Information("Pipeline {RunId} merged from base (no conflicts)", run.RunId);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Error(ex, "Pipeline {RunId} failed to merge from base branch", run.RunId);
+                    await FailRunAsync(run, $"Base branch merge failed: {ex.Message}");
+                    return;
+                }
+            }
+            else
+            {
+                // New-issue flow: create new branch
+                EmitOutputLine("🌿 Creating branch...");
+                try
+                {
+                    var branchName = PipelineFormatting.GenerateBranchName(run.IssueIdentifier, issue.Title, run.RunId);
+                    run.BranchName = await _activeRepoProvider.CreateBranchAsync(workspacePath, branchName, ct);
+                    _logger.Information("Pipeline {RunId} branch {BranchName} created", run.RunId, run.BranchName);
+                    EmitOutputLine($"🌿 Created branch {run.BranchName}");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Error(ex, "Pipeline {RunId} failed to create branch", run.RunId);
+                    await FailRunAsync(run, $"Branch creation failed: {ex.Message}");
+                    return;
+                }
+            }
             // Analysis phase
             EmitOutputLine("🔍 Starting analysis...");
             var analysisShouldContinue = await _agentExecution.ExecuteAnalysisPhaseAsync(
@@ -292,17 +360,44 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 line => EmitOutputLine(line), () => NotifyChange(), ct);
             if (!analysisShouldContinue) return;
             // Code generation phase
-            EmitOutputLine("⚙️ Starting code generation...");
-            var shouldContinue = await _agentExecution.ExecuteCodeGenerationAsync(
-                run, _activeConfig, _activeAgentProvider!,
-                issue, parsed,
-                _cancellationTokenSource,
-                step => TransitionTo(run, step),
-                line => OnOutputLine?.Invoke(line), () => NotifyChange(),
-                r => UpdateFileChangeStatsAsync(r),
-                (id, label, token) => SwapAgentLabelAsync(id, label, token),
-                r => AddRunToHistory(r), ct);
-            if (!shouldContinue) return;
+            string? reworkPromptOverride = null;
+            if (run.LinkedPullRequest != null)
+            {
+                reworkPromptOverride = PromptBuilder.BuildReworkPrompt(
+                    run.MergeConflictFiles,
+                    run.LinkedPullRequest.ReviewComments,
+                    isDraft: run.LinkedPullRequest.IsDraft);
+
+                if (reworkPromptOverride == null)
+                {
+                    // Nothing to rework — no conflicts, no comments, not draft. Skip code generation.
+                    EmitOutputLine("⏭️ No conflicts, review comments, or draft status — skipping code generation");
+                    _logger.Information("Pipeline {RunId} rework prompt is null (no conflicts, no comments, not draft), skipping code generation", run.RunId);
+                }
+                else
+                {
+                    EmitOutputLine("⚙️ Starting rework code generation...");
+                }
+            }
+            else
+            {
+                EmitOutputLine("⚙️ Starting code generation...");
+            }
+
+            if (reworkPromptOverride != null || run.LinkedPullRequest == null)
+            {
+                var shouldContinue = await _agentExecution.ExecuteCodeGenerationAsync(
+                    run, _activeConfig, _activeAgentProvider!,
+                    issue, parsed,
+                    _cancellationTokenSource,
+                    step => TransitionTo(run, step),
+                    line => OnOutputLine?.Invoke(line), () => NotifyChange(),
+                    r => UpdateFileChangeStatsAsync(r),
+                    (id, label, token) => SwapAgentLabelAsync(id, label, token),
+                    r => AddRunToHistory(r), ct,
+                    promptOverride: reworkPromptOverride);
+                if (!shouldContinue) return;
+            }
             // Brain pull before write
             if (_activeBrainProvider != null && !_activeConfig!.BrainReadOnly && run.BrainContextLoaded)
             {
@@ -365,9 +460,17 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         TransitionTo(run, PipelineStep.CreatingPullRequest);
         try
         {
+            // Set PR info from linked PR before calling the orchestrator (rework mode)
+            if (run.LinkedPullRequest != null)
+            {
+                run.PullRequestUrl = run.LinkedPullRequest.Url;
+                run.PullRequestNumber = run.LinkedPullRequest.Number.ToString();
+            }
+
             var prUrl = await _prOrchestrator.CreatePullRequestAsync(
                 run, report, isDraft, _activeRepoProvider!, _activeIssue,
-                _activeIssueComments, _activeConfig!, ct, line => EmitOutputLine(line));
+                _activeIssueComments, _activeConfig!, ct, line => EmitOutputLine(line),
+                isRework: run.LinkedPullRequest != null);
 
             if (prUrl == null && _activeConfig?.BlacklistMode == BlacklistMode.Fail
                 && run.BlacklistedFilesDetected.Count > 0)
@@ -383,7 +486,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
             }
             else
-                await RemoveAllAgentLabelsAsync(run.IssueIdentifier, ct);
+                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Done, ct);
 
             if (!isDraft && _activeBrainProvider != null && !_activeConfig!.BrainReadOnly)
             {

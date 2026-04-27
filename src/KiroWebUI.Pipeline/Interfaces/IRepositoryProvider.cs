@@ -72,4 +72,34 @@ public interface IRepositoryProvider : IAsyncDisposable
         => throw new NotSupportedException(
             $"{GetType().Name} does not support PullAsync. " +
             "Override this method to enable pull operations.");
+
+    /// <summary>
+    /// Searches for open pull requests whose branch name matches the agent branch pattern
+    /// for the given issue. Returns metadata including draft state, mergeable state, and review comments.
+    /// </summary>
+    Task<IReadOnlyList<LinkedPullRequest>> GetAgentPullRequestsAsync(
+        string issueIdentifier, CancellationToken ct)
+        => Task.FromResult<IReadOnlyList<LinkedPullRequest>>(Array.Empty<LinkedPullRequest>());
+
+    /// <summary>
+    /// Checks out an existing remote branch after clone, creating a local tracking branch.
+    /// </summary>
+    Task CheckoutRemoteBranchAsync(string workspacePath, string branchName, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support CheckoutRemoteBranchAsync.");
+
+    /// <summary>
+    /// Merges the base branch into the current branch. If conflicts occur, leaves conflict
+    /// markers in the working tree and returns the list of conflicting files.
+    /// </summary>
+    Task<MergeResult> MergeFromBaseAsync(string workspacePath, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support MergeFromBaseAsync.");
+
+    /// <summary>
+    /// Updates the body of an existing pull request, preserving title and other metadata.
+    /// </summary>
+    Task UpdatePullRequestAsync(int pullRequestNumber, string body, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support UpdatePullRequestAsync.");
 }

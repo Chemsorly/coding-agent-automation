@@ -378,6 +378,74 @@ public static class PromptBuilder
     }
 
     /// <summary>
+    /// Builds a rework-specific prompt containing merge conflict info and/or review feedback.
+    /// Returns null if there is nothing to rework (no conflicts, no comments, and PR is not a draft),
+    /// signaling the pipeline to skip code generation.
+    /// When isDraft is true (previous failed run), always returns a prompt with draft context.
+    /// </summary>
+    public static string? BuildReworkPrompt(
+        IReadOnlyList<string> conflictFiles,
+        IReadOnlyList<PullRequestReviewComment> reviewComments,
+        bool isDraft = false)
+    {
+        if (conflictFiles.Count == 0 && reviewComments.Count == 0 && !isDraft)
+            return null; // Nothing to rework — skip code gen
+
+        var sb = new StringBuilder();
+        sb.AppendLine("You are reworking an existing pull request. " +
+            "Address the issues described below, then verify your changes compile and pass tests.");
+        sb.AppendLine();
+
+        if (isDraft && conflictFiles.Count == 0 && reviewComments.Count == 0)
+        {
+            sb.AppendLine("## Draft PR — Previous Failed Run");
+            sb.AppendLine();
+            sb.AppendLine("This is a draft PR from a previous failed run. " +
+                "Review the code for build/test issues and fix them.");
+            sb.AppendLine();
+        }
+
+        if (conflictFiles.Count > 0)
+        {
+            sb.AppendLine("## Merge Conflicts");
+            sb.AppendLine();
+            sb.AppendLine("The following files have merge conflict markers " +
+                "(`<<<<<<<`, `=======`, `>>>>>>>`) that must be resolved:");
+            sb.AppendLine();
+            foreach (var file in conflictFiles)
+                sb.AppendLine($"- `{file}`");
+            sb.AppendLine();
+            sb.AppendLine("Open each file, resolve all conflict markers, and ensure the " +
+                "merged result is correct.");
+            sb.AppendLine();
+        }
+
+        if (reviewComments.Count > 0)
+        {
+            sb.AppendLine("## Review Feedback");
+            sb.AppendLine();
+            sb.AppendLine("The following review comments were left on the pull request. " +
+                "Address each one:");
+            sb.AppendLine();
+            foreach (var comment in reviewComments)
+            {
+                var location = comment.Path != null ? $" (file: `{comment.Path}`)" : "";
+                sb.AppendLine($"### @{comment.Author}{location}");
+                sb.AppendLine();
+                sb.AppendLine(comment.Body);
+                sb.AppendLine();
+            }
+        }
+
+        sb.AppendLine($"Refer to `{IssueContextFilePath}` for the full issue description and comments.");
+        sb.AppendLine();
+        sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, etc.). " +
+            "The pipeline handles version control automatically.");
+
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
     /// Builds the brain write instructions section for the implementation prompt.
     /// Returns empty string when brain context is not available or when BrainReadOnly is true.
     /// </summary>

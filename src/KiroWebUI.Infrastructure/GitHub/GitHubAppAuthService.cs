@@ -175,7 +175,10 @@ public sealed class GitHubAppAuthService : IGitHubAppAuthService
         {
             Issuer = _clientId,
             IssuedAt = (now - TimeSpan.FromSeconds(60)).UtcDateTime,
-            Expires = (now + TimeSpan.FromMinutes(10)).UtcDateTime,
+            // GitHub enforces a strict ~10-minute max on the exp claim.
+            // Using 5 minutes instead of 10 gives ~5 minutes of headroom for
+            // clock drift (common in WSL2/Docker Desktop after host sleep/hibernate).
+            Expires = (now + TimeSpan.FromMinutes(5)).UtcDateTime,
             SigningCredentials = new SigningCredentials(securityKey, SecurityAlgorithms.RsaSha256)
         };
 

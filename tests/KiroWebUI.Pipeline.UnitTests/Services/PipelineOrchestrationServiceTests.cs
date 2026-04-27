@@ -121,6 +121,10 @@ public class PipelineOrchestrationServiceTests
                 Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
             });
 
+        _mockRepoProvider.Setup(p => p.GetAgentPullRequestsAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<LinkedPullRequest>() as IReadOnlyList<LinkedPullRequest>);
+
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(_mockIssueProvider.Object);
         _mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>())).Returns(_mockRepoProvider.Object);
         _mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>())).Returns(_mockAgentProvider.Object);
@@ -1254,12 +1258,14 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task StartPipeline_RemovesLabelsOnCompletion()
+    public async Task StartPipeline_AddsAgentDoneLabelOnCompletion()
     {
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
-        // On completion, all agent labels should be removed (the final removal)
+        // On successful completion, agent:done label should be applied
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", AgentLabels.Done, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        // All other agent labels should be removed (SwapAgentLabelAsync removes all before adding the new one)
         foreach (var label in AgentLabels.All)
             _mockIssueProvider.Verify(p => p.RemoveLabelAsync("42", label, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
@@ -2722,5 +2728,319 @@ public class PipelineOrchestrationServiceTests
 
         // Verify agent:error label was set
         _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    // --- Rework mode tests ---
+
+    /// <summary>
+    /// Sets up mocks for rework mode: linked PR with review comments, checkout, merge, and update PR.
+    /// </summary>
+    private void SetupReworkMocks()
+    {
+        _mockRepoProvider.Setup(p => p.GetAgentPullRequestsAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LinkedPullRequest>
+            {
+                new()
+                {
+                    Number = 42,
+                    BranchName = "feature/auto-7-fix-bug-abc12345",
+                    Url = "https://github.com/test/repo/pull/42",
+                    IsDraft = false,
+                    IsMergeable = true,
+                    ReviewComments = new List<PullRequestReviewComment>
+                    {
+                        new()
+                        {
+                            Id = "1", Body = "Fix the null check", Author = "reviewer",
+                            CreatedAt = DateTime.UtcNow, Path = "src/Service.cs"
+                        }
+                    }
+                }
+            });
+
+        _mockRepoProvider.Setup(p => p.CheckoutRemoteBranchAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockRepoProvider.Setup(p => p.MergeFromBaseAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MergeResult
+            {
+                Success = true, HasConflicts = false, ConflictFiles = Array.Empty<string>()
+            });
+
+        _mockRepoProvider.Setup(p => p.UpdatePullRequestAsync(
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenAgentPrExists_EntersReworkMode()
+    {
+        SetupReworkMocks();
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.LinkedPullRequest.Should().NotBeNull();
+        run.LinkedPullRequest!.Number.Should().Be(42);
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+    }
+
+    [Fact]
+    public async Task StartPipeline_InReworkMode_CallsCheckoutInsteadOfCreateBranch()
+    {
+        SetupReworkMocks();
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        _mockRepoProvider.Verify(p => p.CheckoutRemoteBranchAsync(
+            It.IsAny<string>(), It.Is<string>(b => b == "feature/auto-7-fix-bug-abc12345"), It.IsAny<CancellationToken>()), Times.Once);
+        _mockRepoProvider.Verify(p => p.CreateBranchAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StartPipeline_InReworkMode_CallsMergeFromBaseAfterCheckout()
+    {
+        SetupReworkMocks();
+
+        var callOrder = new List<string>();
+        _mockRepoProvider.Setup(p => p.CheckoutRemoteBranchAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("Checkout"))
+            .Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(p => p.MergeFromBaseAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("Merge"))
+            .ReturnsAsync(new MergeResult { Success = true, HasConflicts = false, ConflictFiles = Array.Empty<string>() });
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        callOrder.Should().ContainInOrder("Checkout", "Merge");
+    }
+
+    [Fact]
+    public async Task StartPipeline_InReworkMode_UsesPushNotCreatePr()
+    {
+        SetupReworkMocks();
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        _mockRepoProvider.Verify(p => p.PushBranchAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockRepoProvider.Verify(p => p.CreatePullRequestAsync(
+            It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StartPipeline_InReworkMode_CallsUpdatePullRequestAsync()
+    {
+        SetupReworkMocks();
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        _mockRepoProvider.Verify(p => p.UpdatePullRequestAsync(
+            42, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task StartPipeline_InReworkMode_WithConflicts_PromptIncludesConflictFiles()
+    {
+        SetupReworkMocks();
+
+        _mockRepoProvider.Setup(p => p.MergeFromBaseAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MergeResult
+            {
+                Success = false,
+                HasConflicts = true,
+                ConflictFiles = new List<string> { "src/File1.cs", "src/File2.cs" }
+            });
+
+        string? capturedPrompt = null;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => !r.Prompt.Contains("Analyze the codebase")),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedPrompt = req.Prompt;
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        capturedPrompt.Should().NotBeNull();
+        capturedPrompt.Should().Contain("src/File1.cs");
+        capturedPrompt.Should().Contain("src/File2.cs");
+        capturedPrompt.Should().Contain("Merge Conflicts");
+    }
+
+    [Fact]
+    public async Task StartPipeline_InReworkMode_WithReviewComments_PromptIncludesFeedback()
+    {
+        SetupReworkMocks();
+
+        string? capturedPrompt = null;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => !r.Prompt.Contains("Analyze the codebase")),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedPrompt = req.Prompt;
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        capturedPrompt.Should().NotBeNull();
+        capturedPrompt.Should().Contain("reviewer");
+        capturedPrompt.Should().Contain("Fix the null check");
+        capturedPrompt.Should().Contain("src/Service.cs");
+        capturedPrompt.Should().Contain("Review Feedback");
+    }
+
+    [Fact]
+    public async Task StartPipeline_InReworkMode_WhenCheckoutThrows_TransitionsToFailed()
+    {
+        SetupReworkMocks();
+
+        _mockRepoProvider.Setup(p => p.CheckoutRemoteBranchAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Branch not found"));
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("checkout");
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task StartPipeline_WhenGetAgentPrThrows_FallsBackToNewIssueFlow()
+    {
+        _mockRepoProvider.Setup(p => p.GetAgentPullRequestsAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("API error"));
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.LinkedPullRequest.Should().BeNull();
+        _mockRepoProvider.Verify(p => p.CreateBranchAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task StartPipeline_InReworkMode_WhenPushFailsNonFastForward_TransitionsToFailed()
+    {
+        SetupReworkMocks();
+
+        _mockRepoProvider.Setup(p => p.PushBranchAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("non-fast-forward"));
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task StartPipeline_InReworkMode_WhenMergeThrows_TransitionsToFailed()
+    {
+        SetupReworkMocks();
+
+        _mockRepoProvider.Setup(p => p.MergeFromBaseAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Base branch not found"));
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("merge");
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task StartPipeline_InReworkMode_WhenUpdatePrThrows_ContinuesSuccessfully()
+    {
+        SetupReworkMocks();
+
+        _mockRepoProvider.Setup(p => p.UpdatePullRequestAsync(
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("PR not found"));
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Pipeline should complete successfully despite UpdatePullRequestAsync failure
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+    }
+
+    [Fact]
+    public async Task StartPipeline_InReworkMode_DraftPrWithNoFeedback_EntersCodeGeneration()
+    {
+        SetupReworkMocks();
+
+        // Override: draft PR with no review comments
+        _mockRepoProvider.Setup(p => p.GetAgentPullRequestsAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LinkedPullRequest>
+            {
+                new()
+                {
+                    Number = 42,
+                    BranchName = "feature/auto-7-fix-bug-abc12345",
+                    Url = "https://github.com/test/repo/pull/42",
+                    IsDraft = true,
+                    IsMergeable = true,
+                    ReviewComments = Array.Empty<PullRequestReviewComment>()
+                }
+            });
+
+        string? capturedPrompt = null;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => !r.Prompt.Contains("Analyze the codebase")),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedPrompt = req.Prompt;
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        capturedPrompt.Should().NotBeNull();
+        capturedPrompt.Should().Contain("Draft PR");
+        capturedPrompt.Should().Contain("previous failed run");
+    }
+
+    [Fact]
+    public async Task StartPipeline_InReworkMode_NoConflictsNoCommentsNotDraft_SkipsCodeGen()
+    {
+        SetupReworkMocks();
+
+        // Override: non-draft PR with no review comments and no conflicts
+        _mockRepoProvider.Setup(p => p.GetAgentPullRequestsAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LinkedPullRequest>
+            {
+                new()
+                {
+                    Number = 42,
+                    BranchName = "feature/auto-7-fix-bug-abc12345",
+                    Url = "https://github.com/test/repo/pull/42",
+                    IsDraft = false,
+                    IsMergeable = true,
+                    ReviewComments = Array.Empty<PullRequestReviewComment>()
+                }
+            });
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Code generation agent should NOT be called (only analysis agent may be called)
+        _mockAgentProvider.Verify(p => p.ExecuteAsync(
+            It.Is<AgentRequest>(r => !r.Prompt.Contains("Analyze the codebase")),
+            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
     }
 }

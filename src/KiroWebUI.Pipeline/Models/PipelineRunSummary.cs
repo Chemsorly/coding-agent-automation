@@ -25,4 +25,7 @@ public sealed class PipelineRunSummary
 
     /// <summary>Analysis gate recommendation: "ready", "not_ready", "wont_do", or null.</summary>
     public string? AnalysisRecommendation { get; init; }
+
+    /// <summary>Whether this run was a rework of an existing PR.</summary>
+    public bool IsRework { get; init; }
 }

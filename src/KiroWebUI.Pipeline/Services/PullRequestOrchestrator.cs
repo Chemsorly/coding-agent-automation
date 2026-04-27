@@ -33,7 +33,8 @@ internal class PullRequestOrchestrator
         IReadOnlyList<IssueComment>? issueComments,
         PipelineConfiguration config,
         CancellationToken ct,
-        Action<string>? onOutputLine = null)
+        Action<string>? onOutputLine = null,
+        bool isRework = false)
     {
         // Commit any uncommitted changes
         try
@@ -102,25 +103,50 @@ internal class PullRequestOrchestrator
             run.ModelName,
             codeReviewSummary);
 
-        var prInfo = new PullRequestInfo
+        if (isRework)
         {
-            Title = prTitle,
-            Body = prBody,
-            BranchName = run.BranchName!,
-            BaseBranch = repoProvider.BaseBranch,
-            IsDraft = isDraft
-        };
+            // Rework: update existing PR body (run.PullRequestUrl and run.PullRequestNumber
+            // are already set by the caller from LinkedPullRequest)
+            run.IsDraftPr = isDraft;
+            run.CompletedAt = DateTime.UtcNow;
 
-        var prUrl = await repoProvider.CreatePullRequestAsync(prInfo, ct);
-        run.PullRequestUrl = prUrl;
-        run.IsDraftPr = isDraft;
-        run.PullRequestNumber = ExtractPrNumber(prUrl);
-        run.CompletedAt = DateTime.UtcNow;
+            try
+            {
+                var prNumber = int.Parse(run.PullRequestNumber!);
+                await repoProvider.UpdatePullRequestAsync(prNumber, prBody, ct);
+                onOutputLine?.Invoke($"📝 Updated PR #{run.PullRequestNumber} body");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Non-fatal — code is already pushed to the branch
+                _logger.Warning(ex, "Pipeline {RunId} failed to update PR body, continuing", run.RunId);
+            }
 
-        var prLabel = isDraft ? "Draft pull request" : "Pull request";
-        onOutputLine?.Invoke($"🔗 {prLabel} #{run.PullRequestNumber} created");
+            return run.PullRequestUrl;
+        }
+        else
+        {
+            // New-issue: create new PR
+            var prInfo = new PullRequestInfo
+            {
+                Title = prTitle,
+                Body = prBody,
+                BranchName = run.BranchName!,
+                BaseBranch = repoProvider.BaseBranch,
+                IsDraft = isDraft
+            };
 
-        return prUrl;
+            var prUrl = await repoProvider.CreatePullRequestAsync(prInfo, ct);
+            run.PullRequestUrl = prUrl;
+            run.IsDraftPr = isDraft;
+            run.PullRequestNumber = ExtractPrNumber(prUrl);
+            run.CompletedAt = DateTime.UtcNow;
+
+            var prLabel = isDraft ? "Draft pull request" : "Pull request";
+            onOutputLine?.Invoke($"🔗 {prLabel} #{run.PullRequestNumber} created");
+
+            return prUrl;
+        }
     }
 
     /// <summary>

@@ -115,6 +115,12 @@ public sealed class PipelineRun
     /// <summary>Brain update validation result from BrainUpdateService.</summary>
     public BrainValidationResult? BrainValidation { get; set; }
 
+    /// <summary>Linked agent PR detected during rework mode, or null for new-issue runs.</summary>
+    public LinkedPullRequest? LinkedPullRequest { get; set; }
+
+    /// <summary>Files with merge conflicts from MergeFromBaseAsync, empty if no conflicts.</summary>
+    public IReadOnlyList<string> MergeConflictFiles { get; set; } = Array.Empty<string>();
+
     /// <summary>How this run was initiated: "manual" or "loop".</summary>
     public string InitiatedBy { get; init; } = "manual";
 
@@ -134,6 +140,7 @@ public sealed class PipelineRun
         BrainRepoUsed = BrainProviderConfigId != null,
         BrainUpdatesPushed = BrainUpdatesPushed,
         InitiatedBy = InitiatedBy,
-        AnalysisRecommendation = AnalysisRecommendation
+        AnalysisRecommendation = AnalysisRecommendation,
+        IsRework = LinkedPullRequest != null
     };
 }
