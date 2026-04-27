@@ -280,6 +280,30 @@ public static class PromptBuilder
     }
 
     /// <summary>
+    /// Builds a cleanup prompt for the PreparingForPullRequest step.
+    /// The agent cleans up the working directory without making functional changes.
+    /// </summary>
+    public static string BuildCleanupPrompt()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("## Pre-Pull Request Cleanup");
+        sb.AppendLine();
+        sb.AppendLine("The implementation is complete and quality gates have passed. Before creating the pull request, clean up the working directory.");
+        sb.AppendLine();
+        sb.AppendLine("Do the following:");
+        sb.AppendLine("- Remove any debug/temporary code added during development (e.g., Console.WriteLine, debug logging, TODO-REMOVE comments)");
+        sb.AppendLine("- Clean up unused imports and dead code");
+        sb.AppendLine("- Ensure consistent formatting");
+        sb.AppendLine("- Remove any test scaffolding that isn't part of the deliverable");
+        sb.AppendLine("- Verify no sensitive data or credentials were accidentally added");
+        sb.AppendLine();
+        sb.AppendLine("Do NOT make functional changes — cleanup only.");
+        sb.AppendLine();
+        sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, etc.). The pipeline handles version control automatically.");
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
     /// Builds the brain context section to inject into agent prompts.
     /// Returns empty string when brain context is not available.
     /// </summary>
