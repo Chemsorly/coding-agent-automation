@@ -248,6 +248,85 @@ public class QualityGateValidatorTests
         warnings.Should().Be(expectedWarnings);
     }
 
+    // --- Security Scan Output Parsing Tests ---
+
+    [Fact]
+    public void ParseSecurityScanOutput_NoVulnerabilities_ReturnsFalse()
+    {
+        var output = """
+            The following sources were used:
+               https://api.nuget.org/v3/index.json
+
+            Project `MyProject` has no vulnerable packages given the current sources.
+            """;
+
+        var (hasVulnerabilities, projectCount) = QualityGateValidator.ParseSecurityScanOutput(output);
+
+        hasVulnerabilities.Should().BeFalse();
+        projectCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void ParseSecurityScanOutput_SingleProjectVulnerable_ReturnsTrue()
+    {
+        var output = """
+            The following sources were used:
+               https://api.nuget.org/v3/index.json
+
+            Project `MyProject` has the following vulnerable packages
+               [net10.0]:
+               Top-level Package      Requested   Resolved   Severity   Advisory URL
+               > SomePackage           1.0.0       1.0.0      High       https://github.com/advisories/GHSA-xxxx
+            """;
+
+        var (hasVulnerabilities, projectCount) = QualityGateValidator.ParseSecurityScanOutput(output);
+
+        hasVulnerabilities.Should().BeTrue();
+        projectCount.Should().Be(1);
+    }
+
+    [Fact]
+    public void ParseSecurityScanOutput_MultipleProjectsVulnerable_ReturnsCorrectCount()
+    {
+        var output = """
+            The following sources were used:
+               https://api.nuget.org/v3/index.json
+
+            Project `ProjectA` has the following vulnerable packages
+               [net10.0]:
+               Top-level Package      Requested   Resolved   Severity   Advisory URL
+               > PackageA              1.0.0       1.0.0      High       https://github.com/advisories/GHSA-aaaa
+
+            Project `ProjectB` has the following vulnerable packages
+               [net10.0]:
+               Top-level Package      Requested   Resolved   Severity   Advisory URL
+               > PackageB              2.0.0       2.0.0      Critical   https://github.com/advisories/GHSA-bbbb
+            """;
+
+        var (hasVulnerabilities, projectCount) = QualityGateValidator.ParseSecurityScanOutput(output);
+
+        hasVulnerabilities.Should().BeTrue();
+        projectCount.Should().Be(2);
+    }
+
+    [Fact]
+    public void ParseSecurityScanOutput_EmptyOutput_ReturnsFalse()
+    {
+        var (hasVulnerabilities, projectCount) = QualityGateValidator.ParseSecurityScanOutput("");
+
+        hasVulnerabilities.Should().BeFalse();
+        projectCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void ParseSecurityScanOutput_NullOutput_ReturnsFalse()
+    {
+        var (hasVulnerabilities, projectCount) = QualityGateValidator.ParseSecurityScanOutput(null);
+
+        hasVulnerabilities.Should().BeFalse();
+        projectCount.Should().Be(0);
+    }
+
     // --- BuildCiFailureDetails Tests ---
 
     [Fact]
@@ -355,5 +434,115 @@ public class QualityGateValidatorTests
         var path = Path.Combine(dir, fileName);
         File.WriteAllText(path, xml);
         return path;
+    }
+}
+
+/// <summary>
+/// Tests for RunSecurityScanGateAsync behavior via ValidateAsync with a testable subclass
+/// that overrides RunProcessAsync to return controlled output.
+/// </summary>
+public class SecurityScanGateTests
+{
+    private static readonly PipelineConfiguration SecurityScanConfig = new()
+    {
+        SecurityScanEnabled = true,
+        MinCoverageThreshold = 0 // skip coverage gate
+    };
+
+    [Fact]
+    public async Task RunSecurityScanGateAsync_NoVulnerabilities_ReturnsPass()
+    {
+        var stdout = "The following sources were used:\n   https://api.nuget.org/v3/index.json\n\nProject `MyProject` has no vulnerable packages given the current sources.";
+        var validator = new TestableQualityGateValidator(exitCode: 0, stdout: stdout, stderr: "");
+
+        var report = await validator.ValidateAsync(CreateTempWorkspace(), SecurityScanConfig, CancellationToken.None);
+
+        report.SecurityScan.Should().NotBeNull();
+        report.SecurityScan!.Passed.Should().BeTrue();
+        report.SecurityScan.Details.Should().Be("No vulnerable packages found");
+    }
+
+    [Fact]
+    public async Task RunSecurityScanGateAsync_VulnerabilitiesFound_ReturnsFail()
+    {
+        var stdout = "Project `MyProject` has the following vulnerable packages\n   [net10.0]:\n   > SomePackage  1.0.0  1.0.0  High  https://github.com/advisories/GHSA-xxxx";
+        var validator = new TestableQualityGateValidator(exitCode: 0, stdout: stdout, stderr: "");
+
+        var report = await validator.ValidateAsync(CreateTempWorkspace(), SecurityScanConfig, CancellationToken.None);
+
+        report.SecurityScan.Should().NotBeNull();
+        report.SecurityScan!.Passed.Should().BeFalse();
+        report.SecurityScan.Details.Should().Be("1 project(s) with vulnerable packages");
+    }
+
+    [Fact]
+    public async Task RunSecurityScanGateAsync_EmptyOutput_ReturnsPass()
+    {
+        var validator = new TestableQualityGateValidator(exitCode: 0, stdout: "", stderr: "");
+
+        var report = await validator.ValidateAsync(CreateTempWorkspace(), SecurityScanConfig, CancellationToken.None);
+
+        report.SecurityScan.Should().NotBeNull();
+        report.SecurityScan!.Passed.Should().BeTrue();
+        report.SecurityScan.Details.Should().Be("No vulnerable packages found");
+    }
+
+    [Fact]
+    public async Task RunSecurityScanGateAsync_NonZeroExitCode_ReturnsSkipped()
+    {
+        var validator = new TestableQualityGateValidator(exitCode: 1, stdout: "", stderr: "error: something went wrong");
+
+        var report = await validator.ValidateAsync(CreateTempWorkspace(), SecurityScanConfig, CancellationToken.None);
+
+        report.SecurityScan.Should().NotBeNull();
+        report.SecurityScan!.Passed.Should().BeTrue();
+        report.SecurityScan.Details.Should().Contain("Security scan skipped");
+        report.SecurityScan.Details.Should().Contain("exit code 1");
+    }
+
+    [Fact]
+    public async Task RunSecurityScanGateAsync_WritesGateOutput()
+    {
+        var stdout = "some output";
+        var validator = new TestableQualityGateValidator(exitCode: 0, stdout: stdout, stderr: "");
+        var workspace = CreateTempWorkspace();
+
+        await validator.ValidateAsync(workspace, SecurityScanConfig, CancellationToken.None);
+
+        var outputFile = Path.Combine(workspace, ".kiro", "quality-gates", "security-scan-stdout.txt");
+        File.Exists(outputFile).Should().BeTrue();
+        File.ReadAllText(outputFile).Should().Be(stdout);
+    }
+
+    private static string CreateTempWorkspace()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"sec-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    /// <summary>
+    /// Subclass that overrides RunProcessAsync to return controlled output,
+    /// enabling unit testing of gate methods without running real processes.
+    /// </summary>
+    private sealed class TestableQualityGateValidator : QualityGateValidator
+    {
+        private readonly int _exitCode;
+        private readonly string _stdout;
+        private readonly string _stderr;
+
+        public TestableQualityGateValidator(int exitCode, string stdout, string stderr)
+            : base(Serilog.Log.Logger)
+        {
+            _exitCode = exitCode;
+            _stdout = stdout;
+            _stderr = stderr;
+        }
+
+        private protected override Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+            string fileName, string arguments, string workingDirectory, CancellationToken ct)
+        {
+            return Task.FromResult((_exitCode, _stdout, _stderr));
+        }
     }
 }

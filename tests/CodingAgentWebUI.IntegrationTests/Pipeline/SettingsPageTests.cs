@@ -375,7 +375,7 @@ public class SettingsPageTests
         savedConfig!.MaxRetries.Should().Be(3);
         savedConfig.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30));
         savedConfig.MinCoverageThreshold.Should().Be(50.0);
-        savedConfig.SecurityScanEnabled.Should().BeFalse();
+        savedConfig.SecurityScanEnabled.Should().BeTrue();
         savedConfig.BlacklistedPaths.Should().BeEquivalentTo(new[] { ".kiro", ".github", ".brain" });
         savedConfig.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
         savedConfig.CodeReview.Enabled.Should().BeTrue();
