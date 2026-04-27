@@ -8,6 +8,8 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// Singleton service that coordinates the entire automated development pipeline.
 /// Manages the active pipeline run, state transitions, chat interaction, retry logic,
 /// quality gate validation, and PR creation.
+/// Supports both local execution (single <see cref="ActiveRun"/>) and multi-agent
+/// dispatch (concurrent runs tracked via <see cref="IOrchestratorRunService"/>).
 /// </summary>
 public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 {
@@ -19,6 +21,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     private readonly IPipelineRunHistoryService _historyService;
     private readonly AgentExecutionOrchestrator _agentExecution;
     private readonly QualityGateOrchestrator _qualityGates;
+    private readonly IOrchestratorRunService? _runService;
     private readonly Serilog.ILogger _logger;
 
     private CancellationTokenSource? _cancellationTokenSource;
@@ -40,14 +43,51 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     /// <summary>Fired for each agent output line for real-time display.</summary>
     public event Action<string>? OnOutputLine;
 
-    /// <summary>The currently active pipeline run, or null if idle.</summary>
+    /// <summary>The currently active local pipeline run, or null if idle. For agent runs, use <see cref="GetAllActiveRuns"/>.</summary>
     public PipelineRun? ActiveRun { get; private set; }
 
-    /// <summary>Whether a pipeline run is currently in progress.</summary>
+    /// <summary>Whether a local pipeline run is currently in progress.</summary>
     public bool IsRunning => ActiveRun != null
         && ActiveRun.CurrentStep != PipelineStep.Completed
         && ActiveRun.CurrentStep != PipelineStep.Failed
         && ActiveRun.CurrentStep != PipelineStep.Cancelled;
+
+    /// <summary>
+    /// Checks whether the given issue is being processed by any active run (local or agent).
+    /// Use this instead of <see cref="IsRunning"/> when dispatching to agents.
+    /// </summary>
+    public bool IsIssueBeingProcessed(string issueIdentifier)
+    {
+        ArgumentNullException.ThrowIfNull(issueIdentifier);
+
+        // Check local run
+        if (ActiveRun != null && ActiveRun.IssueIdentifier == issueIdentifier && IsRunning)
+            return true;
+
+        // Check agent runs via OrchestratorRunService
+        return _runService?.IsIssueBeingProcessed(issueIdentifier) == true;
+    }
+
+    /// <summary>
+    /// Returns all active runs — both the local run (if any) and all agent-dispatched runs.
+    /// </summary>
+    public IReadOnlyList<PipelineRun> GetAllActiveRuns()
+    {
+        var runs = new List<PipelineRun>();
+
+        if (ActiveRun != null && IsRunning)
+            runs.Add(ActiveRun);
+
+        if (_runService != null)
+            runs.AddRange(_runService.GetActiveRuns());
+
+        return runs.AsReadOnly();
+    }
+
+    /// <summary>
+    /// Whether any pipeline run is active (local or agent).
+    /// </summary>
+    public bool HasAnyActiveRuns => IsRunning || (_runService?.HasActiveRuns == true);
 
     public PipelineOrchestrationService(
         IConfigurationStore configStore,
@@ -57,7 +97,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         CiLogWriter ciLogWriter,
         Serilog.ILogger logger,
         IBrainUpdateService? brainUpdateService = null,
-        IPipelineRunHistoryService? historyService = null)
+        IPipelineRunHistoryService? historyService = null,
+        IOrchestratorRunService? runService = null)
     {
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
@@ -70,6 +111,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         _providerFactory = providerFactory;
         _issueParser = issueParser;
         _logger = logger;
+        _runService = runService;
 
         ArgumentNullException.ThrowIfNull(brainUpdateService);
         _brainSync = new BrainSyncOrchestrator(brainUpdateService, logger);
@@ -207,6 +249,72 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     {
         try { OnOutputLine?.Invoke(message); }
         catch (Exception ex) { _logger.Warning(ex, "OnOutputLine handler threw an exception"); }
+    }
+
+    /// <summary>
+    /// Creates a <see cref="PipelineRun"/> for dispatch to a remote agent.
+    /// The run is tracked via <see cref="IOrchestratorRunService"/> (not the local <see cref="ActiveRun"/>).
+    /// Does NOT execute the pipeline locally — the agent handles execution.
+    /// </summary>
+    /// <returns>The created <see cref="PipelineRun"/> ready for dispatch, or <c>null</c> if the issue is already being processed.</returns>
+    public async Task<PipelineRun?> CreateDispatchedRunAsync(
+        string issueProviderId, string repoProviderId, string issueIdentifier,
+        string agentProviderId, string agentId, CancellationToken ct,
+        string? brainProviderId = null, string? pipelineProviderId = null,
+        string initiatedBy = "dispatch")
+    {
+        ArgumentNullException.ThrowIfNull(issueProviderId);
+        ArgumentNullException.ThrowIfNull(repoProviderId);
+        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(agentProviderId);
+        ArgumentNullException.ThrowIfNull(agentId);
+
+        if (_runService == null)
+            throw new InvalidOperationException("OrchestratorRunService is not configured. Cannot dispatch to agents.");
+
+        // Check if this issue is already being processed (local or agent)
+        if (IsIssueBeingProcessed(issueIdentifier))
+        {
+            _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping dispatch", issueIdentifier);
+            return null;
+        }
+
+        var config = await _configStore.LoadPipelineConfigAsync(ct);
+
+        // Resolve repo provider config to get repository name
+        var repoProviderConfig = await ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, ct);
+        await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
+        var agentProviderConfig = await ResolveProviderConfigAsync(agentProviderId, ProviderKind.Agent, ct);
+        var configuredModel = agentProviderConfig.Settings.GetValueOrDefault("model", "auto");
+
+        var run = new PipelineRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = issueIdentifier,
+            IssueTitle = string.Empty,
+            IssueProviderConfigId = issueProviderId,
+            RepoProviderConfigId = repoProviderId,
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.Created,
+            RepositoryName = tempRepoProvider.RepositoryFullName,
+            ModelName = configuredModel,
+            BrainProviderConfigId = brainProviderId,
+            InitiatedBy = initiatedBy,
+            AgentId = agentId
+        };
+
+        // Track in OrchestratorRunService
+        _runService.AddRun(run);
+
+        // Persist to history
+        _historyService.AddRunToHistory(run);
+
+        _logger.Information(
+            "Dispatched run {RunId} created for issue {IssueIdentifier} → agent {AgentId}",
+            run.RunId, issueIdentifier, agentId);
+
+        NotifyChange();
+        return run;
     }
 
     private async Task ExecutePipelineStepsAsync(
@@ -351,11 +459,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             }
             // Analysis phase
             EmitOutputLine("🔍 Starting analysis...");
+            IAgentIssueOperations issueOps = new IssueProviderIssueOperations(_activeIssueProvider!, _logger);
             var analysisShouldContinue = await _agentExecution.ExecuteAnalysisPhaseAsync(
-                run, _activeConfig, _activeAgentProvider!, _activeIssueProvider!,
+                run, _activeConfig, _activeAgentProvider!, issueOps,
                 issue, parsed, issueComments,
                 step => TransitionTo(run, step),
-                (id, label, token) => SwapAgentLabelAsync(id, label, token),
                 r => AddRunToHistory(r),
                 line => EmitOutputLine(line), () => NotifyChange(), ct);
             if (!analysisShouldContinue) return;
@@ -393,7 +501,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                     step => TransitionTo(run, step),
                     line => OnOutputLine?.Invoke(line), () => NotifyChange(),
                     r => UpdateFileChangeStatsAsync(r),
-                    (id, label, token) => SwapAgentLabelAsync(id, label, token),
+                    issueOps,
                     r => AddRunToHistory(r), ct,
                     promptOverride: reworkPromptOverride);
                 if (!shouldContinue) return;
@@ -417,7 +525,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 run, _activeConfig!, _activeAgentProvider!, _activeRepoProvider!, _activePipelineProvider,
                 _cancellationTokenSource,
                 step => TransitionTo(run, step),
-                (id, label, token) => SwapAgentLabelAsync(id, label, token),
+                issueOps,
                 (id, token) => RemoveAllAgentLabelsAsync(id, token),
                 r => AddRunToHistory(r),
                 line => OnOutputLine?.Invoke(line), () => NotifyChange(),
@@ -668,5 +776,39 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         // deadlocks in Blazor Server's SynchronizationContext (review finding #13).
         // DisposeAsync() is the correct disposal path; sync Dispose handles only sync resources.
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Adapts <see cref="IIssueProvider"/> to <see cref="IAgentIssueOperations"/> for use
+    /// by <see cref="AgentExecutionOrchestrator"/> and <see cref="QualityGateOrchestrator"/>.
+    /// Implements the label swap logic (remove all agent labels, add new label) inline.
+    /// </summary>
+    private sealed class IssueProviderIssueOperations : IAgentIssueOperations
+    {
+        private readonly IIssueProvider _issueProvider;
+        private readonly Serilog.ILogger _logger;
+
+        public IssueProviderIssueOperations(IIssueProvider issueProvider, Serilog.ILogger logger)
+        {
+            _issueProvider = issueProvider;
+            _logger = logger;
+        }
+
+        public Task PostCommentAsync(string issueIdentifier, string body, CancellationToken ct)
+            => _issueProvider.PostCommentAsync(issueIdentifier, body, ct);
+
+        public async Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct)
+        {
+            try
+            {
+                foreach (var label in AgentLabels.All)
+                    await _issueProvider.RemoveLabelAsync(issueIdentifier, label, ct);
+                await _issueProvider.AddLabelAsync(issueIdentifier, newLabel, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to swap agent label to {Label} on issue {Issue}", newLabel, issueIdentifier);
+            }
+        }
     }
 }

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- MsgPack003: Suppress for existing types referenced by MessagePack DTOs via ContractlessStandardResolver.
+         MsgPack017: Init properties with default initializers are intentional. -->
+    <NoWarn>$(NoWarn);MsgPack003;MsgPack017</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.7" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.MessagePack" Version="10.0.7" />
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.Infrastructure\CodingAgentWebUI.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

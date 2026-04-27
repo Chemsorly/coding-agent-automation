@@ -31,6 +31,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgentWebUI\CodingAgentWebUI.csproj" />
   </ItemGroup>
 
 </Project>

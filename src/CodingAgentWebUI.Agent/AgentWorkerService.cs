@@ -1,0 +1,310 @@
+using System.Diagnostics;
+using CodingAgentWebUI.Pipeline.Models;
+using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.Hosting;
+namespace CodingAgentWebUI.Agent;
+
+/// <summary>
+/// Background service that manages the agent lifecycle: connects to the orchestrator,
+/// registers, handles job assignments, sends heartbeats, and gracefully shuts down.
+/// </summary>
+public sealed class AgentWorkerService : BackgroundService
+{
+    private readonly HubConnectionManager _hubManager;
+    private readonly LocalPipelineExecutor _executor;
+    private readonly Serilog.ILogger _logger;
+
+    private readonly string _agentId;
+    private readonly string _agentType;
+    private readonly IReadOnlyList<string> _labels;
+
+    private CancellationTokenSource? _jobCts;
+    private Task? _activeJobTask;
+    private string? _activeJobId;
+    private PipelineStep? _currentStep;
+    private readonly object _busyLock = new();
+
+    public AgentWorkerService(
+        HubConnectionManager hubManager,
+        LocalPipelineExecutor executor,
+        Serilog.ILogger logger)
+    {
+        ArgumentNullException.ThrowIfNull(hubManager);
+        ArgumentNullException.ThrowIfNull(executor);
+        ArgumentNullException.ThrowIfNull(logger);
+
+        _hubManager = hubManager;
+        _executor = executor;
+        _logger = logger;
+
+        _agentId = Environment.GetEnvironmentVariable("AGENT_ID")
+            ?? Environment.MachineName;
+        _agentType = Environment.GetEnvironmentVariable("AGENT_TYPE")
+            ?? throw new InvalidOperationException("AGENT_TYPE environment variable is required");
+
+        var labelsEnv = Environment.GetEnvironmentVariable("AGENT_LABELS") ?? string.Empty;
+        _labels = labelsEnv
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList()
+            .AsReadOnly();
+    }
+
+    /// <summary>Whether the agent is currently executing a job.</summary>
+    public bool IsBusy => _activeJobId is not null;
+
+    /// <summary>The current pipeline step being executed, or null if idle.</summary>
+    public PipelineStep? CurrentStep => _currentStep;
+
+    /// <summary>Whether the hub connection is active.</summary>
+    public bool IsConnected => _hubManager.IsConnected;
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        // Wire up event handlers
+        _hubManager.OnAssignJob += HandleAssignJobAsync;
+        _hubManager.OnCancelJob += HandleCancelJobAsync;
+
+        try
+        {
+            // Connect to orchestrator
+            await _hubManager.StartAsync(stoppingToken);
+
+            // Register with orchestrator
+            var registration = new AgentRegistrationMessage
+            {
+                AgentId = _agentId,
+                Hostname = Environment.MachineName,
+                AgentType = _agentType,
+                Labels = _labels
+            };
+
+            await _hubManager.Connection.InvokeAsync("RegisterAgent", registration, stoppingToken);
+            _logger.Information("Agent {AgentId} registered as {AgentType} with labels [{Labels}]",
+                _agentId, _agentType, string.Join(", ", _labels));
+
+            // Heartbeat loop
+            using var heartbeatTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    if (await heartbeatTimer.WaitForNextTickAsync(stoppingToken))
+                        await SendHeartbeatAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Heartbeat failed, will retry on next tick");
+                }
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Expected during shutdown
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Agent worker service encountered a fatal error");
+            throw;
+        }
+        finally
+        {
+            await ShutdownAsync();
+        }
+    }
+
+    private async Task HandleAssignJobAsync(JobAssignmentMessage message)
+    {
+        lock (_busyLock)
+        {
+            if (_activeJobId is not null)
+            {
+                _logger.Warning("Rejecting job {JobId} — agent is busy with {ActiveJobId}",
+                    message.JobId, _activeJobId);
+                _ = _hubManager.Connection.InvokeAsync("JobRejected", message.JobId, "Agent is busy");
+                return;
+            }
+
+            _activeJobId = message.JobId;
+        }
+
+        _logger.Information("Accepted job {JobId} for issue {IssueIdentifier}",
+            message.JobId, message.IssueIdentifier);
+
+        try
+        {
+            await _hubManager.Connection.InvokeAsync("JobAccepted", message.JobId);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to send JobAccepted for {JobId}", message.JobId);
+            lock (_busyLock) { _activeJobId = null; }
+            return;
+        }
+
+        _jobCts = new CancellationTokenSource();
+
+        await using var outputBatcher = new OutputBatcher();
+        outputBatcher.OnFlush += async lines =>
+        {
+            try
+            {
+                await _hubManager.Connection.InvokeAsync("ReportOutputLines", message.JobId, lines);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to send output lines batch");
+            }
+        };
+
+        _activeJobTask = Task.Run(async () =>
+        {
+            JobCompletionPayload? completion = null;
+            try
+            {
+                completion = await _executor.ExecuteAsync(
+                    message, _hubManager.Connection, outputBatcher,
+                    step => _currentStep = step,
+                    _jobCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                completion = new JobCompletionPayload
+                {
+                    FinalStep = PipelineStep.Cancelled,
+                    CompletedAt = DateTimeOffset.UtcNow,
+                    IsRework = message.LinkedPullRequest is not null
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Pipeline execution failed for job {JobId}", message.JobId);
+                completion = new JobCompletionPayload
+                {
+                    FinalStep = PipelineStep.Failed,
+                    FailureReason = ex.Message,
+                    CompletedAt = DateTimeOffset.UtcNow,
+                    IsRework = message.LinkedPullRequest is not null
+                };
+            }
+            finally
+            {
+                // Report completion
+                try
+                {
+                    if (completion is not null)
+                        await _hubManager.Connection.InvokeAsync("ReportJobCompleted", message.JobId, completion);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "Failed to report job completion for {JobId}", message.JobId);
+                }
+
+                lock (_busyLock)
+                {
+                    _activeJobId = null;
+                    _currentStep = null;
+                }
+
+                _jobCts?.Dispose();
+                _jobCts = null;
+
+                // Signal ready for next job
+                try
+                {
+                    await _hubManager.Connection.InvokeAsync("AgentReady", _agentId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to send AgentReady signal");
+                }
+            }
+        });
+    }
+
+    private Task HandleCancelJobAsync(string jobId)
+    {
+        lock (_busyLock)
+        {
+            if (_activeJobId != jobId)
+            {
+                _logger.Warning("Received CancelJob for {JobId} but active job is {ActiveJobId}",
+                    jobId, _activeJobId);
+                return Task.CompletedTask;
+            }
+        }
+
+        _logger.Information("Cancelling job {JobId}", jobId);
+        _jobCts?.Cancel();
+        return Task.CompletedTask;
+    }
+
+    private async Task SendHeartbeatAsync(CancellationToken ct)
+    {
+        var heartbeat = new HeartbeatMessage
+        {
+            AgentId = _agentId,
+            Timestamp = DateTimeOffset.UtcNow,
+            CurrentStep = _currentStep,
+            MemoryUsageMb = Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024)
+        };
+
+        await _hubManager.Connection.InvokeAsync("Heartbeat", heartbeat, ct);
+    }
+
+    private async Task ShutdownAsync()
+    {
+        _logger.Information("Agent {AgentId} shutting down...", _agentId);
+
+        // Cancel active job if running
+        if (_activeJobId is not null)
+        {
+            _logger.Information("Cancelling active job {JobId} due to shutdown", _activeJobId);
+            _jobCts?.Cancel();
+
+            // Wait briefly for the job to finish its current step
+            if (_activeJobTask is not null)
+            {
+                try
+                {
+                    await _activeJobTask.WaitAsync(TimeSpan.FromSeconds(30));
+                }
+                catch (TimeoutException)
+                {
+                    _logger.Warning("Active job did not complete within shutdown timeout");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Error waiting for active job to complete during shutdown");
+                }
+            }
+        }
+
+        // Deregister from orchestrator
+        try
+        {
+            if (_hubManager.IsConnected)
+            {
+                await _hubManager.Connection.InvokeAsync("DeregisterAgent", _agentId);
+                _logger.Information("Agent {AgentId} deregistered from orchestrator", _agentId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to deregister agent during shutdown");
+        }
+
+        // Close connection
+        try
+        {
+            await _hubManager.StopAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to close hub connection during shutdown");
+        }
+    }
+}

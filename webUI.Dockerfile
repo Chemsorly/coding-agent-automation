@@ -1,11 +1,12 @@
 # =============================================================================
-# CodingAgentWebUI Dockerfile
-# Runs the Kiro Web UI (Blazor Server) inside a Linux container.
-# Kiro CLI auth files must be mounted at runtime.
+# CodingAgentWebUI Orchestrator Dockerfile
+# Runs the Blazor Server UI + SignalR hub for agent coordination.
+# The orchestrator does NOT run Kiro CLI, dotnet build/test, or quality gates.
+# Those responsibilities belong to agent containers (see agent.Dockerfile).
 # =============================================================================
 
 # Stage 1: Build
-# Pinned to 10.0.200 feature band to match global.json (rollForward: latestPatch)
+# Pinned to 10.0.200 feature band to match global.json (rollForward: latestFeature)
 FROM mcr.microsoft.com/dotnet/sdk:10.0.203 AS build
 WORKDIR /src
 
@@ -15,6 +16,7 @@ COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
 COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAgentWebUI.Pipeline/
 COPY src/CodingAgentWebUI.Infrastructure/CodingAgentWebUI.Infrastructure.csproj src/CodingAgentWebUI.Infrastructure/
 COPY src/CodingAgentWebUI/CodingAgentWebUI.csproj src/CodingAgentWebUI/
+COPY src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj src/CodingAgentWebUI.Agent/
 COPY tests/CodingAgentWebUI.Pipeline.UnitTests/CodingAgentWebUI.Pipeline.UnitTests.csproj tests/CodingAgentWebUI.Pipeline.UnitTests/
 COPY tests/CodingAgentWebUI.Infrastructure.UnitTests/CodingAgentWebUI.Infrastructure.UnitTests.csproj tests/CodingAgentWebUI.Infrastructure.UnitTests/
 COPY tests/CodingAgentWebUI.UnitTests/CodingAgentWebUI.UnitTests.csproj tests/CodingAgentWebUI.UnitTests/
@@ -26,53 +28,35 @@ RUN dotnet restore
 COPY . .
 RUN dotnet publish src/CodingAgentWebUI/CodingAgentWebUI.csproj -c Release -o /app/publish
 
-# Stage 2: Runtime (ASP.NET for Blazor Server)
-# Pinned to 10.0.200 feature band to match global.json (rollForward: latestPatch)
-FROM mcr.microsoft.com/dotnet/sdk:10.0.203 AS runtime
+# Stage 2: Runtime (ASP.NET only — no SDK, no Kiro CLI, no Node.js)
+# The orchestrator only serves Blazor UI and SignalR hub.
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 
-# Install dependencies for Kiro CLI (curl, unzip, ca-certificates, Node.js for npx MCP servers)
+# Install curl for docker-compose healthcheck (curl -f http://localhost:5000/health)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        curl \
-        unzip \
-        ca-certificates \
-        git \
-        nodejs \
-        npm \
-    && rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
 
-# Reuse existing ubuntu user (UID 1000) from the base image
-RUN mkdir -p /home/ubuntu/.local/bin /home/ubuntu/.kiro && \
-    chown -R ubuntu:ubuntu /home/ubuntu
+# Create non-root user for running the app
+RUN groupadd --gid 1000 ubuntu && \
+    useradd --uid 1000 --gid ubuntu --create-home ubuntu
 
-# Install Kiro CLI as non-root user
 USER ubuntu
-ENV PATH="/home/ubuntu/.local/bin:${PATH}"
-# Pinned — 2.1.x has a subagent deadlock in --no-interactive mode
-# (parent agent hangs indefinitely after dispatching parallel subagents, 2/3 runs affected)
-# Tested: 2.1.0 and 2.1.1 both reproduce. Falling back to 2.0.1.
-ARG KIRO_CLI_VERSION=2.0.1
-RUN curl --proto '=https' --tlsv1.2 -sSf \
-        "https://desktop-release.q.us-east-1.amazonaws.com/${KIRO_CLI_VERSION}/kirocli-x86_64-linux.zip" \
-        -o /tmp/kirocli.zip && \
-    unzip /tmp/kirocli.zip -d /tmp/kirocli && \
-    /tmp/kirocli/kirocli/install.sh --no-confirm && \
-    rm -rf /tmp/kirocli /tmp/kirocli.zip && \
-    kiro-cli settings "app.disableAutoupdates" "true"
-
-# Install uv (Python package manager) for MCP server support
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Pre-cache MCP server packages so first run doesn't timeout downloading
-ENV PATH="/home/ubuntu/.npm-global/node_modules/.bin:${PATH}"
-
 WORKDIR /app
 
 # Pre-create config directory with correct ownership (before volume mount)
-RUN mkdir -p /app/config/pipeline/providers/issue /app/config/pipeline/providers/repository /app/config/pipeline/providers/agent /app/config/pipeline/runs
+RUN mkdir -p /app/config/pipeline/providers/issue \
+             /app/config/pipeline/providers/repository \
+             /app/config/pipeline/providers/agent \
+             /app/config/pipeline/providers/pipeline \
+             /app/config/pipeline/runs
 
 # Configure ASP.NET to listen on port 5000
 ENV ASPNETCORE_URLS=http://+:5000
+
+# Agent API key for authenticating agent SignalR connections
+ENV AGENT_API_KEY=""
+
 EXPOSE 5000
 
 # Copy published app and Docker-specific config (owned by ubuntu user)
@@ -81,9 +65,10 @@ COPY --chown=ubuntu:ubuntu config/appsettings.docker.json config/appsettings.jso
 COPY --chown=ubuntu:ubuntu build-info.json build-info.json
 
 # Mount points:
-#   /home/ubuntu/.kiro   - Kiro CLI auth/session data (REQUIRED)
-#   /workspace           - Target workspace for the agent to operate on
 #   /app/config/pipeline - Pipeline provider & settings config (mount for persistence across restarts)
-VOLUME ["/home/ubuntu/.kiro", "/workspace", "/app/config/pipeline"]
+VOLUME ["/app/config/pipeline"]
+
+HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:5000/health || exit 1
 
 ENTRYPOINT ["dotnet", "CodingAgentWebUI.dll"]

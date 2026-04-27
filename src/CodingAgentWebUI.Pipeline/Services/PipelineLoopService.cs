@@ -5,7 +5,10 @@ using Microsoft.Extensions.Hosting;
 namespace CodingAgentWebUI.Pipeline.Services;
 
 /// <summary>
-/// Background service that polls for agent:next issues and processes them sequentially.
+/// Background service that polls for agent:next issues and dispatches them to agents
+/// or processes them locally. When an <see cref="IJobDispatcher"/> is configured,
+/// issues are dispatched to available agents via the multi-agent flow. Otherwise,
+/// falls back to local execution via <see cref="PipelineOrchestrationService.StartPipelineAsync"/>.
 /// Starts dormant and is activated via <see cref="StartLoop"/>. Survives page navigation.
 /// </summary>
 public sealed class PipelineLoopService : BackgroundService
@@ -13,6 +16,7 @@ public sealed class PipelineLoopService : BackgroundService
     private readonly PipelineOrchestrationService _orchestration;
     private readonly IProviderFactory _providerFactory;
     private readonly IConfigurationStore _configStore;
+    private readonly IJobDispatcher? _jobDispatcher;
     private readonly Serilog.ILogger _logger;
 
     private TaskCompletionSource _activationSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -67,7 +71,8 @@ public sealed class PipelineLoopService : BackgroundService
         PipelineOrchestrationService orchestration,
         IProviderFactory providerFactory,
         IConfigurationStore configStore,
-        Serilog.ILogger logger)
+        Serilog.ILogger logger,
+        IJobDispatcher? jobDispatcher = null)
     {
         ArgumentNullException.ThrowIfNull(orchestration);
         ArgumentNullException.ThrowIfNull(providerFactory);
@@ -78,6 +83,7 @@ public sealed class PipelineLoopService : BackgroundService
         _providerFactory = providerFactory;
         _configStore = configStore;
         _logger = logger;
+        _jobDispatcher = jobDispatcher;
     }
 
     /// <summary>
@@ -91,7 +97,9 @@ public sealed class PipelineLoopService : BackgroundService
         {
             if (IsLoopActive)
                 return false;
-            if (_orchestration.IsRunning)
+            // In dispatch mode, allow starting even if a local run is in progress
+            // (agents handle execution independently). In local mode, block if running.
+            if (_jobDispatcher == null && _orchestration.IsRunning)
                 return false;
 
             _issueProviderId = issueProviderId;
@@ -315,6 +323,63 @@ public sealed class PipelineLoopService : BackgroundService
                     continue;
                 }
 
+                // Skip issues already being processed (local or agent) or queued
+                if (_orchestration.IsIssueBeingProcessed(issue.Identifier))
+                {
+                    _logger.Information("Pipeline loop skipping issue #{Issue} (already being processed)", issue.Identifier);
+                    continue;
+                }
+
+                if (_jobDispatcher?.IsIssueBeingProcessedOrQueued(issue.Identifier) == true)
+                {
+                    _logger.Information("Pipeline loop skipping issue #{Issue} (already queued or dispatched)", issue.Identifier);
+                    continue;
+                }
+
+                // Dispatch mode: send to agents via JobDispatcher
+                if (_jobDispatcher != null && _jobDispatcher.HasRegisteredAgents)
+                {
+                    CurrentIssueIdentifier = issue.Identifier;
+                    QueueCount = candidates.Count - runsThisCycle;
+                    StatusMessage = $"🔄 Loop active — dispatching issue #{issue.Identifier} ({runsThisCycle + 1} of {candidates.Count} in queue)";
+                    NotifyChange();
+
+                    try
+                    {
+                        var dispatched = await _jobDispatcher.TryDispatchAsync(
+                            issue.Identifier,
+                            _issueProviderId, _repoProviderId, _agentProviderId,
+                            _brainProviderId, _pipelineProviderId,
+                            initiatedBy: "loop",
+                            stoppingToken);
+
+                        if (dispatched)
+                        {
+                            ProcessedCount++;
+                            runsThisCycle++;
+                            _logger.Information("Pipeline loop dispatched issue #{Issue}: {Title}", issue.Identifier, issue.Title);
+                        }
+                        else
+                        {
+                            _logger.Information("Pipeline loop could not dispatch issue #{Issue} (already processing or no agents)", issue.Identifier);
+                        }
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Error(ex, "Pipeline loop dispatch failed for issue #{Issue}", issue.Identifier);
+                        FailedCount++;
+                        ProcessedCount++;
+                        runsThisCycle++;
+                    }
+
+                    continue;
+                }
+
+                // Local execution mode (fallback when no agents or no dispatcher)
                 // Wait for any in-progress run to finish
                 if (_orchestration.IsRunning)
                 {

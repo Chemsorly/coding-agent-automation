@@ -42,7 +42,7 @@ internal class QualityGateOrchestrator
         IPipelineProvider? pipelineProvider,
         CancellationTokenSource? orchestratorCts,
         Action<PipelineStep> transitionTo,
-        Func<string, string, CancellationToken, Task> swapAgentLabel,
+        IAgentIssueOperations issueOps,
         Func<string, CancellationToken, Task> removeAllAgentLabels,
         Action<PipelineRun> addRunToHistory,
         Action<string> onOutputLine, Action onChange,
@@ -62,7 +62,7 @@ internal class QualityGateOrchestrator
             var report = await _qualityGateValidator.ValidateAsync(run.WorkspacePath!, config, linkedCt);
 
             report = await AppendExternalCiIfNeededAsync(run, report, config, repoProvider, pipelineProvider,
-                transitionTo, swapAgentLabel, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: false, linkedCt);
+                transitionTo, issueOps, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: false, linkedCt);
             if (run.CurrentStep == PipelineStep.Failed) return;
 
             run.LatestQualityReport = report;
@@ -137,7 +137,7 @@ internal class QualityGateOrchestrator
                 report = await _qualityGateValidator.ValidateAsync(run.WorkspacePath!, config, linkedCt);
 
                 report = await AppendExternalCiIfNeededAsync(run, report, config, repoProvider, pipelineProvider,
-                    transitionTo, swapAgentLabel, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: true, linkedCt);
+                    transitionTo, issueOps, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: true, linkedCt);
                 if (run.CurrentStep == PipelineStep.Failed) return;
 
                 run.LatestQualityReport = report;
@@ -203,7 +203,7 @@ internal class QualityGateOrchestrator
                 report = await _qualityGateValidator.ValidateAsync(run.WorkspacePath!, config, linkedCt);
 
                 report = await AppendExternalCiIfNeededAsync(run, report, config, repoProvider, pipelineProvider,
-                    transitionTo, swapAgentLabel, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: true, linkedCt,
+                    transitionTo, issueOps, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: true, linkedCt,
                     skipCiIfNoChanges: true);
                 if (run.CurrentStep == PipelineStep.Failed) return;
 
@@ -280,7 +280,7 @@ internal class QualityGateOrchestrator
                     report = await _qualityGateValidator.ValidateAsync(run.WorkspacePath!, config, linkedCt);
 
                     report = await AppendExternalCiIfNeededAsync(run, report, config, repoProvider, pipelineProvider,
-                        transitionTo, swapAgentLabel, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: true, linkedCt);
+                        transitionTo, issueOps, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: true, linkedCt);
                     if (run.CurrentStep == PipelineStep.Failed) return;
 
                     run.LatestQualityReport = report;
@@ -336,7 +336,7 @@ internal class QualityGateOrchestrator
         {
             _logger.Error(ex, "Pipeline {RunId} quality gate validation failed", run.RunId);
             run.FailureReason = $"Quality gate validation error: {ex.Message}";
-            await swapAgentLabel(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
+            await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
             // TODO: [UX-16] Emit onOutputLine($"❌ Pipeline failed: {run.FailureReason}") for output log consistency
             transitionTo(PipelineStep.Failed);
             addRunToHistory(run);
@@ -360,7 +360,7 @@ internal class QualityGateOrchestrator
         IRepositoryProvider repoProvider,
         IPipelineProvider? pipelineProvider,
         Action<PipelineStep> transitionTo,
-        Func<string, string, CancellationToken, Task> swapAgentLabel,
+        IAgentIssueOperations issueOps,
         Action<PipelineRun> addRunToHistory,
         Action onChange,
         Action<string> onOutputLine,
@@ -380,7 +380,7 @@ internal class QualityGateOrchestrator
                 var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, run.IssueIdentifier);
                 var blacklisted = await repoProvider.CommitAllAsync(
                     run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct);
-                if (await RecordBlacklistedFiles(run, blacklisted, config, transitionTo, swapAgentLabel, addRunToHistory, onChange, ct))
+                if (await RecordBlacklistedFiles(run, blacklisted, config, transitionTo, issueOps, addRunToHistory, onChange, ct))
                     return report;
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
@@ -479,7 +479,7 @@ internal class QualityGateOrchestrator
         PipelineRun run, IReadOnlyList<string> blacklisted,
         PipelineConfiguration config,
         Action<PipelineStep> transitionTo,
-        Func<string, string, CancellationToken, Task> swapAgentLabel,
+        IAgentIssueOperations issueOps,
         Action<PipelineRun> addRunToHistory,
         Action onChange,
         CancellationToken ct)
@@ -493,7 +493,7 @@ internal class QualityGateOrchestrator
             var fileList = string.Join(", ", blacklisted);
             run.FailureReason = $"Blacklisted files detected: {fileList}. The agent modified protected paths.";
             run.CompletedAt = DateTime.UtcNow;
-            await swapAgentLabel(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
+            await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
             transitionTo(PipelineStep.Failed);
             addRunToHistory(run);
             return true;
@@ -508,7 +508,7 @@ internal class QualityGateOrchestrator
 
     internal static string FormatCoverageLogValue(GateResult? gate) =>
         gate is null ? "N/A" : gate.CoveragePercent.HasValue
-            ? $"{gate.Passed} ({gate.CoveragePercent.Value:F1}%)"
+            ? $"{gate.Passed} ({gate.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%)"
             : gate.Passed.ToString();
 
     private static string BuildQualityGateErrorSummary(QualityGateReport report)

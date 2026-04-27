@@ -1,14 +1,17 @@
 using KiroCliLib.Configuration;
 using KiroCliLib.Core;
 using CodingAgentWebUI.Components;
+using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Models;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
+using Microsoft.AspNetCore.SignalR;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -55,14 +58,16 @@ builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
     sp.GetRequiredService<CiLogWriter>(),
     Serilog.Log.Logger,
     sp.GetRequiredService<IBrainUpdateService>(),
-    sp.GetRequiredService<IPipelineRunHistoryService>()));
+    sp.GetRequiredService<IPipelineRunHistoryService>(),
+    sp.GetRequiredService<OrchestratorRunService>()));
 
 // Pipeline — Loop Service (background service, starts dormant)
 builder.Services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(
     sp.GetRequiredService<PipelineOrchestrationService>(),
     sp.GetRequiredService<IProviderFactory>(),
     sp.GetRequiredService<IConfigurationStore>(),
-    Serilog.Log.Logger));
+    Serilog.Log.Logger,
+    sp.GetRequiredService<IJobDispatcher>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
 
 // TODO: [ARC-12] Captive dependency — IQualityGateValidator and IssueDescriptionParser are transient but captured by singleton PipelineOrchestrationService. Register as singleton or use factories.
@@ -71,6 +76,50 @@ builder.Services.AddTransient<IssueDescriptionParser>();
 builder.Services.AddSingleton(sp => new CiLogWriter(Serilog.Log.Logger));
 builder.Services.AddTransient<GitHubValidationService>(sp =>
     new GitHubValidationService(sp.GetRequiredService<IProviderFactory>()));
+
+// Multi-agent orchestrator services (singletons)
+builder.Services.AddSingleton(sp => new AgentRegistryService(Serilog.Log.Logger));
+builder.Services.AddSingleton(sp => new JobDispatcherService(
+    sp.GetRequiredService<AgentRegistryService>(),
+    Serilog.Log.Logger));
+builder.Services.AddSingleton(sp => new TokenVendingService(Serilog.Log.Logger));
+builder.Services.AddSingleton(sp => new OrchestratorRunService(
+    Serilog.Log.Logger,
+    pipelineConfig.OutputBufferCapacity));
+builder.Services.AddSingleton<IOrchestratorRunService>(sp => sp.GetRequiredService<OrchestratorRunService>());
+builder.Services.AddHostedService(sp => new HeartbeatMonitorService(
+    sp.GetRequiredService<AgentRegistryService>(),
+    sp.GetRequiredService<OrchestratorRunService>(),
+    sp.GetRequiredService<IConfigurationStore>(),
+    Serilog.Log.Logger));
+
+// Multi-agent job dispatcher (bridges loop service to agent dispatch)
+builder.Services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
+    sp.GetRequiredService<JobDispatcherService>(),
+    sp.GetRequiredService<AgentRegistryService>(),
+    sp.GetRequiredService<OrchestratorRunService>(),
+    sp.GetRequiredService<PipelineOrchestrationService>(),
+    sp.GetRequiredService<TokenVendingService>(),
+    sp.GetRequiredService<IConfigurationStore>(),
+    sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
+    Serilog.Log.Logger));
+
+// SignalR — hub services with MessagePack protocol
+builder.Services.AddSignalR()
+    .AddMessagePackProtocol();
+
+// SignalR — hub filter for agent authorization
+builder.Services.AddSingleton<IHubFilter>(sp => new AgentAuthorizationFilter(
+    sp.GetRequiredService<AgentRegistryService>(),
+    Serilog.Log.Logger));
+
+// Agent API key authentication
+var agentApiKey = AgentApiKeyAuthHandler.ResolveApiKey(Serilog.Log.Logger);
+builder.Services.AddAuthentication(AgentApiKeyDefaults.AuthenticationScheme)
+    .AddScheme<AgentApiKeyAuthOptions, AgentApiKeyAuthHandler>(
+        AgentApiKeyDefaults.AuthenticationScheme,
+        options => options.ApiKey = agentApiKey);
+builder.Services.AddAuthorization();
 
 // Configure Serilog
 builder.Host.UseSerilog((ctx, lc) => lc
@@ -99,6 +148,12 @@ if (!Directory.Exists(workspace))
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
 
 app.UseStaticFiles();
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+// SignalR hub endpoint for agent connections
+app.MapHub<AgentHub>("/hubs/agent").RequireAuthorization();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()
