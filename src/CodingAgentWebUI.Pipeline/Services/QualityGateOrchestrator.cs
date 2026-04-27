@@ -69,8 +69,9 @@ internal class QualityGateOrchestrator
             run.QualityGateHistory.Enqueue(report);
             onOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
 
-            _logger.Information("Pipeline {RunId} quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}",
-                run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed);
+            _logger.Information("Pipeline {RunId} quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, Coverage={CoverageResult}, SecurityScan={SecurityResult}, ExternalCi={ExternalCiResult}",
+                run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed,
+                FormatCoverageLogValue(report.Coverage), FormatGateLogValue(report.SecurityScan), FormatGateLogValue(report.ExternalCi));
 
             while (!report.AllPassed && run.RetryCount < config.MaxRetries)
             {
@@ -143,8 +144,9 @@ internal class QualityGateOrchestrator
                 run.QualityGateHistory.Enqueue(report);
                 onOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
 
-                _logger.Information("Pipeline {RunId} retry quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}",
-                    run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed);
+                _logger.Information("Pipeline {RunId} retry quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, Coverage={CoverageResult}, SecurityScan={SecurityResult}, ExternalCi={ExternalCiResult}",
+                    run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed,
+                    FormatCoverageLogValue(report.Coverage), FormatGateLogValue(report.SecurityScan), FormatGateLogValue(report.ExternalCi));
             }
 
             if (report.AllPassed)
@@ -208,8 +210,9 @@ internal class QualityGateOrchestrator
                 run.QualityGateHistory.Enqueue(report);
                 onOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
 
-                _logger.Information("Pipeline {RunId} final quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}",
-                    run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed);
+                _logger.Information("Pipeline {RunId} final quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, Coverage={CoverageResult}, SecurityScan={SecurityResult}, ExternalCi={ExternalCiResult}",
+                    run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed,
+                    FormatCoverageLogValue(report.Coverage), FormatGateLogValue(report.SecurityScan), FormatGateLogValue(report.ExternalCi));
 
                 // If final gates fail, re-enter the retry loop using the existing retry budget
                 while (!report.AllPassed && run.RetryCount < config.MaxRetries)
@@ -283,8 +286,9 @@ internal class QualityGateOrchestrator
                     run.QualityGateHistory.Enqueue(report);
                     onOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
 
-                    _logger.Information("Pipeline {RunId} final QG retry quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}",
-                        run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed);
+                    _logger.Information("Pipeline {RunId} final QG retry quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, Coverage={CoverageResult}, SecurityScan={SecurityResult}, ExternalCi={ExternalCiResult}",
+                        run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed,
+                        FormatCoverageLogValue(report.Coverage), FormatGateLogValue(report.SecurityScan), FormatGateLogValue(report.ExternalCi));
                 }
 
                 if (report.AllPassed)
@@ -482,6 +486,14 @@ internal class QualityGateOrchestrator
         onChange();
         return false;
     }
+
+    internal static string FormatGateLogValue(GateResult? gate) =>
+        gate is null ? "N/A" : gate.Passed.ToString();
+
+    internal static string FormatCoverageLogValue(GateResult? gate) =>
+        gate is null ? "N/A" : gate.CoveragePercent.HasValue
+            ? $"{gate.Passed} ({gate.CoveragePercent.Value:F1}%)"
+            : gate.Passed.ToString();
 
     private static string BuildQualityGateErrorSummary(QualityGateReport report)
     {
