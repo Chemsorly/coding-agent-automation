@@ -1,0 +1,162 @@
+using KiroCliLib.Core;
+using CodingAgentWebUI.Infrastructure.Agent;
+using CodingAgentWebUI.Infrastructure.GitHub;
+using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
+
+namespace CodingAgentWebUI.Infrastructure;
+
+/// <summary>
+/// Registration-based provider factory. New provider types can be added via
+/// RegisterIssueProvider/RegisterRepositoryProvider/RegisterAgentProvider/RegisterPipelineProvider
+/// without modifying this class.
+/// </summary>
+public class ProviderFactory : IProviderFactory
+{
+    private readonly Dictionary<string, Func<ProviderConfig, IIssueProvider>> _issueFactories = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Func<ProviderConfig, IRepositoryProvider>> _repoFactories = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Func<ProviderConfig, IAgentProvider>> _agentFactories = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Func<ProviderConfig, IPipelineProvider>> _pipelineFactories = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, GitHubAppAuthService> _authServiceCache = new(StringComparer.Ordinal);
+    private readonly PipelineConfiguration _pipelineConfig;
+
+    public ProviderFactory(IKiroCliOrchestrator orchestrator, PipelineConfiguration pipelineConfig)
+    {
+        ArgumentNullException.ThrowIfNull(orchestrator);
+        ArgumentNullException.ThrowIfNull(pipelineConfig);
+
+        _pipelineConfig = pipelineConfig;
+
+        // Register built-in providers
+        RegisterIssueProvider("GitHub", config =>
+        {
+            ValidateRequiredSettings(config, "apiUrl", "clientId", "installationId", "privateKeyBase64", "owner", "repo");
+            var authService = GetOrCreateAuthService(config);
+            return new GitHubIssueProvider(
+                config.Settings["apiUrl"],
+                authService.GetTokenAsync,
+                config.Settings["owner"],
+                config.Settings["repo"]);
+        });
+
+        RegisterRepositoryProvider("GitHub", config =>
+        {
+            ValidateRequiredSettings(config, "apiUrl", "clientId", "installationId", "privateKeyBase64", "owner", "repo", "baseBranch");
+            var authService = GetOrCreateAuthService(config);
+            return new GitHubRepositoryProvider(
+                config.Settings["apiUrl"],
+                authService.GetTokenAsync,
+                config.Settings["owner"],
+                config.Settings["repo"],
+                config.Settings["baseBranch"]);
+        });
+
+        RegisterAgentProvider("KiroCli", config =>
+        {
+            var model = config.Settings.GetValueOrDefault("model");
+            var executablePath = config.Settings.GetValueOrDefault("executablePath", "/home/ubuntu/.local/bin/kiro-cli");
+            return new KiroCliAgentProvider(orchestrator, Serilog.Log.Logger, model, executablePath);
+        });
+
+        RegisterPipelineProvider("GitHub", config =>
+        {
+            ValidateRequiredSettings(config, "apiUrl", "clientId", "installationId", "privateKeyBase64", "owner", "repo");
+            var authService = GetOrCreateAuthService(config);
+            return new GitHubActionsPipelineProvider(
+                config.Settings["apiUrl"],
+                authService.GetTokenAsync,
+                config.Settings["owner"],
+                config.Settings["repo"],
+                _pipelineConfig.ExternalCiPollInterval);
+        });
+    }
+
+    private void RegisterIssueProvider(string providerType, Func<ProviderConfig, IIssueProvider> factory)
+        => _issueFactories[providerType] = factory;
+
+    private void RegisterRepositoryProvider(string providerType, Func<ProviderConfig, IRepositoryProvider> factory)
+        => _repoFactories[providerType] = factory;
+
+    private void RegisterAgentProvider(string providerType, Func<ProviderConfig, IAgentProvider> factory)
+        => _agentFactories[providerType] = factory;
+
+    private void RegisterPipelineProvider(string providerType, Func<ProviderConfig, IPipelineProvider> factory)
+        => _pipelineFactories[providerType] = factory;
+
+    public IIssueProvider CreateIssueProvider(ProviderConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (_issueFactories.TryGetValue(config.ProviderType, out var factory))
+            return factory(config);
+        throw new NotSupportedException(
+            $"Unsupported issue provider type: '{config.ProviderType}'. Supported: {string.Join(", ", _issueFactories.Keys)}");
+    }
+
+    public IRepositoryProvider CreateRepositoryProvider(ProviderConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (_repoFactories.TryGetValue(config.ProviderType, out var factory))
+            return factory(config);
+        throw new NotSupportedException(
+            $"Unsupported repository provider type: '{config.ProviderType}'. Supported: {string.Join(", ", _repoFactories.Keys)}");
+    }
+
+    public IAgentProvider CreateAgentProvider(ProviderConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (_agentFactories.TryGetValue(config.ProviderType, out var factory))
+            return factory(config);
+        throw new NotSupportedException(
+            $"Unsupported agent provider type: '{config.ProviderType}'. Supported: {string.Join(", ", _agentFactories.Keys)}");
+    }
+
+    public IPipelineProvider CreatePipelineProvider(ProviderConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (_pipelineFactories.TryGetValue(config.ProviderType, out var factory))
+            return factory(config);
+        throw new NotSupportedException(
+            $"Unsupported pipeline provider type: '{config.ProviderType}'. Supported: {string.Join(", ", _pipelineFactories.Keys)}");
+    }
+
+    internal static void ValidateRequiredSettings(ProviderConfig config, params string[] requiredKeys)
+    {
+        var missingKeys = requiredKeys
+            .Where(key => !config.Settings.ContainsKey(key) || string.IsNullOrWhiteSpace(config.Settings[key]))
+            .ToList();
+
+        if (missingKeys.Count > 0)
+            throw new ArgumentException(
+                $"Provider '{config.DisplayName}' (type: {config.ProviderType}) is missing required settings: {string.Join(", ", missingKeys)}",
+                nameof(config));
+    }
+
+    /// <summary>
+    /// Returns a cached <see cref="GitHubAppAuthService"/> for the given config's
+    /// clientId + installationId composite key, creating one if it doesn't exist yet.
+    /// This ensures multiple providers sharing the same GitHub App installation
+    /// reuse a single auth service with a single token cache.
+    /// </summary>
+    internal GitHubAppAuthService GetOrCreateAuthService(ProviderConfig config)
+    {
+        if (!long.TryParse(config.Settings["installationId"], out var installationId))
+            throw new ArgumentException(
+                $"Provider '{config.DisplayName}' (type: {config.ProviderType}) has invalid installationId: '{config.Settings["installationId"]}'. Expected a numeric value.",
+                nameof(config));
+
+        var cacheKey = $"{config.Settings["clientId"]}:{installationId}";
+
+        if (_authServiceCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
+        var authService = new GitHubAppAuthService(
+            config.Settings["clientId"],
+            installationId,
+            config.Settings["privateKeyBase64"],
+            config.Settings["apiUrl"],
+            Serilog.Log.Logger);
+
+        _authServiceCache[cacheKey] = authService;
+        return authService;
+    }
+}

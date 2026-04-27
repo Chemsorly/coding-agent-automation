@@ -1,0 +1,167 @@
+@using CodingAgentWebUI.Pipeline.Models
+
+<div class="pipeline-summary">
+    <div class="summary-header">
+        <div class="summary-title">
+            <span class="summary-icon">@OutcomeIcon</span>
+            <h2>Pipeline @OutcomeText</h2>
+        </div>
+        <div class="summary-meta">
+            Issue #@Run.IssueIdentifier · @Run.IssueTitle
+        </div>
+        <div class="summary-meta">
+            Duration: @FormatDuration()
+            @if (!string.IsNullOrEmpty(Run.RepositoryName))
+            {
+                <span> · Repo: @Run.RepositoryName</span>
+            }
+            @if (!string.IsNullOrEmpty(Run.ModelName))
+            {
+                <span> · Model: @Run.ModelName</span>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(Run.BranchName))
+        {
+            <div class="summary-meta summary-branch">Branch: @Run.BranchName</div>
+        }
+    </div>
+
+    @if (!string.IsNullOrEmpty(Run.FailureReason))
+    {
+        <div class="summary-failure-callout" role="alert">⚠️ @Run.FailureReason</div>
+    }
+
+    @if ((Run.BlacklistedFilesDetected?.Count ?? 0) > 0)
+    {
+        <div class="summary-blacklist-warning" role="alert">
+            ⚠️ Blacklisted files excluded from commit:
+            <ul>
+                @foreach (var file in Run.BlacklistedFilesDetected!)
+                {
+                    <li>@file</li>
+                }
+            </ul>
+        </div>
+    }
+
+    @if (Run.CurrentStep == PipelineStep.Cancelled)
+    {
+        <div class="summary-cancelled-step">Cancelled during: @FormatStepName(GetLastReachedStep())</div>
+    }
+    else
+    {
+        <div class="result-strip">
+            @{ var qr = Run.LatestQualityReport; }
+            <span>Compilation @(qr?.Compilation.Passed == true ? "✅" : qr is not null ? "❌" : "—")</span>
+            <span class="result-strip-sep">│</span>
+            <span>Tests @(qr is not null ? (qr.Tests.Passed ? "✅" : "❌") : "—") @FormatTestCounts(qr)</span>
+            <span class="result-strip-sep">│</span>
+            <span>Coverage @FormatCoverage(qr)</span>
+            <span class="result-strip-sep">│</span>
+            <span>Security @(qr?.SecurityScan is { } sec ? (sec.Passed ? "✅" : "❌") : "—")</span>
+            <span class="result-strip-sep">│</span>
+            <span>Files: @Run.FilesChangedCount (+@Run.LinesAdded -@Run.LinesRemoved)</span>
+            <span class="result-strip-sep">│</span>
+            @if (Run.CodeReviewCriticalCount > 0 || Run.CodeReviewWarningCount > 0 || Run.CodeReviewSuggestionCount > 0)
+            {
+                <span>Review: 🔴@(Run.CodeReviewCriticalCount) 🟡@(Run.CodeReviewWarningCount) 🔵@(Run.CodeReviewSuggestionCount)</span>
+                <span class="result-strip-sep">│</span>
+            }
+            <span>Retries: @Run.RetryCount@(MaxRetries.HasValue ? $"/{MaxRetries}" : "")</span>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(Run.PullRequestUrl))
+    {
+        <div class="summary-pr-link">
+            🔗 PR @(!string.IsNullOrEmpty(Run.PullRequestNumber) ? $"#{Run.PullRequestNumber}" : "")
+            (@(Run.IsDraftPr ? "draft" : "final")) —
+            <a href="@Run.PullRequestUrl" target="_blank" rel="noopener noreferrer">View on GitHub →</a>
+        </div>
+    }
+
+    <button class="btn-save" @onclick="OnBackToIssues">Back to Issues</button>
+</div>
+
+@code {
+    /// <summary>The pipeline run to display in the summary.</summary>
+    [Parameter, EditorRequired] public PipelineRun Run { get; set; } = default!;
+
+    /// <summary>Maximum retry count from pipeline configuration, for "Retries: N/M" display.</summary>
+    [Parameter] public int? MaxRetries { get; set; }
+
+    /// <summary>Callback invoked when the user clicks "Back to Issues".</summary>
+    [Parameter] public EventCallback OnBackToIssues { get; set; }
+
+    private string OutcomeIcon => Run.CurrentStep switch
+    {
+        PipelineStep.Completed => "✅",
+        PipelineStep.Failed => "❌",
+        PipelineStep.Cancelled => "🚫",
+        _ => "❓"
+    };
+
+    private string OutcomeText => Run.CurrentStep switch
+    {
+        PipelineStep.Completed => "Completed",
+        PipelineStep.Failed => "Failed",
+        PipelineStep.Cancelled => "Cancelled",
+        _ => Run.CurrentStep.ToString()
+    };
+
+    private string FormatDuration()
+    {
+        var elapsed = (Run.CompletedAt ?? DateTime.UtcNow) - Run.StartedAt;
+        if (elapsed < TimeSpan.Zero) return "—";
+        if (elapsed.TotalHours >= 1)
+            return $"{(int)elapsed.TotalHours}h {elapsed.Minutes:D2}m {elapsed.Seconds:D2}s";
+        if (elapsed.TotalMinutes >= 1)
+            return $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds:D2}s";
+        return $"{elapsed.Seconds}s";
+    }
+
+    private static string FormatTestCounts(QualityGateReport? qr)
+    {
+        if (qr is null) return "";
+        var p = qr.Tests.TestsPassed?.ToString() ?? "—";
+        var f = qr.Tests.TestsFailed?.ToString() ?? "—";
+        var s = qr.Tests.TestsSkipped?.ToString() ?? "—";
+        return $"{p}p/{f}f/{s}s";
+    }
+
+    private static string FormatCoverage(QualityGateReport? qr)
+    {
+        if (qr?.Coverage is not { } cov) return "—";
+        if (!cov.CoveragePercent.HasValue) return cov.Passed ? "✅ —" : "❌ —";
+        return $"{(cov.Passed ? "✅" : "❌")} {cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%";
+    }
+
+    /// <summary>
+    /// Infers the last pipeline step that was reached before a terminal state.
+    /// </summary>
+    private PipelineStep GetLastReachedStep()
+    {
+        if (!string.IsNullOrEmpty(Run.PullRequestUrl)) return PipelineStep.CreatingPullRequest;
+        if (Run.LatestQualityReport is not null) return PipelineStep.RunningQualityGates;
+        if (Run.CodeReviewIterationsCompleted > 0) return PipelineStep.ReviewingCode;
+        if (Run.FilesChangedCount > 0 || Run.ChatHistory.Count > 0) return PipelineStep.GeneratingCode;
+        if (Run.AnalysisContent is not null) return PipelineStep.PostingAnalysis;
+        if (!string.IsNullOrEmpty(Run.BranchName)) return PipelineStep.CreatingBranch;
+        if (!string.IsNullOrEmpty(Run.WorkspacePath)) return PipelineStep.CloningRepository;
+        return PipelineStep.Created;
+    }
+
+    private static string FormatStepName(PipelineStep step) => step switch
+    {
+        PipelineStep.Created => "Pipeline Created",
+        PipelineStep.CloningRepository => "Cloning Repository",
+        PipelineStep.CreatingBranch => "Creating Branch",
+        PipelineStep.AnalyzingCode => "Analyzing Code",
+        PipelineStep.PostingAnalysis => "Posting Analysis",
+        PipelineStep.GeneratingCode => "Generating Code",
+        PipelineStep.ReviewingCode => "Reviewing Code",
+        PipelineStep.RunningQualityGates => "Running Quality Gates",
+        PipelineStep.CreatingPullRequest => "Creating Pull Request",
+        _ => step.ToString()
+    };
+}

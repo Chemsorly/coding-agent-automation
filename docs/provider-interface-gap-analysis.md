@@ -1,7 +1,7 @@
 # Provider Interface Gap Analysis
 
 **Date:** April 19, 2026  
-**Scope:** All 4 provider interfaces in `src/KiroWebUI/Pipeline/Interfaces/` and their consumers  
+**Scope:** All 4 provider interfaces in `src/CodingAgentWebUI/Pipeline/Interfaces/` and their consumers  
 **Goal:** Identify functionality that lives on concrete implementations or in orchestrator workarounds but should be exposed on the provider interfaces.
 
 ---
@@ -299,7 +299,7 @@ The post-STK-03 fix improved this method (cleanup of old log dirs, memory freein
 
 ### 5.4 Duplicated `GetClientAsync` Pattern [LOW]
 
-**Problem:** All 3 GitHub providers copy-paste the same dual-auth client construction logic (~15 lines each). The `ProductHeaderValue("KiroWebUI-Pipeline")` string literal appears in 5 locations.
+**Problem:** All 3 GitHub providers copy-paste the same dual-auth client construction logic (~15 lines each). The `ProductHeaderValue("CodingAgentWebUI-Pipeline")` string literal appears in 5 locations.
 
 **Proposed fix:** Extract a `GitHubClientProvider` helper class that encapsulates the dual-auth pattern:
 

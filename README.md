@@ -25,13 +25,13 @@ The pipeline runs inside a Docker container with Kiro CLI installed. The web UI 
 ### Build the Docker image
 
 ```powershell
-docker build -f webUI.Dockerfile -t kiro-webui:latest .
+docker build -f webUI.Dockerfile -t coding-agent-webui:latest .
 ```
 
 ### Run the container
 
 ```powershell
-docker run -it --rm -p 5000:5000 -v ${PWD}/config/kiro-cli-data:/home/ubuntu/.local/share/kiro-cli -v "$env:USERPROFILE\.aws:/home/ubuntu/.aws" -v ${PWD}/config/kiro-settings:/home/ubuntu/.kiro/settings -v ${PWD}/config/pipeline:/app/config/pipeline kiro-webui:latest
+docker run -it --rm -p 5000:5000 -v ${PWD}/config/kiro-cli-data:/home/ubuntu/.local/share/kiro-cli -v "$env:USERPROFILE\.aws:/home/ubuntu/.aws" -v ${PWD}/config/kiro-settings:/home/ubuntu/.kiro/settings -v ${PWD}/config/pipeline:/app/config/pipeline coding-agent-webui:latest
 ```
 
 Open `http://localhost:5000` in your browser.
@@ -62,9 +62,9 @@ Workspaces are created inside the container at `/app/workspaces/` (configurable 
 ```
 src/
   KiroCliLib/          — Shared library: process management, output parsing, configuration
-  KiroWebUI/           — Blazor Server app: UI, pipeline engine, providers, persistence
+  CodingAgentWebUI/           — Blazor Server app: UI, pipeline engine, providers, persistence
 tests/
-  KiroWebUI.Tests/     — Unit, property, integration, and smoke tests
+  CodingAgentWebUI.Tests/     — Unit, property, integration, and smoke tests
 config/
   pipeline/            — Provider configs and pipeline run history
   appsettings.json     — Application configuration
@@ -325,7 +325,7 @@ Any step can transition to `Failed` on error. The pipeline catches exceptions at
 
 <!-- TODO: Add architecture diagram after ARC-12 (#147) refactoring completes.
      Target structure:
-       KiroWebUI (Presentation) → KiroWebUI.Pipeline (Core) + KiroWebUI.Infrastructure
+       CodingAgentWebUI (Presentation) → CodingAgentWebUI.Pipeline (Core) + CodingAgentWebUI.Infrastructure
        See #147 for the full dependency graph and migration plan. -->
 
 The application follows Clean Architecture principles:
@@ -405,7 +405,7 @@ docker run --rm -v "${PWD}:/app" -w /app mcr.microsoft.com/dotnet/sdk:10.0 dotne
 
 ```bash
 dotnet build
-dotnet run --project src/KiroWebUI
+dotnet run --project src/CodingAgentWebUI
 ```
 
 ### Code conventions
@@ -420,7 +420,7 @@ dotnet run --project src/KiroWebUI
 
 See [open issues](https://github.com/Chemsorly/coding-agent-automation/issues) for planned features. Key upcoming work:
 
-- [ARC-12](https://github.com/Chemsorly/coding-agent-automation/issues/147) — Split KiroWebUI into Pipeline, Infrastructure, and WebUI projects
+- [ARC-12](https://github.com/Chemsorly/coding-agent-automation/issues/147) — Split CodingAgentWebUI into Pipeline, Infrastructure, and WebUI projects
 - [ARC-08a](https://github.com/Chemsorly/coding-agent-automation/issues/142) — Confidence gate for issue quality assessment
 - [AGT-01](https://github.com/Chemsorly/coding-agent-automation/issues/10) — Crush as alternative agent provider
 

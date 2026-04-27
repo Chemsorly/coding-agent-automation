@@ -1,5 +1,5 @@
 # =============================================================================
-# KiroWebUI Dockerfile
+# CodingAgentWebUI Dockerfile
 # Runs the Kiro Web UI (Blazor Server) inside a Linux container.
 # Kiro CLI auth files must be mounted at runtime.
 # =============================================================================
@@ -10,20 +10,20 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0.203 AS build
 WORKDIR /src
 
 # Copy solution and project files first for layer caching
-COPY KiroCliPoc.sln ./
+COPY CodingAgentAutomation.sln ./
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
-COPY src/KiroWebUI.Pipeline/KiroWebUI.Pipeline.csproj src/KiroWebUI.Pipeline/
-COPY src/KiroWebUI.Infrastructure/KiroWebUI.Infrastructure.csproj src/KiroWebUI.Infrastructure/
-COPY src/KiroWebUI/KiroWebUI.csproj src/KiroWebUI/
-COPY tests/KiroWebUI.Pipeline.UnitTests/KiroWebUI.Pipeline.UnitTests.csproj tests/KiroWebUI.Pipeline.UnitTests/
-COPY tests/KiroWebUI.Infrastructure.UnitTests/KiroWebUI.Infrastructure.UnitTests.csproj tests/KiroWebUI.Infrastructure.UnitTests/
-COPY tests/KiroWebUI.UnitTests/KiroWebUI.UnitTests.csproj tests/KiroWebUI.UnitTests/
-COPY tests/KiroWebUI.IntegrationTests/KiroWebUI.IntegrationTests.csproj tests/KiroWebUI.IntegrationTests/
+COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAgentWebUI.Pipeline/
+COPY src/CodingAgentWebUI.Infrastructure/CodingAgentWebUI.Infrastructure.csproj src/CodingAgentWebUI.Infrastructure/
+COPY src/CodingAgentWebUI/CodingAgentWebUI.csproj src/CodingAgentWebUI/
+COPY tests/CodingAgentWebUI.Pipeline.UnitTests/CodingAgentWebUI.Pipeline.UnitTests.csproj tests/CodingAgentWebUI.Pipeline.UnitTests/
+COPY tests/CodingAgentWebUI.Infrastructure.UnitTests/CodingAgentWebUI.Infrastructure.UnitTests.csproj tests/CodingAgentWebUI.Infrastructure.UnitTests/
+COPY tests/CodingAgentWebUI.UnitTests/CodingAgentWebUI.UnitTests.csproj tests/CodingAgentWebUI.UnitTests/
+COPY tests/CodingAgentWebUI.IntegrationTests/CodingAgentWebUI.IntegrationTests.csproj tests/CodingAgentWebUI.IntegrationTests/
 RUN dotnet restore
 
 # Copy everything else and publish
 COPY . .
-RUN dotnet publish src/KiroWebUI/KiroWebUI.csproj -c Release -o /app/publish
+RUN dotnet publish src/CodingAgentWebUI/CodingAgentWebUI.csproj -c Release -o /app/publish
 
 # Stage 2: Runtime (ASP.NET for Blazor Server)
 # Pinned to 10.0.200 feature band to match global.json (rollForward: latestPatch)
@@ -85,4 +85,4 @@ COPY --chown=ubuntu:ubuntu build-info.json build-info.json
 #   /app/config/pipeline - Pipeline provider & settings config (mount for persistence across restarts)
 VOLUME ["/home/ubuntu/.kiro", "/workspace", "/app/config/pipeline"]
 
-ENTRYPOINT ["dotnet", "KiroWebUI.dll"]
+ENTRYPOINT ["dotnet", "CodingAgentWebUI.dll"]

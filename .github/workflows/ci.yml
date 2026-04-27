@@ -57,7 +57,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Build Web UI image
-        run: docker build -f webUI.Dockerfile -t kiro-webui:ci .
+        run: docker build -f webUI.Dockerfile -t coding-agent-webui:ci .
 
   docker-push:
     needs: [build-and-test, docker-build]
