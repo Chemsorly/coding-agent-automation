@@ -142,6 +142,7 @@
     private PipelineStep GetLastReachedStep()
     {
         if (!string.IsNullOrEmpty(Run.PullRequestUrl)) return PipelineStep.CreatingPullRequest;
+        if (Run.HighWaterMark >= PipelineStep.PreparingForPullRequest && Run.LatestQualityReport is not null) return PipelineStep.PreparingForPullRequest;
         if (Run.LatestQualityReport is not null) return PipelineStep.RunningQualityGates;
         if (Run.CodeReviewIterationsCompleted > 0) return PipelineStep.ReviewingCode;
         if (Run.FilesChangedCount > 0 || Run.ChatHistory.Count > 0) return PipelineStep.GeneratingCode;
@@ -161,6 +162,7 @@
         PipelineStep.GeneratingCode => "Generating Code",
         PipelineStep.ReviewingCode => "Reviewing Code",
         PipelineStep.RunningQualityGates => "Running Quality Gates",
+        PipelineStep.PreparingForPullRequest => "Preparing for Pull Request",
         PipelineStep.CreatingPullRequest => "Creating Pull Request",
         _ => step.ToString()
     };

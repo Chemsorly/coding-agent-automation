@@ -11,6 +11,7 @@ public enum PipelineStep
     GeneratingCode,
     ReviewingCode,
     RunningQualityGates,
+    PreparingForPullRequest,
     CreatingPullRequest,
     ReflectingOnRun,
     SyncingBrainRepoPostRun,

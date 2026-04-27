@@ -400,6 +400,8 @@ public class PipelineOrchestrationServiceTests
             PipelineStep.PostingAnalysis,
             PipelineStep.GeneratingCode,
             PipelineStep.RunningQualityGates,
+            PipelineStep.PreparingForPullRequest,
+            PipelineStep.RunningQualityGates,
             PipelineStep.CreatingPullRequest,
             PipelineStep.Completed);
     }
@@ -2732,6 +2734,150 @@ public class PipelineOrchestrationServiceTests
         _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
+    // --- PreparingForPullRequest (cleanup step) tests ---
+
+    [Fact]
+    public async Task StartPipeline_HappyPath_TransitionsThroughPreparingForPullRequest()
+    {
+        var transitions = new List<PipelineStep>();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+                transitions.Add(_service.ActiveRun.CurrentStep);
+        };
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        transitions.Should().ContainInOrder(
+            PipelineStep.RunningQualityGates,
+            PipelineStep.PreparingForPullRequest,
+            PipelineStep.RunningQualityGates,
+            PipelineStep.CreatingPullRequest);
+    }
+
+    [Fact]
+    public async Task StartPipeline_CleanupAgent_ReceivesCleanupPrompt()
+    {
+        var capturedPrompts = new List<string>();
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => !r.Prompt.Contains("Analyze the codebase")),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedPrompts.Add(req.Prompt);
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        capturedPrompts.Should().Contain(p => p.Contains("Pre-Pull Request Cleanup"));
+        var cleanupPrompt = capturedPrompts.First(p => p.Contains("Pre-Pull Request Cleanup"));
+        cleanupPrompt.Should().Contain("Do NOT make functional changes");
+        cleanupPrompt.Should().Contain("Do NOT run git write commands");
+    }
+
+    [Fact]
+    public async Task StartPipeline_FinalQualityGateFail_ReEntersRetryLoop()
+    {
+        var callCount = 0;
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                // First call (initial QG): pass. Second call (final QG after cleanup): fail. Third call (retry): pass.
+                var testsPassed = callCount != 2;
+                return new QualityGateReport
+                {
+                    Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+                    Tests = new GateResult { GateName = "Tests", Passed = testsPassed, Details = testsPassed ? "OK" : "1 test failed" }
+                };
+            });
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), MaxRetries = 3 });
+
+        var transitions = new List<PipelineStep>();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+                transitions.Add(_service.ActiveRun.CurrentStep);
+        };
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.RetryCount.Should().Be(1);
+        // Should have gone: QG(pass) → PreparingForPullRequest → QG(fail) → GeneratingCode → QG(pass) → CreatingPullRequest
+        transitions.Should().ContainInOrder(
+            PipelineStep.PreparingForPullRequest,
+            PipelineStep.RunningQualityGates,
+            PipelineStep.GeneratingCode,
+            PipelineStep.RunningQualityGates,
+            PipelineStep.CreatingPullRequest);
+    }
+
+    [Fact]
+    public async Task StartPipeline_FinalQualityGateFail_RetriesExhausted_CreatesDraftPr()
+    {
+        var callCount = 0;
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                // First call: pass (initial QG). All subsequent calls: fail.
+                var testsPassed = callCount == 1;
+                return new QualityGateReport
+                {
+                    Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+                    Tests = new GateResult { GateName = "Tests", Passed = testsPassed, Details = testsPassed ? "OK" : "1 test failed" }
+                };
+            });
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), MaxRetries = 1 });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.IsDraftPr.Should().BeTrue();
+        run.RetryCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task StartPipeline_CleanupAgentFails_ContinuesToFinalQualityGates()
+    {
+        // Make the cleanup agent throw — pipeline should still proceed to final QG
+        var callCount = 0;
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => !r.Prompt.Contains("Analyze the codebase")),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                callCount++;
+                if (req.Prompt.Contains("Pre-Pull Request Cleanup"))
+                    throw new InvalidOperationException("Agent crashed during cleanup");
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Pipeline should complete despite cleanup agent failure
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.PullRequestUrl.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task StartPipeline_FinalQualityGateRun_EmitsDistinctLogMessage()
+    {
+        var outputLines = new List<string>();
+        _service.OnOutputLine += line => outputLines.Add(line);
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        outputLines.Should().Contain(l => l.Contains("Preparing for pull request"));
+        outputLines.Should().Contain(l => l.Contains("Running final quality gates after cleanup"));
+    }
+
     // --- Rework mode tests ---
 
     /// <summary>
@@ -2860,22 +3006,22 @@ public class PipelineOrchestrationServiceTests
                 ConflictFiles = new List<string> { "src/File1.cs", "src/File2.cs" }
             });
 
-        string? capturedPrompt = null;
+        var capturedPrompts = new List<string>();
         _mockAgentProvider.Setup(p => p.ExecuteAsync(
                 It.Is<AgentRequest>(r => !r.Prompt.Contains("Analyze the codebase")),
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
-                capturedPrompt = req.Prompt;
+                capturedPrompts.Add(req.Prompt);
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
         await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        capturedPrompt.Should().NotBeNull();
-        capturedPrompt.Should().Contain("src/File1.cs");
-        capturedPrompt.Should().Contain("src/File2.cs");
-        capturedPrompt.Should().Contain("Merge Conflicts");
+        var reworkPrompt = capturedPrompts.First(p => !p.Contains("Pre-Pull Request Cleanup"));
+        reworkPrompt.Should().Contain("src/File1.cs");
+        reworkPrompt.Should().Contain("src/File2.cs");
+        reworkPrompt.Should().Contain("Merge Conflicts");
     }
 
     [Fact]
@@ -2883,23 +3029,23 @@ public class PipelineOrchestrationServiceTests
     {
         SetupReworkMocks();
 
-        string? capturedPrompt = null;
+        var capturedPrompts = new List<string>();
         _mockAgentProvider.Setup(p => p.ExecuteAsync(
                 It.Is<AgentRequest>(r => !r.Prompt.Contains("Analyze the codebase")),
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
-                capturedPrompt = req.Prompt;
+                capturedPrompts.Add(req.Prompt);
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
         await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        capturedPrompt.Should().NotBeNull();
-        capturedPrompt.Should().Contain("reviewer");
-        capturedPrompt.Should().Contain("Fix the null check");
-        capturedPrompt.Should().Contain("src/Service.cs");
-        capturedPrompt.Should().Contain("Review Feedback");
+        var reworkPrompt = capturedPrompts.First(p => !p.Contains("Pre-Pull Request Cleanup"));
+        reworkPrompt.Should().Contain("reviewer");
+        reworkPrompt.Should().Contain("Fix the null check");
+        reworkPrompt.Should().Contain("src/Service.cs");
+        reworkPrompt.Should().Contain("Review Feedback");
     }
 
     [Fact]
@@ -3000,21 +3146,21 @@ public class PipelineOrchestrationServiceTests
                 }
             });
 
-        string? capturedPrompt = null;
+        var capturedPrompts = new List<string>();
         _mockAgentProvider.Setup(p => p.ExecuteAsync(
                 It.Is<AgentRequest>(r => !r.Prompt.Contains("Analyze the codebase")),
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
-                capturedPrompt = req.Prompt;
+                capturedPrompts.Add(req.Prompt);
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
         await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        capturedPrompt.Should().NotBeNull();
-        capturedPrompt.Should().Contain("Draft PR");
-        capturedPrompt.Should().Contain("previous failed run");
+        var reworkPrompt = capturedPrompts.First(p => !p.Contains("Pre-Pull Request Cleanup"));
+        reworkPrompt.Should().Contain("Draft PR");
+        reworkPrompt.Should().Contain("previous failed run");
     }
 
     [Fact]
@@ -3038,11 +3184,19 @@ public class PipelineOrchestrationServiceTests
                 }
             });
 
+        var capturedPrompts = new List<string>();
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.Is<AgentRequest>(r => !r.Prompt.Contains("Analyze the codebase")),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedPrompts.Add(req.Prompt);
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+
         await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        // Code generation agent should NOT be called (only analysis agent may be called)
-        _mockAgentProvider.Verify(p => p.ExecuteAsync(
-            It.Is<AgentRequest>(r => !r.Prompt.Contains("Analyze the codebase")),
-            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
+        // Code generation agent should NOT be called — only the cleanup agent
+        capturedPrompts.Should().AllSatisfy(p => p.Should().Contain("Pre-Pull Request Cleanup"));
     }
 }

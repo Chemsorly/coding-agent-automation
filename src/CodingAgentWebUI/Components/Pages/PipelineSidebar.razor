@@ -253,6 +253,7 @@
         PipelineStep.GeneratingCode,
         PipelineStep.ReviewingCode,
         PipelineStep.RunningQualityGates,
+        PipelineStep.PreparingForPullRequest,
         PipelineStep.CreatingPullRequest,
         PipelineStep.ReflectingOnRun,
         PipelineStep.SyncingBrainRepoPostRun
@@ -301,6 +302,7 @@
     private PipelineStep GetLastReachedStep()
     {
         if (!string.IsNullOrEmpty(Run.PullRequestUrl)) return PipelineStep.CreatingPullRequest;
+        if (Run.HighWaterMark >= PipelineStep.PreparingForPullRequest && Run.LatestQualityReport != null) return PipelineStep.PreparingForPullRequest;
         if (Run.LatestQualityReport != null) return PipelineStep.RunningQualityGates;
         if (Run.CodeReviewIterationsCompleted > 0) return PipelineStep.ReviewingCode;
         if (Run.FilesChangedCount > 0 || Run.ChatHistory.Count > 0) return PipelineStep.GeneratingCode;
@@ -331,6 +333,7 @@
         PipelineStep.GeneratingCode => "Generating Code",
         PipelineStep.ReviewingCode => "Reviewing Code",
         PipelineStep.RunningQualityGates => "Running Quality Gates",
+        PipelineStep.PreparingForPullRequest => "Preparing for Pull Request",
         PipelineStep.CreatingPullRequest => "Creating Pull Request",
         PipelineStep.ReflectingOnRun => "Reflecting on Run",
         PipelineStep.SyncingBrainRepoPostRun => "Saving Brain Knowledge",
@@ -358,6 +361,7 @@
         PipelineStep.GeneratingCode => Run.FilesChangedCount > 0 || Run.LinesAdded > 0 || Run.LinesRemoved > 0,
         PipelineStep.ReviewingCode => Run.CodeReviewIterationsCompleted > 0,
         PipelineStep.RunningQualityGates => Run.LatestQualityReport != null,
+        PipelineStep.PreparingForPullRequest => false,
         PipelineStep.CreatingPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
         PipelineStep.ReflectingOnRun => Run.BrainProviderConfigId != null,
         PipelineStep.SyncingBrainRepoPostRun => Run.BrainProviderConfigId != null,

@@ -1,5 +1,7 @@
 # Coding Agent Automation
 
+Hello, World! 👋
+
 An automated development pipeline that uses AI coding agents (Kiro CLI) to implement GitHub issues end-to-end: analyze the issue, generate code, run quality gates, and create a pull request — all orchestrated through a Blazor Server web UI running in Docker.
 
 ## How It Works
@@ -181,9 +183,15 @@ stateDiagram-v2
 
     state QualityGateDecision <<choice>>
     RunningQualityGates --> QualityGateDecision
-    QualityGateDecision --> CreatingPullRequest : all passed
+    QualityGateDecision --> PreparingForPullRequest : all passed
     QualityGateDecision --> GeneratingCode : failed, retries remaining
     QualityGateDecision --> CreatingPullRequest : failed, retries exhausted (draft PR)
+
+    PreparingForPullRequest --> RunningFinalQualityGates
+    state RunningFinalQualityGates <<choice>>
+    RunningFinalQualityGates --> CreatingPullRequest : all passed
+    RunningFinalQualityGates --> GeneratingCode : failed, retries remaining
+    RunningFinalQualityGates --> CreatingPullRequest : failed, retries exhausted (draft PR)
 
     CreatingPullRequest --> ReflectingOnRun
     ReflectingOnRun --> SyncingBrainRepoPostRun
@@ -216,6 +224,7 @@ stateDiagram-v2
 Created → CloningRepository → SyncingBrainRepoPreRun → CreatingBranch
   → AnalyzingCode → PostingAnalysis → [Confidence Gate]
   → GeneratingCode → ReviewingCode → RunningQualityGates → [Quality Gate Decision]
+  → PreparingForPullRequest → [Final Quality Gate]
   → CreatingPullRequest → ReflectingOnRun → SyncingBrainRepoPostRun → Completed
 ```
 
@@ -234,6 +243,7 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 | **GeneratingCode** | Agent implements the changes. Also used during quality gate retries |
 | **ReviewingCode** | Multi-agent code review: each review agent writes findings, then a fix agent addresses `[CRITICAL]` items |
 | **RunningQualityGates** | Build, tests, coverage, and external CI checks run |
+| **PreparingForPullRequest** | Agent cleans up the working directory (removes debug artifacts, unused code, formatting). Quality gates run one final time after cleanup |
 | **CreatingPullRequest** | PR created (normal or draft). Blacklisted file detection happens here |
 | **ReflectingOnRun** | Agent reviews the entire run and enriches `.brain/` knowledge (if brain repo configured) |
 | **SyncingBrainRepoPostRun** | Brain updates committed and pushed to brain repository |
@@ -266,11 +276,16 @@ After code generation and review, quality gates run. If they fail, the pipeline 
 ```mermaid
 flowchart TD
     RQG[RunningQualityGates] --> GP{Gates Passed?}
-    GP -->|yes| PR[CreatingPullRequest]
+    GP -->|yes| PREP[PreparingForPullRequest\nagent cleanup]
     GP -->|no| RL{retries remaining?}
     RL -->|yes| GC[GeneratingCode\nagent gets error feedback]
     RL -->|no| DPR[Draft PR\nagent error label]
     GC --> RQG2[RunningQualityGates\nre-validate]
+    PREP --> FQG[RunningFinalQualityGates]
+    FQG -->|pass| PR[CreatingPullRequest]
+    FQG -->|fail| RL2{retries remaining?}
+    RL2 -->|yes| GC
+    RL2 -->|no| DPR
 ```
 
 Quality gates checked (in order):

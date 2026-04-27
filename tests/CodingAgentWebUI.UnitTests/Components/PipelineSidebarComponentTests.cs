@@ -153,6 +153,46 @@ public class PipelineSidebarComponentTests : BunitContext
 
         Assert.Contains("step-card-completed", cut.Find("#step-GeneratingCode").GetAttribute("class"));
         Assert.Contains("step-card-completed", cut.Find("#step-RunningQualityGates").GetAttribute("class"));
+        Assert.Contains("step-card-completed", cut.Find("#step-PreparingForPullRequest").GetAttribute("class"));
         Assert.Contains("step-card-completed", cut.Find("#step-CreatingPullRequest").GetAttribute("class"));
+    }
+
+    // --- PreparingForPullRequest step ---
+
+    [Fact]
+    public void FailedDuringCleanup_MarksPreparingForPullRequestAsFailed()
+    {
+        var run = CreateRun(PipelineStep.Failed, PipelineStep.PreparingForPullRequest);
+        run.LatestQualityReport = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true },
+            Tests = new GateResult { GateName = "Tests", Passed = true }
+        };
+        run.CompletedAt = DateTime.UtcNow;
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        Assert.Contains("step-card-failed", cut.Find("#step-PreparingForPullRequest").GetAttribute("class"));
+        Assert.Contains("step-card-completed", cut.Find("#step-RunningQualityGates").GetAttribute("class"));
+    }
+
+    [Fact]
+    public void PreparingForPullRequest_ShownBetweenQualityGatesAndPullRequest()
+    {
+        var run = CreateRun(PipelineStep.PreparingForPullRequest, PipelineStep.PreparingForPullRequest);
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        Assert.Contains("step-card-active", cut.Find("#step-PreparingForPullRequest").GetAttribute("class"));
+        Assert.Contains("step-card-completed", cut.Find("#step-RunningQualityGates").GetAttribute("class"));
+        Assert.Contains("step-card-pending", cut.Find("#step-CreatingPullRequest").GetAttribute("class"));
+    }
+
+    [Fact]
+    public void PreparingForPullRequest_DisplaysCorrectName()
+    {
+        var run = CreateRun(PipelineStep.PreparingForPullRequest, PipelineStep.PreparingForPullRequest);
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        Assert.Contains("Preparing for Pull Request", cut.Find("#step-PreparingForPullRequest .step-card-name").TextContent);
     }
 }

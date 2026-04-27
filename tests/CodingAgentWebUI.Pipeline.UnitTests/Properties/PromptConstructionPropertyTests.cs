@@ -441,4 +441,23 @@ public class PromptConstructionPropertyTests
         prompt.Should().NotContain("Security");
         prompt.Should().NotContain("External CI");
     }
+
+    [Fact]
+    public void BuildCleanupPrompt_ContainsCleanupInstructions()
+    {
+        var prompt = PromptBuilder.BuildCleanupPrompt();
+
+        prompt.Should().Contain("Pre-Pull Request Cleanup");
+        prompt.Should().Contain("Do NOT make functional changes");
+        prompt.Should().Contain("unused imports");
+        prompt.Should().Contain("sensitive data");
+    }
+
+    [Fact]
+    public void BuildCleanupPrompt_ContainsGitProhibition()
+    {
+        var prompt = PromptBuilder.BuildCleanupPrompt();
+
+        prompt.Should().Contain("Do NOT run git write commands");
+    }
 }
