@@ -19,6 +19,7 @@ COPY tests/CodingAgentWebUI.Pipeline.UnitTests/CodingAgentWebUI.Pipeline.UnitTes
 COPY tests/CodingAgentWebUI.Infrastructure.UnitTests/CodingAgentWebUI.Infrastructure.UnitTests.csproj tests/CodingAgentWebUI.Infrastructure.UnitTests/
 COPY tests/CodingAgentWebUI.UnitTests/CodingAgentWebUI.UnitTests.csproj tests/CodingAgentWebUI.UnitTests/
 COPY tests/CodingAgentWebUI.IntegrationTests/CodingAgentWebUI.IntegrationTests.csproj tests/CodingAgentWebUI.IntegrationTests/
+COPY tests/KiroCliLib.UnitTests/KiroCliLib.UnitTests.csproj tests/KiroCliLib.UnitTests/
 RUN dotnet restore
 
 # Copy everything else and publish
