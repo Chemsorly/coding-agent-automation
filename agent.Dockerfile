@@ -25,6 +25,7 @@ COPY tests/CodingAgentWebUI.Infrastructure.UnitTests/CodingAgentWebUI.Infrastruc
 COPY tests/CodingAgentWebUI.UnitTests/CodingAgentWebUI.UnitTests.csproj tests/CodingAgentWebUI.UnitTests/
 COPY tests/CodingAgentWebUI.IntegrationTests/CodingAgentWebUI.IntegrationTests.csproj tests/CodingAgentWebUI.IntegrationTests/
 COPY tests/KiroCliLib.UnitTests/KiroCliLib.UnitTests.csproj tests/KiroCliLib.UnitTests/
+COPY tests/CodingAgentWebUI.Agent.UnitTests/CodingAgentWebUI.Agent.UnitTests.csproj tests/CodingAgentWebUI.Agent.UnitTests/
 RUN dotnet restore
 
 # Copy everything else and publish the Agent project
