@@ -298,7 +298,9 @@ public class AgentCodingPageTests
             });
 
         var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        await Task.Delay(200);
+        // Wait for the pipeline to reach GeneratingCode (blocked by agentTcs)
+        for (var i = 0; i < 50 && _service.ActiveRun?.CurrentStep != PipelineStep.GeneratingCode; i++)
+            await Task.Delay(100);
 
         _service.ActiveRun!.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
 
@@ -315,7 +317,9 @@ public class AgentCodingPageTests
             .Returns(gateTcs.Task);
 
         var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        await Task.Delay(200);
+        // Wait for the pipeline to reach RunningQualityGates (blocked by gateTcs)
+        for (var i = 0; i < 50 && _service.ActiveRun?.CurrentStep != PipelineStep.RunningQualityGates; i++)
+            await Task.Delay(100);
 
         _service.ActiveRun!.CurrentStep.Should().Be(PipelineStep.RunningQualityGates);
 

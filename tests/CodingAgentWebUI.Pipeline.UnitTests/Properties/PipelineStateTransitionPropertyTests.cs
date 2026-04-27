@@ -51,7 +51,8 @@ public class PipelineStateTransitionPropertyTests
 
         if (allGatesPass)
         {
-            // Should have transitioned through CreatingPullRequest → Completed
+            // Should have transitioned through PreparingForPullRequest → CreatingPullRequest → Completed
+            transitionLog.Should().Contain(PipelineStep.PreparingForPullRequest);
             transitionLog.Should().Contain(PipelineStep.CreatingPullRequest);
             transitionLog.Should().Contain(PipelineStep.Completed);
             run.CurrentStep.Should().Be(PipelineStep.Completed);
