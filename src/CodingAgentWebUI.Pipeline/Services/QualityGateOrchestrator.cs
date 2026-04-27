@@ -343,7 +343,13 @@ internal class QualityGateOrchestrator
     /// If local gates passed and external CI is enabled, commits, pushes, waits for CI,
     /// and returns a new report with the external CI gate appended.
     /// </summary>
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
+    /// <summary>
+    /// Appends an external CI gate result to the quality gate report if external CI is enabled
+    /// and all local gates passed. When <paramref name="skipCiIfNoChanges"/> is true and there
+    /// are no changes to commit, skips CI entirely (used after cleanup when CI already validated
+    /// the same commit). When <paramref name="allowEmptyCommit"/> is true and there are no changes,
+    /// creates an empty commit to trigger a CI re-run (used in retry loops).
+    /// </summary>
     public async Task<QualityGateReport> AppendExternalCiIfNeededAsync(
         PipelineRun run, QualityGateReport report,
         PipelineConfiguration config,
