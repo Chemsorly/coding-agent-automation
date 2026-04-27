@@ -201,7 +201,8 @@ internal class QualityGateOrchestrator
                 report = await _qualityGateValidator.ValidateAsync(run.WorkspacePath!, config, linkedCt);
 
                 report = await AppendExternalCiIfNeededAsync(run, report, config, repoProvider, pipelineProvider,
-                    transitionTo, swapAgentLabel, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: true, linkedCt);
+                    transitionTo, swapAgentLabel, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: true, linkedCt,
+                    skipCiIfNoChanges: true);
                 if (run.CurrentStep == PipelineStep.Failed) return;
 
                 run.LatestQualityReport = report;
@@ -353,7 +354,8 @@ internal class QualityGateOrchestrator
         Action<PipelineRun> addRunToHistory,
         Action onChange,
         Action<string> onOutputLine,
-        bool allowEmptyCommit, CancellationToken ct)
+        bool allowEmptyCommit, CancellationToken ct,
+        bool skipCiIfNoChanges = false)
     {
         if (!report.Compilation.Passed || !report.Tests.Passed
             || !(report.Coverage?.Passed ?? true) || !(report.SecurityScan?.Passed ?? true)
@@ -373,7 +375,15 @@ internal class QualityGateOrchestrator
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
             {
-                if (allowEmptyCommit)
+                if (skipCiIfNoChanges)
+                {
+                    // CI already validated this exact commit during the initial quality gate run.
+                    // Cleanup made no changes, so there's nothing new to validate — skip external CI.
+                    _logger.Information("Pipeline {RunId} no changes after cleanup, skipping external CI (already validated)", run.RunId);
+                    onOutputLine("✅ External CI skipped — no changes since last CI pass");
+                    return report;
+                }
+                else if (allowEmptyCommit)
                 {
                     _logger.Information("Pipeline {RunId} no changes after retry fix, creating empty commit to trigger CI", run.RunId);
                     await repoProvider.CommitAllAsync(
