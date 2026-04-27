@@ -38,10 +38,6 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Create non-root user for running the app
-RUN groupadd --gid 1000 ubuntu && \
-    useradd --uid 1000 --gid ubuntu --create-home ubuntu
-
 USER ubuntu
 WORKDIR /app
 
