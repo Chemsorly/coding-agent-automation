@@ -73,7 +73,7 @@
                     @if (LinkedPullRequest != null)
                     {
                         <div class="rework-indicator">
-                            🔄 Open PR <a href="@LinkedPullRequest.Url" target="_blank" rel="noopener noreferrer">#@LinkedPullRequest.Number</a> found — pipeline will enter rework mode
+                            🔄 Open @(LinkedPullRequest.IsDraft ? "draft " : "")PR <a href="@LinkedPullRequest.Url" target="_blank" rel="noopener noreferrer">#@LinkedPullRequest.Number</a> found — pipeline will enter rework mode
                         </div>
                     }
                 </div>

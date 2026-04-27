@@ -524,6 +524,34 @@ public class AgentCodingPageComponentTests : BunitContext
         Assert.Contains("#186", component.Markup);
         Assert.Contains("https://github.com/owner/repo/pull/186", component.Markup);
         Assert.Contains("pipeline will enter rework mode", component.Markup);
+        Assert.Contains("Open PR", component.Markup);
+        Assert.DoesNotContain("draft", component.Markup);
+    }
+
+    [Fact]
+    public async Task AgentCoding_WhenIssueHasDraftAgentPr_ShowsDraftInReworkIndicator()
+    {
+        var linkedPr = new LinkedPullRequest
+        {
+            Number = 200,
+            BranchName = "feature/auto-42-test-issue-abc12345",
+            Url = "https://github.com/owner/repo/pull/200",
+            IsDraft = true
+        };
+        _mockRepoProvider.Setup(r => r.GetAgentPullRequestsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { linkedPr });
+        _mockIssueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "", Labels = Array.Empty<string>() });
+
+        var component = Render<AgentCoding>();
+        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
+
+        var issueCard = component.Find(".issue-card");
+        await component.InvokeAsync(() => issueCard.Click());
+
+        component.WaitForAssertion(() => Assert.Contains("rework-indicator", component.Markup), timeout: TimeSpan.FromSeconds(5));
+        Assert.Contains("Open draft PR", component.Markup);
+        Assert.Contains("#200", component.Markup);
     }
 
     [Fact]
