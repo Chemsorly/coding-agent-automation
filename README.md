@@ -1,5 +1,7 @@
 # Coding Agent Automation
 
+Hello, World! 👋
+
 An automated development pipeline that uses AI coding agents (Kiro CLI) to implement GitHub issues end-to-end: analyze the issue, generate code, run quality gates, and create a pull request — all orchestrated through a Blazor Server web UI running in Docker.
 
 ## How It Works
