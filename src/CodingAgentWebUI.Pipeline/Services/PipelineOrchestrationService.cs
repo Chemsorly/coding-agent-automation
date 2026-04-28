@@ -216,6 +216,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 if (pipelineProviderConfig is not null)
                 {
                     _activePipelineProvider = _providerFactory.CreatePipelineProvider(pipelineProviderConfig);
+                    run.PipelineProviderConfigId = pipelineProviderConfig.Id;
                     _logger.Information("Pipeline {RunId} external CI provider configured", run.RunId);
                 }
                 else
@@ -299,6 +300,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             RepositoryName = tempRepoProvider.RepositoryFullName,
             ModelName = configuredModel,
             BrainProviderConfigId = brainProviderId,
+            PipelineProviderConfigId = pipelineProviderId,
             InitiatedBy = initiatedBy,
             AgentId = agentId
         };
