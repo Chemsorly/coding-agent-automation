@@ -100,6 +100,9 @@ public sealed class PipelineRun
     /// <summary>Brain repository provider config ID, or null if no brain repo selected.</summary>
     public string? BrainProviderConfigId { get; init; }
 
+    /// <summary>Pipeline provider config ID, or null if no pipeline provider configured.</summary>
+    public string? PipelineProviderConfigId { get; set; }
+
     /// <summary>Whether brain context was successfully loaded during pre-run sync.</summary>
     public bool BrainContextLoaded { get; set; }
 

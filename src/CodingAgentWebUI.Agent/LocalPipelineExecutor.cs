@@ -135,6 +135,7 @@ public sealed class LocalPipelineExecutor
             RepositoryName = repoProvider.RepositoryFullName,
             ModelName = agentProvider is Infrastructure.Agent.KiroCliAgentProvider kp ? kp.Model : null,
             BrainProviderConfigId = brainProvider is not null ? job.BrainProviderConfigId : null,
+            PipelineProviderConfigId = job.PipelineProviderConfigId,
             InitiatedBy = job.InitiatedBy,
             LinkedPullRequest = job.LinkedPullRequest,
             AgentId = Environment.MachineName

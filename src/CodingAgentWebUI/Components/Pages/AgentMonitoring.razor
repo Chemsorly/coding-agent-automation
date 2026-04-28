@@ -95,36 +95,60 @@
                         Run @Truncate(modalRun.RunId, 12) — #@modalRun.IssueIdentifier @Truncate(modalRun.IssueTitle, 40)
                     </h3>
 
-                    <div class="monitoring-detail-grid">
-                        <div><strong>Agent:</strong> @(modalRun.AgentId ?? "local")</div>
-                        <div><strong>Repository:</strong> @modalRun.RepositoryName</div>
-                        <div><strong>Model:</strong> @modalRun.ModelName</div>
-                        <div><strong>Retries:</strong> @modalRun.RetryCount</div>
-                        @if (modalRun.BranchName != null)
-                        {
-                            <div><strong>Branch:</strong> @modalRun.BranchName</div>
-                        }
-                    </div>
-
-                    <PipelineSidebar Run="modalRun" IsRunning="true" MaxRetries="@_maxRetries"
-                                     OnCancel="() => CancelAgentRun(modalRun)" />
-
-                    @{
-                        var buffer = RunService.GetOutputBuffer(modalRun.RunId);
-                        var outputLines = buffer.GetAll();
-                    }
-                    @if (outputLines.Count > 0)
-                    {
-                        <div>
-                            <h4 style="font-size: 0.85rem; margin: 0 0 6px;">Output (last @Math.Min(outputLines.Count, 100) lines)</h4>
-                            <div class="output-panel" id="modalOutputPanel">
-                                @foreach (var line in outputLines.TakeLast(100))
+                    <div class="modal-two-column">
+                        <div class="modal-column-left">
+                            <div class="modal-provider-list">
+                                <h4 style="font-size: 0.85rem; margin: 0 0 6px;">Providers</h4>
+                                @{ var issueConfig = ResolveProvider(modalRun.IssueProviderConfigId); }
+                                <div><strong>Issue:</strong> @(issueConfig?.DisplayName ?? "Unknown") (@(issueConfig?.ProviderType ?? "—"))</div>
+                                @{ var repoConfig = ResolveProvider(modalRun.RepoProviderConfigId); }
+                                <div><strong>Repository:</strong> @(repoConfig?.DisplayName ?? modalRun.RepositoryName ?? "Unknown") (@(repoConfig?.ProviderType ?? "—"))</div>
+                                @* TODO: [UX-24] Add AgentProviderConfigId to PipelineRun to resolve agent display name and type from config store *@
+                                <div><strong>Agent:</strong> @(modalRun.AgentId ?? "local") — Model: @(modalRun.ModelName ?? "—")</div>
+                                @if (modalRun.BrainProviderConfigId != null)
                                 {
-                                    <div class="output-line">@line</div>
+                                    var brainConfig = ResolveProvider(modalRun.BrainProviderConfigId);
+                                    <div><strong>Brain:</strong> @(brainConfig?.DisplayName ?? "Unknown")</div>
+                                }
+                                @if (modalRun.PipelineProviderConfigId != null)
+                                {
+                                    var pipelineConfig = ResolveProvider(modalRun.PipelineProviderConfigId);
+                                    @* TODO: [UX-24] Show ExternalCiEnabled status for pipeline provider *@
+                                    <div><strong>Pipeline:</strong> @(pipelineConfig?.DisplayName ?? "Unknown") (@(pipelineConfig?.ProviderType ?? "—"))</div>
                                 }
                             </div>
+
+                            <div class="monitoring-detail-grid">
+                                <div><strong>Retries:</strong> @modalRun.RetryCount</div>
+                                @if (modalRun.BranchName != null)
+                                {
+                                    <div><strong>Branch:</strong> @modalRun.BranchName</div>
+                                }
+                            </div>
+
+                            @{
+                                var buffer = RunService.GetOutputBuffer(modalRun.RunId);
+                                var outputLines = buffer.GetAll();
+                            }
+                            @if (outputLines.Count > 0)
+                            {
+                                <div>
+                                    <h4 style="font-size: 0.85rem; margin: 0 0 6px;">Output (last @Math.Min(outputLines.Count, 100) lines)</h4>
+                                    <div class="output-panel" id="modalOutputPanel">
+                                        @foreach (var line in outputLines.TakeLast(100))
+                                        {
+                                            <div class="output-line">@line</div>
+                                        }
+                                    </div>
+                                </div>
+                            }
                         </div>
-                    }
+
+                        <div class="modal-column-right">
+                            <PipelineSidebar Run="modalRun" IsRunning="true" MaxRetries="@_maxRetries"
+                                             OnCancel="() => CancelAgentRun(modalRun)" />
+                        </div>
+                    </div>
 
                     <div class="modal-footer">
                         <button class="btn-cancel" @onclick="DismissRunDetailModal">Close</button>
@@ -256,6 +280,7 @@
     private IReadOnlyList<PipelineRun> _activeRuns = [];
     private IReadOnlyList<AgentEntry> _agents = [];
     private IReadOnlyList<PendingJob> _queuedJobs = [];
+    private Dictionary<string, ProviderConfig> _providerConfigLookup = new();
     private string? _selectedRunId;
     private bool _showRunDetailModal;
     private bool _scrollModalOnNextRender;
@@ -276,6 +301,15 @@
             _maxRetries = config.MaxRetries;
         }
         catch { /* use default */ }
+
+        try
+        {
+            var allConfigs = new List<ProviderConfig>();
+            foreach (var kind in Enum.GetValues<ProviderKind>())
+                allConfigs.AddRange(await ConfigStore.LoadProviderConfigsAsync(kind, CancellationToken.None));
+            _providerConfigLookup = allConfigs.ToDictionary(c => c.Id);
+        }
+        catch { /* use empty lookup */ }
 
         RefreshData();
     }
@@ -412,6 +446,12 @@
     {
         if (string.IsNullOrEmpty(value)) return string.Empty;
         return value.Length <= maxLength ? value : value[..(maxLength - 3)] + "...";
+    }
+
+    private ProviderConfig? ResolveProvider(string? configId)
+    {
+        if (string.IsNullOrEmpty(configId)) return null;
+        return _providerConfigLookup.GetValueOrDefault(configId);
     }
 
     public void Dispose()
