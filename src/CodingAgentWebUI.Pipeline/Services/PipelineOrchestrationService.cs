@@ -306,9 +306,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         // Track in OrchestratorRunService
         _runService.AddRun(run);
 
-        // Persist to history
-        _historyService.AddRunToHistory(run);
-
         _logger.Information(
             "Dispatched run {RunId} created for issue {IssueIdentifier} → agent {AgentId}",
             run.RunId, issueIdentifier, agentId);
@@ -734,7 +731,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from issue {Issue}", issueId); }
     }
-    private void NotifyChange()
+    internal void NotifyChange()
     {
         try { OnChange?.Invoke(); }
         catch (Exception ex) { _logger.Warning(ex, "OnChange handler threw an exception"); }

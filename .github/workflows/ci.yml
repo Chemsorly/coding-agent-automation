@@ -59,6 +59,9 @@ jobs:
       - name: Build Web UI image
         run: docker build -f webUI.Dockerfile -t coding-agent-webui:ci .
 
+      - name: Build Agent image
+        run: docker build -f agent.Dockerfile -t coding-agent-kiro-dotnet:ci .
+
   docker-push:
     needs: [build-and-test, docker-build]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -97,5 +100,12 @@ jobs:
           context: .
           file: webUI.Dockerfile
           push: true
-          tags: chemsorly/dev:coding-agent
+          tags: chemsorly/dev:coding-agent-webui
 
+      - name: Build and push
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          file: agent.Dockerfile
+          push: true
+          tags: chemsorly/dev:coding-agent-kiro-dotnet

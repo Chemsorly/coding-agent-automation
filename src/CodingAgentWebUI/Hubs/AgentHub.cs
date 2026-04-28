@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.SignalR;
 using ILogger = Serilog.ILogger;
@@ -22,6 +23,8 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IProviderFactory _providerFactory;
     private readonly IConfigurationStore _configStore;
+    private readonly PipelineOrchestrationService _orchestration;
+    private readonly JobQueueDrainService _drainService;
     private readonly ILogger _logger;
 
     public AgentHub(
@@ -32,6 +35,8 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         IPipelineRunHistoryService historyService,
         IProviderFactory providerFactory,
         IConfigurationStore configStore,
+        PipelineOrchestrationService orchestration,
+        JobQueueDrainService drainService,
         ILogger logger)
     {
         _registry = registry;
@@ -41,6 +46,8 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         _historyService = historyService;
         _providerFactory = providerFactory;
         _configStore = configStore;
+        _orchestration = orchestration;
+        _drainService = drainService;
         _logger = logger;
     }
 
@@ -143,6 +150,9 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         {
             agent.ActiveJobId = null;
             _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+
+            // Signal drain service — agent is idle and may pick up a different job
+            _drainService.Signal();
         }
 
         return Task.CompletedTask;
@@ -150,10 +160,10 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
     /// <summary>
     /// Agent reports job completion. Updates the PipelineRun, persists to history,
-    /// transitions agent to Idle, and triggers job dequeue.
+    /// transitions agent to Idle, and signals the drain service for next dispatch.
     /// </summary>
     [RequiresActiveJob]
-    public async Task ReportJobCompleted(string jobId, JobCompletionPayload payload)
+    public Task ReportJobCompleted(string jobId, JobCompletionPayload payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
 
@@ -190,6 +200,8 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
             _logger.Information(
                 "Job {JobId} completed: step={FinalStep}, PR={PullRequestUrl}",
                 jobId, payload.FinalStep, payload.PullRequestUrl ?? "none");
+
+            _orchestration.NotifyChange();
         }
 
         // Transition agent to Idle and clear active job
@@ -203,15 +215,17 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
             if (run is not null)
                 _dispatcher.MarkIssueComplete(run.IssueIdentifier);
 
-            // Try to dequeue next job for this agent
-            await TryDequeueAndAssignAsync(agent);
+            // Signal the drain service to attempt dispatch for this now-idle agent
+            _drainService.Signal();
         }
+
+        return Task.CompletedTask;
     }
 
     /// <summary>
     /// Agent signals it is ready for the next job. Triggers job dequeue.
     /// </summary>
-    public async Task AgentReady(string agentId)
+    public Task AgentReady(string agentId)
     {
         ArgumentNullException.ThrowIfNull(agentId);
 
@@ -219,11 +233,12 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         if (agent is null)
         {
             _logger.Warning("AgentReady received for unknown agent {AgentId}", agentId);
-            return;
+            return Task.CompletedTask;
         }
 
         _logger.Information("Agent {AgentId} signaled ready", agentId);
-        await TryDequeueAndAssignAsync(agent);
+        _drainService.Signal();
+        return Task.CompletedTask;
     }
 
     // ── Real-time status ────────────────────────────────────────────────
@@ -245,6 +260,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
                 run.HighWaterMark = step;
 
             _logger.Debug("Job {JobId} step transition → {Step}", jobId, step);
+            _orchestration.NotifyChange();
         }
 
         return Task.CompletedTask;
@@ -267,6 +283,8 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         {
             foreach (var line in lines)
                 run.OutputLines.Enqueue(line);
+
+            _orchestration.NotifyChange();
         }
 
         return Task.CompletedTask;
@@ -388,7 +406,10 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         if (run is null)
             throw new HubException($"No active run found for job {jobId}");
 
-        // Load the repo provider config to generate a new token
+        // NOTE: Currently always generates a token from the repo provider config regardless of providerKind.
+        // All GitHub App-authenticated providers (repo, brain, pipeline) share the same installation,
+        // so the token works for all of them. If providers use different installations in the future,
+        // this should be updated to look up the correct config by providerKind.
         var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
         var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == run.RepoProviderConfigId);
         if (repoConfig is null)
@@ -407,6 +428,13 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// Builds a gate comment (not-ready or wont-do) from the assessment JSON.
     /// Falls back to the raw JSON if deserialization fails.
     /// </summary>
+    /// <remarks>
+    /// Currently only invoked via <see cref="RequestPostComment"/> when the agent sends
+    /// <see cref="CommentType.GateRejection"/> or <see cref="CommentType.GateWontDo"/>.
+    /// In practice, <see cref="CodingAgentWebUI.Pipeline.Services.AgentExecutionOrchestrator"/>
+    /// formats gate comments locally and posts via <see cref="CommentType.Analysis"/>,
+    /// so this path is currently unused.
+    /// </remarks>
     private string BuildGateComment(string? assessmentJson, bool isWontDo)
     {
         if (string.IsNullOrWhiteSpace(assessmentJson))
@@ -485,110 +513,4 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         }
     }
 
-    /// <summary>
-    /// Attempts to dequeue the next compatible job for the given agent and assign it.
-    /// </summary>
-    private async Task TryDequeueAndAssignAsync(AgentEntry agent)
-    {
-        var pendingJob = _dispatcher.DequeueForAgent(agent);
-        if (pendingJob is null)
-            return;
-
-        _logger.Information("Dequeued job for issue {IssueIdentifier} → agent {AgentId}", pendingJob.IssueIdentifier, agent.AgentId);
-
-        try
-        {
-            // Create a dispatched run via PipelineOrchestrationService
-            var orchestration = _providerFactory as object; // We need PipelineOrchestrationService
-            // Build provider configs for the agent
-            var providerConfigs = new List<ProviderConfig>();
-
-            var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
-            var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == pendingJob.RepoProviderId);
-            if (repoConfig != null) providerConfigs.Add(repoConfig);
-
-            var agentConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None);
-            var agentConfig = agentConfigs.FirstOrDefault(c => c.Id == pendingJob.AgentProviderId);
-            if (agentConfig != null) providerConfigs.Add(agentConfig);
-
-            if (!string.IsNullOrEmpty(pendingJob.BrainProviderId))
-            {
-                var brainConfig = repoConfigs.FirstOrDefault(c => c.Id == pendingJob.BrainProviderId);
-                if (brainConfig != null) providerConfigs.Add(brainConfig);
-            }
-
-            if (!string.IsNullOrEmpty(pendingJob.PipelineProviderId))
-            {
-                var pipelineConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, CancellationToken.None);
-                var pipelineConfig = pipelineConfigs.FirstOrDefault(c => c.Id == pendingJob.PipelineProviderId);
-                if (pipelineConfig != null) providerConfigs.Add(pipelineConfig);
-            }
-
-            var config = await _configStore.LoadPipelineConfigAsync(CancellationToken.None);
-
-            // Create a run in the run service
-            var configuredModel = agentConfig?.Settings.GetValueOrDefault("model", "auto") ?? "auto";
-            var repoProvider = repoConfig != null ? _providerFactory.CreateRepositoryProvider(repoConfig) : null;
-            var repoName = repoProvider?.RepositoryFullName ?? "unknown";
-            if (repoProvider is IAsyncDisposable disposable) await disposable.DisposeAsync();
-
-            var run = new PipelineRun
-            {
-                RunId = Guid.NewGuid().ToString(),
-                IssueIdentifier = pendingJob.IssueIdentifier,
-                IssueTitle = string.Empty,
-                IssueProviderConfigId = pendingJob.IssueProviderId,
-                RepoProviderConfigId = pendingJob.RepoProviderId,
-                StartedAt = DateTime.UtcNow,
-                CurrentStep = PipelineStep.Created,
-                RepositoryName = repoName,
-                ModelName = configuredModel,
-                BrainProviderConfigId = pendingJob.BrainProviderId,
-                InitiatedBy = pendingJob.InitiatedBy,
-                AgentId = agent.AgentId
-            };
-
-            _runService.AddRun(run);
-            _historyService.AddRunToHistory(run);
-
-            // Build assignment message
-            var message = new JobAssignmentMessage
-            {
-                JobId = run.RunId,
-                IssueIdentifier = pendingJob.IssueIdentifier,
-                IssueDetail = new IssueDetail { Identifier = pendingJob.IssueIdentifier, Title = string.Empty, Description = string.Empty, Labels = [] },
-                ParsedIssue = new ParsedIssue { RequirementsSection = string.Empty, AcceptanceCriteria = [] },
-                IssueComments = [],
-                RepoProviderConfigId = pendingJob.RepoProviderId,
-                AgentProviderConfigId = pendingJob.AgentProviderId,
-                BrainProviderConfigId = pendingJob.BrainProviderId,
-                PipelineProviderConfigId = pendingJob.PipelineProviderId,
-                ProviderConfigs = providerConfigs.AsReadOnly(),
-                PipelineConfiguration = config,
-                InitiatedBy = pendingJob.InitiatedBy
-            };
-
-            // Assign to agent
-            agent.ActiveJobId = run.RunId;
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
-
-            // Send via SignalR
-            await Clients.Client(agent.ConnectionId).AssignJob(message);
-
-            _logger.Information("Dequeued job {JobId} dispatched to agent {AgentId} for issue {IssueIdentifier}",
-                run.RunId, agent.AgentId, pendingJob.IssueIdentifier);
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Failed to dispatch dequeued job to agent {AgentId} for issue {IssueIdentifier}",
-                agent.AgentId, pendingJob.IssueIdentifier);
-
-            // Reset agent status
-            agent.ActiveJobId = null;
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-
-            // Re-enqueue the job
-            _dispatcher.EnqueueJob(pendingJob);
-        }
-    }
 }

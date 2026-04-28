@@ -57,6 +57,7 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddSingleton(registry);
         Services.AddSingleton(new JobDispatcherService(registry, mockLogger.Object));
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
+        Services.AddSingleton<IJobDispatcher>(new Mock<IJobDispatcher>().Object);
     }
 
     private void SetupDefaults()

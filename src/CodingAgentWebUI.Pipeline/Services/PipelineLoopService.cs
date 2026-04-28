@@ -6,9 +6,8 @@ namespace CodingAgentWebUI.Pipeline.Services;
 
 /// <summary>
 /// Background service that polls for agent:next issues and dispatches them to agents
-/// or processes them locally. When an <see cref="IJobDispatcher"/> is configured,
-/// issues are dispatched to available agents via the multi-agent flow. Otherwise,
-/// falls back to local execution via <see cref="PipelineOrchestrationService.StartPipelineAsync"/>.
+/// via the <see cref="IJobDispatcher"/>. Issues are always dispatched to agents or enqueued;
+/// local execution is not supported. If no dispatcher is available, issues are skipped.
 /// Starts dormant and is activated via <see cref="StartLoop"/>. Survives page navigation.
 /// </summary>
 public sealed class PipelineLoopService : BackgroundService
@@ -97,9 +96,7 @@ public sealed class PipelineLoopService : BackgroundService
         {
             if (IsLoopActive)
                 return false;
-            // In dispatch mode, allow starting even if a local run is in progress
-            // (agents handle execution independently). In local mode, block if running.
-            if (_jobDispatcher == null && _orchestration.IsRunning)
+            if (_orchestration.IsRunning)
                 return false;
 
             _issueProviderId = issueProviderId;
@@ -337,7 +334,7 @@ public sealed class PipelineLoopService : BackgroundService
                 }
 
                 // Dispatch mode: send to agents via JobDispatcher
-                if (_jobDispatcher != null && _jobDispatcher.HasRegisteredAgents)
+                if (_jobDispatcher != null)
                 {
                     CurrentIssueIdentifier = issue.Identifier;
                     QueueCount = candidates.Count - runsThisCycle;
@@ -379,48 +376,9 @@ public sealed class PipelineLoopService : BackgroundService
                     continue;
                 }
 
-                // Local execution mode (fallback when no agents or no dispatcher)
-                // Wait for any in-progress run to finish
-                if (_orchestration.IsRunning)
-                {
-                    _logger.Warning("Pipeline loop waiting for in-progress run to complete before starting next issue");
-                    while (_orchestration.IsRunning && !_stopRequested && !stoppingToken.IsCancellationRequested)
-                        await Task.Delay(1000, stoppingToken);
-                    if (_stopRequested || stoppingToken.IsCancellationRequested) break;
-                }
-
-                CurrentIssueIdentifier = issue.Identifier;
-                // TODO: [UX-12b] QueueCount does not subtract skipped issues — shows total candidates not processable count (review finding #4)
-                QueueCount = candidates.Count - runsThisCycle;
-                StatusMessage = $"🔄 Loop active — processing issue #{issue.Identifier} ({runsThisCycle + 1} of {candidates.Count} in queue, {FailedCount} failed)";
-                NotifyChange();
-
-                try
-                {
-                    _logger.Information("Pipeline loop starting run for issue #{Issue}: {Title}", issue.Identifier, issue.Title);
-                    // Pass stoppingToken (not ct) so StopLoop doesn't cancel the active run — only app shutdown does
-                    await _orchestration.StartPipelineAsync(
-                        _issueProviderId, _repoProviderId, issue.Identifier, _agentProviderId,
-                        stoppingToken, _brainProviderId, _pipelineProviderId, initiatedBy: "loop");
-
-                    var run = _orchestration.ActiveRun;
-                    if (run?.CurrentStep == PipelineStep.Failed)
-                        FailedCount++;
-
-                    ProcessedCount++;
-                    runsThisCycle++;
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    _logger.Error(ex, "Pipeline loop run failed for issue #{Issue}", issue.Identifier);
-                    FailedCount++;
-                    ProcessedCount++;
-                    runsThisCycle++;
-                }
+                // No agents available and no dispatcher — skip this issue
+                _logger.Warning("Pipeline loop skipping issue #{Issue} — no agents available for dispatch", issue.Identifier);
+                continue;
             }
 
             CurrentIssueIdentifier = null;

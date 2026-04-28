@@ -9,7 +9,9 @@
 @inject JobDispatcherService Dispatcher
 @inject OrchestratorRunService RunService
 @inject PipelineOrchestrationService PipelineService
+@inject IConfigurationStore ConfigStore
 @inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
+@inject IJSRuntime JS
 @using Microsoft.AspNetCore.SignalR
 
 <div class="agent-monitoring-page">
@@ -43,8 +45,8 @@
                         @foreach (var run in _activeRuns)
                         {
                             var elapsed = DateTime.UtcNow - run.StartedAt;
-                            <tr class="@(run.RunId == _selectedRunId ? "monitoring-row-selected" : "")"
-                                @onclick="() => SelectRun(run.RunId)">
+                            <tr class="monitoring-row-clickable"
+                                @onclick="() => OpenRunDetail(run.RunId)">
                                 <td class="monitoring-mono">@Truncate(run.RunId, 8)</td>
                                 <td>#@run.IssueIdentifier @Truncate(run.IssueTitle, 30)</td>
                                 <td>@(run.AgentId ?? "local")</td>
@@ -78,47 +80,66 @@
             </div>
         }
 
-        @if (_selectedRunId != null)
+    </section>
+
+    @* ── Run Detail Modal ── *@
+    @if (_showRunDetailModal)
+    {
+        var modalRun = _activeRuns.FirstOrDefault(r => r.RunId == _selectedRunId);
+        if (modalRun != null)
         {
-            var selectedRun = _activeRuns.FirstOrDefault(r => r.RunId == _selectedRunId);
-            if (selectedRun != null)
-            {
-                <div class="monitoring-run-detail">
-                    <h3>Run Details: @Truncate(selectedRun.RunId, 12)</h3>
+            <div class="modal-overlay" @onclick="DismissRunDetailModal" @onkeydown="HandleModalKeyDown">
+                <div class="modal-card modal-card-wide" @onclick:stopPropagation="true"
+                     role="dialog" aria-modal="true" aria-labelledby="run-detail-title">
+                    <h3 id="run-detail-title">
+                        Run @Truncate(modalRun.RunId, 12) — #@modalRun.IssueIdentifier @Truncate(modalRun.IssueTitle, 40)
+                    </h3>
+
                     <div class="monitoring-detail-grid">
-                        <div><strong>Issue:</strong> #@selectedRun.IssueIdentifier — @selectedRun.IssueTitle</div>
-                        <div><strong>Repository:</strong> @selectedRun.RepositoryName</div>
-                        <div><strong>Agent:</strong> @(selectedRun.AgentId ?? "local")</div>
-                        <div><strong>Model:</strong> @selectedRun.ModelName</div>
-                        <div><strong>Step:</strong> @selectedRun.CurrentStep</div>
-                        <div><strong>High Water Mark:</strong> @selectedRun.HighWaterMark</div>
-                        <div><strong>Retries:</strong> @selectedRun.RetryCount</div>
-                        @if (selectedRun.BranchName != null)
+                        <div><strong>Agent:</strong> @(modalRun.AgentId ?? "local")</div>
+                        <div><strong>Repository:</strong> @modalRun.RepositoryName</div>
+                        <div><strong>Model:</strong> @modalRun.ModelName</div>
+                        <div><strong>Retries:</strong> @modalRun.RetryCount</div>
+                        @if (modalRun.BranchName != null)
                         {
-                            <div><strong>Branch:</strong> @selectedRun.BranchName</div>
+                            <div><strong>Branch:</strong> @modalRun.BranchName</div>
                         }
                     </div>
 
+                    <PipelineSidebar Run="modalRun" IsRunning="true" MaxRetries="@_maxRetries"
+                                     OnCancel="() => CancelAgentRun(modalRun)" />
+
                     @{
-                        var buffer = RunService.GetOutputBuffer(selectedRun.RunId);
+                        var buffer = RunService.GetOutputBuffer(modalRun.RunId);
                         var outputLines = buffer.GetAll();
                     }
                     @if (outputLines.Count > 0)
                     {
-                        <div class="monitoring-output">
-                            <h4>Output (last @Math.Min(outputLines.Count, 50) lines)</h4>
-                            <div class="output-panel" style="max-height: 200px;">
-                                @foreach (var line in outputLines.TakeLast(50))
+                        <div>
+                            <h4 style="font-size: 0.85rem; margin: 0 0 6px;">Output (last @Math.Min(outputLines.Count, 100) lines)</h4>
+                            <div class="output-panel" id="modalOutputPanel">
+                                @foreach (var line in outputLines.TakeLast(100))
                                 {
                                     <div class="output-line">@line</div>
                                 }
                             </div>
                         </div>
                     }
+
+                    <div class="modal-footer">
+                        <button class="btn-cancel" @onclick="DismissRunDetailModal">Close</button>
+                        @if (modalRun.AgentId != null)
+                        {
+                            <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                    @onclick="() => CancelAgentRun(modalRun)">
+                                Cancel Run
+                            </button>
+                        }
+                    </div>
                 </div>
-            }
+            </div>
         }
-    </section>
+    }
 
     <!-- Registered Agents -->
     <section class="settings-section" style="margin: 16px 20px;">
@@ -236,17 +257,42 @@
     private IReadOnlyList<AgentEntry> _agents = [];
     private IReadOnlyList<PendingJob> _queuedJobs = [];
     private string? _selectedRunId;
+    private bool _showRunDetailModal;
+    private bool _scrollModalOnNextRender;
     private bool _disposed;
     private Timer? _refreshTimer;
+    private int _maxRetries = 3;
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         PipelineService.OnChange += HandleStateChanged;
 
         // Refresh every 2 seconds for heartbeat/elapsed updates
         _refreshTimer = new Timer(RefreshTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
 
+        try
+        {
+            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+            _maxRetries = config.MaxRetries;
+        }
+        catch { /* use default */ }
+
         RefreshData();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_scrollModalOnNextRender && _showRunDetailModal)
+        {
+            _scrollModalOnNextRender = false;
+            try
+            {
+                await Task.Delay(50);
+                await JS.InvokeVoidAsync("scrollActiveStepIntoView", "sidebarSteps");
+                await JS.InvokeVoidAsync("scrollToBottom", "modalOutputPanel");
+            }
+            catch { /* JS interop may fail during dispose */ }
+        }
     }
 
     private void RefreshData()
@@ -286,9 +332,23 @@
         catch (ObjectDisposedException) { }
     }
 
-    private void SelectRun(string runId)
+    private void OpenRunDetail(string runId)
     {
-        _selectedRunId = _selectedRunId == runId ? null : runId;
+        _selectedRunId = runId;
+        _showRunDetailModal = true;
+        _scrollModalOnNextRender = true;
+    }
+
+    private void DismissRunDetailModal()
+    {
+        _showRunDetailModal = false;
+        _selectedRunId = null;
+    }
+
+    private void HandleModalKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            DismissRunDetailModal();
     }
 
     private async Task CancelAgentRun(PipelineRun run)

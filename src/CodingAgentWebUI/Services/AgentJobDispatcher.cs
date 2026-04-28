@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.AspNetCore.SignalR;
 using ILogger = Serilog.ILogger;
 
@@ -20,6 +21,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
     private readonly Pipeline.Services.PipelineOrchestrationService _orchestration;
     private readonly TokenVendingService _tokenVending;
     private readonly IConfigurationStore _configStore;
+    private readonly IProviderFactory _providerFactory;
     private readonly IHubContext<AgentHub, IAgentHubClient> _hubContext;
     private readonly ILogger _logger;
 
@@ -30,6 +32,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         Pipeline.Services.PipelineOrchestrationService orchestration,
         TokenVendingService tokenVending,
         IConfigurationStore configStore,
+        IProviderFactory providerFactory,
         IHubContext<AgentHub, IAgentHubClient> hubContext,
         ILogger logger)
     {
@@ -39,6 +42,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         ArgumentNullException.ThrowIfNull(orchestration);
         ArgumentNullException.ThrowIfNull(tokenVending);
         ArgumentNullException.ThrowIfNull(configStore);
+        ArgumentNullException.ThrowIfNull(providerFactory);
         ArgumentNullException.ThrowIfNull(hubContext);
         ArgumentNullException.ThrowIfNull(logger);
 
@@ -48,6 +52,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         _orchestration = orchestration;
         _tokenVending = tokenVending;
         _configStore = configStore;
+        _providerFactory = providerFactory;
         _hubContext = hubContext;
         _logger = logger;
     }
@@ -153,7 +158,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
                 return false;
             }
 
-            // Fetch issue details for the assignment message
+            // Pre-fetch issue details and comments via IIssueProvider (REQ-4.4)
             var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
             var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == issueProviderId);
             if (issueConfig == null)
@@ -163,6 +168,35 @@ public sealed class AgentJobDispatcher : IJobDispatcher
                 return false;
             }
 
+            IssueDetail issueDetail;
+            ParsedIssue parsedIssue;
+            IReadOnlyList<IssueComment> issueComments;
+            await using (var issueProvider = _providerFactory.CreateIssueProvider(issueConfig))
+            {
+                issueDetail = await issueProvider.GetIssueAsync(issueIdentifier, ct);
+                parsedIssue = new IssueDescriptionParser().Parse(issueDetail.Description);
+                var allComments = await issueProvider.ListCommentsAsync(issueIdentifier, ct);
+                // Cap at 50 comments per REQ-4.4
+                issueComments = allComments.Count > 50
+                    ? allComments.Take(50).ToList().AsReadOnly()
+                    : allComments;
+
+                // Swap label to agent:in-progress before dispatch (REQ-7.2)
+                try
+                {
+                    foreach (var label in AgentLabels.All)
+                        await issueProvider.RemoveLabelAsync(issueIdentifier, label, ct);
+                    await issueProvider.AddLabelAsync(issueIdentifier, AgentLabels.InProgress, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to swap label to agent:in-progress for issue {IssueIdentifier}", issueIdentifier);
+                }
+            }
+
+            // Update run with fetched issue title
+            run.IssueTitle = issueDetail.Title;
+
             // Build provider configs for the agent (excluding issue provider)
             var rawConfigs = await BuildAgentProviderConfigsAsync(
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct);
@@ -170,27 +204,29 @@ public sealed class AgentJobDispatcher : IJobDispatcher
 
             var config = await _configStore.LoadPipelineConfigAsync(ct);
 
-            // Build the assignment message
-            // Note: IssueDetail, ParsedIssue, and comments are populated by the agent hub
-            // when it processes the assignment. For now, we send minimal data and the agent
-            // fetches what it needs via the orchestrator proxy.
+            // Detect existing analysis and rework state from comments
+            string? existingAnalysis = null;
+            bool forceRefreshAnalysis = false;
+            var analysisComment = issueComments.FirstOrDefault(c => c.Body.Contains("## 🤖 Agent Analysis"));
+            if (analysisComment is not null)
+            {
+                existingAnalysis = analysisComment.Body;
+                var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains("<!-- agent:gate-rejection -->"));
+                var gateWontDo = issueComments.FirstOrDefault(c => c.Body.Contains("<!-- agent:gate-wont-do -->"));
+                if ((gateRejection?.CreatedAt > analysisComment.CreatedAt) ||
+                    (gateWontDo?.CreatedAt > analysisComment.CreatedAt))
+                    forceRefreshAnalysis = true;
+            }
+
             var message = new JobAssignmentMessage
             {
                 JobId = run.RunId,
                 IssueIdentifier = issueIdentifier,
-                IssueDetail = new IssueDetail
-                {
-                    Identifier = issueIdentifier,
-                    Title = string.Empty,
-                    Description = string.Empty,
-                    Labels = []
-                },
-                ParsedIssue = new ParsedIssue
-                {
-                    RequirementsSection = string.Empty,
-                    AcceptanceCriteria = []
-                },
-                IssueComments = [],
+                IssueDetail = issueDetail,
+                ParsedIssue = parsedIssue,
+                IssueComments = issueComments,
+                ExistingAnalysis = existingAnalysis,
+                ForceRefreshAnalysis = forceRefreshAnalysis,
                 RepoProviderConfigId = repoProviderId,
                 AgentProviderConfigId = agentProviderId,
                 BrainProviderConfigId = brainProviderId,
@@ -221,6 +257,21 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             // Reset agent status on failure
             agent.ActiveJobId = null;
             _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+
+            // Revert label on dispatch failure (REQ-7.7)
+            try
+            {
+                var issueConfigs2 = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+                var issueConfig2 = issueConfigs2.FirstOrDefault(c => c.Id == issueProviderId);
+                if (issueConfig2 != null)
+                {
+                    await using var revertProvider = _providerFactory.CreateIssueProvider(issueConfig2);
+                    foreach (var label in AgentLabels.All)
+                        await revertProvider.RemoveLabelAsync(issueIdentifier, label, CancellationToken.None);
+                    await revertProvider.AddLabelAsync(issueIdentifier, AgentLabels.Next, CancellationToken.None);
+                }
+            }
+            catch { /* best effort */ }
 
             return false;
         }

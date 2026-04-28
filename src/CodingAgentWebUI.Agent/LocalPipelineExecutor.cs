@@ -273,6 +273,9 @@ public sealed class LocalPipelineExecutor
             }
 
             // ── Analysis ──
+            // NOTE: job.ExistingAnalysis and job.ForceRefreshAnalysis are available on the job
+            // but the shared AgentExecutionOrchestrator re-derives them from job.IssueComments
+            // for consistency with the local execution path.
             EmitOutputLine("🔍 Starting analysis...");
             var analysisShouldContinue = await agentExecution.ExecuteAnalysisPhaseAsync(
                 run, config, agentProvider, issueOps,
@@ -359,6 +362,11 @@ public sealed class LocalPipelineExecutor
         catch (OperationCanceledException)
         {
             run.CompletedAt = DateTime.UtcNow;
+
+            // Set agent:cancelled label (matching monolith behavior)
+            try { await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None); }
+            catch (Exception labelEx) { _logger.Warning(labelEx, "Failed to set cancelled label"); }
+
             TransitionTo(PipelineStep.Cancelled);
             EmitOutputLine("🚫 Pipeline cancelled");
 
@@ -406,9 +414,8 @@ public sealed class LocalPipelineExecutor
     {
         var prOrchestrator = new PullRequestOrchestrator(_logger);
 
-        run.CurrentStep = PipelineStep.PreparingForPullRequest;
-        try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.PreparingForPullRequest, DateTimeOffset.UtcNow, ct); }
-        catch { /* best effort */ }
+        // NOTE: QualityGateOrchestrator already transitions to PreparingForPullRequest
+        // during its cleanup phase, so we skip that transition here to avoid duplicates.
 
         run.CurrentStep = PipelineStep.CreatingPullRequest;
         try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.CreatingPullRequest, DateTimeOffset.UtcNow, ct); }
@@ -421,7 +428,7 @@ public sealed class LocalPipelineExecutor
         }
 
         var prUrl = await prOrchestrator.CreatePullRequestAsync(
-            run, report, isDraft, repoProvider, null, null, config, ct,
+            run, report, isDraft, repoProvider, job.IssueDetail, job.IssueComments, config, ct,
             emitOutputLine, isRework: run.LinkedPullRequest is not null);
 
         if (prUrl is null && config.BlacklistMode == BlacklistMode.Fail && run.BlacklistedFilesDetected.Count > 0)

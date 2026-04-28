@@ -56,9 +56,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             .Returns(_mockIssueProvider.Object);
     }
 
-    private PipelineLoopService CreateService()
+    private PipelineLoopService CreateService(IJobDispatcher? jobDispatcher = null)
     {
-        _loopService = new PipelineLoopService(_orchestration, _mockFactory.Object, _mockStore.Object, _mockLogger.Object);
+        _loopService = new PipelineLoopService(_orchestration, _mockFactory.Object, _mockStore.Object, _mockLogger.Object, jobDispatcher);
         return _loopService;
     }
 
@@ -498,7 +498,16 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 Page = 1, PageSize = 100, HasMore = false
             });
 
-        var svc = CreateService();
+        var mockDispatcher = new Mock<IJobDispatcher>();
+        mockDispatcher.Setup(d => d.TryDispatchAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>()))
+            .Returns(false);
+
+        var svc = CreateService(mockDispatcher.Object);
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
@@ -512,8 +521,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
-        // With maxRunsPerCycle=1, only 1 issue should be attempted per cycle
-        // (though the run itself may fail due to mock setup)
+        // With maxRunsPerCycle=1, only 1 issue should be dispatched per cycle
         Assert.True(svc.ProcessedCount >= 1);
     }
 

@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Services;
 
 /// <summary>
 /// Generates short-lived GitHub installation access tokens scoped to specific repositories
-/// with minimal permissions (<c>contents: write</c> + <c>pull_requests: write</c>).
+/// with minimal permissions (<c>contents: write</c>, <c>pull_requests: write</c>, <c>actions: read</c>).
 /// Agents receive these tokens instead of the GitHub App private key.
 /// Registered as a singleton in DI.
 /// </summary>
@@ -40,7 +40,7 @@ public sealed partial class TokenVendingService
 
     /// <summary>
     /// Generates a short-lived GitHub installation access token scoped to the target repository
-    /// with <c>contents: write</c> and <c>pull_requests: write</c> permissions only.
+    /// with <c>contents: write</c>, <c>pull_requests: write</c>, and <c>actions: read</c> permissions.
     /// No <c>issues: write</c> — all issue operations stay on the orchestrator.
     /// </summary>
     /// <param name="repoConfig">Repository provider config containing GitHub App credentials.</param>
@@ -74,7 +74,8 @@ public sealed partial class TokenVendingService
             Permissions = new TokenPermissions
             {
                 Contents = "write",
-                PullRequests = "write"
+                PullRequests = "write",
+                Actions = "read"
                 // Explicitly NO issues permission — all issue ops stay on orchestrator
             }
         };
@@ -138,26 +139,47 @@ public sealed partial class TokenVendingService
 
         foreach (var config in configs)
         {
-            if (config.Id == repoConfigId && config.Kind == ProviderKind.Repository)
+            // Any config with privateKeyBase64 needs a short-lived token replacement
+            // (repo, brain repo, pipeline provider — all may use GitHub App auth)
+            if (config.Settings.ContainsKey("privateKeyBase64"))
             {
-                // Generate a short-lived token for this repo config
-                var (token, expiresAt) = await GenerateAgentTokenAsync(config, ct);
-
-                // Clone settings, replacing privateKeyBase64 with token
-                var clonedSettings = new Dictionary<string, string>(config.Settings);
-                clonedSettings.Remove("privateKeyBase64");
-                clonedSettings["token"] = token;
-                clonedSettings["tokenExpiresAt"] = expiresAt.ToString("O");
-
-                result.Add(new ProviderConfig
+                try
                 {
-                    Id = config.Id,
-                    Kind = config.Kind,
-                    ProviderType = config.ProviderType,
-                    DisplayName = config.DisplayName,
-                    Settings = clonedSettings,
-                    RepositoryRole = config.RepositoryRole
-                });
+                    var (token, expiresAt) = await GenerateAgentTokenAsync(config, ct);
+
+                    var clonedSettings = new Dictionary<string, string>(config.Settings);
+                    clonedSettings.Remove("privateKeyBase64");
+                    clonedSettings["token"] = token;
+                    clonedSettings["tokenExpiresAt"] = expiresAt.ToString("O");
+
+                    result.Add(new ProviderConfig
+                    {
+                        Id = config.Id,
+                        Kind = config.Kind,
+                        ProviderType = config.ProviderType,
+                        DisplayName = config.DisplayName,
+                        Settings = clonedSettings,
+                        RepositoryRole = config.RepositoryRole
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to generate token for config {ConfigId} ({DisplayName}), stripping private key only",
+                        config.Id, config.DisplayName);
+
+                    var clonedSettings = new Dictionary<string, string>(config.Settings);
+                    clonedSettings.Remove("privateKeyBase64");
+
+                    result.Add(new ProviderConfig
+                    {
+                        Id = config.Id,
+                        Kind = config.Kind,
+                        ProviderType = config.ProviderType,
+                        DisplayName = config.DisplayName,
+                        Settings = clonedSettings,
+                        RepositoryRole = config.RepositoryRole
+                    });
+                }
             }
             else
             {
@@ -231,6 +253,9 @@ public sealed partial class TokenVendingService
 
         [JsonPropertyName("pull_requests")]
         public string? PullRequests { get; set; }
+
+        [JsonPropertyName("actions")]
+        public string? Actions { get; set; }
     }
 
     private sealed class TokenResponseBody

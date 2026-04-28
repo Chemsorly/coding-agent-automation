@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Moq;
@@ -21,6 +22,19 @@ public class HubAuthorizationTests
 {
     private static AgentRegistryService CreateRegistry() =>
         new(new Mock<ILogger>().Object);
+
+    private static HeartbeatMonitorService CreateMonitor(
+        AgentRegistryService registry,
+        OrchestratorRunService runService,
+        Mock<IConfigurationStore> mockConfigStore) =>
+        new(
+            registry,
+            runService,
+            new Mock<IPipelineRunHistoryService>().Object,
+            new JobDispatcherService(registry, new Mock<ILogger>().Object),
+            new Mock<IProviderFactory>().Object,
+            mockConfigStore.Object,
+            new Mock<ILogger>().Object);
 
     private static AgentEntry RegisterAgent(
         AgentRegistryService registry,
@@ -120,8 +134,7 @@ public class HubAuthorizationTests
                 AgentDisconnectGracePeriod = TimeSpan.Zero // Immediate expiry for testing
             });
 
-        var monitor = new HeartbeatMonitorService(
-            registry, runService, mockConfigStore.Object, new Mock<ILogger>().Object);
+        var monitor = CreateMonitor(registry, runService, mockConfigStore);
 
         // Register and disconnect an agent (no active job)
         var entry = RegisterAgent(registry, "agent-1", "conn-1");
@@ -150,8 +163,7 @@ public class HubAuthorizationTests
                 AgentDisconnectGracePeriod = TimeSpan.FromMinutes(5)
             });
 
-        var monitor = new HeartbeatMonitorService(
-            registry, runService, mockConfigStore.Object, new Mock<ILogger>().Object);
+        var monitor = CreateMonitor(registry, runService, mockConfigStore);
 
         // Register and disconnect an agent
         RegisterAgent(registry, "agent-1", "conn-1");
@@ -315,8 +327,7 @@ public class HubAuthorizationTests
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
 
-        var monitor = new HeartbeatMonitorService(
-            registry, runService, mockConfigStore.Object, new Mock<ILogger>().Object);
+        var monitor = CreateMonitor(registry, runService, mockConfigStore);
 
         // Register agent with stale heartbeat (>90 seconds ago)
         var entry = RegisterAgent(registry, "agent-1", "conn-1");
@@ -341,8 +352,7 @@ public class HubAuthorizationTests
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
 
-        var monitor = new HeartbeatMonitorService(
-            registry, runService, mockConfigStore.Object, new Mock<ILogger>().Object);
+        var monitor = CreateMonitor(registry, runService, mockConfigStore);
 
         // Register agent with fresh heartbeat
         RegisterAgent(registry, "agent-1", "conn-1");

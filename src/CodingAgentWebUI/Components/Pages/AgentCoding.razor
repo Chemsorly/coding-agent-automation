@@ -10,6 +10,7 @@
 @inject OrchestratorRunService RunService
 @inject AgentRegistryService Registry
 @inject JobDispatcherService Dispatcher
+@inject IJobDispatcher JobDispatcher
 @inject IConfigurationStore ConfigStore
 @inject IProviderFactory ProviderFactory
 @inject IJSRuntime JS
@@ -384,17 +385,29 @@
             {
                 try
                 {
-                    await PipelineService.StartPipelineAsync(
+                    var dispatched = await JobDispatcher.TryDispatchAsync(
+                        _selectedIssueId,
                         _selectedIssueProviderId, _selectedRepoProviderId,
-                        _selectedIssueId, _selectedAgentProviderId, CancellationToken.None,
-                        brainProviderId: string.IsNullOrEmpty(_selectedBrainProviderId) ? null : _selectedBrainProviderId,
-                        pipelineProviderId: string.IsNullOrEmpty(_selectedPipelineProviderId) ? null : _selectedPipelineProviderId);
+                        _selectedAgentProviderId,
+                        string.IsNullOrEmpty(_selectedBrainProviderId) ? null : _selectedBrainProviderId,
+                        string.IsNullOrEmpty(_selectedPipelineProviderId) ? null : _selectedPipelineProviderId,
+                        initiatedBy: "manual",
+                        CancellationToken.None);
+
+                    if (!dispatched)
+                    {
+                        await InvokeAsync(() =>
+                        {
+                            _errorMessage = "Could not dispatch — issue is already being processed or queued, or no agents are available.";
+                            StateHasChanged();
+                        });
+                    }
                 }
                 catch (Exception ex)
                 {
                     await InvokeAsync(() =>
                     {
-                        _errorMessage = $"Pipeline failed: {ex.Message}";
+                        _errorMessage = $"Pipeline dispatch failed: {ex.Message}";
                         StateHasChanged();
                     });
                 }
@@ -402,7 +415,7 @@
         }
         catch (Exception ex)
         {
-            _errorMessage = $"Failed to start pipeline: {ex.Message}";
+            _errorMessage = $"Failed to dispatch pipeline: {ex.Message}";
         }
     }
 

@@ -147,21 +147,21 @@ public sealed class AgentWorkerService : BackgroundService
 
         _jobCts = new CancellationTokenSource();
 
-        await using var outputBatcher = new OutputBatcher();
-        outputBatcher.OnFlush += async lines =>
-        {
-            try
-            {
-                await _hubManager.Connection.InvokeAsync("ReportOutputLines", message.JobId, lines);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to send output lines batch");
-            }
-        };
-
         _activeJobTask = Task.Run(async () =>
         {
+            await using var outputBatcher = new OutputBatcher();
+            outputBatcher.OnFlush += async lines =>
+            {
+                try
+                {
+                    await _hubManager.Connection.InvokeAsync("ReportOutputLines", message.JobId, lines);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to send output lines batch");
+                }
+            };
+
             JobCompletionPayload? completion = null;
             try
             {

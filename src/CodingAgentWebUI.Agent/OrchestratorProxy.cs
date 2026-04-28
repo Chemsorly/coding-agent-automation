@@ -46,6 +46,11 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     /// <summary>
     /// Posts a gate rejection comment (not_ready assessment) via the orchestrator.
     /// </summary>
+    /// <remarks>
+    /// Currently unused — <see cref="CodingAgentWebUI.Pipeline.Services.AgentExecutionOrchestrator"/> formats gate comments locally
+    /// and posts via <see cref="PostCommentAsync"/> with pre-built markdown. This method exists
+    /// for future use if comment formatting is moved to the orchestrator side.
+    /// </remarks>
     public Task PostGateRejectionAsync(string assessmentJson, CancellationToken ct)
         => _connection.InvokeAsync(
             "RequestPostComment",
@@ -57,6 +62,11 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     /// <summary>
     /// Posts a gate wont-do comment via the orchestrator.
     /// </summary>
+    /// <remarks>
+    /// Currently unused — <see cref="CodingAgentWebUI.Pipeline.Services.AgentExecutionOrchestrator"/> formats gate comments locally
+    /// and posts via <see cref="PostCommentAsync"/> with pre-built markdown. This method exists
+    /// for future use if comment formatting is moved to the orchestrator side.
+    /// </remarks>
     public Task PostGateWontDoAsync(string assessmentJson, CancellationToken ct)
         => _connection.InvokeAsync(
             "RequestPostComment",
