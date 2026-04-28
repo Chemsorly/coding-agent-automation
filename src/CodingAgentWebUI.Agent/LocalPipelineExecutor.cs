@@ -215,6 +215,10 @@ public sealed class LocalPipelineExecutor
                     _logger.Warning(ex, "Brain sync pre-run failed, continuing without brain context");
                     run.BrainContextLoaded = false;
                 }
+
+                // Report brain sync result to orchestrator for UI display
+                try { await connection.InvokeAsync("ReportBrainSyncResult", job.JobId, run.BrainContextLoaded, run.BrainKnowledgeFileCount, linkedCt); }
+                catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
             }
 
             // ── Rework detection ──

@@ -267,6 +267,25 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     }
 
     /// <summary>
+    /// Reports the result of brain repository synchronization so the UI can display context status.
+    /// </summary>
+    [RequiresActiveJob]
+    public Task ReportBrainSyncResult(string jobId, bool contextLoaded, int knowledgeFileCount)
+    {
+        var run = _runService.GetRun(jobId);
+        if (run is not null)
+        {
+            run.BrainContextLoaded = contextLoaded;
+            run.BrainKnowledgeFileCount = knowledgeFileCount;
+            _logger.Debug("Job {JobId} brain sync result: loaded={Loaded}, files={FileCount}",
+                jobId, contextLoaded, knowledgeFileCount);
+            _orchestration.NotifyChange();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
     /// Enqueues output lines into the run's OutputRingBuffer and the run's OutputLines queue.
     /// </summary>
     [RequiresActiveJob]
