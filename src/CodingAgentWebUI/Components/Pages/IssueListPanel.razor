@@ -66,9 +66,14 @@
         <div class="issue-list">
             @foreach (var issue in FilteredIssues)
             {
-                <div class="issue-card @(SelectedIssueId == issue.Identifier ? "issue-selected" : "")"
+                var isProcessing = IsIssueProcessingOrQueued?.Invoke(issue.Identifier) == true;
+                <div class="issue-card @(SelectedIssueId == issue.Identifier ? "issue-selected" : "") @(isProcessing ? "issue-dispatched" : "")"
                      @onclick="() => SelectIssue(issue.Identifier)">
                     <span class="issue-id">#@issue.Identifier</span>
+                    @if (isProcessing)
+                    {
+                        <span class="issue-dispatched-badge" title="Processing or queued">🔄</span>
+                    }
                     <span class="issue-title">@issue.Title</span>
                     @if (issue.Labels.Count > 0)
                     {
@@ -138,6 +143,9 @@
 
     /// <summary>The currently selected issue ID, driven by the parent shell.</summary>
     [Parameter] public string SelectedIssueId { get; set; } = "";
+
+    /// <summary>Predicate to check if an issue is currently being processed or queued.</summary>
+    [Parameter] public Func<string, bool>? IsIssueProcessingOrQueued { get; set; }
 
     private List<IssueSummary> _issues = new();
     private List<string> _availableLabels = new();

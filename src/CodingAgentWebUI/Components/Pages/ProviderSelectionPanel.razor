@@ -81,9 +81,20 @@
         }
 
         <button class="btn-save pipeline-start-btn" @onclick="OnStartPipeline"
-                disabled="@(!CanStartPipeline || IsLoopActive)"
+                disabled="@(!CanStartPipeline || IsLoopActive || IsDispatching || IsDispatched)"
                 title="@(IsLoopActive ? "Stop the loop to run manually" : "")">
-            🚀 Start Pipeline on Issue
+            @if (IsDispatching)
+            {
+                <text>⏳ Dispatching...</text>
+            }
+            else if (IsDispatched)
+            {
+                <text>✅ Dispatched</text>
+            }
+            else
+            {
+                <text>🚀 Start Pipeline on Issue</text>
+            }
         </button>
 
         @if (IsLoopActive)
@@ -193,6 +204,8 @@
     [Parameter] public EventCallback OnStartPipeline { get; set; }
     [Parameter] public bool IsLoopActive { get; set; }
     [Parameter] public bool IsManualRunInProgress { get; set; }
+    [Parameter] public bool IsDispatching { get; set; }
+    [Parameter] public bool IsDispatched { get; set; }
     [Parameter] public EventCallback OnStartLoop { get; set; }
     [Parameter] public EventCallback OnStopLoop { get; set; }
 
