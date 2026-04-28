@@ -72,7 +72,12 @@ public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAu
 
         if (string.IsNullOrEmpty(token))
         {
-            return Task.FromResult(AuthenticateResult.Fail("Missing API key"));
+            // NoResult (not Fail) — this request simply doesn't carry a token.
+            // Fail("Missing API key") causes ASP.NET Core to log a noisy warning on every
+            // unauthenticated request (e.g. Docker health checks hitting /health every 10s).
+            // NoResult means "this handler has no opinion" and lets the authorization layer
+            // decide whether to reject the request based on endpoint policy.
+            return Task.FromResult(AuthenticateResult.NoResult());
         }
 
         var expectedKey = Options.ApiKey;

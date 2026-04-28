@@ -39,6 +39,12 @@ public sealed class AgentAuthorizationFilter : IHubFilter
         HubInvocationContext context,
         Func<HubInvocationContext, ValueTask<object?>> next)
     {
+        // Only apply authorization to AgentHub — skip Blazor's internal ComponentHub and other hubs
+        if (context.Hub is not AgentHub)
+        {
+            return await next(context);
+        }
+
         var connectionId = context.Context.ConnectionId;
         var methodName = context.HubMethodName;
 
