@@ -1,51 +1,10 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
-
-#pragma warning disable CS0618 // Testing obsolete FromIssue method intentionally
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
 public class IssueAnalysisCommentTests
 {
-    [Fact]
-    public void FromIssue_WithFullInfo_ReturnsHighConfidence()
-    {
-        var issue = new IssueDetail
-        {
-            Identifier = "1",
-            Title = "Add login page",
-            Description = "## Requirements\nBuild a login page\n## Acceptance Criteria\n- [ ] Has username field\n- [ ] Has password field",
-            Labels = new[] { "feature" }
-        };
-        var parsed = new IssueDescriptionParser().Parse(issue.Description);
-
-        var result = IssueAnalysisComment.FromIssue(issue, parsed);
-
-        result.ConfidenceAssessment.Should().StartWith("High");
-        result.EstimatedComplexity.Should().StartWith("Low");
-        result.PlannedApproach.Should().Contain("Add login page");
-        result.AffectedComponents.Should().Contain(c => c.Contains("feature"));
-    }
-
-    [Fact]
-    public void FromIssue_WithNoStructure_ReturnsLowConfidence()
-    {
-        var issue = new IssueDetail
-        {
-            Identifier = "2",
-            Title = "Fix bug",
-            Description = "Something is broken",
-            Labels = Array.Empty<string>()
-        };
-        var parsed = new IssueDescriptionParser().Parse(issue.Description);
-
-        var result = IssueAnalysisComment.FromIssue(issue, parsed);
-
-        // Unstructured text is treated as requirements by the parser, so confidence is Medium
-        result.ConfidenceAssessment.Should().StartWith("Medium");
-    }
-
     [Fact]
     public void ToMarkdown_ContainsAllSections()
     {

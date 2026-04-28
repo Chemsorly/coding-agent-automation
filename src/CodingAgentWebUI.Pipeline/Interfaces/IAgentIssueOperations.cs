@@ -2,7 +2,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
 /// Narrow interface for issue operations needed by pipeline orchestrators.
-/// Implemented by <c>IssueProviderAdapter</c> (wraps <see cref="IIssueProvider"/>) on the orchestrator
+/// Implemented on the orchestrator side (wraps <see cref="IIssueProvider"/>)
 /// and by <c>OrchestratorProxy</c> (wraps SignalR hub calls) on the agent.
 /// This abstraction enables reuse of <c>AgentExecutionOrchestrator</c> and <c>QualityGateOrchestrator</c>
 /// in both deployment contexts without depending on <see cref="IIssueProvider"/> directly.
