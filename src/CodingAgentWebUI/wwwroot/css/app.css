@@ -486,6 +486,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 
 .monitoring-empty { font-size: 0.85rem; color: var(--text-muted); padding: 12px 0; }
 .monitoring-muted { color: var(--text-muted); font-style: italic; }
+.monitoring-section-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.monitoring-section-toggle:hover { opacity: 0.8; }
+.monitoring-section-toggle h2 { margin-bottom: 0; }
+.monitoring-toggle-icon { font-size: 0.85rem; color: var(--text-muted); }
 
 .monitoring-table-wrap { overflow-x: auto; }
 .monitoring-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
