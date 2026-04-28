@@ -494,9 +494,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .monitoring-toggle-icon { font-size: 0.85rem; color: var(--text-muted); }
 
 .monitoring-table-wrap { overflow-x: auto; }
-.monitoring-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-.monitoring-table th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
-.monitoring-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+.monitoring-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; table-layout: fixed; }
+.monitoring-table th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.monitoring-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .monitoring-table tbody tr { cursor: default; transition: background 0.1s; }
 .monitoring-table tbody tr:hover { background: var(--surface-alt); }
 .monitoring-mono { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.78rem; }
