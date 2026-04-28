@@ -30,6 +30,15 @@
         {
             <div class="monitoring-table-wrap">
                 <table class="monitoring-table">
+                    <colgroup>
+                        <col style="width: 80px;" />
+                        <col />
+                        <col style="width: 100px;" />
+                        <col style="width: 120px;" />
+                        <col style="width: 80px;" />
+                        <col style="width: 80px;" />
+                        <col style="width: 80px;" />
+                    </colgroup>
                     <thead>
                         <tr>
                             <th>Run ID</th>
@@ -47,9 +56,9 @@
                             var elapsed = DateTime.UtcNow - run.StartedAt;
                             <tr class="monitoring-row-clickable"
                                 @onclick="() => OpenRunDetail(run.RunId)">
-                                <td class="monitoring-mono">@Truncate(run.RunId, 8)</td>
-                                <td>#@run.IssueIdentifier @Truncate(run.IssueTitle, 30)</td>
-                                <td>@(run.AgentId ?? "local")</td>
+                                <td class="monitoring-mono" title="@run.RunId">@run.RunId</td>
+                                <td title="#@run.IssueIdentifier @run.IssueTitle">#@run.IssueIdentifier @run.IssueTitle</td>
+                                <td title="@(run.AgentId ?? "local")">@(run.AgentId ?? "local")</td>
                                 <td>
                                     <span class="monitoring-step monitoring-step-@run.CurrentStep.ToString().ToLowerInvariant()">
                                         @FormatStep(run.CurrentStep)
@@ -152,6 +161,15 @@
         {
             <div class="monitoring-table-wrap">
                 <table class="monitoring-table">
+                    <colgroup>
+                        <col style="width: 120px;" />
+                        <col style="width: 80px;" />
+                        <col />
+                        <col style="width: 100px;" />
+                        <col style="width: 80px;" />
+                        <col style="width: 100px;" />
+                        <col style="width: 80px;" />
+                    </colgroup>
                     <thead>
                         <tr>
                             <th>Agent ID</th>
@@ -167,7 +185,7 @@
                         @foreach (var agent in _agents)
                         {
                             <tr class="monitoring-row-@agent.Status.ToString().ToLowerInvariant()">
-                                <td class="monitoring-mono">@agent.AgentId</td>
+                                <td class="monitoring-mono" title="@agent.AgentId">@agent.AgentId</td>
                                 <td>@agent.AgentType</td>
                                 <td>
                                     @foreach (var label in agent.Labels)
@@ -180,7 +198,7 @@
                                         @GetStatusIcon(agent.Status) @agent.Status
                                     </span>
                                 </td>
-                                <td class="monitoring-mono">@(agent.ActiveJobId != null ? Truncate(agent.ActiveJobId, 8) : "—")</td>
+                                <td class="monitoring-mono" title="@(agent.ActiveJobId ?? "")">@(agent.ActiveJobId ?? "—")</td>
                                 <td>@FormatTimeAgo(agent.LastHeartbeatAt)</td>
                                 <td>@agent.RegisteredAt.ToString("HH:mm:ss")</td>
                             </tr>
@@ -202,6 +220,15 @@
         {
             <div class="monitoring-table-wrap">
                 <table class="monitoring-table">
+                    <colgroup>
+                        <col style="width: 40px;" />
+                        <col />
+                        <col style="width: 120px;" />
+                        <col style="width: 80px;" />
+                        <col style="width: 80px;" />
+                        <col style="width: 150px;" />
+                        <col style="width: 80px;" />
+                    </colgroup>
                     <thead>
                         <tr>
                             <th>#</th>
@@ -220,8 +247,8 @@
                             var waitTime = DateTimeOffset.UtcNow - job.EnqueuedAt;
                             <tr>
                                 <td>@position</td>
-                                <td>#@job.IssueIdentifier</td>
-                                <td>@job.InitiatedBy</td>
+                                <td title="#@job.IssueIdentifier">#@job.IssueIdentifier</td>
+                                <td title="@job.InitiatedBy">@job.InitiatedBy</td>
                                 <td>@job.EnqueuedAt.ToString("HH:mm:ss")</td>
                                 <td>@waitTime.ToString(@"hh\:mm\:ss")</td>
                                 <td>
