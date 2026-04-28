@@ -85,30 +85,17 @@ public class CiLogWriterTests : IDisposable
         result.Should().ContainKey(2);
     }
 
-    [Fact]
-    public void WriteJobLogs_FailedJobWithEmptyLog_IsSkipped()
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    public void WriteJobLogs_FailedJobWithEmptyOrNullLog_IsSkipped(string? logContent)
     {
         var status = CreateStatus(new PipelineJobResult
         {
             JobId = 1,
             Name = "build",
             State = PipelineRunState.Failed,
-            LogContent = ""
-        });
-
-        var result = _writer.WriteJobLogs(status, _tempDir, "run-1");
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void WriteJobLogs_FailedJobWithNullLog_IsSkipped()
-    {
-        var status = CreateStatus(new PipelineJobResult
-        {
-            JobId = 1,
-            Name = "build",
-            State = PipelineRunState.Failed,
-            LogContent = null
+            LogContent = logContent
         });
 
         var result = _writer.WriteJobLogs(status, _tempDir, "run-1");

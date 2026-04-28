@@ -54,70 +54,29 @@ public class TokenVendingServiceTests
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
 
-    [Fact]
-    public async Task GenerateAgentTokenAsync_MissingPrivateKey_Throws()
+    [Theory]
+    [InlineData("privateKeyBase64", new[] { "clientId", "installationId" })]
+    [InlineData("clientId", new[] { "privateKeyBase64", "installationId" })]
+    [InlineData("installationId", new[] { "privateKeyBase64", "clientId" })]
+    public async Task GenerateAgentTokenAsync_MissingSetting_Throws(string missingKey, string[] presentKeys)
     {
         var service = new TokenVendingService(_mockLogger.Object);
+        var settings = new Dictionary<string, string>();
+        foreach (var key in presentKeys)
+            settings[key] = key == "privateKeyBase64" ? "dGVzdA==" : "value-123";
+
         var config = new ProviderConfig
         {
             Id = "repo-1",
             Kind = ProviderKind.Repository,
             ProviderType = "GitHub",
             DisplayName = "Test",
-            Settings = new Dictionary<string, string>
-            {
-                ["clientId"] = "client-123",
-                ["installationId"] = "456"
-            }
+            Settings = settings
         };
 
         var act = () => service.GenerateAgentTokenAsync(config, CancellationToken.None);
         await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*privateKeyBase64*");
-    }
-
-    [Fact]
-    public async Task GenerateAgentTokenAsync_MissingClientId_Throws()
-    {
-        var service = new TokenVendingService(_mockLogger.Object);
-        var config = new ProviderConfig
-        {
-            Id = "repo-1",
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Test",
-            Settings = new Dictionary<string, string>
-            {
-                ["privateKeyBase64"] = "dGVzdA==",
-                ["installationId"] = "456"
-            }
-        };
-
-        var act = () => service.GenerateAgentTokenAsync(config, CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*clientId*");
-    }
-
-    [Fact]
-    public async Task GenerateAgentTokenAsync_MissingInstallationId_Throws()
-    {
-        var service = new TokenVendingService(_mockLogger.Object);
-        var config = new ProviderConfig
-        {
-            Id = "repo-1",
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Test",
-            Settings = new Dictionary<string, string>
-            {
-                ["privateKeyBase64"] = "dGVzdA==",
-                ["clientId"] = "client-123"
-            }
-        };
-
-        var act = () => service.GenerateAgentTokenAsync(config, CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*installationId*");
+            .WithMessage($"*{missingKey}*");
     }
 
     [Fact]

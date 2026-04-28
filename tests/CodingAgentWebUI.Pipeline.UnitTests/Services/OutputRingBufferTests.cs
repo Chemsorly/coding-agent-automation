@@ -181,7 +181,7 @@ public class OutputRingBufferTests
     }
 
     [Fact]
-    public void ThreadSafety_ConcurrentAdds_DoNotCorrupt()
+    public async Task ThreadSafety_ConcurrentAdds_DoNotCorrupt()
     {
         var buffer = new OutputRingBuffer(1000);
         var tasks = Enumerable.Range(0, 10)
@@ -192,14 +192,14 @@ public class OutputRingBufferTests
             }))
             .ToArray();
 
-        Task.WaitAll(tasks);
+        await Task.WhenAll(tasks);
 
         // All 1000 lines should be present (capacity = 1000, total adds = 1000)
         buffer.Count.Should().Be(1000);
     }
 
     [Fact]
-    public void ThreadSafety_ConcurrentAddsExceedingCapacity_MaintainsInvariant()
+    public async Task ThreadSafety_ConcurrentAddsExceedingCapacity_MaintainsInvariant()
     {
         var buffer = new OutputRingBuffer(100);
         var tasks = Enumerable.Range(0, 10)
@@ -210,7 +210,7 @@ public class OutputRingBufferTests
             }))
             .ToArray();
 
-        Task.WaitAll(tasks);
+        await Task.WhenAll(tasks);
 
         // Count should never exceed capacity
         buffer.Count.Should().BeLessThanOrEqualTo(100);
