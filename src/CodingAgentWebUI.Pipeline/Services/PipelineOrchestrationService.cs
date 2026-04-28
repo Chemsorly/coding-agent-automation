@@ -627,7 +627,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 }
 
                 TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
-                try { await _brainSync.SyncPostRunAsync(run, _activeBrainProvider, ct, line => EmitOutputLine(line)); }
+                try { await _brainSync.SyncPostRunAsync(run, _activeBrainProvider, ct, line => EmitOutputLine(line), _activeConfig!.BrainPushMaxRetries); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 { _logger.Warning(ex, "Pipeline {RunId} brain post-run sync failed", run.RunId); run.BrainUpdatesPushed = false; }
             }

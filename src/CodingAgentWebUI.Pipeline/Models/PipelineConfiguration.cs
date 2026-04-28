@@ -262,6 +262,13 @@ public sealed record PipelineConfiguration
     public string? DefaultRequiredAgentLabels { get; init; }
 
     /// <summary>
+    /// Maximum number of retry attempts when brain repo push fails with a non-fast-forward error
+    /// (concurrent push conflict). Each retry fetches, rebases, resolves conflicts, and retries push.
+    /// Default: 3.
+    /// </summary>
+    public int BrainPushMaxRetries { get; init; } = 3;
+
+    /// <summary>
     /// How long to wait after an agent disconnects before marking its active run as Failed.
     /// Default: 5 minutes.
     /// </summary>

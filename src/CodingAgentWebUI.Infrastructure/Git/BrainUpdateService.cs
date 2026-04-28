@@ -192,16 +192,22 @@ public partial class BrainUpdateService : IBrainUpdateService
     /// (4) Write resolved content to disk.
     /// (5) Stage resolved files.
     /// (6) Commit with message referencing runId and issueIdentifier.
-    /// (7) Push.
+    /// (7) Push with retry-rebase on non-fast-forward failure.
+    ///
+    /// NOTE: This retry-rebase approach is a local, self-healing solution that works across
+    /// separate Docker containers without orchestrator involvement. If the system later requires
+    /// coordination of additional shared resources beyond the brain repo, this could be superseded
+    /// by a centralized semaphore managed by the orchestrator via SignalR (acquire-push-release protocol).
     /// </summary>
     public async Task<BrainSyncResult> CommitAndPushAsync(
         string brainPath, string runId, string issueIdentifier,
-        IRepositoryProvider brainProvider, CancellationToken ct)
+        IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
     {
         ArgumentNullException.ThrowIfNull(brainPath);
         ArgumentNullException.ThrowIfNull(runId);
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(brainProvider);
+        // TODO: [GIT-05] Add ArgumentOutOfRangeException guard for maxPushRetries <= 0
 
         try
         {
@@ -219,55 +225,12 @@ public partial class BrainUpdateService : IBrainUpdateService
                 _logger.Warning(ex, "Brain repo pull failed, attempting to commit anyway");
             }
 
-            // Step 2-5: Detect and resolve conflicts
-            await Task.Run(() =>
-            {
-                using var repo = new Repository(brainPath);
+            // Step 2-6: Resolve conflicts, stage, and commit
+            var commitMessage = BuildCommitMessage(runId, issueIdentifier);
+            await ResolveConflictsAndCommitAsync(brainPath, commitMessage, ct);
 
-                if (repo.Index.Conflicts.Any())
-                {
-                    _logger.Information("Resolving {ConflictCount} brain repo conflicts", repo.Index.Conflicts.Count());
-
-                    foreach (var conflict in repo.Index.Conflicts)
-                    {
-                        try
-                        {
-                            var oursContent = conflict.Ours != null
-                                ? repo.Lookup<Blob>(conflict.Ours.Id)?.GetContentText() ?? ""
-                                : "";
-                            var theirsContent = conflict.Theirs != null
-                                ? repo.Lookup<Blob>(conflict.Theirs.Id)?.GetContentText() ?? ""
-                                : "";
-
-                            var resolved = ResolveConflictAcceptBoth(oursContent, theirsContent);
-                            var filePath = conflict.Ours?.Path ?? conflict.Theirs?.Path ?? conflict.Ancestor?.Path;
-
-                            if (filePath != null)
-                            {
-                                var fullPath = Path.Combine(brainPath, filePath);
-                                File.WriteAllText(fullPath, resolved);
-                                Commands.Stage(repo, filePath);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.Warning(ex, "Failed to resolve conflict for {Path}",
-                                conflict.Ours?.Path ?? conflict.Theirs?.Path ?? "unknown");
-                        }
-                    }
-                }
-
-                // Stage all changes
-                Commands.Stage(repo, "*");
-
-                // Commit
-                var signature = new Signature("CodingAgentWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
-                var message = BuildCommitMessage(runId, issueIdentifier);
-                repo.Commit(message, signature, signature);
-            }, ct);
-
-            // Step 7: Push
-            await brainProvider.PushBranchAsync(brainPath, brainProvider.BaseBranch, ct);
+            // Step 7: Push with retry-rebase loop on non-fast-forward failure
+            await PushWithRetryRebaseAsync(brainPath, brainProvider, commitMessage, maxPushRetries, ct);
 
             // Count committed files
             var filesCommitted = await Task.Run(() =>
@@ -292,6 +255,7 @@ public partial class BrainUpdateService : IBrainUpdateService
                 FilesCommitted = filesCommitted
             };
         }
+        // TODO: [GIT-05] Use `when (ex is not OperationCanceledException)` to propagate cancellation per project convention
         catch (Exception ex)
         {
             _logger.Warning(ex, "Brain repo commit/push failed for run {RunId}", runId);
@@ -301,6 +265,204 @@ public partial class BrainUpdateService : IBrainUpdateService
                 ErrorMessage = ex.Message
             };
         }
+    }
+
+    /// <summary>
+    /// Resolves any index conflicts and creates a commit with all staged changes.
+    /// </summary>
+    private async Task ResolveConflictsAndCommitAsync(string brainPath, string commitMessage, CancellationToken ct)
+    {
+        await Task.Run(() =>
+        {
+            using var repo = new Repository(brainPath);
+
+            if (repo.Index.Conflicts.Any())
+            {
+                var conflictCount = repo.Index.Conflicts.Count();
+                _logger.Information("Resolving {ConflictCount} brain repo conflicts", conflictCount);
+
+                foreach (var conflict in repo.Index.Conflicts)
+                {
+                    try
+                    {
+                        var oursContent = conflict.Ours != null
+                            ? repo.Lookup<Blob>(conflict.Ours.Id)?.GetContentText() ?? ""
+                            : "";
+                        var theirsContent = conflict.Theirs != null
+                            ? repo.Lookup<Blob>(conflict.Theirs.Id)?.GetContentText() ?? ""
+                            : "";
+
+                        var resolved = ResolveConflictAcceptBoth(oursContent, theirsContent);
+                        var filePath = conflict.Ours?.Path ?? conflict.Theirs?.Path ?? conflict.Ancestor?.Path;
+
+                        if (filePath != null)
+                        {
+                            var fullPath = Path.Combine(brainPath, filePath);
+                            File.WriteAllText(fullPath, resolved);
+                            Commands.Stage(repo, filePath);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex, "Failed to resolve conflict for {Path}",
+                            conflict.Ours?.Path ?? conflict.Theirs?.Path ?? "unknown");
+                    }
+                }
+            }
+
+            // Stage all changes
+            Commands.Stage(repo, "*");
+
+            // Commit
+            var signature = new Signature("CodingAgentWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
+            repo.Commit(commitMessage, signature, signature);
+        }, ct);
+    }
+
+    /// <summary>
+    /// Pushes the current branch with retry-rebase on non-fast-forward failure.
+    /// On conflict: fetches remote, resets to remote HEAD, re-applies local changes,
+    /// resolves conflicts, recommits, and retries push.
+    /// </summary>
+    private async Task PushWithRetryRebaseAsync(
+        string brainPath, IRepositoryProvider brainProvider, string commitMessage,
+        int maxRetries, CancellationToken ct)
+    {
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                await brainProvider.PushBranchAsync(brainPath, brainProvider.BaseBranch, ct);
+                if (attempt > 1)
+                {
+                    _logger.Information(
+                        "Brain push succeeded on attempt {Attempt}/{MaxRetries}",
+                        attempt, maxRetries);
+                }
+                return; // success
+            }
+            catch (InvalidOperationException ex) when (
+                ex.Message.Contains("non-fast-forward", StringComparison.OrdinalIgnoreCase) &&
+                attempt < maxRetries)
+            {
+                _logger.Warning(
+                    "Brain push attempt {Attempt}/{MaxRetries} failed (non-fast-forward), rebasing...",
+                    attempt, maxRetries);
+
+                // Random jitter to reduce collision probability
+                await Task.Delay(Random.Shared.Next(200, 501), ct);
+
+                // Rebase: fetch, reset to remote, re-apply our changes
+                // TODO: [GIT-05] Log resolution outcome (success/failure) after rebase for complete structured logging
+                await RebaseOntoRemoteAsync(brainPath, brainProvider, commitMessage, ct);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Fetches remote, resets local branch to remote HEAD, re-applies local changes
+    /// from the saved commit, resolves conflicts, and recommits.
+    /// </summary>
+    private async Task RebaseOntoRemoteAsync(
+        string brainPath, IRepositoryProvider brainProvider, string commitMessage, CancellationToken ct)
+    {
+        // Fetch latest via PullAsync (which does fetch internally).
+        // We catch the NonFastForwardException since we'll handle the merge ourselves.
+        try
+        {
+            await brainProvider.PullAsync(brainPath, ct);
+        }
+        catch (NonFastForwardException)
+        {
+            // Expected — we have local commits that diverge from remote
+        }
+        catch (CheckoutConflictException)
+        {
+            // Expected — local uncommitted changes conflict with fetched remote
+        }
+        // TODO: [GIT-05] If fetch fails (network error), origin/branch is stale and rebase will produce same diverged commit — consider re-throwing to skip this retry attempt
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Brain repo fetch during rebase failed, attempting manual rebase");
+        }
+
+        await Task.Run(() =>
+        {
+            using var repo = new Repository(brainPath);
+
+            // Save our commit's tree (the changes we want to keep)
+            var ourCommit = repo.Head.Tip;
+            var ourTree = ourCommit.Tree;
+            var parentTree = ourCommit.Parents.FirstOrDefault()?.Tree;
+
+            // Determine which files we changed
+            // TODO: [GIT-05] parentTree null edge case — repo.Diff.Compare with null may throw on some LibGit2Sharp versions
+            var ourChanges = parentTree != null
+                ? repo.Diff.Compare<TreeChanges>(parentTree, ourTree)
+                : repo.Diff.Compare<TreeChanges>(null, ourTree);
+
+            // TODO: [GIT-05] remoteBranch null — if fetch failed, this skips reset and rebase produces same diverged commit
+            // Reset to remote branch tip
+            var remoteBranch = repo.Branches[$"origin/{brainProvider.BaseBranch}"];
+            if (remoteBranch != null)
+            {
+                repo.Reset(ResetMode.Hard, remoteBranch.Tip);
+            }
+
+            // Re-apply our changes from the saved commit tree
+            var conflictCount = 0;
+            foreach (var change in ourChanges)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var filePath = change.Path;
+                var fullPath = Path.Combine(brainPath, filePath);
+
+                if (change.Status == ChangeKind.Deleted)
+                {
+                    if (File.Exists(fullPath))
+                        File.Delete(fullPath);
+                    continue;
+                }
+
+                // Get our version from the saved tree
+                var ourBlob = ourTree[filePath]?.Target as Blob;
+                var ourContent = ourBlob?.GetContentText() ?? "";
+
+                // Check if remote also modified this file (conflict)
+                var remoteContent = File.Exists(fullPath) ? File.ReadAllText(fullPath) : "";
+                var baseContent = parentTree?[filePath]?.Target is Blob baseBlob
+                    ? baseBlob.GetContentText() : "";
+
+                if (remoteContent != baseContent && ourContent != baseContent)
+                {
+                    // Both sides modified — resolve with accept-both
+                    conflictCount++;
+                    var resolved = ResolveConflictAcceptBoth(remoteContent, ourContent);
+                    Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+                    File.WriteAllText(fullPath, resolved);
+                }
+                else
+                {
+                    // Only we modified — apply our version
+                    Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+                    File.WriteAllText(fullPath, ourContent);
+                }
+            }
+
+            if (conflictCount > 0)
+            {
+                _logger.Information(
+                    "Brain rebase resolved {ConflictCount} conflicts using accept-both strategy",
+                    conflictCount);
+            }
+
+            // Stage and recommit
+            // TODO: [GIT-05] EmptyCommitException possible if remote already has identical changes
+            Commands.Stage(repo, "*");
+            var signature = new Signature("CodingAgentWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
+            repo.Commit(commitMessage, signature, signature);
+        }, ct);
     }
 
     [GeneratedRegex(@"###\s+\d{4}-\d{2}-\d{2}")]
