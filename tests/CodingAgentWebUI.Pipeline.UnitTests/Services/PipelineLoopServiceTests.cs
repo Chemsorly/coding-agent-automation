@@ -137,11 +137,15 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
-        // Give it time to process
-        await Task.Delay(2000);
+        // Poll until at least one issue is started
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (startedIssues.Count == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         svc.StopLoop();
-        await Task.Delay(500);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         cts.Cancel();
 
         try { await svc.StopAsync(CancellationToken.None); } catch { }
@@ -172,7 +176,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
-        await Task.Delay(1500);
+        // Poll until status message contains "error"
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!svc.StatusMessage.Contains("error", StringComparison.OrdinalIgnoreCase) && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         // All issues have agent:error — status should indicate all errored
         Assert.Contains("error", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
@@ -203,7 +210,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
-        await Task.Delay(1500);
+        // Poll until status message indicates processing happened (skipped issues)
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (string.IsNullOrEmpty(svc.StatusMessage) && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         // Both issues should be skipped — no runs should have been attempted
         Assert.Equal(0, svc.ProcessedCount);
@@ -234,7 +244,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
-        await Task.Delay(1500);
+        // Poll until status message contains "refinement"
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!svc.StatusMessage.Contains("refinement", StringComparison.OrdinalIgnoreCase) && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         Assert.Equal(0, svc.ProcessedCount);
         Assert.Contains("refinement", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
@@ -265,7 +278,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
-        await Task.Delay(1500);
+        // Poll until status message contains both "error" and "refinement"
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while ((!svc.StatusMessage.Contains("error", StringComparison.OrdinalIgnoreCase) || !svc.StatusMessage.Contains("refinement", StringComparison.OrdinalIgnoreCase)) && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         Assert.Equal(0, svc.ProcessedCount);
         // Early-exit status message should mention both error and refinement
@@ -311,9 +327,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
         // Wait for at least one poll cycle to complete
-        await Task.Delay(2000);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (pageRequested == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         svc.StopLoop();
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -338,13 +359,18 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
-        await Task.Delay(1500);
+        // Poll until status message contains expected text
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!svc.StatusMessage.Contains("no `agent:next` issues") && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         Assert.True(svc.IsLoopActive);
         Assert.Contains("no `agent:next` issues", svc.StatusMessage);
 
         svc.StopLoop();
-        await Task.Delay(500);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -359,8 +385,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
         svc.StopLoop();
 
-        // Give it time to process the stop
-        await Task.Delay(1500);
+        // Poll for loop to become inactive
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         Assert.False(svc.IsLoopActive);
 
@@ -415,7 +443,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
         // Wait for at least 2 poll cycles (first fails with backoff, second succeeds)
-        await Task.Delay(2000);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (callCount < 2 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         // Loop should still be active (didn't crash)
         Assert.True(svc.IsLoopActive);
@@ -424,7 +454,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.Equal(0, svc.ConsecutivePollFailures);
 
         svc.StopLoop();
-        await Task.Delay(500);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -453,13 +485,19 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
-        await Task.Delay(500);
+        // Wait for the loop to actually start processing (status message changes from initial)
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.StatusMessage == "🔄 Loop starting…" && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         Assert.True(svc.IsLoopActive);
 
         // Simulate application shutdown
         cts.Cancel();
-        try { await svc.StopAsync(CancellationToken.None); } catch { }
+        try { await svc.StopAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token); } catch { }
 
+        var deadline2 = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline2)
+            await Task.Delay(50);
         Assert.False(svc.IsLoopActive);
     }
 
@@ -513,11 +551,15 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
-        // Give it time to process one cycle
-        await Task.Delay(1500);
+        // Poll until at least one issue is processed
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.ProcessedCount < 1 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         svc.StopLoop();
-        await Task.Delay(500);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -715,14 +757,18 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
         // Wait for failures + recovery
-        await Task.Delay(2000);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (callCount < 3 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         // After success, consecutive failures should be reset
         Assert.Equal(0, svc.ConsecutivePollFailures);
         Assert.Null(svc.LastPollError);
 
         svc.StopLoop();
-        await Task.Delay(500);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -750,7 +796,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
         // Wait for 3 failures: 100ms + 200ms + 200ms(capped) = ~500ms, then circuit breaks
-        await Task.Delay(2000);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         Assert.True(svc.IsCircuitBroken);
         Assert.Equal(3, svc.ConsecutivePollFailures);
@@ -758,7 +806,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.Contains("3 times", svc.StatusMessage);
 
         svc.StopLoop();
-        await Task.Delay(500);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -798,7 +848,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
         // Wait for circuit breaker to trip
-        await Task.Delay(2000);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         Assert.True(svc.IsCircuitBroken);
 
         // Resume the loop
@@ -807,13 +859,17 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.Equal(0, svc.ConsecutivePollFailures);
 
         // Wait for successful poll after resume
-        await Task.Delay(1000);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (callCount < 4 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         Assert.True(svc.IsLoopActive);
         Assert.False(svc.IsCircuitBroken);
 
         svc.StopLoop();
-        await Task.Delay(500);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -841,12 +897,16 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
         // Wait for circuit breaker to trip
-        await Task.Delay(2000);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         Assert.True(svc.IsCircuitBroken);
 
         // Stop the loop while circuit breaker is active
         svc.StopLoop();
-        await Task.Delay(1000);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         Assert.False(svc.IsLoopActive);
 
@@ -887,7 +947,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
-        await Task.Delay(1500);
+        // Poll until at least 2 calls have been made
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (callCount < 2 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         // Rate limit should NOT count as a failure
         Assert.Equal(0, svc.ConsecutivePollFailures);
@@ -895,7 +958,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.True(callCount >= 2, $"Expected at least 2 poll attempts, got {callCount}");
 
         svc.StopLoop();
-        await Task.Delay(500);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -933,7 +998,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
-        await Task.Delay(1500);
+        // Poll until at least 2 calls (first fails, second succeeds and resets)
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (callCount < 2 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         Assert.True(svc.IsLoopActive);
         Assert.Equal(0, svc.ConsecutivePollFailures);
@@ -941,7 +1009,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.False(svc.IsCircuitBroken);
 
         svc.StopLoop();
-        await Task.Delay(500);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -969,7 +1039,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
         // Wait for circuit breaker to trip
-        await Task.Delay(2000);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         Assert.True(svc.IsCircuitBroken);
 
         // Simulate app shutdown while paused on circuit breaker
@@ -1007,13 +1079,17 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
 
         // Wait for 2 failures to trip circuit breaker
-        await Task.Delay(1500);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         Assert.True(svc.IsCircuitBroken);
         Assert.Equal(2, svc.ConsecutivePollFailures);
 
         svc.StopLoop();
-        await Task.Delay(500);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }

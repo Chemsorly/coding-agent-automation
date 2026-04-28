@@ -47,8 +47,10 @@ public class OutputBatcherTests
         await batcher.AddLineAsync("timer-line-1");
         await batcher.AddLineAsync("timer-line-2");
 
-        // Wait for the 250ms timer to fire (give some margin)
-        await Task.Delay(500);
+        // Poll until the timer flushes (no fixed delay)
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (!flushedBatches.Any() && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         // Assert — timer should have flushed the 2 lines
         flushedBatches.Should().HaveCountGreaterThanOrEqualTo(1);
@@ -96,8 +98,11 @@ public class OutputBatcherTests
             return Task.CompletedTask;
         };
 
-        // Act — don't add any lines, wait for a couple of timer ticks
-        await Task.Delay(600);
+        // Act — don't add any lines, wait long enough for multiple timer ticks
+        // Poll to confirm no flush fires (negative assertion needs a reasonable wait)
+        var deadline = DateTime.UtcNow.AddMilliseconds(800);
+        while (DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         // Assert — no flush should have been triggered
         flushCount.Should().Be(0);
@@ -108,7 +113,7 @@ public class OutputBatcherTests
     {
         // Arrange
         var flushedBatches = new List<IReadOnlyList<string>>();
-        await using var batcher = new OutputBatcher();
+        var batcher = new OutputBatcher();
         batcher.OnFlush += batch =>
         {
             flushedBatches.Add(batch.ToList());
@@ -119,10 +124,10 @@ public class OutputBatcherTests
         for (var i = 0; i < 120; i++)
             await batcher.AddLineAsync($"line-{i}");
 
-        // Wait for timer to flush remaining
-        await Task.Delay(500);
+        // Dispose flushes remaining lines deterministically (no timer dependency)
+        await batcher.DisposeAsync();
 
-        // Assert — should have at least 2 threshold flushes + 1 timer flush
+        // Assert — should have all 120 lines across threshold + final flush
         var allLines = flushedBatches.SelectMany(b => b).ToList();
         allLines.Should().HaveCount(120);
     }
