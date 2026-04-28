@@ -500,7 +500,7 @@ public sealed class LocalPipelineExecutor
             try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.SyncingBrainRepoPostRun, DateTimeOffset.UtcNow, ct); }
             catch { /* best effort */ }
 
-            try { await brainSync.SyncPostRunAsync(run, brainProvider, ct, emitOutputLine); }
+            try { await brainSync.SyncPostRunAsync(run, brainProvider, ct, emitOutputLine, config.BrainPushMaxRetries); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.Warning(ex, "Brain post-run sync failed");

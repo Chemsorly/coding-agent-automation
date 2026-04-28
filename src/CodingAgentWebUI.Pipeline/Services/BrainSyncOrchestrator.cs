@@ -90,7 +90,7 @@ internal class BrainSyncOrchestrator
     // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public async Task SyncPostRunAsync(
         PipelineRun run, IRepositoryProvider brainProvider,
-        CancellationToken ct, Action<string>? onOutputLine = null)
+        CancellationToken ct, Action<string>? onOutputLine = null, int maxPushRetries = 3)
     {
         var brainSw = System.Diagnostics.Stopwatch.StartNew();
         var brainPath = Path.Combine(run.WorkspacePath!, ".brain");
@@ -108,7 +108,7 @@ internal class BrainSyncOrchestrator
             }
 
             var syncResult = await _brainUpdateService.CommitAndPushAsync(
-                brainPath, run.RunId, run.IssueIdentifier, brainProvider, ct);
+                brainPath, run.RunId, run.IssueIdentifier, brainProvider, ct, maxPushRetries);
             run.BrainUpdatesPushed = syncResult.Success;
             run.BrainFilesCommitted = syncResult.FilesCommitted;
 
