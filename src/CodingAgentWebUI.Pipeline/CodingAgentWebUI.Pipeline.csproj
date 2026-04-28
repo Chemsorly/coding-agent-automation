@@ -4,14 +4,22 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- MsgPack003: Suppress for existing types (IssueDetail, ParsedIssue, etc.) referenced by
+         [MessagePackObject] DTOs — these are serialized via ContractlessStandardResolver at runtime.
+         MsgPack017: Init properties with default initializers are intentional — defaults are overridden
+         during deserialization when values are present in the payload. -->
+    <NoWarn>$(NoWarn);MsgPack003;MsgPack017</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="CodingAgentWebUI" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Agent" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure.UnitTests" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="MessagePack" Version="3.1.4" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.7" />
     <PackageReference Include="Serilog" Version="4.3.1" />
   </ItemGroup>

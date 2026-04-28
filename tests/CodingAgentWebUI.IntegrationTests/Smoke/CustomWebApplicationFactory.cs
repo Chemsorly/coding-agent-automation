@@ -1,4 +1,3 @@
-using KiroCliLib.Core;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Hosting;
@@ -23,9 +22,6 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
             // Replace IProviderFactory with a mock
             ReplaceService<IProviderFactory>(services, new Mock<IProviderFactory>().Object);
-
-            // Replace IKiroCliOrchestrator with a mock (prevents real process spawning)
-            ReplaceService<IKiroCliOrchestrator>(services, new Mock<IKiroCliOrchestrator>().Object);
 
             // Replace IQualityGateValidator with a mock (prevents real dotnet build/test)
             ReplaceService<IQualityGateValidator>(services, new Mock<IQualityGateValidator>().Object);

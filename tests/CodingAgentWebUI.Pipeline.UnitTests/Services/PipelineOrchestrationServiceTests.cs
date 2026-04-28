@@ -182,7 +182,9 @@ public class PipelineOrchestrationServiceTests
     public async Task StartPipeline_WhenAlreadyRunning_ThrowsInvalidOperationException()
     {
         var (pipelineTask, agentTcs) = StartBlockingPipeline();
-        await Task.Delay(200); // let pipeline reach GeneratingCode
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_service.ActiveRun?.CurrentStep != PipelineStep.GeneratingCode && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         _service.IsRunning.Should().BeTrue();
 
@@ -232,7 +234,9 @@ public class PipelineOrchestrationServiceTests
     public async Task CancelPipeline_DuringExecution_TransitionsToCancelled()
     {
         var (pipelineTask, agentTcs) = StartBlockingPipeline();
-        await Task.Delay(200);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_service.ActiveRun?.CurrentStep != PipelineStep.GeneratingCode && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         await _service.CancelPipelineAsync();
         agentTcs.TrySetCanceled();
@@ -778,7 +782,9 @@ public class PipelineOrchestrationServiceTests
             });
 
         var pipelineTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_service.ActiveRun?.ChatHistory.Count == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await pipelineTask;
@@ -820,7 +826,9 @@ public class PipelineOrchestrationServiceTests
             });
 
         var pipelineTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_service.ActiveRun?.ChatHistory.Count == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await pipelineTask;
@@ -862,7 +870,9 @@ public class PipelineOrchestrationServiceTests
             });
 
         var pipelineTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        await Task.Delay(TimeSpan.FromSeconds(2));
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while ((_service.ActiveRun?.ChatHistory.Where(c => c.Role == ChatRole.System && c.Content.Contains("no output for")).Count() ?? 0) < 2 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await pipelineTask;
@@ -1300,7 +1310,9 @@ public class PipelineOrchestrationServiceTests
         var pipelineTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Wait for pipeline to reach a running state
-        await Task.Delay(200);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!_service.IsRunning && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         await _service.CancelPipelineAsync();
         tcs.TrySetCanceled();
@@ -1834,7 +1846,9 @@ public class PipelineOrchestrationServiceTests
     public async Task PipelineEvents_CancelledRun_EmitsCancelMessage()
     {
         var (pipelineTask, agentTcs) = StartBlockingPipeline();
-        await Task.Delay(200);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_service.ActiveRun?.CurrentStep != PipelineStep.GeneratingCode && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         var outputLines = new List<string>();
         _service.OnOutputLine += line => outputLines.Add(line);

@@ -124,6 +124,9 @@ public sealed class PipelineRun
     /// <summary>How this run was initiated: "manual" or "loop".</summary>
     public string InitiatedBy { get; init; } = "manual";
 
+    /// <summary>Which agent is executing this run, or null for legacy/local runs.</summary>
+    public string? AgentId { get; init; }
+
     /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
     // TODO: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
     public PipelineRunSummary ToSummary() => new()

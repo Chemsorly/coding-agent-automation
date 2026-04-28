@@ -4,8 +4,13 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Services
 @inject PipelineOrchestrationService PipelineService
 @inject PipelineLoopService LoopService
+@inject OrchestratorRunService RunService
+@inject AgentRegistryService Registry
+@inject JobDispatcherService Dispatcher
+@inject IJobDispatcher JobDispatcher
 @inject IConfigurationStore ConfigStore
 @inject IProviderFactory ProviderFactory
 @inject IJSRuntime JS
@@ -38,6 +43,27 @@
     @if (!string.IsNullOrEmpty(_errorMessage))
     {
         <div class="settings-status status-error">@_errorMessage</div>
+    }
+
+    @* Multi-agent run summary bar *@
+    @{
+        var agentRuns = RunService.GetActiveRuns();
+        var agentCount = Registry.GetAllAgents().Count;
+        var queueLength = Dispatcher.QueueLength;
+    }
+    @if (agentRuns.Count > 0 || queueLength > 0)
+    {
+        <div class="settings-status status-info" style="margin: 8px 20px 0;">
+            <span>
+                🤖 @agentCount agent(s) registered ·
+                @agentRuns.Count agent run(s) active
+                @if (queueLength > 0)
+                {
+                    <text> · @queueLength job(s) queued</text>
+                }
+                · <a href="/agent-monitoring" style="color: var(--accent-light);">View Dashboard →</a>
+            </span>
+        </div>
     }
 
     @{
@@ -359,17 +385,29 @@
             {
                 try
                 {
-                    await PipelineService.StartPipelineAsync(
+                    var dispatched = await JobDispatcher.TryDispatchAsync(
+                        _selectedIssueId,
                         _selectedIssueProviderId, _selectedRepoProviderId,
-                        _selectedIssueId, _selectedAgentProviderId, CancellationToken.None,
-                        brainProviderId: string.IsNullOrEmpty(_selectedBrainProviderId) ? null : _selectedBrainProviderId,
-                        pipelineProviderId: string.IsNullOrEmpty(_selectedPipelineProviderId) ? null : _selectedPipelineProviderId);
+                        _selectedAgentProviderId,
+                        string.IsNullOrEmpty(_selectedBrainProviderId) ? null : _selectedBrainProviderId,
+                        string.IsNullOrEmpty(_selectedPipelineProviderId) ? null : _selectedPipelineProviderId,
+                        initiatedBy: "manual",
+                        CancellationToken.None);
+
+                    if (!dispatched)
+                    {
+                        await InvokeAsync(() =>
+                        {
+                            _errorMessage = "Could not dispatch — issue is already being processed or queued, or no agents are available.";
+                            StateHasChanged();
+                        });
+                    }
                 }
                 catch (Exception ex)
                 {
                     await InvokeAsync(() =>
                     {
-                        _errorMessage = $"Pipeline failed: {ex.Message}";
+                        _errorMessage = $"Pipeline dispatch failed: {ex.Message}";
                         StateHasChanged();
                     });
                 }
@@ -377,7 +415,7 @@
         }
         catch (Exception ex)
         {
-            _errorMessage = $"Failed to start pipeline: {ex.Message}";
+            _errorMessage = $"Failed to dispatch pipeline: {ex.Message}";
         }
     }
 

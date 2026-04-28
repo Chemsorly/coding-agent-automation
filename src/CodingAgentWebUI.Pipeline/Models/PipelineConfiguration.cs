@@ -251,4 +251,25 @@ public sealed record PipelineConfiguration
     /// </summary>
     // TODO: [REF-01] Add server-side validation to reject values < 1 — values ≤ 0 silently fetch only 1 page (review finding #2)
     public int ClosedLoopMaxPagesToFetch { get; init; } = 10;
+
+    // ── Multi-agent fields ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Global fallback for agent label routing when a repository's ProviderConfig
+    /// does not specify <c>requiredAgentLabels</c>. Comma-separated string (e.g., "kiro,dotnet").
+    /// Null means any idle agent can be selected.
+    /// </summary>
+    public string? DefaultRequiredAgentLabels { get; init; }
+
+    /// <summary>
+    /// How long to wait after an agent disconnects before marking its active run as Failed.
+    /// Default: 5 minutes.
+    /// </summary>
+    public TimeSpan AgentDisconnectGracePeriod { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Maximum number of output lines to retain per active pipeline run (ring buffer capacity).
+    /// Default: 10,000.
+    /// </summary>
+    public int OutputBufferCapacity { get; init; } = 10_000;
 }

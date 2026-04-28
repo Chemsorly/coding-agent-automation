@@ -1,0 +1,516 @@
+using System.Text.Json;
+using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Services;
+using Microsoft.AspNetCore.SignalR;
+using ILogger = Serilog.ILogger;
+
+namespace CodingAgentWebUI.Hubs;
+
+/// <summary>
+/// SignalR hub hosted at <c>/hubs/agent</c>. Agents connect as clients and invoke
+/// server-side methods for registration, status reporting, issue operations, and job lifecycle.
+/// Implements <see cref="Hub{T}"/> with <see cref="IAgentHubClient"/> for strongly-typed
+/// client method invocations (AssignJob, CancelJob).
+/// </summary>
+public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
+{
+    private readonly AgentRegistryService _registry;
+    private readonly OrchestratorRunService _runService;
+    private readonly JobDispatcherService _dispatcher;
+    private readonly TokenVendingService _tokenVending;
+    private readonly IPipelineRunHistoryService _historyService;
+    private readonly IProviderFactory _providerFactory;
+    private readonly IConfigurationStore _configStore;
+    private readonly PipelineOrchestrationService _orchestration;
+    private readonly JobQueueDrainService _drainService;
+    private readonly ILogger _logger;
+
+    public AgentHub(
+        AgentRegistryService registry,
+        OrchestratorRunService runService,
+        JobDispatcherService dispatcher,
+        TokenVendingService tokenVending,
+        IPipelineRunHistoryService historyService,
+        IProviderFactory providerFactory,
+        IConfigurationStore configStore,
+        PipelineOrchestrationService orchestration,
+        JobQueueDrainService drainService,
+        ILogger logger)
+    {
+        _registry = registry;
+        _runService = runService;
+        _dispatcher = dispatcher;
+        _tokenVending = tokenVending;
+        _historyService = historyService;
+        _providerFactory = providerFactory;
+        _configStore = configStore;
+        _orchestration = orchestration;
+        _drainService = drainService;
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Validates that the connecting agent provided an <c>agentId</c> query parameter.
+    /// Rejects the connection if missing.
+    /// </summary>
+    public override Task OnConnectedAsync()
+    {
+        var agentId = Context.GetHttpContext()?.Request.Query["agentId"].ToString();
+        if (string.IsNullOrWhiteSpace(agentId))
+        {
+            _logger.Warning("Connection {ConnectionId} rejected — missing agentId query parameter", Context.ConnectionId);
+            Context.Abort();
+            return Task.CompletedTask;
+        }
+
+        _logger.Information("Agent connection established: agentId={AgentId}, connectionId={ConnectionId}", agentId, Context.ConnectionId);
+        return base.OnConnectedAsync();
+    }
+
+    /// <summary>
+    /// Transitions the disconnected agent to <see cref="AgentStatus.Disconnected"/> in the registry.
+    /// </summary>
+    public override Task OnDisconnectedAsync(Exception? exception)
+    {
+        var agent = _registry.GetByConnectionId(Context.ConnectionId);
+        if (agent is not null)
+        {
+            _registry.TransitionStatus(agent.AgentId, AgentStatus.Disconnected);
+            _logger.Information(
+                "Agent {AgentId} disconnected (connectionId={ConnectionId}, exception={Exception})",
+                agent.AgentId, Context.ConnectionId, exception?.Message ?? "none");
+        }
+
+        return base.OnDisconnectedAsync(exception);
+    }
+
+    // ── Registration ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Registers an agent in the registry. Validates that the <c>agentId</c> in the message
+    /// matches the <c>agentId</c> query parameter from the connection.
+    /// </summary>
+    public Task RegisterAgent(AgentRegistrationMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+        var queryAgentId = Context.GetHttpContext()?.Request.Query["agentId"].ToString();
+        if (!string.Equals(message.AgentId, queryAgentId, StringComparison.Ordinal))
+        {
+            _logger.Warning(
+                "RegisterAgent rejected — message agentId '{MessageAgentId}' does not match query param '{QueryAgentId}'",
+                message.AgentId, queryAgentId);
+            throw new HubException($"AgentId mismatch: message has '{message.AgentId}' but connection has '{queryAgentId}'");
+        }
+
+        _registry.Register(message, Context.ConnectionId);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Deregisters an agent from the registry.
+    /// </summary>
+    public Task DeregisterAgent(string agentId)
+    {
+        ArgumentNullException.ThrowIfNull(agentId);
+        _registry.Deregister(agentId);
+        return Task.CompletedTask;
+    }
+
+    // ── Job lifecycle ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Agent acknowledges job acceptance. Transitions agent to Busy.
+    /// </summary>
+    [RequiresActiveJob]
+    public Task JobAccepted(string jobId)
+    {
+        var agent = _registry.GetByConnectionId(Context.ConnectionId);
+        if (agent is not null)
+        {
+            _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
+            _logger.Information("Agent {AgentId} accepted job {JobId}", agent.AgentId, jobId);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Agent rejects a job. Orchestrator should select a different agent or re-queue.
+    /// </summary>
+    public Task JobRejected(string jobId, string reason)
+    {
+        var agent = _registry.GetByConnectionId(Context.ConnectionId);
+        _logger.Warning("Agent {AgentId} rejected job {JobId}: {Reason}", agent?.AgentId, jobId, reason);
+
+        // Transition agent back to Idle
+        if (agent is not null)
+        {
+            agent.ActiveJobId = null;
+            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+
+            // Signal drain service — agent is idle and may pick up a different job
+            _drainService.Signal();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Agent reports job completion. Updates the PipelineRun, persists to history,
+    /// transitions agent to Idle, and signals the drain service for next dispatch.
+    /// </summary>
+    [RequiresActiveJob]
+    public Task ReportJobCompleted(string jobId, JobCompletionPayload payload)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+
+        var agent = _registry.GetByConnectionId(Context.ConnectionId);
+        var run = _runService.GetRun(jobId);
+
+        if (run is not null)
+        {
+            // Update run with completion data
+            run.CurrentStep = payload.FinalStep;
+            run.CompletedAt = payload.CompletedAt.UtcDateTime;
+            run.FailureReason = payload.FailureReason;
+            run.PullRequestUrl = payload.PullRequestUrl;
+            run.PullRequestNumber = payload.PullRequestNumber;
+            run.IsDraftPr = payload.IsDraftPr;
+            run.RetryCount = payload.RetryCount;
+            run.FilesChangedCount = payload.FilesChangedCount;
+            run.LinesAdded = payload.LinesAdded;
+            run.LinesRemoved = payload.LinesRemoved;
+            run.BrainUpdatesPushed = payload.BrainUpdatesPushed;
+            run.AnalysisRecommendation = payload.AnalysisRecommendation;
+            run.AnalysisConcerns = payload.AnalysisConcerns;
+            run.AnalysisBlockingIssues = payload.AnalysisBlockingIssues;
+            run.BlacklistedFilesDetected = payload.BlacklistedFilesDetected;
+            run.CodeReviewAgentsRun = payload.CodeReviewAgentsRun;
+            Interlocked.Exchange(ref run.CodeReviewCriticalCount, payload.CodeReviewCriticalCount);
+            Interlocked.Exchange(ref run.CodeReviewWarningCount, payload.CodeReviewWarningCount);
+            Interlocked.Exchange(ref run.CodeReviewSuggestionCount, payload.CodeReviewSuggestionCount);
+
+            // Persist to history and remove from active runs
+            _historyService.AddRunToHistory(run);
+            _runService.RemoveRun(jobId);
+
+            _logger.Information(
+                "Job {JobId} completed: step={FinalStep}, PR={PullRequestUrl}",
+                jobId, payload.FinalStep, payload.PullRequestUrl ?? "none");
+
+            _orchestration.NotifyChange();
+        }
+
+        // Transition agent to Idle and clear active job
+        if (agent is not null)
+        {
+            agent.ActiveJobId = null;
+            agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
+            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+
+            // Mark issue as no longer processing in the dispatcher
+            if (run is not null)
+                _dispatcher.MarkIssueComplete(run.IssueIdentifier);
+
+            // Signal the drain service to attempt dispatch for this now-idle agent
+            _drainService.Signal();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Agent signals it is ready for the next job. Triggers job dequeue.
+    /// </summary>
+    public Task AgentReady(string agentId)
+    {
+        ArgumentNullException.ThrowIfNull(agentId);
+
+        var agent = _registry.GetByAgentId(agentId);
+        if (agent is null)
+        {
+            _logger.Warning("AgentReady received for unknown agent {AgentId}", agentId);
+            return Task.CompletedTask;
+        }
+
+        _logger.Information("Agent {AgentId} signaled ready", agentId);
+        _drainService.Signal();
+        return Task.CompletedTask;
+    }
+
+    // ── Real-time status ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Updates the PipelineRun's CurrentStep and HighWaterMark, notifies UI.
+    /// </summary>
+    [RequiresActiveJob]
+    public Task ReportStepTransition(string jobId, PipelineStep step, DateTimeOffset timestamp)
+    {
+        var run = _runService.GetRun(jobId);
+        if (run is not null)
+        {
+            run.CurrentStep = step;
+
+            // Update HighWaterMark — only advance, never go backward
+            // Exclude terminal states (Completed, Failed, Cancelled) from high water mark
+            if (step < PipelineStep.Completed && step > run.HighWaterMark)
+                run.HighWaterMark = step;
+
+            _logger.Debug("Job {JobId} step transition → {Step}", jobId, step);
+            _orchestration.NotifyChange();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Enqueues output lines into the run's OutputRingBuffer and the run's OutputLines queue.
+    /// </summary>
+    [RequiresActiveJob]
+    public Task ReportOutputLines(string jobId, IReadOnlyList<string> lines)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+
+        var buffer = _runService.GetOutputBuffer(jobId);
+        buffer.AddRange(lines);
+
+        // Also add to the run's OutputLines for UI streaming
+        var run = _runService.GetRun(jobId);
+        if (run is not null)
+        {
+            foreach (var line in lines)
+                run.OutputLines.Enqueue(line);
+
+            _orchestration.NotifyChange();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Adds a chat entry to the run's chat history.
+    /// </summary>
+    [RequiresActiveJob]
+    public Task ReportChatEntry(string jobId, ChatRole role, string content)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+
+        var run = _runService.GetRun(jobId);
+        run?.ChatHistory.Enqueue(new ChatEntry { Role = role, Content = content, Timestamp = DateTime.UtcNow });
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Updates the run's quality gate report and history.
+    /// </summary>
+    [RequiresActiveJob]
+    public Task ReportQualityGateResult(string jobId, QualityGateReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+
+        var run = _runService.GetRun(jobId);
+        if (run is not null)
+        {
+            run.LatestQualityReport = report;
+            run.QualityGateHistory.Enqueue(report);
+            _logger.Information("Job {JobId} quality gate result received", jobId);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    // ── Heartbeat ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Updates the agent's heartbeat timestamp in the registry.
+    /// </summary>
+    public Task Heartbeat(HeartbeatMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        _registry.UpdateHeartbeat(message.AgentId, message.Timestamp);
+        return Task.CompletedTask;
+    }
+
+    // ── Issue operations (proxied through orchestrator) ─────────────────
+
+    /// <summary>
+    /// Formats and posts a comment on the GitHub issue via <see cref="IIssueProvider"/>.
+    /// Uses existing comment formatters based on <paramref name="commentType"/>.
+    /// </summary>
+    [RequiresActiveJob]
+    public async Task RequestPostComment(string jobId, CommentType commentType, CommentPayload payload)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+
+        var run = _runService.GetRun(jobId);
+        if (run is null)
+        {
+            _logger.Warning("RequestPostComment for unknown run {JobId}", jobId);
+            return;
+        }
+
+        string commentBody;
+        switch (commentType)
+        {
+            case CommentType.Analysis:
+                commentBody = payload.AnalysisMarkdown ?? string.Empty;
+                break;
+
+            case CommentType.GateRejection:
+                commentBody = BuildGateComment(payload.AssessmentJson, isWontDo: false);
+                break;
+
+            case CommentType.GateWontDo:
+                commentBody = BuildGateComment(payload.AssessmentJson, isWontDo: true);
+                break;
+
+            default:
+                _logger.Warning("Unknown comment type {CommentType} for job {JobId}", commentType, jobId);
+                return;
+        }
+
+        await PostCommentViaIssueProviderAsync(run, commentBody);
+    }
+
+    /// <summary>
+    /// Executes a label swap on the issue via <see cref="IIssueProvider"/>.
+    /// </summary>
+    [RequiresActiveJob]
+    public async Task RequestLabelChange(string jobId, string newLabel)
+    {
+        ArgumentNullException.ThrowIfNull(newLabel);
+
+        var run = _runService.GetRun(jobId);
+        if (run is null)
+        {
+            _logger.Warning("RequestLabelChange for unknown run {JobId}", jobId);
+            return;
+        }
+
+        await SwapLabelViaIssueProviderAsync(run, newLabel);
+    }
+
+    // ── Token refresh ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Generates a fresh short-lived token via <see cref="TokenVendingService"/>.
+    /// </summary>
+    [RequiresActiveJob]
+    public async Task<TokenRefreshResponse> RequestTokenRefresh(string jobId, ProviderKind providerKind)
+    {
+        var run = _runService.GetRun(jobId);
+        if (run is null)
+            throw new HubException($"No active run found for job {jobId}");
+
+        // NOTE: Currently always generates a token from the repo provider config regardless of providerKind.
+        // All GitHub App-authenticated providers (repo, brain, pipeline) share the same installation,
+        // so the token works for all of them. If providers use different installations in the future,
+        // this should be updated to look up the correct config by providerKind.
+        var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
+        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == run.RepoProviderConfigId);
+        if (repoConfig is null)
+            throw new HubException($"Repository provider config '{run.RepoProviderConfigId}' not found");
+
+        var (token, expiresAt) = await _tokenVending.GenerateAgentTokenAsync(repoConfig, CancellationToken.None);
+
+        _logger.Information("Token refreshed for job {JobId}, expires at {ExpiresAt}", jobId, expiresAt);
+
+        return new TokenRefreshResponse { Token = token, ExpiresAt = expiresAt };
+    }
+
+    // ── Private helpers ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a gate comment (not-ready or wont-do) from the assessment JSON.
+    /// Falls back to the raw JSON if deserialization fails.
+    /// </summary>
+    /// <remarks>
+    /// Currently only invoked via <see cref="RequestPostComment"/> when the agent sends
+    /// <see cref="CommentType.GateRejection"/> or <see cref="CommentType.GateWontDo"/>.
+    /// In practice, <see cref="CodingAgentWebUI.Pipeline.Services.AgentExecutionOrchestrator"/>
+    /// formats gate comments locally and posts via <see cref="CommentType.Analysis"/>,
+    /// so this path is currently unused.
+    /// </remarks>
+    private string BuildGateComment(string? assessmentJson, bool isWontDo)
+    {
+        if (string.IsNullOrWhiteSpace(assessmentJson))
+            return isWontDo ? "## 🚫 Analysis Gate: Won't Do" : "## ⚠️ Analysis Gate: Needs Refinement";
+
+        try
+        {
+            var assessment = JsonSerializer.Deserialize<AnalysisAssessment>(assessmentJson);
+            if (assessment is not null)
+            {
+                return isWontDo
+                    ? Pipeline.Services.AgentExecutionOrchestrator.BuildWontDoComment(assessment)
+                    : Pipeline.Services.AgentExecutionOrchestrator.BuildNotReadyComment(assessment);
+            }
+        }
+        catch (JsonException ex)
+        {
+            _logger.Warning(ex, "Failed to deserialize assessment JSON for gate comment");
+        }
+
+        // Fallback: wrap raw JSON in a code block
+        return isWontDo
+            ? $"## 🚫 Analysis Gate: Won't Do\n\n```json\n{assessmentJson}\n```"
+            : $"## ⚠️ Analysis Gate: Needs Refinement\n\n```json\n{assessmentJson}\n```";
+    }
+
+    /// <summary>
+    /// Posts a comment on the issue using the issue provider from the run's config.
+    /// </summary>
+    private async Task PostCommentViaIssueProviderAsync(PipelineRun run, string body)
+    {
+        try
+        {
+            var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+            var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
+            if (issueConfig is null)
+            {
+                _logger.Warning("Issue provider config '{ConfigId}' not found for run {RunId}", run.IssueProviderConfigId, run.RunId);
+                return;
+            }
+
+            await using var issueProvider = _providerFactory.CreateIssueProvider(issueConfig);
+            await issueProvider.PostCommentAsync(run.IssueIdentifier, body, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to post comment on issue {IssueIdentifier} for run {RunId}", run.IssueIdentifier, run.RunId);
+        }
+    }
+
+    /// <summary>
+    /// Swaps the agent label on the issue using the issue provider from the run's config.
+    /// </summary>
+    private async Task SwapLabelViaIssueProviderAsync(PipelineRun run, string newLabel)
+    {
+        try
+        {
+            var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+            var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
+            if (issueConfig is null)
+            {
+                _logger.Warning("Issue provider config '{ConfigId}' not found for run {RunId}", run.IssueProviderConfigId, run.RunId);
+                return;
+            }
+
+            await using var issueProvider = _providerFactory.CreateIssueProvider(issueConfig);
+
+            // Remove all existing agent labels, then add the new one
+            foreach (var label in AgentLabels.All)
+                await issueProvider.RemoveLabelAsync(run.IssueIdentifier, label, CancellationToken.None);
+            await issueProvider.AddLabelAsync(run.IssueIdentifier, newLabel, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to swap label to {Label} on issue {IssueIdentifier} for run {RunId}", newLabel, run.IssueIdentifier, run.RunId);
+        }
+    }
+
+}

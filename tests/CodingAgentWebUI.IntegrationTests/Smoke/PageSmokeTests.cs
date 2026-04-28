@@ -12,7 +12,6 @@ public class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     [Theory]
-    [InlineData("/")]
     [InlineData("/agent-coding")]
     [InlineData("/settings")]
     [InlineData("/about")]

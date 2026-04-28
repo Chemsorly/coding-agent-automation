@@ -142,7 +142,9 @@ public class PipelineRunHighWaterMarkTests
         var runTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Wait for the pipeline to reach the agent step
-        await Task.Delay(200);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!_service.IsRunning && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
         await _service.CancelPipelineAsync();
 
         var run = await runTask;

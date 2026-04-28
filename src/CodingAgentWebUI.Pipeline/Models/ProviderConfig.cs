@@ -1,6 +1,20 @@
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
+/// Well-known keys for <see cref="ProviderConfig.Settings"/> dictionary entries.
+/// </summary>
+public static class ProviderSettingsKeys
+{
+    /// <summary>
+    /// Optional key on Repository ProviderConfig. Comma-separated agent labels required
+    /// to process issues from this repository (e.g., "kiro,dotnet").
+    /// When absent, falls back to <see cref="PipelineConfiguration.DefaultRequiredAgentLabels"/>,
+    /// then to empty (any idle agent matches).
+    /// </summary>
+    public const string RequiredAgentLabels = "requiredAgentLabels";
+}
+
+/// <summary>
 /// Configuration for a provider instance (issue, repository, or agent).
 /// WARNING: Settings dictionary stores sensitive values (tokens, credentials) as plain text.
 /// TODO: Before production use, encrypt sensitive Settings values using ASP.NET Data Protection

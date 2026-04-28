@@ -31,11 +31,10 @@ internal class AgentExecutionOrchestrator
     // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public async Task<bool> ExecuteAnalysisPhaseAsync(
         PipelineRun run, PipelineConfiguration config,
-        IAgentProvider agentProvider, IIssueProvider issueProvider,
+        IAgentProvider agentProvider, IAgentIssueOperations issueOps,
         IssueDetail issue, ParsedIssue parsed,
         IReadOnlyList<IssueComment> issueComments,
         Action<PipelineStep> transitionTo,
-        Func<string, string, CancellationToken, Task> swapAgentLabel,
         Action<PipelineRun> addRunToHistory,
         Action<string>? onOutputLine, Action? onChange,
         CancellationToken ct)
@@ -168,7 +167,7 @@ internal class AgentExecutionOrchestrator
                     run.FailureReason = $"Analysis failed after {attempt + 1} attempt(s): {ex.Message}";
                     run.CompletedAt = DateTime.UtcNow;
                     // TODO: [RES-06] Use CancellationToken.None for failure-path label swap — ct may already be cancelled (review finding .NET #1)
-                    await swapAgentLabel(run.IssueIdentifier, AgentLabels.Error, ct);
+                    await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
                     transitionTo(PipelineStep.Failed);
                     addRunToHistory(run);
                     return false;
@@ -197,7 +196,7 @@ internal class AgentExecutionOrchestrator
                     run.FailureReason = $"Analysis failed after {attempt + 1} attempt(s): {wrapped.Message}";
                     run.CompletedAt = DateTime.UtcNow;
                     // TODO: [RES-06] Use CancellationToken.None for failure-path label swap — ct may already be cancelled (review finding .NET #1)
-                    await swapAgentLabel(run.IssueIdentifier, AgentLabels.Error, ct);
+                    await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
                     transitionTo(PipelineStep.Failed);
                     addRunToHistory(run);
                     return false;
@@ -221,16 +220,16 @@ internal class AgentExecutionOrchestrator
             {
                 // Post analysis comment first
                 transitionTo(PipelineStep.PostingAnalysis);
-                await PostAnalysisCommentAsync(run, issue, issueProvider, assessment, ct);
+                await PostAnalysisCommentAsync(run, issue, issueOps, assessment, ct);
 
                 var abortComment = BuildNotReadyComment(assessment!);
-                try { await issueProvider.PostCommentAsync(run.IssueIdentifier, abortComment, ct); }
+                try { await issueOps.PostCommentAsync(run.IssueIdentifier, abortComment, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 { _logger.Warning(ex, "Pipeline {RunId} failed to post not-ready comment", run.RunId); }
 
                 run.FailureReason = $"Analysis gate: needs refinement — {assessment?.Reason ?? "issue not ready"}";
                 run.CompletedAt = DateTime.UtcNow;
-                await swapAgentLabel(run.IssueIdentifier, AgentLabels.NeedsRefinement, ct);
+                await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.NeedsRefinement, ct);
                 transitionTo(PipelineStep.Failed);
                 addRunToHistory(run);
                 return false;
@@ -240,16 +239,16 @@ internal class AgentExecutionOrchestrator
             {
                 // Post analysis comment first
                 transitionTo(PipelineStep.PostingAnalysis);
-                await PostAnalysisCommentAsync(run, issue, issueProvider, assessment, ct);
+                await PostAnalysisCommentAsync(run, issue, issueOps, assessment, ct);
 
                 var wontDoComment = BuildWontDoComment(assessment!);
-                try { await issueProvider.PostCommentAsync(run.IssueIdentifier, wontDoComment, ct); }
+                try { await issueOps.PostCommentAsync(run.IssueIdentifier, wontDoComment, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 { _logger.Warning(ex, "Pipeline {RunId} failed to post won't-do comment", run.RunId); }
 
                 run.FailureReason = $"Analysis gate: won't do — {assessment?.Reason ?? "no code changes needed"}";
                 run.CompletedAt = DateTime.UtcNow;
-                await swapAgentLabel(run.IssueIdentifier, AgentLabels.WontDo, ct);
+                await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.WontDo, ct);
                 transitionTo(PipelineStep.Completed);
                 addRunToHistory(run);
                 return false;
@@ -257,7 +256,7 @@ internal class AgentExecutionOrchestrator
 
             // Ready path — post analysis and continue
             transitionTo(PipelineStep.PostingAnalysis);
-            await PostAnalysisCommentAsync(run, issue, issueProvider, assessment, ct);
+            await PostAnalysisCommentAsync(run, issue, issueOps, assessment, ct);
         }
 
         return true;
@@ -287,7 +286,7 @@ internal class AgentExecutionOrchestrator
 
     private async Task PostAnalysisCommentAsync(
         PipelineRun run, IssueDetail issue,
-        IIssueProvider issueProvider, AnalysisAssessment? assessment, CancellationToken ct)
+        IAgentIssueOperations issueOps, AnalysisAssessment? assessment, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(run.AnalysisContent))
         {
@@ -298,7 +297,7 @@ internal class AgentExecutionOrchestrator
         try
         {
             var analysis = IssueAnalysisComment.FromAgentAnalysis(issue, run.AnalysisContent, assessment);
-            await issueProvider.PostCommentAsync(run.IssueIdentifier, analysis.ToMarkdown(), ct);
+            await issueOps.PostCommentAsync(run.IssueIdentifier, analysis.ToMarkdown(), ct);
             _logger.Information("Pipeline {RunId} posted analysis comment on issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -382,7 +381,7 @@ internal class AgentExecutionOrchestrator
         Action<PipelineStep> transitionTo,
         Action<string> onOutputLine, Action onChange,
         Func<PipelineRun, Task> updateFileChangeStats,
-        Func<string, string, CancellationToken, Task> swapAgentLabel,
+        IAgentIssueOperations issueOps,
         Action<PipelineRun> addRunToHistory,
         CancellationToken ct,
         string? promptOverride = null)
@@ -454,7 +453,7 @@ internal class AgentExecutionOrchestrator
                 {
                     run.FailureReason = $"Agent timed out after {config.AgentTimeout}. Implementation is incomplete.";
                     run.CompletedAt = DateTime.UtcNow;
-                    await swapAgentLabel(run.IssueIdentifier, AgentLabels.Error, ct);
+                    await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
                     transitionTo(PipelineStep.Failed);
                     addRunToHistory(run);
                     return false;
@@ -475,7 +474,7 @@ internal class AgentExecutionOrchestrator
             });
             run.FailureReason = $"Agent timed out after {config.AgentTimeout}. Implementation is incomplete.";
             run.CompletedAt = DateTime.UtcNow;
-            await swapAgentLabel(run.IssueIdentifier, AgentLabels.Error, ct);
+            await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
             transitionTo(PipelineStep.Failed);
             addRunToHistory(run);
             return false;

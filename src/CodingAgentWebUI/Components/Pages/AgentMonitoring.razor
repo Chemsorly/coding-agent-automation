@@ -1,0 +1,423 @@
+@page "/agent-monitoring"
+@rendermode InteractiveServer
+@implements IDisposable
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Services
+@inject AgentRegistryService Registry
+@inject JobDispatcherService Dispatcher
+@inject OrchestratorRunService RunService
+@inject PipelineOrchestrationService PipelineService
+@inject IConfigurationStore ConfigStore
+@inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
+@inject IJSRuntime JS
+@using Microsoft.AspNetCore.SignalR
+
+<div class="agent-monitoring-page">
+    <header class="agent-header">
+        <h1>Agent Monitoring</h1>
+    </header>
+
+    <!-- Active Runs -->
+    <section class="settings-section" style="margin: 16px 20px;">
+        <h2>🔄 Active Runs (@_activeRuns.Count)</h2>
+        @if (_activeRuns.Count == 0)
+        {
+            <div class="monitoring-empty">No active pipeline runs.</div>
+        }
+        else
+        {
+            <div class="monitoring-table-wrap">
+                <table class="monitoring-table">
+                    <thead>
+                        <tr>
+                            <th>Run ID</th>
+                            <th>Issue</th>
+                            <th>Agent</th>
+                            <th>Step</th>
+                            <th>Started</th>
+                            <th>Elapsed</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var run in _activeRuns)
+                        {
+                            var elapsed = DateTime.UtcNow - run.StartedAt;
+                            <tr class="monitoring-row-clickable"
+                                @onclick="() => OpenRunDetail(run.RunId)">
+                                <td class="monitoring-mono">@Truncate(run.RunId, 8)</td>
+                                <td>#@run.IssueIdentifier @Truncate(run.IssueTitle, 30)</td>
+                                <td>@(run.AgentId ?? "local")</td>
+                                <td>
+                                    <span class="monitoring-step monitoring-step-@run.CurrentStep.ToString().ToLowerInvariant()">
+                                        @FormatStep(run.CurrentStep)
+                                    </span>
+                                </td>
+                                <td>@run.StartedAt.ToString("HH:mm:ss")</td>
+                                <td>@elapsed.ToString(@"hh\:mm\:ss")</td>
+                                <td>
+                                    @if (run.AgentId != null)
+                                    {
+                                        <button class="btn-cancel-small" @onclick:stopPropagation="true"
+                                                @onclick="() => CancelAgentRun(run)">
+                                            Cancel
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn-cancel-small" @onclick:stopPropagation="true"
+                                                @onclick="CancelLocalRun">
+                                            Cancel
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+    </section>
+
+    @* ── Run Detail Modal ── *@
+    @if (_showRunDetailModal)
+    {
+        var modalRun = _activeRuns.FirstOrDefault(r => r.RunId == _selectedRunId);
+        if (modalRun != null)
+        {
+            <div class="modal-overlay" @onclick="DismissRunDetailModal" @onkeydown="HandleModalKeyDown">
+                <div class="modal-card modal-card-wide" @onclick:stopPropagation="true"
+                     role="dialog" aria-modal="true" aria-labelledby="run-detail-title">
+                    <h3 id="run-detail-title">
+                        Run @Truncate(modalRun.RunId, 12) — #@modalRun.IssueIdentifier @Truncate(modalRun.IssueTitle, 40)
+                    </h3>
+
+                    <div class="monitoring-detail-grid">
+                        <div><strong>Agent:</strong> @(modalRun.AgentId ?? "local")</div>
+                        <div><strong>Repository:</strong> @modalRun.RepositoryName</div>
+                        <div><strong>Model:</strong> @modalRun.ModelName</div>
+                        <div><strong>Retries:</strong> @modalRun.RetryCount</div>
+                        @if (modalRun.BranchName != null)
+                        {
+                            <div><strong>Branch:</strong> @modalRun.BranchName</div>
+                        }
+                    </div>
+
+                    <PipelineSidebar Run="modalRun" IsRunning="true" MaxRetries="@_maxRetries"
+                                     OnCancel="() => CancelAgentRun(modalRun)" />
+
+                    @{
+                        var buffer = RunService.GetOutputBuffer(modalRun.RunId);
+                        var outputLines = buffer.GetAll();
+                    }
+                    @if (outputLines.Count > 0)
+                    {
+                        <div>
+                            <h4 style="font-size: 0.85rem; margin: 0 0 6px;">Output (last @Math.Min(outputLines.Count, 100) lines)</h4>
+                            <div class="output-panel" id="modalOutputPanel">
+                                @foreach (var line in outputLines.TakeLast(100))
+                                {
+                                    <div class="output-line">@line</div>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    <div class="modal-footer">
+                        <button class="btn-cancel" @onclick="DismissRunDetailModal">Close</button>
+                        @if (modalRun.AgentId != null)
+                        {
+                            <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                    @onclick="() => CancelAgentRun(modalRun)">
+                                Cancel Run
+                            </button>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    }
+
+    <!-- Registered Agents -->
+    <section class="settings-section" style="margin: 16px 20px;">
+        <h2>🤖 Registered Agents (@_agents.Count)</h2>
+        @if (_agents.Count == 0)
+        {
+            <div class="monitoring-empty">No agents registered. Start agent containers to connect.</div>
+        }
+        else
+        {
+            <div class="monitoring-table-wrap">
+                <table class="monitoring-table">
+                    <thead>
+                        <tr>
+                            <th>Agent ID</th>
+                            <th>Type</th>
+                            <th>Labels</th>
+                            <th>Status</th>
+                            <th>Active Job</th>
+                            <th>Last Heartbeat</th>
+                            <th>Registered</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var agent in _agents)
+                        {
+                            <tr class="monitoring-row-@agent.Status.ToString().ToLowerInvariant()">
+                                <td class="monitoring-mono">@agent.AgentId</td>
+                                <td>@agent.AgentType</td>
+                                <td>
+                                    @foreach (var label in agent.Labels)
+                                    {
+                                        <span class="sidebar-label">@label</span>
+                                    }
+                                </td>
+                                <td>
+                                    <span class="monitoring-status monitoring-status-@agent.Status.ToString().ToLowerInvariant()">
+                                        @GetStatusIcon(agent.Status) @agent.Status
+                                    </span>
+                                </td>
+                                <td class="monitoring-mono">@(agent.ActiveJobId != null ? Truncate(agent.ActiveJobId, 8) : "—")</td>
+                                <td>@FormatTimeAgo(agent.LastHeartbeatAt)</td>
+                                <td>@agent.RegisteredAt.ToString("HH:mm:ss")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
+    <!-- Job Queue -->
+    <section class="settings-section" style="margin: 16px 20px;">
+        <h2>📋 Job Queue (@_queuedJobs.Count)</h2>
+        @if (_queuedJobs.Count == 0)
+        {
+            <div class="monitoring-empty">No pending jobs in queue.</div>
+        }
+        else
+        {
+            <div class="monitoring-table-wrap">
+                <table class="monitoring-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Issue</th>
+                            <th>Initiated By</th>
+                            <th>Enqueued At</th>
+                            <th>Wait Time</th>
+                            <th>Required Labels</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{ var position = 1; }
+                        @foreach (var job in _queuedJobs)
+                        {
+                            var waitTime = DateTimeOffset.UtcNow - job.EnqueuedAt;
+                            <tr>
+                                <td>@position</td>
+                                <td>#@job.IssueIdentifier</td>
+                                <td>@job.InitiatedBy</td>
+                                <td>@job.EnqueuedAt.ToString("HH:mm:ss")</td>
+                                <td>@waitTime.ToString(@"hh\:mm\:ss")</td>
+                                <td>
+                                    @if (job.RequiredLabels.Count > 0)
+                                    {
+                                        @foreach (var label in job.RequiredLabels)
+                                        {
+                                            <span class="sidebar-label">@label</span>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <span class="monitoring-muted">any</span>
+                                    }
+                                </td>
+                                <td>
+                                    <button class="btn-cancel-small" @onclick="() => RemoveFromQueue(job.IssueIdentifier)">
+                                        Remove
+                                    </button>
+                                </td>
+                            </tr>
+                            position++;
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    private IReadOnlyList<PipelineRun> _activeRuns = [];
+    private IReadOnlyList<AgentEntry> _agents = [];
+    private IReadOnlyList<PendingJob> _queuedJobs = [];
+    private string? _selectedRunId;
+    private bool _showRunDetailModal;
+    private bool _scrollModalOnNextRender;
+    private bool _disposed;
+    private Timer? _refreshTimer;
+    private int _maxRetries = 3;
+
+    protected override async Task OnInitializedAsync()
+    {
+        PipelineService.OnChange += HandleStateChanged;
+
+        // Refresh every 2 seconds for heartbeat/elapsed updates
+        _refreshTimer = new Timer(RefreshTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
+
+        try
+        {
+            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+            _maxRetries = config.MaxRetries;
+        }
+        catch { /* use default */ }
+
+        RefreshData();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_scrollModalOnNextRender && _showRunDetailModal)
+        {
+            _scrollModalOnNextRender = false;
+            try
+            {
+                await Task.Delay(50);
+                await JS.InvokeVoidAsync("scrollActiveStepIntoView", "sidebarSteps");
+                await JS.InvokeVoidAsync("scrollToBottom", "modalOutputPanel");
+            }
+            catch { /* JS interop may fail during dispose */ }
+        }
+    }
+
+    private void RefreshData()
+    {
+        _activeRuns = PipelineService.GetAllActiveRuns();
+        _agents = Registry.GetAllAgents();
+        _queuedJobs = Dispatcher.GetQueuedJobs();
+    }
+
+    private async void RefreshTick(object? state)
+    {
+        if (_disposed) return;
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                if (_disposed) return;
+                RefreshData();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async void HandleStateChanged()
+    {
+        if (_disposed) return;
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                if (_disposed) return;
+                RefreshData();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void OpenRunDetail(string runId)
+    {
+        _selectedRunId = runId;
+        _showRunDetailModal = true;
+        _scrollModalOnNextRender = true;
+    }
+
+    private void DismissRunDetailModal()
+    {
+        _showRunDetailModal = false;
+        _selectedRunId = null;
+    }
+
+    private void HandleModalKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            DismissRunDetailModal();
+    }
+
+    private async Task CancelAgentRun(PipelineRun run)
+    {
+        if (run.AgentId == null) return;
+
+        var agent = Registry.GetByAgentId(run.AgentId);
+        if (agent == null) return;
+
+        try
+        {
+            await HubContext.Clients.Client(agent.ConnectionId).CancelJob(run.RunId);
+        }
+        catch (Exception) { /* Agent may be disconnected */ }
+    }
+
+    private async Task CancelLocalRun()
+    {
+        await PipelineService.CancelPipelineAsync();
+    }
+
+    private void RemoveFromQueue(string issueIdentifier)
+    {
+        Dispatcher.RemoveFromQueue(issueIdentifier);
+        RefreshData();
+    }
+
+    private static string GetStatusIcon(AgentStatus status) => status switch
+    {
+        AgentStatus.Idle => "🟢",
+        AgentStatus.Busy => "🟡",
+        AgentStatus.Disconnected => "🔴",
+        _ => "⚪"
+    };
+
+    private static string FormatStep(PipelineStep step) => step switch
+    {
+        PipelineStep.Created => "Created",
+        PipelineStep.CloningRepository => "Cloning",
+        PipelineStep.CreatingBranch => "Branching",
+        PipelineStep.AnalyzingCode => "Analyzing",
+        PipelineStep.GeneratingCode => "Generating",
+        PipelineStep.ReviewingCode => "Reviewing",
+        PipelineStep.RunningQualityGates => "Quality Gates",
+        PipelineStep.CreatingPullRequest => "Creating PR",
+        PipelineStep.Completed => "Completed",
+        PipelineStep.Failed => "Failed",
+        PipelineStep.Cancelled => "Cancelled",
+        _ => step.ToString()
+    };
+
+    private static string FormatTimeAgo(DateTimeOffset timestamp)
+    {
+        var ago = DateTimeOffset.UtcNow - timestamp;
+        if (ago.TotalSeconds < 60) return $"{(int)ago.TotalSeconds}s ago";
+        if (ago.TotalMinutes < 60) return $"{(int)ago.TotalMinutes}m ago";
+        return $"{(int)ago.TotalHours}h ago";
+    }
+
+    private static string Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value)) return string.Empty;
+        return value.Length <= maxLength ? value : value[..(maxLength - 3)] + "...";
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _refreshTimer?.Dispose();
+        PipelineService.OnChange -= HandleStateChanged;
+    }
+}

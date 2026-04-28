@@ -4,6 +4,7 @@ using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 
@@ -51,6 +52,12 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddSingleton(_mockFactory.Object);
         Services.AddSingleton(new PipelineLoopService(_pipelineService, _mockFactory.Object, _mockStore.Object, mockLogger.Object));
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
+
+        var registry = new AgentRegistryService(mockLogger.Object);
+        Services.AddSingleton(registry);
+        Services.AddSingleton(new JobDispatcherService(registry, mockLogger.Object));
+        Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
+        Services.AddSingleton<IJobDispatcher>(new Mock<IJobDispatcher>().Object);
     }
 
     private void SetupDefaults()
