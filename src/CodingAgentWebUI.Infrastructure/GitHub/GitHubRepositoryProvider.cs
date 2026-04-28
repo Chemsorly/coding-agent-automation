@@ -188,7 +188,14 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
             var stagedAny = false;
             foreach (var entry in preStatus)
             {
-                if (entry.State.HasFlag(FileStatus.DeletedFromWorkdir))
+                if (entry.State.HasFlag(FileStatus.Conflicted))
+                {
+                    // Merge conflict resolved in working tree by the agent — stage to mark resolution.
+                    Serilog.Log.Debug("CommitAllAsync staging conflicted (resolved) file via Index.Add: {FilePath}", entry.FilePath);
+                    repo.Index.Add(entry.FilePath);
+                    stagedAny = true;
+                }
+                else if (entry.State.HasFlag(FileStatus.DeletedFromWorkdir))
                 {
                     Serilog.Log.Debug("CommitAllAsync staging deleted file via Index.Remove: {FilePath}", entry.FilePath);
                     repo.Index.Remove(entry.FilePath);

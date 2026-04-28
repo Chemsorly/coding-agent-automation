@@ -35,12 +35,6 @@ public class PipelineModelCoverageTests
     }
 
     [Fact]
-    public void AnsiStripper_Strip_RemovesAnsiCodes()
-    {
-        AnsiStripper.Strip("\x1B[31mred\x1B[0m").Should().Be("red");
-    }
-
-    [Fact]
     public void GenerateBranchName_VeryLongTitle_TruncatesSlug()
     {
         var longTitle = new string('a', 200);

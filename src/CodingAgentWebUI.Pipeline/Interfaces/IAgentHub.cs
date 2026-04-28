@@ -23,6 +23,7 @@ public interface IAgentHub
     Task ReportOutputLines(string jobId, IReadOnlyList<string> lines);
     Task ReportChatEntry(string jobId, ChatRole role, string content);
     Task ReportQualityGateResult(string jobId, QualityGateReport report);
+    Task ReportBrainSyncResult(string jobId, bool contextLoaded, int knowledgeFileCount);
 
     // Heartbeat
     Task Heartbeat(HeartbeatMessage message);

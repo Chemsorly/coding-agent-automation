@@ -40,6 +40,11 @@
         </div>
     }
 
+    @if (!string.IsNullOrEmpty(_successMessage))
+    {
+        <div class="settings-status status-success">@_successMessage</div>
+    }
+
     @if (!string.IsNullOrEmpty(_errorMessage))
     {
         <div class="settings-status status-error">@_errorMessage</div>
@@ -95,6 +100,7 @@
                                             InitialIssueProviderId="@_selectedIssueProviderId"
                                             IssuePageSize="_issuePageSize"
                                             SelectedIssueId="@_selectedIssueId"
+                                            IsIssueProcessingOrQueued="id => JobDispatcher.IsIssueBeingProcessedOrQueued(id)"
                                             OnIssueProviderIdChanged="HandleIssueProviderIdChanged"
                                             OnIssueSelected="HandleIssueSelected"
                                             OnError="HandleChildError" />
@@ -118,6 +124,8 @@
                                                     OnStartPipeline="StartPipeline"
                                                     IsLoopActive="LoopService.IsLoopActive"
                                                     IsManualRunInProgress="PipelineService.IsRunning && !LoopService.IsLoopActive"
+                                                    IsDispatching="_isDispatching"
+                                                    IsDispatched="_isDispatched"
                                                     OnStartLoop="StartLoop"
                                                     OnStopLoop="StopLoop" />
                         </div>
@@ -184,6 +192,9 @@
     private string _selectedPipelineProviderId = "";
     private string _selectedBrainProviderId = "";
     private string? _errorMessage;
+    private string? _successMessage;
+    private bool _isDispatching;
+    private bool _isDispatched;
     private bool _showCompletionOnly;
     private string? _lastRunId;
     private bool _disposed;
@@ -201,6 +212,8 @@
     {
         _selectedIssueId = selection.IssueId;
         _selectedIssueDetail = selection.Detail;
+        _isDispatched = false;
+        _successMessage = null;
         await CheckForExistingPullRequestAsync();
     }
 
@@ -352,6 +365,7 @@
     private async Task StartPipeline()
     {
         _errorMessage = null;
+        _successMessage = null;
 
         if (PipelineService.IsRunning)
         {
@@ -378,35 +392,72 @@
 
         lock (_outputLock) { _outputLines.Clear(); }
         _showCompletionOnly = false;
+        _isDispatching = true;
+        _isDispatched = false;
+
+        // Capture all IDs as locals before Task.Run — the user can change dropdowns while dispatch is in flight (review finding #1)
+        var dispatchedIssueId = _selectedIssueId;
+        var issueProviderId = _selectedIssueProviderId;
+        var repoProviderId = _selectedRepoProviderId;
+        var agentProviderId = _selectedAgentProviderId;
+        var brainProviderId = string.IsNullOrEmpty(_selectedBrainProviderId) ? null : _selectedBrainProviderId;
+        var pipelineProviderId = string.IsNullOrEmpty(_selectedPipelineProviderId) ? null : _selectedPipelineProviderId;
 
         try
         {
+            // TODO: [ARC-10] Pass a component-scoped CancellationToken instead of CancellationToken.None so dispatch can be cancelled on navigation (review finding #2)
             _ = Task.Run(async () =>
             {
                 try
                 {
                     var dispatched = await JobDispatcher.TryDispatchAsync(
-                        _selectedIssueId,
-                        _selectedIssueProviderId, _selectedRepoProviderId,
-                        _selectedAgentProviderId,
-                        string.IsNullOrEmpty(_selectedBrainProviderId) ? null : _selectedBrainProviderId,
-                        string.IsNullOrEmpty(_selectedPipelineProviderId) ? null : _selectedPipelineProviderId,
+                        dispatchedIssueId,
+                        issueProviderId, repoProviderId,
+                        agentProviderId,
+                        brainProviderId,
+                        pipelineProviderId,
                         initiatedBy: "manual",
                         CancellationToken.None);
 
-                    if (!dispatched)
+                    // TODO: [UX-22] Wrap InvokeAsync in try/catch ObjectDisposedException for consistency with the auto-clear path (review finding #3)
+                    await InvokeAsync(() =>
                     {
-                        await InvokeAsync(() =>
+                        if (_disposed) return;
+                        _isDispatching = false;
+                        if (dispatched)
+                        {
+                            _isDispatched = true;
+                            _successMessage = $"✅ Dispatched #{dispatchedIssueId}";
+                        }
+                        else
                         {
                             _errorMessage = "Could not dispatch — issue is already being processed or queued, or no agents are available.";
-                            StateHasChanged();
-                        });
+                        }
+                        StateHasChanged();
+                    });
+
+                    if (dispatched)
+                    {
+                        await Task.Delay(3000);
+                        try
+                        {
+                            await InvokeAsync(() =>
+                            {
+                                if (_disposed) return;
+                                _successMessage = null;
+                                StateHasChanged();
+                            });
+                        }
+                        catch (ObjectDisposedException) { }
                     }
                 }
                 catch (Exception ex)
                 {
+                    // TODO: [UX-22] Wrap InvokeAsync in try/catch ObjectDisposedException for consistency (review finding #3)
                     await InvokeAsync(() =>
                     {
+                        if (_disposed) return;
+                        _isDispatching = false;
                         _errorMessage = $"Pipeline dispatch failed: {ex.Message}";
                         StateHasChanged();
                     });
@@ -415,6 +466,8 @@
         }
         catch (Exception ex)
         {
+            // TODO: [UX-22] Add explicit StateHasChanged() for consistency with inner paths (review finding from correctness review #1)
+            _isDispatching = false;
             _errorMessage = $"Failed to dispatch pipeline: {ex.Message}";
         }
     }

@@ -315,6 +315,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .issue-card { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: border-color 0.15s; }
 .issue-card:hover { border-color: var(--accent); }
 .issue-card.issue-selected { border-color: var(--accent); background: var(--surface-alt); }
+.issue-card.issue-dispatched { opacity: 0.6; border-color: var(--warning); }
+.issue-dispatched-badge { font-size: 0.75rem; line-height: 1; }
 .issue-id { font-size: 0.8rem; color: var(--text-muted); font-weight: 600; min-width: 50px; }
 .issue-title { font-size: 0.9rem; color: var(--text); flex: 1; }
 .issue-detail-panel { padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-top: 8px; max-height: 300px; overflow-y: auto; }
@@ -495,11 +497,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 
 .monitoring-empty { font-size: 0.85rem; color: var(--text-muted); padding: 12px 0; }
 .monitoring-muted { color: var(--text-muted); font-style: italic; }
+.monitoring-section-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.monitoring-section-toggle:hover { opacity: 0.8; }
+.monitoring-section-toggle h2 { margin-bottom: 0; }
+.monitoring-toggle-icon { font-size: 0.85rem; color: var(--text-muted); }
 
 .monitoring-table-wrap { overflow-x: auto; }
-.monitoring-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-.monitoring-table th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
-.monitoring-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+.monitoring-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; table-layout: fixed; }
+.monitoring-table th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.monitoring-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .monitoring-table tbody tr { cursor: default; transition: background 0.1s; }
 .monitoring-table tbody tr:hover { background: var(--surface-alt); }
 .monitoring-mono { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.78rem; }

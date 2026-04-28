@@ -50,4 +50,41 @@ public class PipelineRunSummaryTests
 
         summary.IsRework.Should().BeFalse();
     }
+
+    [Fact]
+    public void AgentId_WhenSet_MapsToSummary()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            AgentId = "agent-01"
+        };
+
+        var summary = run.ToSummary();
+
+        summary.AgentId.Should().Be("agent-01");
+    }
+
+    [Fact]
+    public void AgentId_WhenNull_MapsNullToSummary()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow
+        };
+
+        var summary = run.ToSummary();
+
+        summary.AgentId.Should().BeNull();
+    }
 }
