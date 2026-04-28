@@ -2,7 +2,6 @@ using System.Security.Cryptography;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using Octokit;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -13,7 +12,7 @@ namespace CodingAgentWebUI.Infrastructure.GitHub;
 /// short-lived installation access tokens via the GitHub API, and caches tokens
 /// with automatic renewal (5-minute buffer before expiry).
 /// </summary>
-public sealed class GitHubAppAuthService : IGitHubAppAuthService
+public sealed class GitHubAppAuthService
 {
     private readonly string _clientId;
     private readonly long _installationId;
