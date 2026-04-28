@@ -114,9 +114,16 @@ builder.Services.AddSingleton<IHubFilter>(sp => new AgentAuthorizationFilter(
     sp.GetRequiredService<AgentRegistryService>(),
     Serilog.Log.Logger));
 
-// Agent API key authentication — NOT set as default scheme to avoid interfering with Blazor UI
+// Agent API key authentication — NOT set as default scheme to avoid interfering with Blazor UI.
+// When only one scheme is registered, ASP.NET Core auto-promotes it to the default scheme,
+// causing UseAuthentication() to challenge every request (health checks, Blazor, static files).
+// Explicitly clear the defaults so only endpoints with RequireAuthorization("AgentApiKey") trigger it.
 var agentApiKey = AgentApiKeyAuthHandler.ResolveApiKey(Serilog.Log.Logger);
-builder.Services.AddAuthentication()
+builder.Services.AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = null;
+        options.DefaultChallengeScheme = null;
+    })
     .AddScheme<AgentApiKeyAuthOptions, AgentApiKeyAuthHandler>(
         AgentApiKeyDefaults.AuthenticationScheme,
         options => options.ApiKey = agentApiKey);

@@ -1,0 +1,232 @@
+using AwesomeAssertions;
+using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
+using KiroCliLib.Core;
+using Moq;
+
+namespace CodingAgentWebUI.Agent.UnitTests;
+
+/// <summary>
+/// Unit tests for <see cref="AgentProviderFactory"/>.
+/// </summary>
+public class AgentProviderFactoryTests
+{
+    private static AgentProviderFactory CreateFactory(
+        IKiroCliOrchestrator? orchestrator = null,
+        PipelineConfiguration? config = null)
+    {
+        return new AgentProviderFactory(
+            orchestrator ?? new Mock<IKiroCliOrchestrator>().Object,
+            config ?? new PipelineConfiguration());
+    }
+
+    [Fact]
+    public void Constructor_NullOrchestrator_Throws()
+    {
+        var act = () => new AgentProviderFactory(null!, new PipelineConfiguration());
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Constructor_NullConfig_Throws()
+    {
+        var act = () => new AgentProviderFactory(new Mock<IKiroCliOrchestrator>().Object, null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void CreateIssueProvider_AlwaysThrows()
+    {
+        var factory = CreateFactory();
+        var config = CreateProviderConfig(ProviderKind.Issue, "GitHub");
+
+        var act = () => factory.CreateIssueProvider(config);
+        act.Should().Throw<NotSupportedException>();
+    }
+
+    [Fact]
+    public void CreateRepositoryProvider_NullConfig_Throws()
+    {
+        var factory = CreateFactory();
+        var act = () => factory.CreateRepositoryProvider(null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void CreateRepositoryProvider_UnsupportedType_Throws()
+    {
+        var factory = CreateFactory();
+        var config = CreateProviderConfig(ProviderKind.Repository, "Bitbucket");
+
+        var act = () => factory.CreateRepositoryProvider(config);
+        act.Should().Throw<NotSupportedException>()
+            .WithMessage("*Bitbucket*");
+    }
+
+    [Fact]
+    public void CreateRepositoryProvider_GitHub_MissingToken_Throws()
+    {
+        var factory = CreateFactory();
+        var config = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test",
+            Settings = new Dictionary<string, string>
+            {
+                // Missing "token"
+                ["apiUrl"] = "https://api.github.com",
+                ["owner"] = "test",
+                ["repo"] = "test",
+                ["baseBranch"] = "main"
+            }
+        };
+
+        var act = () => factory.CreateRepositoryProvider(config);
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("*token*");
+    }
+
+    [Fact]
+    public void CreateRepositoryProvider_GitHub_ValidConfig_ReturnsProvider()
+    {
+        var factory = CreateFactory();
+        var config = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test",
+            Settings = new Dictionary<string, string>
+            {
+                ["token"] = "ghs_test_token",
+                ["apiUrl"] = "https://api.github.com",
+                ["owner"] = "test-owner",
+                ["repo"] = "test-repo",
+                ["baseBranch"] = "main"
+            }
+        };
+
+        var provider = factory.CreateRepositoryProvider(config);
+        provider.Should().NotBeNull();
+        provider.Should().BeAssignableTo<IRepositoryProvider>();
+    }
+
+    [Fact]
+    public void CreateAgentProvider_NullConfig_Throws()
+    {
+        var factory = CreateFactory();
+        var act = () => factory.CreateAgentProvider(null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void CreateAgentProvider_UnsupportedType_Throws()
+    {
+        var factory = CreateFactory();
+        var config = CreateProviderConfig(ProviderKind.Agent, "OpenAI");
+
+        var act = () => factory.CreateAgentProvider(config);
+        act.Should().Throw<NotSupportedException>()
+            .WithMessage("*OpenAI*");
+    }
+
+    [Fact]
+    public void CreateAgentProvider_KiroCli_ReturnsProvider()
+    {
+        var factory = CreateFactory();
+        var config = new ProviderConfig
+        {
+            Id = "agent-1",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Test Agent",
+            Settings = new Dictionary<string, string>
+            {
+                ["model"] = "auto"
+            }
+        };
+
+        var provider = factory.CreateAgentProvider(config);
+        provider.Should().NotBeNull();
+        provider.Should().BeAssignableTo<IAgentProvider>();
+    }
+
+    [Fact]
+    public void CreatePipelineProvider_NullConfig_Throws()
+    {
+        var factory = CreateFactory();
+        var act = () => factory.CreatePipelineProvider(null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void CreatePipelineProvider_UnsupportedType_Throws()
+    {
+        var factory = CreateFactory();
+        var config = CreateProviderConfig(ProviderKind.Pipeline, "Jenkins");
+
+        var act = () => factory.CreatePipelineProvider(config);
+        act.Should().Throw<NotSupportedException>()
+            .WithMessage("*Jenkins*");
+    }
+
+    [Fact]
+    public void CreatePipelineProvider_GitHub_ValidConfig_ReturnsProvider()
+    {
+        var factory = CreateFactory();
+        var config = new ProviderConfig
+        {
+            Id = "pipeline-1",
+            Kind = ProviderKind.Pipeline,
+            ProviderType = "GitHub",
+            DisplayName = "Test Pipeline",
+            Settings = new Dictionary<string, string>
+            {
+                ["token"] = "ghs_test_token",
+                ["apiUrl"] = "https://api.github.com",
+                ["owner"] = "test-owner",
+                ["repo"] = "test-repo"
+            }
+        };
+
+        var provider = factory.CreatePipelineProvider(config);
+        provider.Should().NotBeNull();
+        provider.Should().BeAssignableTo<IPipelineProvider>();
+    }
+
+    [Fact]
+    public void CreateRepositoryProvider_CaseInsensitiveProviderType()
+    {
+        var factory = CreateFactory();
+        var config = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "github", // lowercase
+            DisplayName = "Test",
+            Settings = new Dictionary<string, string>
+            {
+                ["token"] = "ghs_test",
+                ["apiUrl"] = "https://api.github.com",
+                ["owner"] = "test",
+                ["repo"] = "test",
+                ["baseBranch"] = "main"
+            }
+        };
+
+        var provider = factory.CreateRepositoryProvider(config);
+        provider.Should().NotBeNull();
+    }
+
+    private static ProviderConfig CreateProviderConfig(ProviderKind kind, string providerType) => new()
+    {
+        Id = "test-id",
+        Kind = kind,
+        ProviderType = providerType,
+        DisplayName = "Test",
+        Settings = new Dictionary<string, string>()
+    };
+}
