@@ -250,12 +250,75 @@
             </div>
         }
     </section>
+
+    <!-- Recent Runs -->
+    <section class="settings-section" style="margin: 16px 20px;">
+        <div class="monitoring-section-toggle" @onclick="() => _historyExpanded = !_historyExpanded"
+             role="button" tabindex="0">
+            <h2>📜 Recent Runs (@_runHistory.Count)</h2>
+            <span class="monitoring-toggle-icon">@(_historyExpanded ? "▾" : "▸")</span>
+        </div>
+        @if (_historyExpanded)
+        {
+            @if (_runHistory.Count == 0)
+            {
+                <div class="monitoring-empty">No completed runs yet.</div>
+            }
+            else
+            {
+                <div class="monitoring-table-wrap">
+                    <table class="monitoring-table">
+                        <thead>
+                            <tr>
+                                <th>Run ID</th>
+                                <th>Issue</th>
+                                <th>Agent</th>
+                                <th>Final Step</th>
+                                <th>Duration</th>
+                                <th>PR</th>
+                                <th>Initiated By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var run in _runHistory.Take(20))
+                            {
+                                <tr>
+                                    <td class="monitoring-mono">@Truncate(run.RunId, 8)</td>
+                                    <td>#@run.IssueIdentifier @Truncate(run.IssueTitle, 30)</td>
+                                    <td>@(run.AgentId ?? "local")</td>
+                                    <td>
+                                        <span class="step-badge step-@run.FinalStep.ToString().ToLowerInvariant()">
+                                            @FormatStep(run.FinalStep)
+                                        </span>
+                                    </td>
+                                    <td>@FormatDuration(run.StartedAt, run.CompletedAt)</td>
+                                    <td>
+                                        @if (!string.IsNullOrEmpty(run.PullRequestUrl))
+                                        {
+                                            <a href="@run.PullRequestUrl" target="_blank" rel="noopener">PR</a>
+                                        }
+                                        else
+                                        {
+                                            <span>—</span>
+                                        }
+                                    </td>
+                                    <td>@run.InitiatedBy</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        }
+    </section>
 </div>
 
 @code {
     private IReadOnlyList<PipelineRun> _activeRuns = [];
     private IReadOnlyList<AgentEntry> _agents = [];
     private IReadOnlyList<PendingJob> _queuedJobs = [];
+    private IReadOnlyList<PipelineRunSummary> _runHistory = [];
+    private bool _historyExpanded = true;
     private string? _selectedRunId;
     private bool _showRunDetailModal;
     private bool _scrollModalOnNextRender;
@@ -300,6 +363,7 @@
         _activeRuns = PipelineService.GetAllActiveRuns();
         _agents = Registry.GetAllAgents();
         _queuedJobs = Dispatcher.GetQueuedJobs();
+        _runHistory = PipelineService.GetRunHistory();
     }
 
     private async void RefreshTick(object? state)
@@ -399,6 +463,13 @@
         PipelineStep.Cancelled => "Cancelled",
         _ => step.ToString()
     };
+
+    private static string FormatDuration(DateTime startedAt, DateTime? completedAt)
+    {
+        if (completedAt is null) return "—";
+        var duration = completedAt.Value - startedAt;
+        return duration.ToString(@"hh\:mm\:ss");
+    }
 
     private static string FormatTimeAgo(DateTimeOffset timestamp)
     {

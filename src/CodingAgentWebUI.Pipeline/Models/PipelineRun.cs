@@ -142,6 +142,7 @@ public sealed class PipelineRun
         ModelName = ModelName,
         BrainRepoUsed = BrainProviderConfigId != null,
         BrainUpdatesPushed = BrainUpdatesPushed,
+        AgentId = AgentId,
         InitiatedBy = InitiatedBy,
         AnalysisRecommendation = AnalysisRecommendation,
         IsRework = LinkedPullRequest != null
