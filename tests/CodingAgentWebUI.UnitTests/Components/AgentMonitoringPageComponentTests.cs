@@ -229,6 +229,69 @@ public class AgentMonitoringPageComponentTests : BunitContext
         Assert.Contains("—", row.TextContent);
     }
 
+    [Fact]
+    public void RecentRuns_HasColgroup()
+    {
+        var history = new List<PipelineRunSummary>
+        {
+            CreateSummary("run-1", "42", "Test", PipelineStep.Completed)
+        };
+        RegisterDefaults(history);
+        var cut = Render<AgentMonitoring>();
+
+        var colgroups = cut.FindAll(".monitoring-table:last-of-type colgroup");
+        Assert.NotEmpty(colgroups);
+
+        var cols = colgroups[0].QuerySelectorAll("col");
+        Assert.Equal(7, cols.Length);
+    }
+
+    [Fact]
+    public void RecentRuns_DisplaysFullIssueTitle_WithoutTruncation()
+    {
+        var longTitle = "[UX-25] Apply column width fix to Registered Agents and Recent Runs tables";
+        var history = new List<PipelineRunSummary>
+        {
+            CreateSummary("run-1", "214", longTitle, PipelineStep.Completed)
+        };
+        RegisterDefaults(history);
+        var cut = Render<AgentMonitoring>();
+
+        Assert.Contains(longTitle, cut.Markup);
+    }
+
+    [Fact]
+    public void RecentRuns_HasTitleAttributes_ForTooltips()
+    {
+        var history = new List<PipelineRunSummary>
+        {
+            CreateSummary("run-1", "42", "Test Title", PipelineStep.Completed)
+        };
+        RegisterDefaults(history);
+        var cut = Render<AgentMonitoring>();
+
+        var tdsWithTitle = cut.FindAll(".monitoring-table:last-of-type td[title]");
+        Assert.NotEmpty(tdsWithTitle);
+
+        var issueTd = tdsWithTitle.FirstOrDefault(td => td.GetAttribute("title")?.Contains("Test Title") == true);
+        Assert.NotNull(issueTd);
+    }
+
+    [Fact]
+    public void RecentRuns_RunIdCell_HasTitleWithFullId()
+    {
+        var history = new List<PipelineRunSummary>
+        {
+            CreateSummary("abcd1234-5678-9012-3456-789012345678", "42", "Test", PipelineStep.Completed)
+        };
+        RegisterDefaults(history);
+        var cut = Render<AgentMonitoring>();
+
+        var monoTds = cut.FindAll(".monitoring-table:last-of-type td.monitoring-mono[title]");
+        Assert.NotEmpty(monoTds);
+        Assert.Equal("abcd1234-5678-9012-3456-789012345678", monoTds[0].GetAttribute("title"));
+    }
+
     private static PipelineRunSummary CreateSummary(
         string runId, string issueId, string issueTitle, PipelineStep finalStep,
         string? agentId = null, string? prUrl = null, string initiatedBy = "manual",
