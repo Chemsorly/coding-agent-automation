@@ -27,4 +27,7 @@ public sealed record AgentProfile
 
     [Key(5)]
     public int Priority { get; init; } = 0;
+
+    [Key(6)]
+    public IReadOnlyList<McpServerConfig> McpServers { get; init; } = [];
 }

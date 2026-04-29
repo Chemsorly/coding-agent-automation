@@ -98,6 +98,9 @@ public sealed record JobAssignmentMessage
 
     [Key(16)]
     public required IReadOnlyList<QualityGateConfiguration> QualityGateConfigs { get; init; }
+
+    [Key(17)]
+    public IReadOnlyList<McpServerConfig> McpServers { get; init; } = [];
 }
 
 /// <summary>

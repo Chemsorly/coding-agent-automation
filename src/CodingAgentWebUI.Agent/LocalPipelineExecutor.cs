@@ -206,6 +206,24 @@ public sealed class LocalPipelineExecutor
                 return BuildFailurePayload(run, $"Repository clone failed: {ex.Message}");
             }
 
+            // ── Write MCP server config to workspace ──
+            if (job.McpServers.Count > 0)
+            {
+                try
+                {
+                    // MCP config path is agent-provider-specific (e.g., .kiro/settings/mcp.json for Kiro CLI)
+                    var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.AgentProviderConfigId);
+                    var mcpConfigPath = agentConfig?.Settings.GetValueOrDefault("mcpConfigPath", ".kiro/settings/mcp.json")
+                        ?? ".kiro/settings/mcp.json";
+                    WriteMcpConfig(workspacePath, job.McpServers, mcpConfigPath);
+                    EmitOutputLine($"🔌 Wrote MCP config with {job.McpServers.Count} server(s) to {mcpConfigPath}");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex, "Failed to write MCP config to workspace, continuing without it");
+                }
+            }
+
             // ── Brain sync pre-run ──
             if (brainProvider is not null && brainSync is not null)
             {
@@ -563,4 +581,53 @@ public sealed class LocalPipelineExecutor
         CodeReviewWarningCount = run.CodeReviewWarningCount,
         CodeReviewSuggestionCount = run.CodeReviewSuggestionCount
     };
+
+    /// <summary>
+    /// Writes the MCP server configuration to the workspace at the path specified by
+    /// the agent provider's mcpConfigPath setting (defaults to .kiro/settings/mcp.json for Kiro CLI).
+    /// Supports both stdio (command-based) and HTTP (URL-based) MCP servers.
+    /// </summary>
+    private static void WriteMcpConfig(string workspacePath, IReadOnlyList<McpServerConfig> mcpServers, string mcpConfigRelativePath)
+    {
+        var fullPath = Path.Combine(workspacePath, mcpConfigRelativePath);
+        var directory = Path.GetDirectoryName(fullPath);
+        if (directory is not null)
+            Directory.CreateDirectory(directory);
+
+        var serversDict = new Dictionary<string, object>();
+        foreach (var server in mcpServers)
+        {
+            if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase))
+            {
+                serversDict[server.Name] = new
+                {
+                    type = "http",
+                    url = server.Url,
+                    disabled = server.Disabled,
+                    autoApprove = server.AutoApprove
+                };
+            }
+            else
+            {
+                // stdio (default)
+                serversDict[server.Name] = new
+                {
+                    command = server.Command,
+                    args = server.Args,
+                    env = server.Env,
+                    disabled = server.Disabled,
+                    autoApprove = server.AutoApprove
+                };
+            }
+        }
+
+        var mcpConfig = new { mcpServers = serversDict };
+        var json = System.Text.Json.JsonSerializer.Serialize(mcpConfig, new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true,
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+        });
+
+        File.WriteAllText(fullPath, json);
+    }
 }

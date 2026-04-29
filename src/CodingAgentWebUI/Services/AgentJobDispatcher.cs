@@ -228,7 +228,8 @@ public sealed class AgentJobDispatcher : IJobDispatcher
                 PipelineConfiguration = config,
                 InitiatedBy = initiatedBy,
                 ResolvedProfileId = profile.Id,
-                QualityGateConfigs = resolvedQgcs
+                QualityGateConfigs = resolvedQgcs,
+                McpServers = profile.McpServers
             };
 
             // Assign the job to the agent in the registry
