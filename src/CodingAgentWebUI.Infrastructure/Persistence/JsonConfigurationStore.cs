@@ -1,6 +1,8 @@
 using System.Text.Json;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Infrastructure.Persistence;
 
@@ -8,6 +10,7 @@ public class JsonConfigurationStore : IConfigurationStore
 {
     private readonly string _baseDirectory;
     private readonly SemaphoreSlim _pipelineConfigLock = new(1, 1);
+    private readonly ILogger _logger = Log.ForContext<JsonConfigurationStore>();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -98,6 +101,92 @@ public class JsonConfigurationStore : IConfigurationStore
     {
         ArgumentNullException.ThrowIfNull(id);
         var path = Path.Combine(GetProviderDirectory(kind), $"{id}.json");
+        if (File.Exists(path))
+            File.Delete(path);
+
+        return Task.CompletedTask;
+    }
+
+    // --- Agent Profiles ---
+
+    public async Task<IReadOnlyList<AgentProfile>> LoadAgentProfilesAsync(CancellationToken ct)
+    {
+        var directory = Path.Combine(_baseDirectory, "profiles");
+        if (!Directory.Exists(directory))
+            return Array.Empty<AgentProfile>();
+
+        var profiles = new List<AgentProfile>();
+        foreach (var file in Directory.GetFiles(directory, "*.json"))
+        {
+            var profile = await LoadJsonAsync<AgentProfile>(file, ct);
+            if (profile is not null)
+            {
+                profiles.Add(profile);
+            }
+            else
+            {
+                _logger.Warning("Skipping corrupted agent profile file: {FilePath}", file);
+            }
+        }
+
+        return profiles.AsReadOnly();
+    }
+
+    public async Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        var directory = Path.Combine(_baseDirectory, "profiles");
+        var path = Path.Combine(directory, $"{profile.Id}.json");
+        await SaveJsonAsync(path, profile, ct);
+    }
+
+    public Task DeleteAgentProfileAsync(string id, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        var path = Path.Combine(_baseDirectory, "profiles", $"{id}.json");
+        if (File.Exists(path))
+            File.Delete(path);
+
+        return Task.CompletedTask;
+    }
+
+    // --- Quality Gate Configurations ---
+
+    public async Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct)
+    {
+        var directory = Path.Combine(_baseDirectory, "quality-gates");
+        if (!Directory.Exists(directory))
+            return Array.Empty<QualityGateConfiguration>();
+
+        var configs = new List<QualityGateConfiguration>();
+        foreach (var file in Directory.GetFiles(directory, "*.json"))
+        {
+            var config = await LoadJsonAsync<QualityGateConfiguration>(file, ct);
+            if (config is not null)
+            {
+                configs.Add(config);
+            }
+            else
+            {
+                _logger.Warning("Skipping corrupted quality gate configuration file: {FilePath}", file);
+            }
+        }
+
+        return configs.AsReadOnly();
+    }
+
+    public async Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        var directory = Path.Combine(_baseDirectory, "quality-gates");
+        var path = Path.Combine(directory, $"{config.Id}.json");
+        await SaveJsonAsync(path, config, ct);
+    }
+
+    public Task DeleteQualityGateConfigAsync(string id, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        var path = Path.Combine(_baseDirectory, "quality-gates", $"{id}.json");
         if (File.Exists(path))
             File.Delete(path);
 

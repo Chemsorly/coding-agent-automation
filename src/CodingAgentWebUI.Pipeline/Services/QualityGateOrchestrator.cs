@@ -34,21 +34,23 @@ internal class QualityGateOrchestrator
     /// <summary>
     /// Runs quality gate validation with retry logic and PR creation.
     /// </summary>
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
-    public async Task ProceedToQualityGatesAsync(
-        PipelineRun run, PipelineConfiguration config,
-        IAgentProvider agentProvider,
-        IRepositoryProvider repoProvider,
-        IPipelineProvider? pipelineProvider,
-        CancellationTokenSource? orchestratorCts,
-        Action<PipelineStep> transitionTo,
-        IAgentIssueOperations issueOps,
-        Func<string, CancellationToken, Task> removeAllAgentLabels,
-        Action<PipelineRun> addRunToHistory,
-        Action<string> onOutputLine, Action onChange,
-        Func<PipelineRun, QualityGateReport, bool, CancellationToken, Task> createPullRequest,
-        CancellationToken ct)
+    public async Task ProceedToQualityGatesAsync(QualityGateContext context, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(context);
+
+        var run = context.Run;
+        var config = context.Config;
+        var agentProvider = context.AgentProvider;
+        var repoProvider = context.RepoProvider;
+        var pipelineProvider = context.PipelineProvider;
+        var orchestratorCts = context.OrchestratorCts;
+        var transitionTo = context.TransitionTo;
+        var issueOps = context.IssueOps;
+        var removeAllAgentLabels = context.RemoveAllAgentLabels;
+        var addRunToHistory = context.AddRunToHistory;
+        var onOutputLine = context.OnOutputLine;
+        var onChange = context.OnChange;
+        var createPullRequest = context.CreatePullRequest;
         transitionTo(PipelineStep.RunningQualityGates);
 
         try
@@ -59,7 +61,7 @@ internal class QualityGateOrchestrator
             var linkedCt = linkedCts?.Token ?? ct;
 
             onOutputLine("🏗️ Running quality gates...");
-            var report = await _qualityGateValidator.ValidateAsync(run.WorkspacePath!, config, linkedCt);
+            var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
 
             report = await AppendExternalCiIfNeededAsync(run, report, config, repoProvider, pipelineProvider,
                 transitionTo, issueOps, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: false, linkedCt);
@@ -134,7 +136,7 @@ internal class QualityGateOrchestrator
                 }
 
                 transitionTo(PipelineStep.RunningQualityGates);
-                report = await _qualityGateValidator.ValidateAsync(run.WorkspacePath!, config, linkedCt);
+                report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
 
                 report = await AppendExternalCiIfNeededAsync(run, report, config, repoProvider, pipelineProvider,
                     transitionTo, issueOps, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: true, linkedCt);
@@ -200,7 +202,7 @@ internal class QualityGateOrchestrator
                 onOutputLine("🏗️ Running final quality gates after cleanup...");
                 _logger.Information("Pipeline {RunId} running final quality gates after cleanup", run.RunId);
                 transitionTo(PipelineStep.RunningQualityGates);
-                report = await _qualityGateValidator.ValidateAsync(run.WorkspacePath!, config, linkedCt);
+                report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
 
                 report = await AppendExternalCiIfNeededAsync(run, report, config, repoProvider, pipelineProvider,
                     transitionTo, issueOps, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: true, linkedCt,
@@ -277,7 +279,7 @@ internal class QualityGateOrchestrator
                     }
 
                     transitionTo(PipelineStep.RunningQualityGates);
-                    report = await _qualityGateValidator.ValidateAsync(run.WorkspacePath!, config, linkedCt);
+                    report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
 
                     report = await AppendExternalCiIfNeededAsync(run, report, config, repoProvider, pipelineProvider,
                         transitionTo, issueOps, addRunToHistory, onChange, onOutputLine, allowEmptyCommit: true, linkedCt);
@@ -344,6 +346,38 @@ internal class QualityGateOrchestrator
     }
 
     /// <summary>
+    /// Determines which ValidateAsync overload to call based on the QGC context:
+    /// - Non-empty QualityGateConfigs → new multi-QGC overload
+    /// - Empty AND QgcsConfiguredAtDispatch is false (pre-migration) → legacy overload
+    /// - Empty AND QgcsConfiguredAtDispatch is true (none matched) → skip, return passing report
+    /// </summary>
+    private async Task<QualityGateReport> RunQualityGateValidationAsync(
+        QualityGateContext context, string workspacePath, PipelineConfiguration config, CancellationToken ct)
+    {
+        if (context.QualityGateConfigs.Count > 0)
+        {
+            // Multi-QGC mode: use the new overload
+            return await _qualityGateValidator.ValidateAsync(workspacePath, context.QualityGateConfigs, ct);
+        }
+
+        if (!context.QgcsConfiguredAtDispatch)
+        {
+            // Legacy fallback: no QGCs configured at all (pre-migration/fresh install)
+            return await _qualityGateValidator.ValidateAsync(workspacePath, config, ct);
+        }
+
+        // QGCs exist in the store but none matched this job — skip quality gates
+        _logger.Warning("Pipeline {RunId} has no matching QGCs (QGCs are configured but none matched job labels). Skipping quality gates.",
+            context.Run.RunId);
+
+        return new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "Skipped — no matching QGCs" },
+            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "Skipped — no matching QGCs" }
+        };
+    }
+
+    /// <summary>
     /// If local gates passed and external CI is enabled, commits, pushes, waits for CI,
     /// and returns a new report with the external CI gate appended.
     /// </summary>
@@ -367,6 +401,16 @@ internal class QualityGateOrchestrator
         bool allowEmptyCommit, CancellationToken ct,
         bool skipCiIfNoChanges = false)
     {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(report);
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(repoProvider);
+        ArgumentNullException.ThrowIfNull(transitionTo);
+        ArgumentNullException.ThrowIfNull(issueOps);
+        ArgumentNullException.ThrowIfNull(addRunToHistory);
+        ArgumentNullException.ThrowIfNull(onChange);
+        ArgumentNullException.ThrowIfNull(onOutputLine);
+
         if (!report.Compilation.Passed || !report.Tests.Passed
             || !(report.Coverage?.Passed ?? true) || !(report.SecurityScan?.Passed ?? true)
             || !config.ExternalCiEnabled || pipelineProvider == null)

@@ -15,6 +15,15 @@ namespace CodingAgentWebUI.Services;
 /// </summary>
 public sealed class AgentJobDispatcher : IJobDispatcher
 {
+    /// <summary>
+    /// Holds the pre-fetched issue context needed to build a <see cref="JobAssignmentMessage"/>.
+    /// </summary>
+    private sealed record IssueContext(
+        IssueDetail IssueDetail,
+        ParsedIssue ParsedIssue,
+        IReadOnlyList<IssueComment> IssueComments,
+        string? ExistingAnalysis,
+        bool ForceRefreshAnalysis);
     private readonly JobDispatcherService _dispatcher;
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
@@ -22,6 +31,8 @@ public sealed class AgentJobDispatcher : IJobDispatcher
     private readonly TokenVendingService _tokenVending;
     private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
+    private readonly ProfileResolver _profileResolver;
+    private readonly QualityGateResolver _qualityGateResolver;
     private readonly IHubContext<AgentHub, IAgentHubClient> _hubContext;
     private readonly ILogger _logger;
 
@@ -33,6 +44,8 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         TokenVendingService tokenVending,
         IConfigurationStore configStore,
         IProviderFactory providerFactory,
+        ProfileResolver profileResolver,
+        QualityGateResolver qualityGateResolver,
         IHubContext<AgentHub, IAgentHubClient> hubContext,
         ILogger logger)
     {
@@ -43,6 +56,8 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         ArgumentNullException.ThrowIfNull(tokenVending);
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
+        ArgumentNullException.ThrowIfNull(profileResolver);
+        ArgumentNullException.ThrowIfNull(qualityGateResolver);
         ArgumentNullException.ThrowIfNull(hubContext);
         ArgumentNullException.ThrowIfNull(logger);
 
@@ -53,6 +68,8 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         _tokenVending = tokenVending;
         _configStore = configStore;
         _providerFactory = providerFactory;
+        _profileResolver = profileResolver;
+        _qualityGateResolver = qualityGateResolver;
         _hubContext = hubContext;
         _logger = logger;
     }
@@ -73,7 +90,6 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         string issueIdentifier,
         string issueProviderId,
         string repoProviderId,
-        string agentProviderId,
         string? brainProviderId,
         string? pipelineProviderId,
         string initiatedBy,
@@ -82,7 +98,6 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(issueProviderId);
         ArgumentNullException.ThrowIfNull(repoProviderId);
-        ArgumentNullException.ThrowIfNull(agentProviderId);
         ArgumentNullException.ThrowIfNull(initiatedBy);
 
         // Check if already being processed
@@ -106,7 +121,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             // Agent available — dispatch immediately
             return await DispatchToAgentAsync(
                 agent, issueIdentifier, issueProviderId, repoProviderId,
-                agentProviderId, brainProviderId, pipelineProviderId, initiatedBy, ct);
+                brainProviderId, pipelineProviderId, initiatedBy, requiredLabels, ct);
         }
 
         // No idle agent — enqueue for later dispatch
@@ -115,7 +130,6 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             IssueIdentifier = issueIdentifier,
             IssueProviderId = issueProviderId,
             RepoProviderId = repoProviderId,
-            AgentProviderId = agentProviderId,
             BrainProviderId = brainProviderId,
             PipelineProviderId = pipelineProviderId,
             EnqueuedAt = DateTimeOffset.UtcNow,
@@ -130,22 +144,39 @@ public sealed class AgentJobDispatcher : IJobDispatcher
     }
 
     /// <summary>
-    /// Dispatches a job to a specific agent. Creates the PipelineRun, prepares configs,
-    /// and sends the <see cref="JobAssignmentMessage"/> via SignalR.
+    /// Dispatches a job to a specific agent. Resolves the agent profile and quality gate
+    /// configurations, creates the PipelineRun, prepares configs, and sends the
+    /// <see cref="JobAssignmentMessage"/> via SignalR.
     /// </summary>
     internal async Task<bool> DispatchToAgentAsync(
         AgentEntry agent,
         string issueIdentifier,
         string issueProviderId,
         string repoProviderId,
-        string agentProviderId,
         string? brainProviderId,
         string? pipelineProviderId,
         string initiatedBy,
+        IReadOnlyList<string> requiredLabels,
         CancellationToken ct)
     {
         try
         {
+            // Resolve profile for this agent
+            var profiles = await _configStore.LoadAgentProfilesAsync(ct);
+            var profile = _profileResolver.Resolve(profiles, agent.Labels);
+            if (profile is null)
+            {
+                var labelsStr = string.Join(", ", agent.Labels);
+                _logger.Warning("No profile matches agent {AgentId} labels [{Labels}]", agent.AgentId, labelsStr);
+                return false;
+            }
+
+            var agentProviderId = profile.AgentProviderConfigId;
+
+            // Resolve quality gate configurations for this job
+            var allQgcs = await _configStore.LoadQualityGateConfigsAsync(ct);
+            var resolvedQgcs = _qualityGateResolver.Resolve(allQgcs, requiredLabels);
+
             // Create the dispatched run via PipelineOrchestrationService
             var run = await _orchestration.CreateDispatchedRunAsync(
                 issueProviderId, repoProviderId, issueIdentifier,
@@ -158,82 +189,46 @@ public sealed class AgentJobDispatcher : IJobDispatcher
                 return false;
             }
 
-            // Pre-fetch issue details and comments via IIssueProvider (REQ-4.4)
-            var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
-            var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == issueProviderId);
-            if (issueConfig == null)
+            // Populate resolved profile and QGC IDs on the run
+            run.ResolvedProfileId = profile.Id;
+            run.ResolvedQualityGateConfigIds = resolvedQgcs.Select(q => q.Id).ToList().AsReadOnly();
+
+            // Pre-fetch issue details and comments
+            var issueContext = await PrepareIssueContextAsync(issueIdentifier, issueProviderId, ct);
+            if (issueContext is null)
             {
                 _logger.Error("Issue provider config '{ConfigId}' not found", issueProviderId);
                 _runService.RemoveRun(run.RunId);
                 return false;
             }
 
-            IssueDetail issueDetail;
-            ParsedIssue parsedIssue;
-            IReadOnlyList<IssueComment> issueComments;
-            await using (var issueProvider = _providerFactory.CreateIssueProvider(issueConfig))
-            {
-                issueDetail = await issueProvider.GetIssueAsync(issueIdentifier, ct);
-                parsedIssue = new IssueDescriptionParser().Parse(issueDetail.Description);
-                var allComments = await issueProvider.ListCommentsAsync(issueIdentifier, ct);
-                // Cap at 50 comments per REQ-4.4
-                issueComments = allComments.Count > 50
-                    ? allComments.Take(50).ToList().AsReadOnly()
-                    : allComments;
-
-                // Swap label to agent:in-progress before dispatch (REQ-7.2)
-                try
-                {
-                    foreach (var label in AgentLabels.All)
-                        await issueProvider.RemoveLabelAsync(issueIdentifier, label, ct);
-                    await issueProvider.AddLabelAsync(issueIdentifier, AgentLabels.InProgress, ct);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Failed to swap label to agent:in-progress for issue {IssueIdentifier}", issueIdentifier);
-                }
-            }
-
             // Update run with fetched issue title
-            run.IssueTitle = issueDetail.Title;
+            run.IssueTitle = issueContext.IssueDetail.Title;
 
-            // Build provider configs for the agent (excluding issue provider)
-            var rawConfigs = await BuildAgentProviderConfigsAsync(
+            // Build and prepare provider configs for the agent
+            var providerConfigs = await PrepareProviderConfigsAsync(
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct);
-            var providerConfigs = await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct);
 
             var config = await _configStore.LoadPipelineConfigAsync(ct);
-
-            // Detect existing analysis and rework state from comments
-            string? existingAnalysis = null;
-            bool forceRefreshAnalysis = false;
-            var analysisComment = issueComments.FirstOrDefault(c => c.Body.Contains("## 🤖 Agent Analysis"));
-            if (analysisComment is not null)
-            {
-                existingAnalysis = analysisComment.Body;
-                var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains("<!-- agent:gate-rejection -->"));
-                var gateWontDo = issueComments.FirstOrDefault(c => c.Body.Contains("<!-- agent:gate-wont-do -->"));
-                if ((gateRejection?.CreatedAt > analysisComment.CreatedAt) ||
-                    (gateWontDo?.CreatedAt > analysisComment.CreatedAt))
-                    forceRefreshAnalysis = true;
-            }
 
             var message = new JobAssignmentMessage
             {
                 JobId = run.RunId,
                 IssueIdentifier = issueIdentifier,
-                IssueDetail = issueDetail,
-                ParsedIssue = parsedIssue,
-                IssueComments = issueComments,
-                ExistingAnalysis = existingAnalysis,
-                ForceRefreshAnalysis = forceRefreshAnalysis,
+                IssueDetail = issueContext.IssueDetail,
+                ParsedIssue = issueContext.ParsedIssue,
+                IssueComments = issueContext.IssueComments,
+                ExistingAnalysis = issueContext.ExistingAnalysis,
+                ForceRefreshAnalysis = issueContext.ForceRefreshAnalysis,
                 RepoProviderConfigId = repoProviderId,
                 AgentProviderConfigId = agentProviderId,
                 BrainProviderConfigId = brainProviderId,
                 PipelineProviderConfigId = pipelineProviderId,
                 ProviderConfigs = providerConfigs,
                 PipelineConfiguration = config,
-                InitiatedBy = initiatedBy
+                InitiatedBy = initiatedBy,
+                ResolvedProfileId = profile.Id,
+                QualityGateConfigs = resolvedQgcs
             };
 
             // Assign the job to the agent in the registry
@@ -244,8 +239,8 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             await _hubContext.Clients.Client(agent.ConnectionId).AssignJob(message);
 
             _logger.Information(
-                "Job {JobId} dispatched to agent {AgentId} for issue {IssueIdentifier}",
-                run.RunId, agent.AgentId, issueIdentifier);
+                "Job {JobId} dispatched to agent {AgentId} for issue {IssueIdentifier} (profile={ProfileId}, qgcs={QgcCount})",
+                run.RunId, agent.AgentId, issueIdentifier, profile.Id, resolvedQgcs.Count);
 
             return true;
         }
@@ -275,6 +270,78 @@ public sealed class AgentJobDispatcher : IJobDispatcher
 
             return false;
         }
+    }
+
+    /// <summary>
+    /// Pre-fetches issue details, comments, swaps labels, and detects existing analysis.
+    /// Returns null if the issue provider config is not found.
+    /// </summary>
+    private async Task<IssueContext?> PrepareIssueContextAsync(
+        string issueIdentifier,
+        string issueProviderId,
+        CancellationToken ct)
+    {
+        var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
+        var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == issueProviderId);
+        if (issueConfig == null)
+            return null;
+
+        IssueDetail issueDetail;
+        ParsedIssue parsedIssue;
+        IReadOnlyList<IssueComment> issueComments;
+        await using (var issueProvider = _providerFactory.CreateIssueProvider(issueConfig))
+        {
+            issueDetail = await issueProvider.GetIssueAsync(issueIdentifier, ct);
+            parsedIssue = new IssueDescriptionParser().Parse(issueDetail.Description);
+            var allComments = await issueProvider.ListCommentsAsync(issueIdentifier, ct);
+            // Cap at 50 comments per REQ-4.4
+            issueComments = allComments.Count > 50
+                ? allComments.Take(50).ToList().AsReadOnly()
+                : allComments;
+
+            // Swap label to agent:in-progress before dispatch (REQ-7.2)
+            try
+            {
+                foreach (var label in AgentLabels.All)
+                    await issueProvider.RemoveLabelAsync(issueIdentifier, label, ct);
+                await issueProvider.AddLabelAsync(issueIdentifier, AgentLabels.InProgress, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to swap label to agent:in-progress for issue {IssueIdentifier}", issueIdentifier);
+            }
+        }
+
+        // Detect existing analysis and rework state from comments
+        string? existingAnalysis = null;
+        bool forceRefreshAnalysis = false;
+        var analysisComment = issueComments.FirstOrDefault(c => c.Body.Contains("## 🤖 Agent Analysis"));
+        if (analysisComment is not null)
+        {
+            existingAnalysis = analysisComment.Body;
+            var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains("<!-- agent:gate-rejection -->"));
+            var gateWontDo = issueComments.FirstOrDefault(c => c.Body.Contains("<!-- agent:gate-wont-do -->"));
+            if ((gateRejection?.CreatedAt > analysisComment.CreatedAt) ||
+                (gateWontDo?.CreatedAt > analysisComment.CreatedAt))
+                forceRefreshAnalysis = true;
+        }
+
+        return new IssueContext(issueDetail, parsedIssue, issueComments, existingAnalysis, forceRefreshAnalysis);
+    }
+
+    /// <summary>
+    /// Builds the provider configs list and prepares tokens via the token vending service.
+    /// </summary>
+    private async Task<IReadOnlyList<ProviderConfig>> PrepareProviderConfigsAsync(
+        string repoProviderId,
+        string agentProviderId,
+        string? brainProviderId,
+        string? pipelineProviderId,
+        CancellationToken ct)
+    {
+        var rawConfigs = await BuildAgentProviderConfigsAsync(
+            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct);
+        return await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct);
     }
 
     /// <summary>

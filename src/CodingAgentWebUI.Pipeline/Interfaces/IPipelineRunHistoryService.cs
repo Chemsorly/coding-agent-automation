@@ -8,6 +8,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 public interface IPipelineRunHistoryService
 {
     IReadOnlyList<PipelineRunSummary> GetRunHistory();
+    IReadOnlyList<PipelineRunSummary> GetRunsByAgentId(string agentId, int limit = 10);
     void AddRunToHistory(PipelineRun run);
     void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory);
     void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null);

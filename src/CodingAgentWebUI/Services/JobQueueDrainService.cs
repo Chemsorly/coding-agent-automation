@@ -137,7 +137,6 @@ public sealed class JobQueueDrainService : BackgroundService
                     pendingJob.IssueIdentifier,
                     pendingJob.IssueProviderId,
                     pendingJob.RepoProviderId,
-                    pendingJob.AgentProviderId,
                     pendingJob.BrainProviderId,
                     pendingJob.PipelineProviderId,
                     pendingJob.InitiatedBy,

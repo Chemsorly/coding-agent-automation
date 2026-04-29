@@ -7,8 +7,15 @@ public sealed class QualityGateReport
     public GateResult? Coverage { get; init; }
     public GateResult? SecurityScan { get; init; }
     public GateResult? ExternalCi { get; init; }
-    public bool AllPassed => Compilation.Passed && Tests.Passed
-        && (Coverage?.Passed ?? true) && (SecurityScan?.Passed ?? true)
-        && (ExternalCi?.Passed ?? true);
+
+    /// <summary>Per-QGC detailed results (populated in multi-QGC mode).</summary>
+    public IReadOnlyList<QgcExecutionResult> QgcResults { get; init; } = [];
+
+    public bool AllPassed => QgcResults.Count > 0
+        ? QgcResults.All(r => r.Passed) && (ExternalCi?.Passed ?? true)
+        : Compilation.Passed && Tests.Passed
+            && (Coverage?.Passed ?? true) && (SecurityScan?.Passed ?? true)
+            && (ExternalCi?.Passed ?? true);
+
     public DateTime Timestamp { get; init; } = DateTime.UtcNow;
 }

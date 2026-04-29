@@ -74,7 +74,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     public void StartLoop_ActivatesLoop()
     {
         var svc = CreateService();
-        var result = svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        var result = svc.StartLoop("ip-1", "rp-1", null, null);
         Assert.True(result);
         Assert.True(svc.IsLoopActive);
     }
@@ -83,8 +83,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     public void StartLoop_RejectsWhenAlreadyActive()
     {
         var svc = CreateService();
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
-        var second = svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
+        var second = svc.StartLoop("ip-1", "rp-1", null, null);
         Assert.False(second);
     }
 
@@ -92,7 +92,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     public void StopLoop_SetsStopRequested()
     {
         var svc = CreateService();
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
         svc.StopLoop();
         Assert.Contains("stopping", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
     }
@@ -135,7 +135,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         // Start the background service
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Poll until at least one issue is started
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -174,7 +174,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Poll until status message contains "error"
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -208,7 +208,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Poll until status message indicates processing happened (skipped issues)
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -242,7 +242,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Poll until status message contains "refinement"
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -276,7 +276,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Poll until status message contains both "error" and "refinement"
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -324,7 +324,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Wait for at least one poll cycle to complete
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -357,7 +357,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Poll until status message contains expected text
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -382,7 +382,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
         svc.StopLoop();
 
         // Poll for loop to become inactive
@@ -404,7 +404,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         var svc = CreateService();
 
         // When orchestration is not running, start should succeed
-        var result = svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        var result = svc.StartLoop("ip-1", "rp-1", null, null);
         Assert.True(result);
     }
 
@@ -440,7 +440,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Wait for at least 2 poll cycles (first fails with backoff, second succeeds)
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -483,7 +483,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Wait for the loop to actually start processing (status message changes from initial)
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -508,7 +508,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         var fired = false;
         svc.OnChange += () => fired = true;
 
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
         Assert.True(fired);
     }
 
@@ -539,7 +539,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         var mockDispatcher = new Mock<IJobDispatcher>();
         mockDispatcher.Setup(d => d.TryDispatchAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), It.IsAny<string?>(),
                 It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>()))
@@ -549,7 +549,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Poll until at least one issue is processed
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -660,7 +660,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Wait for 3 failures: delays should be ~200ms, ~400ms, ~800ms
         await Task.Delay(3000);
@@ -706,7 +706,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // 100ms + 200ms + 300ms(capped) + 300ms(capped) = ~900ms for 4 calls; wait 5s for CI headroom
         await Task.Delay(5000);
@@ -754,7 +754,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Wait for failures + recovery
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -793,7 +793,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Wait for 3 failures: 100ms + 200ms + 200ms(capped) = ~500ms, then circuit breaks
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -845,7 +845,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Wait for circuit breaker to trip
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -894,7 +894,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Wait for circuit breaker to trip
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -945,7 +945,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Poll until at least 2 calls have been made
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -996,7 +996,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Poll until at least 2 calls (first fails, second succeeds and resets)
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -1036,7 +1036,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Wait for circuit breaker to trip
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -1076,7 +1076,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
 
         // Wait for 2 failures to trip circuit breaker
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -1098,7 +1098,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     public void ResumeLoop_WhenNotBroken_IsNoop()
     {
         var svc = CreateService();
-        svc.StartLoop("ip-1", "rp-1", "ap-1", null, null);
+        svc.StartLoop("ip-1", "rp-1", null, null);
         svc.ResumeLoop(); // Should not throw
         Assert.False(svc.IsCircuitBroken);
     }

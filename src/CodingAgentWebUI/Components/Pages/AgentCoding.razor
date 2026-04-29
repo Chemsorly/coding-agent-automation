@@ -106,7 +106,6 @@
                                             OnError="HandleChildError" />
 
                             <ProviderSelectionPanel RepoProviders="_repoProviders"
-                                                    AgentProviders="_agentProviders"
                                                     PipelineProviders="_pipelineProviders"
                                                     BrainProviders="_brainProviders"
                                                     SelectedIssueProviderId="@_selectedIssueProviderId"
@@ -118,7 +117,6 @@
                                                     SelectedPipelineProviderId="@_selectedPipelineProviderId"
                                                     SelectedBrainProviderId="@_selectedBrainProviderId"
                                                     SelectedRepoProviderIdChanged="HandleRepoProviderIdChanged"
-                                                    SelectedAgentProviderIdChanged="v => _selectedAgentProviderId = v"
                                                     SelectedPipelineProviderIdChanged="v => _selectedPipelineProviderId = v"
                                                     SelectedBrainProviderIdChanged="v => _selectedBrainProviderId = v"
                                                     OnStartPipeline="StartPipeline"
@@ -381,12 +379,11 @@
 
         var canStart = !string.IsNullOrEmpty(_selectedIssueProviderId)
             && !string.IsNullOrEmpty(_selectedIssueId)
-            && !string.IsNullOrEmpty(_selectedRepoProviderId)
-            && !string.IsNullOrEmpty(_selectedAgentProviderId);
+            && !string.IsNullOrEmpty(_selectedRepoProviderId);
 
         if (!canStart)
         {
-            _errorMessage = "Please select an issue, repository provider, and agent provider.";
+            _errorMessage = "Please select an issue and repository provider.";
             return;
         }
 
@@ -399,7 +396,6 @@
         var dispatchedIssueId = _selectedIssueId;
         var issueProviderId = _selectedIssueProviderId;
         var repoProviderId = _selectedRepoProviderId;
-        var agentProviderId = _selectedAgentProviderId;
         var brainProviderId = string.IsNullOrEmpty(_selectedBrainProviderId) ? null : _selectedBrainProviderId;
         var pipelineProviderId = string.IsNullOrEmpty(_selectedPipelineProviderId) ? null : _selectedPipelineProviderId;
 
@@ -413,7 +409,6 @@
                     var dispatched = await JobDispatcher.TryDispatchAsync(
                         dispatchedIssueId,
                         issueProviderId, repoProviderId,
-                        agentProviderId,
                         brainProviderId,
                         pipelineProviderId,
                         initiatedBy: "manual",
@@ -477,17 +472,16 @@
         _errorMessage = null;
 
         var canStart = !string.IsNullOrEmpty(_selectedIssueProviderId)
-            && !string.IsNullOrEmpty(_selectedRepoProviderId)
-            && !string.IsNullOrEmpty(_selectedAgentProviderId);
+            && !string.IsNullOrEmpty(_selectedRepoProviderId);
 
         if (!canStart)
         {
-            _errorMessage = "Please select an issue provider, repository provider, and agent provider.";
+            _errorMessage = "Please select an issue provider and repository provider.";
             return;
         }
 
         var started = LoopService.StartLoop(
-            _selectedIssueProviderId, _selectedRepoProviderId, _selectedAgentProviderId,
+            _selectedIssueProviderId, _selectedRepoProviderId,
             string.IsNullOrEmpty(_selectedBrainProviderId) ? null : _selectedBrainProviderId,
             string.IsNullOrEmpty(_selectedPipelineProviderId) ? null : _selectedPipelineProviderId);
 

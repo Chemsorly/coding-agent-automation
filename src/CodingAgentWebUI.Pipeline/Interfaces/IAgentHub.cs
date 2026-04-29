@@ -43,4 +43,5 @@ public interface IAgentHubClient
 {
     Task AssignJob(JobAssignmentMessage message);
     Task CancelJob(string jobId);
+    Task ForceDisconnect();
 }

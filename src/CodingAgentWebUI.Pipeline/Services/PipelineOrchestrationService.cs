@@ -520,15 +520,25 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 step => TransitionTo(run, step),
                 line => OnOutputLine?.Invoke(line), () => NotifyChange(), ct);
             // Quality gates
-            await _qualityGates.ProceedToQualityGatesAsync(
-                run, _activeConfig!, _activeAgentProvider!, _activeRepoProvider!, _activePipelineProvider,
-                _cancellationTokenSource,
-                step => TransitionTo(run, step),
-                issueOps,
-                (id, token) => RemoveAllAgentLabelsAsync(id, token),
-                r => AddRunToHistory(r),
-                line => OnOutputLine?.Invoke(line), () => NotifyChange(),
-                (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, token), ct);
+            var qualityGateContext = new QualityGateContext
+            {
+                Run = run,
+                Config = _activeConfig!,
+                AgentProvider = _activeAgentProvider!,
+                RepoProvider = _activeRepoProvider!,
+                PipelineProvider = _activePipelineProvider,
+                OrchestratorCts = _cancellationTokenSource,
+                TransitionTo = step => TransitionTo(run, step),
+                IssueOps = issueOps,
+                RemoveAllAgentLabels = (id, token) => RemoveAllAgentLabelsAsync(id, token),
+                AddRunToHistory = r => AddRunToHistory(r),
+                OnOutputLine = line => OnOutputLine?.Invoke(line),
+                OnChange = () => NotifyChange(),
+                CreatePullRequest = (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, token),
+                QualityGateConfigs = [],
+                QgcsConfiguredAtDispatch = false
+            };
+            await _qualityGates.ProceedToQualityGatesAsync(qualityGateContext, ct);
         }
         catch (OperationCanceledException)
         {

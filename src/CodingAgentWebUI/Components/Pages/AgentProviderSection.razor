@@ -3,7 +3,8 @@
 @using CodingAgentWebUI.Pipeline.Services
 
 <section class="settings-section">
-    <h2>Agent Providers</h2>
+    <h2>Agent Provider Configs (referenced by Agent Profiles)</h2>
+    <p class="section-description">These configurations define how agents connect to the Kiro CLI. They are linked from Agent Profiles — each profile references one provider config to determine the executable path, timeout, and model settings for matched agents.</p>
     <div class="provider-list">
         @foreach (var p in Providers)
         {

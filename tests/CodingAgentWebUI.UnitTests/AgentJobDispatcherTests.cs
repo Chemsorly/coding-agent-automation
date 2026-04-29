@@ -63,6 +63,8 @@ public class AgentJobDispatcherTests
             _tokenVending,
             _mockConfigStore.Object,
             _mockProviderFactory.Object,
+            new ProfileResolver(),
+            new QualityGateResolver(),
             _mockHubContext.Object,
             _mockLogger.Object);
     }
@@ -104,7 +106,6 @@ public class AgentJobDispatcherTests
             IssueIdentifier = "issue-1",
             IssueProviderId = "ip",
             RepoProviderId = "rp",
-            AgentProviderId = "ap",
             EnqueuedAt = DateTimeOffset.UtcNow,
             InitiatedBy = "test"
         });
@@ -146,7 +147,6 @@ public class AgentJobDispatcherTests
             IssueIdentifier = "issue-1",
             IssueProviderId = "ip",
             RepoProviderId = "rp",
-            AgentProviderId = "ap",
             EnqueuedAt = DateTimeOffset.UtcNow,
             InitiatedBy = "test"
         });
@@ -158,7 +158,7 @@ public class AgentJobDispatcherTests
 
         var dispatcher = CreateDispatcher();
         var result = await dispatcher.TryDispatchAsync(
-            "issue-1", "ip", "rp", "ap", null, null, "test", CancellationToken.None);
+            "issue-1", "ip", "rp", null, null, "test", CancellationToken.None);
 
         result.Should().BeFalse();
     }
@@ -173,7 +173,7 @@ public class AgentJobDispatcherTests
 
         var dispatcher = CreateDispatcher();
         var result = await dispatcher.TryDispatchAsync(
-            "issue-new", "ip", "rp", "ap", null, null, "user", CancellationToken.None);
+            "issue-new", "ip", "rp", null, null, "user", CancellationToken.None);
 
         result.Should().BeTrue(); // Enqueued successfully
         _dispatcher.IsIssueQueued("issue-new").Should().BeTrue();
@@ -184,7 +184,7 @@ public class AgentJobDispatcherTests
     {
         var dispatcher = CreateDispatcher();
         var act = () => dispatcher.TryDispatchAsync(
-            null!, "ip", "rp", "ap", null, null, "test", CancellationToken.None);
+            null!, "ip", "rp", null, null, "test", CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
 
@@ -193,7 +193,7 @@ public class AgentJobDispatcherTests
     {
         var dispatcher = CreateDispatcher();
         var act = () => dispatcher.TryDispatchAsync(
-            "issue-1", "ip", "rp", "ap", null, null, null!, CancellationToken.None);
+            "issue-1", "ip", "rp", null, null, null!, CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
 }

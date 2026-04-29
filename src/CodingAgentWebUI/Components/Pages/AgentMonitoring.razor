@@ -10,6 +10,7 @@
 @inject OrchestratorRunService RunService
 @inject PipelineOrchestrationService PipelineService
 @inject IConfigurationStore ConfigStore
+@inject IPipelineRunHistoryService HistoryService
 @inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
 @inject IJSRuntime JS
 @using Microsoft.AspNetCore.SignalR
@@ -133,6 +134,14 @@
                                 {
                                     <div><strong>Branch:</strong> @modalRun.BranchName</div>
                                 }
+                                @if (!string.IsNullOrEmpty(modalRun.ResolvedProfileId))
+                                {
+                                    <div><strong>Profile:</strong> @ResolveProfileName(modalRun.ResolvedProfileId)</div>
+                                }
+                                @if (modalRun.ResolvedQualityGateConfigIds.Count > 0)
+                                {
+                                    <div><strong>Quality Gates:</strong> @string.Join(", ", modalRun.ResolvedQualityGateConfigIds.Select(ResolveQgcName))</div>
+                                }
                             </div>
 
                             @{
@@ -208,7 +217,8 @@
                     <tbody>
                         @foreach (var agent in _agents)
                         {
-                            <tr class="monitoring-row-@agent.Status.ToString().ToLowerInvariant()">
+                            <tr class="monitoring-row-@agent.Status.ToString().ToLowerInvariant() @(agent.Disabled ? "monitoring-row-disabled" : "") monitoring-row-clickable"
+                                @onclick="() => SelectAgent(agent.AgentId)">
                                 <td class="monitoring-mono" title="@agent.AgentId">@agent.AgentId</td>
                                 <td>@agent.AgentType</td>
                                 <td>
@@ -221,6 +231,10 @@
                                     <span class="monitoring-status monitoring-status-@agent.Status.ToString().ToLowerInvariant()">
                                         @GetStatusIcon(agent.Status) @agent.Status
                                     </span>
+                                    @if (agent.Disabled)
+                                    {
+                                        <span class="badge-disabled-table">disabled</span>
+                                    }
                                 </td>
                                 <td class="monitoring-mono" title="@(agent.ActiveJobId ?? "")">@(agent.ActiveJobId ?? "—")</td>
                                 <td>@FormatTimeAgo(agent.LastHeartbeatAt)</td>
@@ -371,6 +385,9 @@
             }
         }
     </section>
+
+    <!-- Agent Detail Panel (slide-out) -->
+    <AgentDetailPanel Agent="_selectedAgent" IsOpen="_detailPanelOpen" OnClose="CloseDetailPanel" />
 </div>
 
 @code {
@@ -378,6 +395,8 @@
     private IReadOnlyList<AgentEntry> _agents = [];
     private IReadOnlyList<PendingJob> _queuedJobs = [];
     private Dictionary<string, ProviderConfig> _providerConfigLookup = new();
+    private Dictionary<string, AgentProfile> _profileLookup = new();
+    private Dictionary<string, QualityGateConfiguration> _qgcLookup = new();
     private IReadOnlyList<PipelineRunSummary> _runHistory = [];
     private bool _historyExpanded = true;
     private string? _selectedRunId;
@@ -386,6 +405,8 @@
     private bool _disposed;
     private Timer? _refreshTimer;
     private int _maxRetries = 3;
+    private AgentEntry? _selectedAgent;
+    private bool _detailPanelOpen;
 
     protected override async Task OnInitializedAsync()
     {
@@ -407,6 +428,20 @@
             foreach (var kind in Enum.GetValues<ProviderKind>())
                 allConfigs.AddRange(await ConfigStore.LoadProviderConfigsAsync(kind, CancellationToken.None));
             _providerConfigLookup = allConfigs.ToDictionary(c => c.Id);
+        }
+        catch { /* use empty lookup */ }
+
+        try
+        {
+            var profiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
+            _profileLookup = profiles.ToDictionary(p => p.Id);
+        }
+        catch { /* use empty lookup */ }
+
+        try
+        {
+            var qgcs = await ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None);
+            _qgcLookup = qgcs.ToDictionary(q => q.Id);
         }
         catch { /* use empty lookup */ }
 
@@ -510,6 +545,18 @@
         RefreshData();
     }
 
+    private void SelectAgent(string agentId)
+    {
+        _selectedAgent = _agents.FirstOrDefault(a => a.AgentId == agentId);
+        _detailPanelOpen = _selectedAgent != null;
+    }
+
+    private void CloseDetailPanel()
+    {
+        _detailPanelOpen = false;
+        _selectedAgent = null;
+    }
+
     private static string GetStatusIcon(AgentStatus status) => status switch
     {
         AgentStatus.Idle => "🟢",
@@ -559,6 +606,18 @@
     {
         if (string.IsNullOrEmpty(configId)) return null;
         return _providerConfigLookup.GetValueOrDefault(configId);
+    }
+
+    private string ResolveProfileName(string profileId)
+    {
+        var profile = _profileLookup.GetValueOrDefault(profileId);
+        return profile != null ? profile.DisplayName : $"{Truncate(profileId, 8)} (deleted)";
+    }
+
+    private string ResolveQgcName(string qgcId)
+    {
+        var qgc = _qgcLookup.GetValueOrDefault(qgcId);
+        return qgc != null ? qgc.DisplayName : $"{Truncate(qgcId, 8)} (deleted)";
     }
 
     public void Dispose()

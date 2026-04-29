@@ -57,6 +57,14 @@
                      @onclick="() => SelectNode(SettingsNodes.PipelineSecurity)">
                     Security &amp; Cleanup
                 </div>
+                <div class="tree-node @(SelectedNode == SettingsNodes.AgentProfiles ? "active" : "")"
+                     @onclick="() => SelectNode(SettingsNodes.AgentProfiles)">
+                    Agent Profiles
+                </div>
+                <div class="tree-node @(SelectedNode == SettingsNodes.QualityGateConfigs ? "active" : "")"
+                     @onclick="() => SelectNode(SettingsNodes.QualityGateConfigs)">
+                    Quality Gate Configs
+                </div>
             </div>
         }
     </div>

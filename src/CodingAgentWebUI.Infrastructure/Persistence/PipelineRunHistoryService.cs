@@ -31,6 +31,17 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     /// <summary>Returns the in-memory run history.</summary>
     public IReadOnlyList<PipelineRunSummary> GetRunHistory() => _runHistory.AsReadOnly();
 
+    /// <summary>Returns the most recent runs for a specific agent, limited to <paramref name="limit"/>.</summary>
+    public IReadOnlyList<PipelineRunSummary> GetRunsByAgentId(string agentId, int limit = 10)
+    {
+        ArgumentNullException.ThrowIfNull(agentId);
+        return _runHistory
+            .Where(r => string.Equals(r.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
+            .Take(limit)
+            .ToList()
+            .AsReadOnly();
+    }
+
     /// <summary>Adds a completed run to history and persists the summary to disk.</summary>
     // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public void AddRunToHistory(PipelineRun run)

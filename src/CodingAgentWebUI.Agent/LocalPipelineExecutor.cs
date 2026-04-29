@@ -346,21 +346,30 @@ public sealed class LocalPipelineExecutor
                 EmitOutputLine, () => { }, linkedCt);
 
             // ── Quality gates ──
-            await qualityGates.ProceedToQualityGatesAsync(
-                run, config, agentProvider, repoProvider, pipelineProvider,
-                localCts,
-                step => TransitionTo(step),
-                issueOps,
-                (id, token) => issueOps.SwapLabelAsync(id, string.Empty, token), // removeAllAgentLabels — orchestrator handles
-                _ => { }, // addRunToHistory
-                EmitOutputLine, () => { },
-                async (r, report, isDraft, token) =>
+            var qualityGateContext = new QualityGateContext
+            {
+                Run = run,
+                Config = config,
+                AgentProvider = agentProvider,
+                RepoProvider = repoProvider,
+                PipelineProvider = pipelineProvider,
+                OrchestratorCts = localCts,
+                TransitionTo = step => TransitionTo(step),
+                IssueOps = issueOps,
+                RemoveAllAgentLabels = (id, token) => issueOps.SwapLabelAsync(id, string.Empty, token),
+                AddRunToHistory = _ => { },
+                OnOutputLine = EmitOutputLine,
+                OnChange = () => { },
+                CreatePullRequest = async (r, report, isDraft, token) =>
                 {
                     ReportQualityGateResult(report);
                     await CreatePullRequestAsync(r, report, isDraft, repoProvider, agentProvider,
                         brainProvider, brainSync, config, issueOps, connection, job, EmitOutputLine, token);
                 },
-                linkedCt);
+                QualityGateConfigs = job.QualityGateConfigs,
+                QgcsConfiguredAtDispatch = job.QualityGateConfigs.Count > 0
+            };
+            await qualityGates.ProceedToQualityGatesAsync(qualityGateContext, linkedCt);
 
             return BuildCompletionPayload(run);
         }

@@ -22,7 +22,6 @@ public class JobDispatcherServiceTests
         IssueIdentifier = issueId,
         IssueProviderId = "ip",
         RepoProviderId = "rp",
-        AgentProviderId = "ap",
         EnqueuedAt = DateTimeOffset.UtcNow,
         InitiatedBy = "test",
         RequiredLabels = labels ?? Array.Empty<string>()

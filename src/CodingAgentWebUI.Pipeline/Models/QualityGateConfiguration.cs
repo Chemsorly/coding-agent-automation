@@ -1,0 +1,45 @@
+using MessagePack;
+
+namespace CodingAgentWebUI.Pipeline.Models;
+
+/// <summary>
+/// A named entity that defines structured quality gate commands (compilation executable + arguments,
+/// test executable + arguments, coverage threshold) keyed by a set of MatchLabels.
+/// Applied to jobs whose required labels intersect with the QGC's match labels.
+/// </summary>
+[MessagePackObject]
+public sealed record QualityGateConfiguration
+{
+    [Key(0)]
+    public string Id { get; init; } = Guid.NewGuid().ToString();
+
+    [Key(1)]
+    public required string DisplayName { get; init; }
+
+    [Key(2)]
+    public IReadOnlyList<string> MatchLabels { get; init; } = [];
+
+    [Key(3)]
+    public string? CompilationCommand { get; init; }
+
+    [Key(4)]
+    public IReadOnlyList<string>? CompilationArguments { get; init; }
+
+    [Key(5)]
+    public string? TestCommand { get; init; }
+
+    [Key(6)]
+    public IReadOnlyList<string>? TestArguments { get; init; }
+
+    [Key(7)]
+    public double? CoverageThreshold { get; init; }
+
+    [Key(8)]
+    public bool SecurityScanEnabled { get; init; } = false;
+
+    [Key(9)]
+    public bool Enabled { get; init; } = true;
+
+    [Key(10)]
+    public int ExecutionOrder { get; init; } = 0;
+}

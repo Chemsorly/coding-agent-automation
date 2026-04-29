@@ -355,6 +355,73 @@ The application follows Clean Architecture principles:
 - **WebUI (Presentation)** — Blazor Server components, DI wiring, and the application entry point.
 - **KiroCliLib** — Shared library for Kiro CLI process management, output parsing, and configuration. Used by the agent provider to invoke Kiro CLI.
 
+## Label-Based Configuration System
+
+The pipeline uses a hierarchical label system to route jobs to agents and determine which quality gates to run. Labels are the glue between repositories, agents, profiles, and quality gate configurations.
+
+### Label Hierarchy
+
+Labels follow a hierarchical convention: general stack → specific version. Both levels should be present on repositories and agents:
+
+```
+kiro          — coding agent tool
+dotnet        — technology stack (determines quality gates)
+dotnet10      — specific SDK version (determines agent routing)
+```
+
+**Example: A .NET 10 repository**
+```
+Repository requiredLabels: ["kiro", "dotnet", "dotnet10"]
+Agent labels:              ["kiro", "dotnet", "dotnet10"]
+```
+
+### How Labels Are Used
+
+| System | Label Source | Matching Logic | Purpose |
+|--------|-------------|----------------|---------|
+| **Agent Selection** | Job's RequiredLabels (from repo) | Agent labels ⊇ job labels (superset) | Route job to capable agent |
+| **Profile Resolution** | Agent's labels | Profile MatchLabels ⊆ agent labels (subset) | Determine which provider config to send |
+| **QGC Resolution** | Job's RequiredLabels (from repo) | QGC MatchLabels ∩ job labels ≠ ∅ (intersection) | Determine which quality gates to run |
+
+### Configured Agent Types
+
+| Agent Type | Labels | Docker Image | SDK |
+|-----------|--------|--------------|-----|
+| `kiro-dotnet10` | `kiro, dotnet, dotnet10` | `agent.Dockerfile` | .NET 10 |
+| `kiro-python312` | `kiro, python, python312` | `agent.Dockerfile` | Python 3.12 (planned) |
+| `kiro-java21` | `kiro, java, java21` | `agent.Dockerfile` | Java 21 (planned) |
+
+### Agent Profiles
+
+Agent Profiles map label sets to agent provider configs (model, timeout, CLI path). Configured in Settings → Agent Profiles.
+
+| Profile | Match Labels | Effect |
+|---------|-------------|--------|
+| Kiro .NET 10 Agent | `kiro, dotnet, dotnet10` | Uses Opus model, 30min timeout |
+| Kiro Python 3.12 Agent | `kiro, python, python312` | Uses Opus model, 20min timeout |
+| Kiro Java 21 Agent | `kiro, java, java21` | Uses Opus model, 30min timeout |
+
+Resolution: most specific match wins (highest label count). A profile with empty MatchLabels acts as a default/catch-all.
+
+### Quality Gate Configurations
+
+QGCs define per-stack quality gates. Configured in Settings → Quality Gate Configs.
+
+| QGC | Match Labels | Compilation | Tests |
+|-----|-------------|-------------|-------|
+| .NET Quality Gate | `dotnet` | `dotnet build --no-restore` | `dotnet test --no-restore --no-build` |
+| Python Quality Gate | `python` | `python -m pytest --collect-only` | `python -m pytest` |
+| Java Quality Gate | `java` | `mvn compile -q` | `mvn test -q` |
+
+Resolution: all QGCs whose labels intersect with the job's labels are applied sequentially. A polyglot repo with labels `["dotnet", "python"]` gets both the .NET and Python quality gates.
+
+### Setting Up a New Stack
+
+1. **Create an agent container** — Add a service to `docker-compose.yml` with the appropriate `AGENT_TYPE` and `AGENT_LABELS`
+2. **Create an Agent Profile** — In Settings → Agent Profiles, map the labels to a provider config
+3. **Create a QGC** — In Settings → Quality Gate Configs, define the build/test commands for the stack
+4. **Configure the repository** — Set `requiredLabels` on the repository provider config (include both stack and version labels)
+
 ## Pipeline Configuration
 
 Pipeline behavior is configured in `config/pipeline/pipeline-config.json`:

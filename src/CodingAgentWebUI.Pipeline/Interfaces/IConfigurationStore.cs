@@ -18,4 +18,14 @@ public interface IConfigurationStore
     Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct);
     Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct);
     Task DeleteProviderConfigAsync(string id, ProviderKind kind, CancellationToken ct);
+
+    // Agent Profiles
+    Task<IReadOnlyList<AgentProfile>> LoadAgentProfilesAsync(CancellationToken ct);
+    Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct);
+    Task DeleteAgentProfileAsync(string id, CancellationToken ct);
+
+    // Quality Gate Configurations
+    Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct);
+    Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct);
+    Task DeleteQualityGateConfigAsync(string id, CancellationToken ct);
 }

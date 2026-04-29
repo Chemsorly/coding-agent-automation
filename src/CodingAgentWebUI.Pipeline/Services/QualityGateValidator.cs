@@ -22,11 +22,12 @@ public class QualityGateValidator : IQualityGateValidator
         _logger = logger;
     }
 
+    /// <inheritdoc />
     public virtual async Task<QualityGateReport> ValidateAsync(
-        string workspacePath, PipelineConfiguration config, CancellationToken ct)
+        string workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(workspacePath);
-        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(qualityGateConfigs);
 
         // Clean up any leftover TestResults from previous quality gate iterations
         var testResultsRoot = Path.GetFullPath(Path.Combine(workspacePath, "TestResults"));
@@ -55,68 +56,159 @@ public class QualityGateValidator : IQualityGateValidator
             _logger.Warning(ex, "Failed to clean up quality gates output at {QualityGatesDir}", qualityGatesDir);
         }
 
-        var compilation = await RunCompilationGateAsync(workspacePath, ct);
+        var qgcResults = new List<QgcExecutionResult>();
 
-        // Use a dedicated results directory — must be absolute so dotnet test
-        // (which runs with WorkingDirectory=workspacePath) writes to the correct location
-        var resultsDir = Path.GetFullPath(Path.Combine(workspacePath, "TestResults", $"qg-{Guid.NewGuid():N}"));
-        var collectCoverage = config.MinCoverageThreshold > 0;
-
-        var tests = await RunTestGateAsync(workspacePath, resultsDir, collectCoverage, ct);
-
-        GateResult? coverage = null;
-        if (collectCoverage)
+        foreach (var qgc in qualityGateConfigs)
         {
-            coverage = ParseCoverageFromReports(resultsDir, config.MinCoverageThreshold);
+            var compilationResult = await RunQgcCompilationAsync(workspacePath, qgc, ct);
+            GateResult? testsResult = null;
+            GateResult? coverageResult = null;
+            GateResult? securityResult = null;
+
+            if (compilationResult is { Passed: false })
+            {
+                qgcResults.Add(new QgcExecutionResult
+                {
+                    QgcId = qgc.Id,
+                    DisplayName = qgc.DisplayName,
+                    Compilation = compilationResult,
+                    Tests = null,
+                    Coverage = null,
+                    SecurityScan = null
+                });
+                break; // Stop on first failure
+            }
+
+            testsResult = await RunQgcTestsAsync(workspacePath, qgc, ct);
+
+            if (testsResult is { Passed: false })
+            {
+                qgcResults.Add(new QgcExecutionResult
+                {
+                    QgcId = qgc.Id,
+                    DisplayName = qgc.DisplayName,
+                    Compilation = compilationResult,
+                    Tests = testsResult,
+                    Coverage = null,
+                    SecurityScan = null
+                });
+                break; // Stop on first failure
+            }
+
+            // Coverage threshold check
+            if (qgc.CoverageThreshold is > 0)
+            {
+                var resultsDir = Path.GetFullPath(Path.Combine(workspacePath, "TestResults"));
+                coverageResult = ParseCoverageFromReports(resultsDir, qgc.CoverageThreshold.Value);
+
+                if (coverageResult is { Passed: false })
+                {
+                    qgcResults.Add(new QgcExecutionResult
+                    {
+                        QgcId = qgc.Id,
+                        DisplayName = qgc.DisplayName,
+                        Compilation = compilationResult,
+                        Tests = testsResult,
+                        Coverage = coverageResult,
+                        SecurityScan = null
+                    });
+                    break; // Stop on first failure
+                }
+            }
+
+            // Security scan
+            if (qgc.SecurityScanEnabled)
+            {
+                securityResult = await RunSecurityScanGateAsync(workspacePath, ct);
+                WriteGateOutput(workspacePath, $"{qgc.DisplayName}-security-scan",
+                    securityResult.Details, string.Empty);
+
+                if (securityResult is { Passed: false })
+                {
+                    qgcResults.Add(new QgcExecutionResult
+                    {
+                        QgcId = qgc.Id,
+                        DisplayName = qgc.DisplayName,
+                        Compilation = compilationResult,
+                        Tests = testsResult,
+                        Coverage = coverageResult,
+                        SecurityScan = securityResult
+                    });
+                    break; // Stop on first failure
+                }
+            }
+
+            qgcResults.Add(new QgcExecutionResult
+            {
+                QgcId = qgc.Id,
+                DisplayName = qgc.DisplayName,
+                Compilation = compilationResult,
+                Tests = testsResult,
+                Coverage = coverageResult,
+                SecurityScan = securityResult
+            });
         }
 
-        GateResult? securityScan = null;
-        if (config.SecurityScanEnabled)
-        {
-            securityScan = await RunSecurityScanGateAsync(workspacePath, ct);
-        }
+        // Build aggregate flat fields for backward compatibility
+        var allCompilationsPassed = qgcResults.All(r => r.Compilation?.Passed ?? true);
+        var allTestsPassed = qgcResults.All(r => r.Tests?.Passed ?? true);
+        var firstFailingQgc = qgcResults.FirstOrDefault(r => !r.Passed);
 
-        // External CI gate is handled by PipelineOrchestrationService after local gates pass
+        var aggregateCompilation = new GateResult
+        {
+            GateName = "Compilation",
+            Passed = allCompilationsPassed,
+            Details = allCompilationsPassed
+                ? "All QGC compilations passed"
+                : $"Compilation failed in QGC '{firstFailingQgc?.DisplayName}'"
+        };
 
-        // Clean up results directory (non-fatal)
-        try
+        var aggregateTests = new GateResult
         {
-            if (Directory.Exists(resultsDir))
-                Directory.Delete(resultsDir, recursive: true);
-        }
-        catch (Exception ex)
-        {
-            _logger.Debug(ex, "Failed to clean up test results directory {ResultsDir}", resultsDir);
-        }
+            GateName = "Tests",
+            Passed = allTestsPassed,
+            Details = allTestsPassed
+                ? "All QGC tests passed"
+                : $"Tests failed in QGC '{firstFailingQgc?.DisplayName}'"
+        };
+
+        // Aggregate coverage: take the first non-null coverage result
+        var aggregateCoverage = qgcResults
+            .Select(r => r.Coverage)
+            .FirstOrDefault(c => c != null);
+
+        // Aggregate security: take the first non-null security result
+        var aggregateSecurity = qgcResults
+            .Select(r => r.SecurityScan)
+            .FirstOrDefault(s => s != null);
 
         return new QualityGateReport
         {
-            Compilation = compilation,
-            Tests = tests,
-            Coverage = coverage,
-            SecurityScan = securityScan
+            Compilation = aggregateCompilation,
+            Tests = aggregateTests,
+            Coverage = aggregateCoverage,
+            SecurityScan = aggregateSecurity,
+            QgcResults = qgcResults
         };
     }
 
     /// <summary>
-    /// Formats a short CI failure summary for GateResult.Details.
-    /// Verbose per-job logs are in .kiro/quality-gates/ — the retry prompt points there.
+    /// Runs the compilation command for a single QGC. Returns null if no compilation command is defined.
     /// </summary>
-    internal static string BuildCiFailureDetails(
-        PipelineRunStatus status, IReadOnlyDictionary<long, string>? logPathMapping = null)
+    private async Task<GateResult?> RunQgcCompilationAsync(
+        string workspacePath, QualityGateConfiguration qgc, CancellationToken ct)
     {
-        var failedJobs = status.Jobs.Where(j => j.State == PipelineRunState.Failed).ToList();
-        var jobNames = failedJobs.Count > 0
-            ? string.Join(", ", failedJobs.Select(j => $"'{j.Name}'"))
-            : "unknown";
-        return $"CI {status.State}. {failedJobs.Count} job(s) failed: {jobNames}.";
-    }
+        if (string.IsNullOrWhiteSpace(qgc.CompilationCommand))
+            return null;
 
-    private async Task<GateResult> RunCompilationGateAsync(string workspacePath, CancellationToken ct)
-    {
-        var (exitCode, stdout, stderr) = await RunProcessAsync("dotnet", "build", workspacePath, ct);
+        var arguments = qgc.CompilationArguments != null
+            ? string.Join(" ", qgc.CompilationArguments)
+            : string.Empty;
 
-        WriteGateOutput(workspacePath, "compilation", stdout, stderr);
+        var (exitCode, stdout, stderr) = await RunProcessAsync(
+            qgc.CompilationCommand, arguments, workspacePath, ct);
+
+        WriteGateOutput(workspacePath, $"{qgc.DisplayName}-compilation", stdout, stderr);
 
         string details;
         if (exitCode == 0)
@@ -135,6 +227,109 @@ public class QualityGateValidator : IQualityGateValidator
             Passed = exitCode == 0,
             Details = details
         };
+    }
+
+    /// <summary>
+    /// Runs the test command for a single QGC. Returns null if no test command is defined.
+    /// </summary>
+    private async Task<GateResult?> RunQgcTestsAsync(
+        string workspacePath, QualityGateConfiguration qgc, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(qgc.TestCommand))
+            return null;
+
+        var arguments = qgc.TestArguments != null
+            ? string.Join(" ", qgc.TestArguments)
+            : string.Empty;
+
+        // Add TRX logger and results directory for test result parsing
+        var resultsDir = Path.GetFullPath(Path.Combine(workspacePath, "TestResults", $"qg-{Guid.NewGuid():N}"));
+        Directory.CreateDirectory(resultsDir);
+
+        var collectCoverage = qgc.CoverageThreshold is > 0;
+        var fullArgs = $"{arguments} --logger trx --results-directory \"{resultsDir}\"";
+        if (collectCoverage)
+            fullArgs += " --collect:\"XPlat Code Coverage\"";
+
+        var (exitCode, stdout, stderr) = await RunProcessAsync(
+            qgc.TestCommand, fullArgs, workspacePath, ct);
+
+        WriteGateOutput(workspacePath, $"{qgc.DisplayName}-tests", stdout, stderr);
+
+        // Parse TRX files for accurate test counts
+        var (passed, failed, skipped) = ParseTestCountsFromTrx(resultsDir);
+
+        // If TRX parsing found nothing, fall back to stdout parsing
+        if (passed == 0 && failed == 0 && skipped == 0)
+        {
+            _logger.Warning("No TRX results found in {ResultsDir} for QGC {QgcName}, falling back to stdout parsing",
+                resultsDir, qgc.DisplayName);
+            (passed, failed, skipped) = ParseTestCountsFromStdout(stdout);
+        }
+
+        _logger.Information("QGC {QgcName} test results: {Passed} passed, {Failed} failed, {Skipped} skipped",
+            qgc.DisplayName, passed, failed, skipped);
+
+        // Clean up results directory (non-fatal)
+        try
+        {
+            if (Directory.Exists(resultsDir))
+                Directory.Delete(resultsDir, recursive: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Failed to clean up test results directory {ResultsDir}", resultsDir);
+        }
+
+        return new GateResult
+        {
+            GateName = "Tests",
+            Passed = exitCode == 0,
+            Details = exitCode == 0
+                ? $"Tests passed: {passed} passed, {failed} failed, {skipped} skipped"
+                : $"Tests failed: {passed} passed, {failed} failed, {skipped} skipped.",
+            TestsPassed = passed,
+            TestsFailed = failed,
+            TestsSkipped = skipped
+        };
+    }
+
+    public virtual async Task<QualityGateReport> ValidateAsync(
+        string workspacePath, PipelineConfiguration config, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(workspacePath);
+        ArgumentNullException.ThrowIfNull(config);
+
+        // Construct a default QGC from hardcoded values + PipelineConfiguration fields
+        var defaultQgc = new QualityGateConfiguration
+        {
+            Id = "legacy-default",
+            DisplayName = "Default",
+            CompilationCommand = "dotnet",
+            CompilationArguments = ["build", "--no-restore"],
+            TestCommand = "dotnet",
+            TestArguments = ["test", "--no-restore", "--no-build"],
+            CoverageThreshold = config.MinCoverageThreshold,
+            SecurityScanEnabled = config.SecurityScanEnabled,
+            Enabled = true,
+            ExecutionOrder = 0
+        };
+
+        return await ValidateAsync(workspacePath, [defaultQgc], ct);
+    }
+
+    /// <summary>
+    /// Formats a short CI failure summary for GateResult.Details.
+    /// Verbose per-job logs are in .kiro/quality-gates/ — the retry prompt points there.
+    /// </summary>
+    internal static string BuildCiFailureDetails(
+        PipelineRunStatus status, IReadOnlyDictionary<long, string>? logPathMapping = null)
+    {
+        var failedJobs = status.Jobs.Where(j => j.State == PipelineRunState.Failed).ToList();
+        var jobNames = failedJobs.Count > 0
+            ? string.Join(", ", failedJobs.Select(j => $"'{j.Name}'"))
+            : "unknown";
+        return $"CI {status.State}. {failedJobs.Count} job(s) failed: {jobNames}.";
     }
 
     private async Task<GateResult> RunSecurityScanGateAsync(string workspacePath, CancellationToken ct)
@@ -184,53 +379,6 @@ public class QualityGateValidator : IQualityGateValidator
 
         var matches = Regex.Matches(output, @"has the following vulnerable packages", RegexOptions.IgnoreCase);
         return matches.Count > 0 ? (true, matches.Count) : (false, 0);
-    }
-
-    private async Task<GateResult> RunTestGateAsync(
-        string workspacePath, string resultsDir, bool collectCoverage, CancellationToken ct)
-    {
-        // Ensure the results directory exists before running tests
-        Directory.CreateDirectory(resultsDir);
-
-        var args = $"test --logger trx --results-directory \"{resultsDir}\"";
-        if (collectCoverage)
-            args += " --collect:\"XPlat Code Coverage\"";
-
-        _logger.Debug("Running tests: dotnet {Args} in {WorkspacePath}", args, workspacePath);
-
-        var (exitCode, stdout, stderr) = await RunProcessAsync("dotnet", args, workspacePath, ct);
-
-        WriteGateOutput(workspacePath, "tests", stdout, stderr);
-
-        _logger.Debug("Test results directory contents: {Files}",
-            Directory.Exists(resultsDir)
-                ? string.Join(", ", Directory.GetFiles(resultsDir, "*", SearchOption.AllDirectories))
-                : "DIRECTORY NOT FOUND");
-
-        // Parse TRX files for accurate test counts
-        var (passed, failed, skipped) = ParseTestCountsFromTrx(resultsDir);
-
-        // If TRX parsing found nothing, fall back to stdout parsing
-        if (passed == 0 && failed == 0 && skipped == 0)
-        {
-            _logger.Warning("No TRX results found in {ResultsDir}, falling back to stdout parsing", resultsDir);
-            (passed, failed, skipped) = ParseTestCountsFromStdout(stdout);
-        }
-
-        _logger.Information("Test results: {Passed} passed, {Failed} failed, {Skipped} skipped",
-            passed, failed, skipped);
-
-        return new GateResult
-        {
-            GateName = "Tests",
-            Passed = exitCode == 0,
-            Details = exitCode == 0
-                ? $"Tests passed: {passed} passed, {failed} failed, {skipped} skipped"
-                : $"Tests failed: {passed} passed, {failed} failed, {skipped} skipped.",
-            TestsPassed = passed,
-            TestsFailed = failed,
-            TestsSkipped = skipped
-        };
     }
 
     /// <summary>

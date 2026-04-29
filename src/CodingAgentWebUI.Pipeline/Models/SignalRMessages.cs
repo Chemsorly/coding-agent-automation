@@ -92,6 +92,12 @@ public sealed record JobAssignmentMessage
 
     [Key(14)]
     public required string InitiatedBy { get; init; }
+
+    [Key(15)]
+    public string? ResolvedProfileId { get; init; }
+
+    [Key(16)]
+    public required IReadOnlyList<QualityGateConfiguration> QualityGateConfigs { get; init; }
 }
 
 /// <summary>

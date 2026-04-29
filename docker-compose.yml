@@ -29,7 +29,7 @@ services:
     networks:
       - coding-agent-net
 
-  agent-1:
+  agent-dotnet-1:
     build:
       context: .
       dockerfile: agent.Dockerfile
@@ -39,7 +39,8 @@ services:
     environment:
       - ORCHESTRATOR_URL=http://orchestrator:5000
       - AGENT_ID=agent-1
-      - AGENT_TYPE=kiro-dotnet
+      - AGENT_TYPE=kiro-dotnet10
+      - AGENT_LABELS=kiro,dotnet,dotnet10
       - AGENT_API_KEY=${AGENT_API_KEY}
     depends_on:
       orchestrator:
@@ -47,17 +48,56 @@ services:
     networks:
       - coding-agent-net
 
-  agent-2:
+  agent-dotnet-2:
     build:
       context: .
       dockerfile: agent.Dockerfile
     volumes:
-      - ./config/kiro-cli-data-1:/home/ubuntu/.local/share/kiro-cli
+      - ./config/kiro-cli-data-2:/home/ubuntu/.local/share/kiro-cli
       - ~/.aws:/home/ubuntu/.aws:ro
     environment:
       - ORCHESTRATOR_URL=http://orchestrator:5000
       - AGENT_ID=agent-2
-      - AGENT_TYPE=kiro-dotnet
+      - AGENT_TYPE=kiro-dotnet10
+      - AGENT_LABELS=kiro,dotnet,dotnet10
+      - AGENT_API_KEY=${AGENT_API_KEY}
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    networks:
+      - coding-agent-net
+
+  agent-python:
+    build:
+      context: .
+      dockerfile: agent.Dockerfile
+    volumes:
+      - ./config/kiro-cli-data-3:/home/ubuntu/.local/share/kiro-cli
+      - ~/.aws:/home/ubuntu/.aws:ro
+    environment:
+      - ORCHESTRATOR_URL=http://orchestrator:5000
+      - AGENT_ID=agent-python
+      - AGENT_TYPE=kiro-python312
+      - AGENT_LABELS=kiro,python,python312
+      - AGENT_API_KEY=${AGENT_API_KEY}
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    networks:
+      - coding-agent-net
+
+  agent-java:
+    build:
+      context: .
+      dockerfile: agent.Dockerfile
+    volumes:
+      - ./config/kiro-cli-data-4:/home/ubuntu/.local/share/kiro-cli
+      - ~/.aws:/home/ubuntu/.aws:ro
+    environment:
+      - ORCHESTRATOR_URL=http://orchestrator:5000
+      - AGENT_ID=agent-java
+      - AGENT_TYPE=kiro-java21
+      - AGENT_LABELS=kiro,java,java21
       - AGENT_API_KEY=${AGENT_API_KEY}
     depends_on:
       orchestrator:

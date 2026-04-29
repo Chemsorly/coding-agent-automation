@@ -128,30 +128,62 @@
                                     {
                                         <div class="qg-header-fail">Attempt @(Run.QualityGateHistory.Count)/@(MaxRetries + 1)</div>
                                     }
-                                    <div class="qg-line @(qr.Compilation.Passed ? "qg-pass" : "qg-fail")">
-                                        @(qr.Compilation.Passed ? "✅" : "❌") Compilation
-                                    </div>
-                                    <div class="qg-line @(qr.Tests.Passed ? "qg-pass" : "qg-fail")">
-                                        @(qr.Tests.Passed ? "✅" : "❌") Tests
-                                        <span class="qg-sub">@(qr.Tests.TestsPassed ?? 0) passed, @(qr.Tests.TestsFailed ?? 0) failed</span>
-                                    </div>
-                                    @if (qr.Coverage is { } cov)
+
+                                    @if (qr.QgcResults.Count > 1)
                                     {
-                                        <div class="qg-line @(cov.Passed ? "qg-pass" : "qg-fail")">
-                                            @(cov.Passed ? "✅" : "❌") Coverage
-                                            <span class="qg-sub">@(cov.CoveragePercent.HasValue ? $"{cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%" : "N/A")</span>
-                                        </div>
-                                    }
-                                    @if (qr.SecurityScan is { } sec)
-                                    {
-                                        <div class="qg-line @(sec.Passed ? "qg-pass" : "qg-fail")">
-                                            @(sec.Passed ? "✅" : "❌") Security
-                                        </div>
+                                        @* Multi-QGC mode: show per-QGC sub-items *@
+                                        @foreach (var qgcResult in qr.QgcResults)
+                                        {
+                                            <div class="qgc-sub-item @(qgcResult.Passed ? "qgc-pass" : "qgc-fail")">
+                                                <div class="qgc-sub-header">
+                                                    @(qgcResult.Passed ? "✅" : "❌") @qgcResult.DisplayName
+                                                </div>
+                                                <div class="qgc-sub-details">
+                                                    @if (qgcResult.Compilation is { } comp)
+                                                    {
+                                                        <span class="@(comp.Passed ? "qg-pass" : "qg-fail")">Build: @(comp.Passed ? "OK" : "FAIL")</span>
+                                                    }
+                                                    @if (qgcResult.Tests is { } tests)
+                                                    {
+                                                        <span class="@(tests.Passed ? "qg-pass" : "qg-fail")">Tests: @(tests.TestsPassed ?? 0)/@((tests.TestsPassed ?? 0) + (tests.TestsFailed ?? 0))</span>
+                                                    }
+                                                    @if (qgcResult.Coverage is { } cov)
+                                                    {
+                                                        <span class="@(cov.Passed ? "qg-pass" : "qg-fail")">Cov: @(cov.CoveragePercent?.ToString("F1") ?? "N/A")%</span>
+                                                    }
+                                                </div>
+                                            </div>
+                                        }
                                     }
                                     else
                                     {
-                                        <div class="qg-line qg-skip">— Security</div>
+                                        @* Single QGC or legacy flat display *@
+                                        <div class="qg-line @(qr.Compilation.Passed ? "qg-pass" : "qg-fail")">
+                                            @(qr.Compilation.Passed ? "✅" : "❌") Compilation
+                                        </div>
+                                        <div class="qg-line @(qr.Tests.Passed ? "qg-pass" : "qg-fail")">
+                                            @(qr.Tests.Passed ? "✅" : "❌") Tests
+                                            <span class="qg-sub">@(qr.Tests.TestsPassed ?? 0) passed, @(qr.Tests.TestsFailed ?? 0) failed</span>
+                                        </div>
+                                        @if (qr.Coverage is { } cov)
+                                        {
+                                            <div class="qg-line @(cov.Passed ? "qg-pass" : "qg-fail")">
+                                                @(cov.Passed ? "✅" : "❌") Coverage
+                                                <span class="qg-sub">@(cov.CoveragePercent.HasValue ? $"{cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%" : "N/A")</span>
+                                            </div>
+                                        }
+                                        @if (qr.SecurityScan is { } sec)
+                                        {
+                                            <div class="qg-line @(sec.Passed ? "qg-pass" : "qg-fail")">
+                                                @(sec.Passed ? "✅" : "❌") Security
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div class="qg-line qg-skip">— Security</div>
+                                        }
                                     }
+
                                     @if (qr.ExternalCi is { } ci)
                                     {
                                         <div class="qg-line @(ci.Passed ? "qg-pass" : "qg-fail")">

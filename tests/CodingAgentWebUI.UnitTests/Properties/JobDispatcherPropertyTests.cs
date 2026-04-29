@@ -36,7 +36,6 @@ public class JobDispatcherPropertyTests
         IssueIdentifier = issueId,
         IssueProviderId = "issue-1",
         RepoProviderId = "repo-1",
-        AgentProviderId = "agent-1",
         EnqueuedAt = DateTimeOffset.UtcNow,
         InitiatedBy = "test",
         RequiredLabels = requiredLabels ?? Array.Empty<string>()

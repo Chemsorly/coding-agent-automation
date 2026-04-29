@@ -2,6 +2,7 @@
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
 @inject PipelineOrchestrationService PipelineService
+@inject IConfigurationStore ConfigStore
 
 <div class="pipeline-setup-panel">
     <div class="pipeline-setup-card">
@@ -14,16 +15,6 @@
                     @foreach (var p in RepoProviders)
                     {
                         <option value="@p.Id">@p.DisplayName (@p.ProviderType: @p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "") → @p.Settings.GetValueOrDefault("baseBranch", "main"))</option>
-                    }
-                </select>
-            </div>
-            <div class="form-group">
-                <label>Agent Provider</label>
-                <select @bind="SelectedAgentProviderId" @bind:after="NotifyAgentChanged" disabled="@IsLoopActive">
-                    <option value="">-- Select Agent --</option>
-                    @foreach (var p in AgentProviders)
-                    {
-                        <option value="@p.Id">@p.DisplayName (@p.ProviderType: @p.Settings.GetValueOrDefault("executablePath", ""))</option>
                     }
                 </select>
             </div>
@@ -54,6 +45,13 @@
                 </div>
             }
         </div>
+
+        @if (!_hasAgentProfiles)
+        {
+            <div class="pipeline-warning-banner">
+                ⚠️ No Agent Profiles configured. Create at least one profile in Settings before dispatching jobs.
+            </div>
+        }
 
         @if (!string.IsNullOrEmpty(SelectedIssueId) && SelectedIssueDetail != null)
         {
@@ -123,10 +121,6 @@
                 {
                     <span>Select a repository provider</span>
                 }
-                else if (string.IsNullOrEmpty(SelectedAgentProviderId))
-                {
-                    <span>Select an agent provider</span>
-                }
             </div>
         }
         @if (IsLoopActive)
@@ -186,7 +180,6 @@
 
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<ProviderConfig> RepoProviders { get; set; } = Array.Empty<ProviderConfig>();
-    [Parameter, EditorRequired] public IReadOnlyList<ProviderConfig> AgentProviders { get; set; } = Array.Empty<ProviderConfig>();
     [Parameter] public IReadOnlyList<ProviderConfig> PipelineProviders { get; set; } = Array.Empty<ProviderConfig>();
     [Parameter] public IReadOnlyList<ProviderConfig> BrainProviders { get; set; } = Array.Empty<ProviderConfig>();
     [Parameter] public string SelectedIssueProviderId { get; set; } = "";
@@ -210,20 +203,31 @@
     [Parameter] public EventCallback OnStopLoop { get; set; }
 
     private bool _historyExpanded;
+    private bool _hasAgentProfiles = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var profiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
+            _hasAgentProfiles = profiles.Count > 0;
+        }
+        catch
+        {
+            _hasAgentProfiles = false;
+        }
+    }
 
     private bool CanStartPipeline =>
         !string.IsNullOrEmpty(SelectedIssueProviderId)
         && !string.IsNullOrEmpty(SelectedIssueId)
-        && !string.IsNullOrEmpty(SelectedRepoProviderId)
-        && !string.IsNullOrEmpty(SelectedAgentProviderId);
+        && !string.IsNullOrEmpty(SelectedRepoProviderId);
 
     private bool CanStartLoop =>
         !string.IsNullOrEmpty(SelectedIssueProviderId)
-        && !string.IsNullOrEmpty(SelectedRepoProviderId)
-        && !string.IsNullOrEmpty(SelectedAgentProviderId);
+        && !string.IsNullOrEmpty(SelectedRepoProviderId);
 
     private Task NotifyRepoChanged() => SelectedRepoProviderIdChanged.InvokeAsync(SelectedRepoProviderId);
-    private Task NotifyAgentChanged() => SelectedAgentProviderIdChanged.InvokeAsync(SelectedAgentProviderId);
     private Task NotifyPipelineChanged() => SelectedPipelineProviderIdChanged.InvokeAsync(SelectedPipelineProviderId);
     private Task NotifyBrainChanged() => SelectedBrainProviderIdChanged.InvokeAsync(SelectedBrainProviderId);
 

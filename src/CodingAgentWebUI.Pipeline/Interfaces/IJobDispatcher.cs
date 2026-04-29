@@ -18,7 +18,6 @@ public interface IJobDispatcher
         string issueIdentifier,
         string issueProviderId,
         string repoProviderId,
-        string agentProviderId,
         string? brainProviderId,
         string? pipelineProviderId,
         string initiatedBy,

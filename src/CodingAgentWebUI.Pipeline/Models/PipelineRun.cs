@@ -130,6 +130,12 @@ public sealed class PipelineRun
     /// <summary>Which agent is executing this run, or null for legacy/local runs.</summary>
     public string? AgentId { get; init; }
 
+    /// <summary>Agent Profile Id that was resolved at dispatch time.</summary>
+    public string? ResolvedProfileId { get; set; }
+
+    /// <summary>Ids of all Quality Gate Configuration entities resolved for this job.</summary>
+    public IReadOnlyList<string> ResolvedQualityGateConfigIds { get; set; } = Array.Empty<string>();
+
     /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
     // TODO: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
     public PipelineRunSummary ToSummary() => new()

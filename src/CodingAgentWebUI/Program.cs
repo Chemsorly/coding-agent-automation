@@ -85,6 +85,11 @@ builder.Services.AddHostedService(sp => new HeartbeatMonitorService(
     sp.GetRequiredService<IConfigurationStore>(),
     Serilog.Log.Logger));
 
+// Quality gate migration — ensures at least one QGC exists before first dispatch
+builder.Services.AddHostedService(sp => new QualityGateMigrationService(
+    sp.GetRequiredService<IConfigurationStore>(),
+    Serilog.Log.Logger));
+
 // Job queue drain service — periodically matches queued jobs to idle agents
 builder.Services.AddSingleton(sp => new JobQueueDrainService(
     sp.GetRequiredService<JobDispatcherService>(),
@@ -94,6 +99,8 @@ builder.Services.AddSingleton(sp => new JobQueueDrainService(
 builder.Services.AddHostedService(sp => sp.GetRequiredService<JobQueueDrainService>());
 
 // Multi-agent job dispatcher (bridges loop service to agent dispatch)
+builder.Services.AddSingleton<ProfileResolver>();
+builder.Services.AddSingleton<QualityGateResolver>();
 builder.Services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
     sp.GetRequiredService<JobDispatcherService>(),
     sp.GetRequiredService<AgentRegistryService>(),
@@ -102,6 +109,8 @@ builder.Services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
     sp.GetRequiredService<TokenVendingService>(),
     sp.GetRequiredService<IConfigurationStore>(),
     sp.GetRequiredService<IProviderFactory>(),
+    sp.GetRequiredService<ProfileResolver>(),
+    sp.GetRequiredService<QualityGateResolver>(),
     sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
     Serilog.Log.Logger));
 

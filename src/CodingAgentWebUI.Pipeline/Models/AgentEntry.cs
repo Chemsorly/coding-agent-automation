@@ -44,4 +44,11 @@ public sealed record AgentEntry
 
     /// <summary>Timestamp when disconnection was detected — used for grace period calculation.</summary>
     public DateTimeOffset? DisconnectedAt { get; set; }
+
+    /// <summary>
+    /// When true, the agent is excluded from job selection (SelectAgent skips it)
+    /// while allowing it to finish its current job. In-memory only, not serialized.
+    /// Resets to false on agent re-registration after orchestrator restart.
+    /// </summary>
+    public bool Disabled { get; set; } = false;
 }

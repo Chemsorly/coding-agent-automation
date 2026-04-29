@@ -56,6 +56,10 @@
                         <option value="Brain">Brain</option>
                     </select>
                 </div>
+                <div class="form-group">
+                    <label>Required Agent Labels <span class="form-hint">(comma-separated — determines agent routing and quality gates)</span></label>
+                    <input type="text" @bind="_form.RequiredLabels" placeholder="e.g. kiro, dotnet, dotnet10" />
+                </div>
             </AdditionalFields>
             <HelpContent>
                 <h4>🔐 GitHub App Setup</h4>
@@ -125,7 +129,8 @@
             Owner = p.Settings.GetValueOrDefault("owner", ""),
             Repo = p.Settings.GetValueOrDefault("repo", ""),
             BaseBranch = p.Settings.GetValueOrDefault("baseBranch", "main"),
-            RepositoryRole = p.RepositoryRole.ToString()
+            RepositoryRole = p.RepositoryRole.ToString(),
+            RequiredLabels = p.RequiredLabels != null ? string.Join(", ", p.RequiredLabels) : p.Settings.GetValueOrDefault("requiredAgentLabels", "")
         };
         _showForm = true;
     }
@@ -188,6 +193,7 @@
             ProviderType = _form.ProviderType,
             DisplayName = _form.DisplayName,
             RepositoryRole = Enum.TryParse<RepositoryRole>(_form.RepositoryRole, out var role) ? role : RepositoryRole.Work,
+            RequiredLabels = ParseLabels(_form.RequiredLabels),
             Settings = new Dictionary<string, string>
             {
                 ["apiUrl"] = _form.ApiUrl,
@@ -277,5 +283,15 @@
         public string Repo { get; set; } = "";
         public string BaseBranch { get; set; } = "main";
         public string RepositoryRole { get; set; } = "Work";
+        public string RequiredLabels { get; set; } = "";
+    }
+
+    private static IReadOnlyList<string>? ParseLabels(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return null;
+        var labels = input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToList();
+        return labels.Count > 0 ? labels : null;
     }
 }

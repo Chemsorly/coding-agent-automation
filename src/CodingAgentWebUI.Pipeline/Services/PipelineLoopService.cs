@@ -28,7 +28,6 @@ public sealed class PipelineLoopService : BackgroundService
     // Captured provider IDs at start time
     private string _issueProviderId = "";
     private string _repoProviderId = "";
-    private string _agentProviderId = "";
     private string? _brainProviderId;
     private string? _pipelineProviderId;
 
@@ -88,10 +87,10 @@ public sealed class PipelineLoopService : BackgroundService
     /// <summary>
     /// Activates the loop with the given provider IDs. Rejects if already active or a manual run is in progress.
     /// </summary>
-    public bool StartLoop(string issueProviderId, string repoProviderId, string agentProviderId,
+    public bool StartLoop(string issueProviderId, string repoProviderId,
         string? brainProviderId, string? pipelineProviderId)
     {
-        // TODO: [UX-12b] Add ArgumentNullException.ThrowIfNull for issueProviderId, repoProviderId, agentProviderId (review finding #14)
+        // TODO: [UX-12b] Add ArgumentNullException.ThrowIfNull for issueProviderId, repoProviderId (review finding #14)
         lock (_lock)
         {
             if (IsLoopActive)
@@ -101,7 +100,6 @@ public sealed class PipelineLoopService : BackgroundService
 
             _issueProviderId = issueProviderId;
             _repoProviderId = repoProviderId;
-            _agentProviderId = agentProviderId;
             _brainProviderId = brainProviderId;
             _pipelineProviderId = pipelineProviderId;
 
@@ -122,8 +120,8 @@ public sealed class PipelineLoopService : BackgroundService
             _activationSignal.TrySetResult();
 
             NotifyChange();
-            _logger.Information("Pipeline loop started with issue={IssueProvider}, repo={RepoProvider}, agent={AgentProvider}",
-                issueProviderId, repoProviderId, agentProviderId);
+            _logger.Information("Pipeline loop started with issue={IssueProvider}, repo={RepoProvider}",
+                issueProviderId, repoProviderId);
             return true;
         }
     }
@@ -345,7 +343,7 @@ public sealed class PipelineLoopService : BackgroundService
                     {
                         var dispatched = await _jobDispatcher.TryDispatchAsync(
                             issue.Identifier,
-                            _issueProviderId, _repoProviderId, _agentProviderId,
+                            _issueProviderId, _repoProviderId,
                             _brainProviderId, _pipelineProviderId,
                             initiatedBy: "loop",
                             stoppingToken);

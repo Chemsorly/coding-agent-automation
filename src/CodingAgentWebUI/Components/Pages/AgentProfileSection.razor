@@ -1,0 +1,296 @@
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+
+<section class="settings-section">
+    <h2>Agent Profiles</h2>
+
+    @if (_profiles.Count == 0)
+    {
+        <div class="monitoring-empty">No agent profiles configured. Create at least one profile to enable job dispatch.</div>
+    }
+    else
+    {
+        <div class="monitoring-table-wrap">
+            <table class="monitoring-table">
+                <colgroup>
+                    <col />
+                    <col />
+                    <col style="width: 160px;" />
+                    <col style="width: 70px;" />
+                    <col style="width: 70px;" />
+                    <col style="width: 140px;" />
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th>Display Name</th>
+                        <th>Match Labels</th>
+                        <th>Agent Provider</th>
+                        <th>Enabled</th>
+                        <th>Priority</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var profile in _profiles.OrderByDescending(p => p.Priority))
+                    {
+                        <tr>
+                            <td>
+                                @profile.DisplayName
+                                @if (profile.MatchLabels.Count == 0)
+                                {
+                                    <span class="badge-default">DEFAULT</span>
+                                }
+                            </td>
+                            <td>
+                                @if (profile.MatchLabels.Count > 0)
+                                {
+                                    @foreach (var label in profile.MatchLabels)
+                                    {
+                                        <span class="sidebar-label">@label</span>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="monitoring-muted">(matches all)</span>
+                                }
+                            </td>
+                            <td class="monitoring-mono">@GetProviderName(profile.AgentProviderConfigId)</td>
+                            <td>@(profile.Enabled ? "✅" : "❌")</td>
+                            <td>@profile.Priority</td>
+                            <td>
+                                <button class="btn-edit" @onclick="() => EditProfile(profile)">Edit</button>
+                                <button class="btn-delete" @onclick="() => ConfirmDelete(profile)">Delete</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @if (_showForm)
+    {
+        <div class="provider-form" style="margin-top: 12px;">
+            <h3>@(_editingProfile != null ? "Edit" : "Create") Agent Profile</h3>
+
+            @if (!string.IsNullOrEmpty(_formError))
+            {
+                <div class="settings-status status-error">@_formError</div>
+            }
+
+            <div class="form-group">
+                <label>Display Name *</label>
+                <input type="text" @bind="_form.DisplayName" placeholder="e.g. Kiro .NET Agent" />
+            </div>
+            <div class="form-group">
+                <label>Match Labels <span class="form-hint">(comma-separated, empty = default/catch-all)</span></label>
+                <input type="text" @bind="_form.MatchLabels" placeholder="e.g. kiro, dotnet" />
+            </div>
+            <div class="form-group">
+                <label>Agent Provider Config *</label>
+                <select @bind="_form.AgentProviderConfigId">
+                    <option value="">-- Select --</option>
+                    @foreach (var p in AgentProviders)
+                    {
+                        <option value="@p.Id">@p.DisplayName</option>
+                    }
+                </select>
+            </div>
+            <div class="form-group form-checkbox">
+                <label>
+                    <input type="checkbox" @bind="_form.Enabled" />
+                    Enabled
+                </label>
+            </div>
+            <div class="form-group">
+                <label>Priority <span class="form-hint">(higher = preferred when multiple profiles match)</span></label>
+                <input type="number" @bind="_form.Priority" />
+            </div>
+            <div class="form-buttons">
+                <button class="btn-save" @onclick="SaveProfile">Save</button>
+                <button class="btn-cancel" @onclick="CancelForm">Cancel</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <button class="btn-add" style="margin-top: 12px;" @onclick="ShowAddForm">+ Add Agent Profile</button>
+    }
+
+    @if (_showDeleteConfirm && _deletingProfile != null)
+    {
+        <div class="agent-detail-confirm" style="margin-top: 12px;">
+            <p>Delete profile <strong>@_deletingProfile.DisplayName</strong>?</p>
+            <div class="confirm-buttons">
+                <button class="btn-delete" @onclick="DeleteProfile">Delete</button>
+                <button class="btn-cancel" @onclick="() => _showDeleteConfirm = false">Cancel</button>
+            </div>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter] public IReadOnlyList<ProviderConfig> AgentProviders { get; set; } = [];
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private List<AgentProfile> _profiles = new();
+    private bool _showForm;
+    private AgentProfile? _editingProfile;
+    private ProfileForm _form = new();
+    private string? _formError;
+    private bool _showDeleteConfirm;
+    private AgentProfile? _deletingProfile;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProfiles();
+    }
+
+    private async Task LoadProfiles()
+    {
+        try
+        {
+            _profiles = (await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None)).ToList();
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to load profiles: {ex.Message}", true));
+        }
+    }
+
+    private void ShowAddForm()
+    {
+        _editingProfile = null;
+        _form = new ProfileForm { Enabled = true };
+        _formError = null;
+        _showForm = true;
+    }
+
+    private void EditProfile(AgentProfile profile)
+    {
+        _editingProfile = profile;
+        _form = new ProfileForm
+        {
+            DisplayName = profile.DisplayName,
+            MatchLabels = string.Join(", ", profile.MatchLabels),
+            AgentProviderConfigId = profile.AgentProviderConfigId,
+            Enabled = profile.Enabled,
+            Priority = profile.Priority
+        };
+        _formError = null;
+        _showForm = true;
+    }
+
+    private void CancelForm()
+    {
+        _showForm = false;
+        _formError = null;
+    }
+
+    private async Task SaveProfile()
+    {
+        _formError = null;
+
+        if (string.IsNullOrWhiteSpace(_form.DisplayName))
+        {
+            _formError = "Display Name is required.";
+            return;
+        }
+
+        if (string.IsNullOrEmpty(_form.AgentProviderConfigId))
+        {
+            _formError = "Agent Provider Config is required.";
+            return;
+        }
+
+        var labels = ParseLabels(_form.MatchLabels);
+
+        // Check for duplicate default profile
+        if (labels.Count == 0)
+        {
+            var existingDefault = _profiles.FirstOrDefault(p =>
+                p.MatchLabels.Count == 0 && (_editingProfile == null || p.Id != _editingProfile.Id));
+            if (existingDefault != null)
+            {
+                _formError = $"A default profile already exists: \"{existingDefault.DisplayName}\". Only one default (empty MatchLabels) is allowed.";
+                return;
+            }
+        }
+
+        var profile = new AgentProfile
+        {
+            Id = _editingProfile?.Id ?? Guid.NewGuid().ToString(),
+            DisplayName = _form.DisplayName.Trim(),
+            MatchLabels = labels,
+            AgentProviderConfigId = _form.AgentProviderConfigId,
+            Enabled = _form.Enabled,
+            Priority = _form.Priority
+        };
+
+        try
+        {
+            await ConfigStore.SaveAgentProfileAsync(profile, CancellationToken.None);
+            _showForm = false;
+            await LoadProfiles();
+            await OnShowStatus.InvokeAsync(("Agent profile saved.", false));
+        }
+        catch (Exception ex)
+        {
+            _formError = $"Failed to save: {ex.Message}";
+        }
+    }
+
+    private void ConfirmDelete(AgentProfile profile)
+    {
+        _deletingProfile = profile;
+        _showDeleteConfirm = true;
+    }
+
+    private async Task DeleteProfile()
+    {
+        if (_deletingProfile == null) return;
+
+        try
+        {
+            await ConfigStore.DeleteAgentProfileAsync(_deletingProfile.Id, CancellationToken.None);
+            _showDeleteConfirm = false;
+            _deletingProfile = null;
+            await LoadProfiles();
+            await OnShowStatus.InvokeAsync(("Agent profile deleted.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to delete: {ex.Message}", true));
+        }
+    }
+
+    private string GetProviderName(string configId)
+    {
+        var provider = AgentProviders.FirstOrDefault(p => p.Id == configId);
+        return provider?.DisplayName ?? Truncate(configId, 16);
+    }
+
+    private static IReadOnlyList<string> ParseLabels(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return [];
+        return input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToList();
+    }
+
+    private static string Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value)) return string.Empty;
+        return value.Length <= maxLength ? value : value[..(maxLength - 3)] + "...";
+    }
+
+    private class ProfileForm
+    {
+        public string DisplayName { get; set; } = "";
+        public string MatchLabels { get; set; } = "";
+        public string AgentProviderConfigId { get; set; } = "";
+        public bool Enabled { get; set; } = true;
+        public int Priority { get; set; } = 0;
+    }
+}

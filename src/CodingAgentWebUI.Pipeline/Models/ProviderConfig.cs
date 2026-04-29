@@ -33,4 +33,11 @@ public sealed class ProviderConfig
     /// Defaults to Work for backward compatibility with existing configurations.
     /// </summary>
     public RepositoryRole RepositoryRole { get; init; } = RepositoryRole.Work;
+
+    /// <summary>
+    /// Explicit required agent labels for this provider config. When set, takes precedence
+    /// over the <c>requiredAgentLabels</c> entry in the <see cref="Settings"/> dictionary.
+    /// Null means fall back to Settings dictionary lookup.
+    /// </summary>
+    public IReadOnlyList<string>? RequiredLabels { get; init; }
 }

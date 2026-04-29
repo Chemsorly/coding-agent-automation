@@ -13,7 +13,6 @@ public sealed record PendingJob
     public required string IssueIdentifier { get; init; }
     public required string IssueProviderId { get; init; }
     public required string RepoProviderId { get; init; }
-    public required string AgentProviderId { get; init; }
     public string? BrainProviderId { get; init; }
     public string? PipelineProviderId { get; init; }
     public required DateTimeOffset EnqueuedAt { get; init; }
@@ -56,6 +55,7 @@ public sealed class JobDispatcherService
         var idleAgents = _registry.GetIdleAgents();
 
         var compatible = idleAgents
+            .Where(agent => !agent.Disabled)
             .Where(agent => IsLabelMatch(agent.Labels, requiredLabels))
             .OrderBy(agent => agent.LastJobCompletedAt ?? agent.RegisteredAt)
             .ToList();
@@ -183,14 +183,21 @@ public sealed class JobDispatcherService
 
     /// <summary>
     /// Resolves the required agent labels for a repository provider config.
-    /// Resolution order: repo <c>requiredAgentLabels</c> setting →
+    /// Resolution order: <see cref="ProviderConfig.RequiredLabels"/> property →
+    /// repo <c>requiredAgentLabels</c> setting →
     /// <see cref="PipelineConfiguration.DefaultRequiredAgentLabels"/> → empty (any agent).
     /// </summary>
     public static IReadOnlyList<string> ResolveRequiredLabels(
         ProviderConfig? repoConfig,
         PipelineConfiguration pipelineConfig)
     {
-        // 1. Check repo-level setting
+        // 0. Check the explicit RequiredLabels property first
+        if (repoConfig?.RequiredLabels is { Count: > 0 } explicitLabels)
+        {
+            return explicitLabels;
+        }
+
+        // 1. Check repo-level setting (legacy dictionary approach)
         if (repoConfig?.Settings.TryGetValue(ProviderSettingsKeys.RequiredAgentLabels, out var repoLabels) == true
             && !string.IsNullOrWhiteSpace(repoLabels))
         {
