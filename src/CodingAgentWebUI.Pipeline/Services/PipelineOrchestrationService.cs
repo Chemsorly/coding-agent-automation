@@ -748,6 +748,30 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         try { OnChange?.Invoke(); }
         catch (Exception ex) { _logger.Warning(ex, "OnChange handler threw an exception"); }
     }
+
+    /// <summary>Fired when chat response lines are received from an agent.</summary>
+    public event Action<string, IReadOnlyList<string>>? OnChatResponse;
+
+    /// <summary>Fired when a chat session completes on an agent.</summary>
+    public event Action<string, int, string?>? OnChatCompleted;
+
+    /// <summary>
+    /// Notifies subscribers that chat response lines were received for a session.
+    /// </summary>
+    internal void NotifyChatResponse(string sessionId, IReadOnlyList<string> lines)
+    {
+        try { OnChatResponse?.Invoke(sessionId, lines); }
+        catch (Exception ex) { _logger.Warning(ex, "OnChatResponse handler threw an exception"); }
+    }
+
+    /// <summary>
+    /// Notifies subscribers that a chat session has completed.
+    /// </summary>
+    internal void NotifyChatCompleted(string sessionId, int exitCode, string? error)
+    {
+        try { OnChatCompleted?.Invoke(sessionId, exitCode, error); }
+        catch (Exception ex) { _logger.Warning(ex, "OnChatCompleted handler threw an exception"); }
+    }
     private async Task<ProviderConfig> ResolveProviderConfigAsync(string providerId, ProviderKind kind, CancellationToken ct)
     {
         var configs = await _configStore.LoadProviderConfigsAsync(kind, ct);

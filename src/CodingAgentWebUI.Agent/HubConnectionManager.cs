@@ -24,6 +24,16 @@ public sealed class HubConnectionManager : IAsyncDisposable
     public event Func<string, Task>? OnCancelJob;
 
     /// <summary>
+    /// Fired when the orchestrator assigns an interactive chat prompt to this agent.
+    /// </summary>
+    public event Func<ChatPromptMessage, Task>? OnAssignChatPrompt;
+
+    /// <summary>
+    /// Fired when the orchestrator requests cancellation of the active chat session.
+    /// </summary>
+    public event Func<string, Task>? OnCancelChat;
+
+    /// <summary>
     /// The underlying SignalR hub connection for invoking server methods.
     /// </summary>
     public HubConnection Connection => _connection;
@@ -84,6 +94,20 @@ public sealed class HubConnectionManager : IAsyncDisposable
             _logger.Information("Received cancellation request for job {JobId}", jobId);
             if (OnCancelJob is not null)
                 await OnCancelJob(jobId);
+        });
+
+        _connection.On<ChatPromptMessage>("AssignChatPrompt", async message =>
+        {
+            _logger.Information("Received chat prompt for session {SessionId}", message.SessionId);
+            if (OnAssignChatPrompt is not null)
+                await OnAssignChatPrompt(message);
+        });
+
+        _connection.On<string>("CancelChat", async sessionId =>
+        {
+            _logger.Information("Received chat cancellation for session {SessionId}", sessionId);
+            if (OnCancelChat is not null)
+                await OnCancelChat(sessionId);
         });
     }
 

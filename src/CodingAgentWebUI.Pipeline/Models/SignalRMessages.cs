@@ -206,3 +206,65 @@ public sealed record TokenRefreshResponse
     [Key(1)]
     public required DateTimeOffset ExpiresAt { get; init; }
 }
+
+/// <summary>
+/// Orchestrator → Agent: Chat prompt assignment for interactive MCP validation/debugging.
+/// Lighter than <see cref="JobAssignmentMessage"/> — no issue, no pipeline steps.
+/// </summary>
+[MessagePackObject]
+public sealed record ChatPromptMessage
+{
+    /// <summary>Unique session ID for correlating responses back to this chat.</summary>
+    [Key(0)]
+    public required string SessionId { get; init; }
+
+    /// <summary>The user's prompt text.</summary>
+    [Key(1)]
+    public required string Prompt { get; init; }
+
+    /// <summary>Whether to use --resume (multi-turn continuation).</summary>
+    [Key(2)]
+    public bool UseResume { get; init; }
+
+    /// <summary>MCP servers to write to the workspace before execution.</summary>
+    [Key(3)]
+    public IReadOnlyList<McpServerConfig> McpServers { get; init; } = [];
+
+    /// <summary>
+    /// Absolute path where MCP config should be written.
+    /// Resolved from the agent provider config's "mcpConfigPath" setting.
+    /// Examples: "/home/ubuntu/.kiro/settings/mcp.json" (Kiro CLI global),
+    /// "/home/ubuntu/.claude.json" (Claude CLI).
+    /// </summary>
+    [Key(4)]
+    public string McpConfigPath { get; init; } = "/home/ubuntu/.kiro/settings/mcp.json";
+}
+
+/// <summary>
+/// Agent → Orchestrator: Streamed chat response lines during interactive chat.
+/// </summary>
+[MessagePackObject]
+public sealed record ChatResponseMessage
+{
+    [Key(0)]
+    public required string SessionId { get; init; }
+
+    [Key(1)]
+    public required IReadOnlyList<string> Lines { get; init; }
+}
+
+/// <summary>
+/// Agent → Orchestrator: Signals that the chat prompt execution has completed.
+/// </summary>
+[MessagePackObject]
+public sealed record ChatCompletedMessage
+{
+    [Key(0)]
+    public required string SessionId { get; init; }
+
+    [Key(1)]
+    public required int ExitCode { get; init; }
+
+    [Key(2)]
+    public string? Error { get; init; }
+}

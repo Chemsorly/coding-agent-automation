@@ -34,6 +34,10 @@ public interface IAgentHub
 
     // Token refresh
     Task<TokenRefreshResponse> RequestTokenRefresh(string jobId, ProviderKind providerKind);
+
+    // Interactive chat
+    Task ReportChatResponse(ChatResponseMessage message);
+    Task ReportChatCompleted(ChatCompletedMessage message);
 }
 
 /// <summary>
@@ -43,5 +47,7 @@ public interface IAgentHubClient
 {
     Task AssignJob(JobAssignmentMessage message);
     Task CancelJob(string jobId);
+    Task AssignChatPrompt(ChatPromptMessage message);
+    Task CancelChat(string sessionId);
     Task ForceDisconnect();
 }

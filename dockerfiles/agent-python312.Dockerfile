@@ -39,6 +39,8 @@ RUN apt-get update && \
         python3 \
         python3-pip \
         python3-venv \
+        nodejs \
+        npm \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /home/ubuntu/.local/bin /home/ubuntu/.kiro && \

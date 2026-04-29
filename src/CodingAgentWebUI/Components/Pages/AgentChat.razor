@@ -1,0 +1,407 @@
+@page "/agent-chat"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Services
+@using Microsoft.AspNetCore.SignalR
+@inject AgentRegistryService Registry
+@inject IConfigurationStore ConfigStore
+@inject PipelineOrchestrationService PipelineService
+@inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
+@inject IJSRuntime JS
+
+<div class="agent-monitoring-page">
+    <header class="agent-header">
+        <h1>Agent Chat</h1>
+    </header>
+
+    <section class="settings-section" style="margin: 16px 20px;">
+        @if (!_isChatActive)
+        {
+            <!-- Agent Selection -->
+            <div class="chat-setup">
+                <h2>💬 Interactive Chat</h2>
+                <p class="chat-description">Send prompts to an idle agent for MCP validation and debugging.</p>
+
+                <div class="chat-agent-select">
+                    <label for="agent-select">Select Agent:</label>
+                    <select id="agent-select" @bind="_selectedAgentId" class="chat-select">
+                        <option value="">— Select an idle agent —</option>
+                        @foreach (var agent in _idleAgents)
+                        {
+                            <option value="@agent.AgentId">@agent.AgentId (@agent.Hostname) [@string.Join(", ", agent.Labels)]</option>
+                        }
+                    </select>
+                </div>
+
+                @if (_idleAgents.Count == 0)
+                {
+                    <div class="agent-detail-warning">⚠️ No idle agents available</div>
+                }
+
+                <button class="btn-start-chat" @onclick="StartChat" disabled="@(string.IsNullOrEmpty(_selectedAgentId))">
+                    🚀 Start Chat
+                </button>
+            </div>
+        }
+        else
+        {
+            <!-- Chat Window -->
+            <div class="chat-window">
+                <div class="chat-header-bar">
+                    <span class="chat-agent-info">Chatting with <strong>@_selectedAgentId</strong> · model: <strong>@_resolvedModel</strong></span>
+                    <button class="btn-end-chat" @onclick="EndChat">✕ End Chat</button>
+                </div>
+
+                <div class="chat-messages" @ref="_messagesContainer">
+                    @foreach (var msg in _messages)
+                    {
+                        <div class="chat-message chat-message-@msg.Role.ToString().ToLowerInvariant()">
+                            <div class="chat-message-header">
+                                <span class="chat-role">@GetRoleIcon(msg.Role) @msg.Role</span>
+                                <span class="chat-timestamp">@msg.Timestamp.ToLocalTime().ToString("HH:mm:ss")</span>
+                            </div>
+                            <div class="chat-message-content">
+                                <pre>@msg.Content</pre>
+                            </div>
+                        </div>
+                    }
+                    @if (_isWaitingForResponse)
+                    {
+                        <div class="chat-message chat-message-agent">
+                            <div class="chat-message-header">
+                                <span class="chat-role">🤖 Agent</span>
+                            </div>
+                            <div class="chat-message-content chat-streaming">
+                                <pre>@(_streamingContent.Length > 0 ? _streamingContent.ToString() : "⏳ Thinking...")</pre>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <div class="chat-input-area">
+                    <textarea @bind="_currentPrompt" @bind:event="oninput"
+                              @onkeydown="HandleKeyDown"
+                              placeholder="Type your prompt... (Enter to send, Shift+Enter for newline)"
+                              disabled="@_isWaitingForResponse"
+                              class="chat-input" rows="2"></textarea>
+                    <button class="btn-send" @onclick="SendPrompt"
+                            disabled="@(_isWaitingForResponse || string.IsNullOrWhiteSpace(_currentPrompt))">
+                        Send
+                    </button>
+                </div>
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    private IReadOnlyList<AgentEntry> _idleAgents = [];
+    private string _selectedAgentId = "";
+    private bool _isChatActive;
+    private bool _isWaitingForResponse;
+    private string _currentPrompt = "";
+    private string? _activeSessionId;
+    private bool _isFirstPrompt = true;
+    private AgentProfile? _resolvedProfile;
+    private string _resolvedMcpConfigPath = "/home/ubuntu/.kiro/settings/mcp.json";
+    private string _resolvedModel = "auto";
+
+    private readonly List<ChatMessage> _messages = new();
+    private readonly System.Text.StringBuilder _streamingContent = new();
+    private ElementReference _messagesContainer;
+
+    private System.Threading.Timer? _refreshTimer;
+
+    protected override void OnInitialized()
+    {
+        RefreshIdleAgents();
+        PipelineService.OnChatResponse += HandleChatResponse;
+        PipelineService.OnChatCompleted += HandleChatCompleted;
+        PipelineService.OnChange += HandleStateChange;
+
+        // Refresh idle agents every 5 seconds
+        _refreshTimer = new System.Threading.Timer(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                if (!_isChatActive)
+                {
+                    RefreshIdleAgents();
+                    StateHasChanged();
+                }
+            });
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private void RefreshIdleAgents()
+    {
+        _idleAgents = Registry.GetIdleAgents();
+    }
+
+    private async Task StartChat()
+    {
+        if (string.IsNullOrEmpty(_selectedAgentId)) return;
+
+        // Resolve profile for MCP servers
+        var profiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
+        var agent = Registry.GetByAgentId(_selectedAgentId);
+        if (agent is null) return;
+
+        var resolver = new ProfileResolver();
+        _resolvedProfile = resolver.Resolve(profiles, agent.Labels);
+
+        // Resolve MCP config path and model from the agent provider config
+        if (_resolvedProfile is not null)
+        {
+            var agentConfigs = await ConfigStore.LoadProviderConfigsAsync(
+                ProviderKind.Agent, CancellationToken.None);
+            var agentConfig = agentConfigs.FirstOrDefault(c => c.Id == _resolvedProfile.AgentProviderConfigId);
+
+            _resolvedModel = agentConfig?.Settings.GetValueOrDefault("model", "auto") ?? "auto";
+
+            if (agentConfig?.Settings.TryGetValue("mcpConfigPath", out var path) == true
+                && !string.IsNullOrWhiteSpace(path))
+            {
+                _resolvedMcpConfigPath = path;
+            }
+            else
+            {
+                // Default based on provider type
+                _resolvedMcpConfigPath = agentConfig?.ProviderType switch
+                {
+                    "KiroCli" => "/home/ubuntu/.kiro/settings/mcp.json",
+                    _ => "/home/ubuntu/.kiro/settings/mcp.json"
+                };
+            }
+        }
+
+        // Mark agent as busy for chat
+        agent.ActiveJobId = "chat-session";
+        Registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
+
+        _isChatActive = true;
+        _isFirstPrompt = true;
+        _messages.Clear();
+        _streamingContent.Clear();
+    }
+
+    private async Task SendPrompt()
+    {
+        if (string.IsNullOrWhiteSpace(_currentPrompt) || _isWaitingForResponse) return;
+
+        var prompt = _currentPrompt.Trim();
+        _currentPrompt = "";
+
+        // Add user message to chat
+        _messages.Add(new ChatMessage
+        {
+            Role = ChatRole.User,
+            Content = prompt,
+            Timestamp = DateTime.UtcNow
+        });
+
+        _isWaitingForResponse = true;
+        _streamingContent.Clear();
+        _activeSessionId = Guid.NewGuid().ToString();
+
+        // Send to agent via SignalR
+        var agent = Registry.GetByAgentId(_selectedAgentId);
+        if (agent is null || agent.Status == AgentStatus.Disconnected)
+        {
+            _messages.Add(new ChatMessage
+            {
+                Role = ChatRole.System,
+                Content = "❌ Agent disconnected",
+                Timestamp = DateTime.UtcNow
+            });
+            _isWaitingForResponse = false;
+            _isChatActive = false;
+            return;
+        }
+
+        var message = new ChatPromptMessage
+        {
+            SessionId = _activeSessionId,
+            Prompt = prompt,
+            UseResume = !_isFirstPrompt,
+            McpServers = _resolvedProfile?.McpServers ?? [],
+            McpConfigPath = _resolvedMcpConfigPath
+        };
+
+        try
+        {
+            await HubContext.Clients.Client(agent.ConnectionId).AssignChatPrompt(message);
+            _isFirstPrompt = false;
+        }
+        catch (Exception ex)
+        {
+            _messages.Add(new ChatMessage
+            {
+                Role = ChatRole.System,
+                Content = $"❌ Failed to send prompt: {ex.Message}",
+                Timestamp = DateTime.UtcNow
+            });
+            _isWaitingForResponse = false;
+        }
+
+        await ScrollToBottom();
+    }
+
+    private void HandleChatResponse(string sessionId, IReadOnlyList<string> lines)
+    {
+        if (sessionId != _activeSessionId) return;
+
+        InvokeAsync(() =>
+        {
+            foreach (var line in lines)
+            {
+                if (_streamingContent.Length > 0)
+                    _streamingContent.AppendLine();
+                _streamingContent.Append(line);
+            }
+            StateHasChanged();
+            _ = ScrollToBottom();
+        });
+    }
+
+    private void HandleChatCompleted(string sessionId, int exitCode, string? error)
+    {
+        if (sessionId != _activeSessionId) return;
+
+        InvokeAsync(() =>
+        {
+            // Finalize the streaming content as an agent message
+            var content = _streamingContent.ToString();
+            if (!string.IsNullOrWhiteSpace(content))
+            {
+                _messages.Add(new ChatMessage
+                {
+                    Role = ChatRole.Agent,
+                    Content = content,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+
+            if (!string.IsNullOrEmpty(error))
+            {
+                _messages.Add(new ChatMessage
+                {
+                    Role = ChatRole.System,
+                    Content = $"⚠️ {error} (exit code: {exitCode})",
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+
+            _streamingContent.Clear();
+            _isWaitingForResponse = false;
+            _activeSessionId = null;
+            StateHasChanged();
+            _ = ScrollToBottom();
+        });
+    }
+
+    private void HandleStateChange()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task EndChat()
+    {
+        // Cancel active chat if waiting
+        if (_isWaitingForResponse && _activeSessionId is not null)
+        {
+            var agent = Registry.GetByAgentId(_selectedAgentId);
+            if (agent is not null)
+            {
+                try
+                {
+                    await HubContext.Clients.Client(agent.ConnectionId).CancelChat(_activeSessionId);
+                }
+                catch { /* best effort */ }
+            }
+        }
+
+        // Return agent to idle
+        var agentEntry = Registry.GetByAgentId(_selectedAgentId);
+        if (agentEntry is not null && agentEntry.Status == AgentStatus.Busy && agentEntry.ActiveJobId == "chat-session")
+        {
+            agentEntry.ActiveJobId = null;
+            Registry.TransitionStatus(agentEntry.AgentId, AgentStatus.Idle);
+        }
+
+        _isChatActive = false;
+        _isWaitingForResponse = false;
+        _activeSessionId = null;
+        _messages.Clear();
+        _streamingContent.Clear();
+        _isFirstPrompt = true;
+        RefreshIdleAgents();
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            await SendPrompt();
+        }
+    }
+
+    private async Task ScrollToBottom()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("eval", "document.querySelector('.chat-messages')?.scrollTo(0, document.querySelector('.chat-messages')?.scrollHeight)");
+        }
+        catch { /* best effort */ }
+    }
+
+    private static string GetRoleIcon(ChatRole role) => role switch
+    {
+        ChatRole.User => "👤",
+        ChatRole.Agent => "🤖",
+        ChatRole.System => "⚙️",
+        _ => "○"
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        PipelineService.OnChatResponse -= HandleChatResponse;
+        PipelineService.OnChatCompleted -= HandleChatCompleted;
+        PipelineService.OnChange -= HandleStateChange;
+        _refreshTimer?.Dispose();
+
+        // Return agent to idle if chat was active when navigating away
+        if (_isChatActive && !string.IsNullOrEmpty(_selectedAgentId))
+        {
+            if (_isWaitingForResponse && _activeSessionId is not null)
+            {
+                var agent = Registry.GetByAgentId(_selectedAgentId);
+                if (agent is not null)
+                {
+                    try
+                    {
+                        await HubContext.Clients.Client(agent.ConnectionId).CancelChat(_activeSessionId);
+                    }
+                    catch { /* best effort */ }
+                }
+            }
+
+            var agentEntry = Registry.GetByAgentId(_selectedAgentId);
+            if (agentEntry is not null && agentEntry.Status == AgentStatus.Busy && agentEntry.ActiveJobId == "chat-session")
+            {
+                agentEntry.ActiveJobId = null;
+                Registry.TransitionStatus(agentEntry.AgentId, AgentStatus.Idle);
+            }
+        }
+    }
+
+    private sealed class ChatMessage
+    {
+        public required ChatRole Role { get; init; }
+        public required string Content { get; init; }
+        public required DateTime Timestamp { get; init; }
+    }
+}

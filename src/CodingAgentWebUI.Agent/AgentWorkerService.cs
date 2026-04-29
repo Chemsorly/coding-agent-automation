@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Text.Json;
 using CodingAgentWebUI.Pipeline.Models;
+using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Hosting;
 namespace CodingAgentWebUI.Agent;
@@ -12,6 +14,7 @@ public sealed class AgentWorkerService : BackgroundService
 {
     private readonly HubConnectionManager _hubManager;
     private readonly LocalPipelineExecutor _executor;
+    private readonly IKiroCliOrchestrator _orchestrator;
     private readonly Serilog.ILogger _logger;
 
     private readonly string _agentId;
@@ -24,17 +27,23 @@ public sealed class AgentWorkerService : BackgroundService
     private PipelineStep? _currentStep;
     private readonly object _busyLock = new();
 
+    private CancellationTokenSource? _chatCts;
+    private string? _activeChatSessionId;
+
     public AgentWorkerService(
         HubConnectionManager hubManager,
         LocalPipelineExecutor executor,
+        IKiroCliOrchestrator orchestrator,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(hubManager);
         ArgumentNullException.ThrowIfNull(executor);
+        ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(logger);
 
         _hubManager = hubManager;
         _executor = executor;
+        _orchestrator = orchestrator;
         _logger = logger;
 
         _agentId = Environment.GetEnvironmentVariable("AGENT_ID")
@@ -63,6 +72,8 @@ public sealed class AgentWorkerService : BackgroundService
         // Wire up event handlers
         _hubManager.OnAssignJob += HandleAssignJobAsync;
         _hubManager.OnCancelJob += HandleCancelJobAsync;
+        _hubManager.OnAssignChatPrompt += HandleChatPromptAsync;
+        _hubManager.OnCancelChat += HandleCancelChatAsync;
 
         try
         {
@@ -120,10 +131,10 @@ public sealed class AgentWorkerService : BackgroundService
     {
         lock (_busyLock)
         {
-            if (_activeJobId is not null)
+            if (_activeJobId is not null || _activeChatSessionId is not null)
             {
                 _logger.Warning("Rejecting job {JobId} — agent is busy with {ActiveJobId}",
-                    message.JobId, _activeJobId);
+                    message.JobId, _activeJobId ?? $"chat:{_activeChatSessionId}");
                 _ = _hubManager.Connection.InvokeAsync("JobRejected", message.JobId, "Agent is busy");
                 return;
             }
@@ -240,6 +251,186 @@ public sealed class AgentWorkerService : BackgroundService
         _logger.Information("Cancelling job {JobId}", jobId);
         _jobCts?.Cancel();
         return Task.CompletedTask;
+    }
+
+    private async Task HandleChatPromptAsync(ChatPromptMessage message)
+    {
+        lock (_busyLock)
+        {
+            if (_activeJobId is not null || _activeChatSessionId is not null)
+            {
+                _logger.Warning("Rejecting chat prompt for session {SessionId} — agent is busy",
+                    message.SessionId);
+                return;
+            }
+
+            _activeChatSessionId = message.SessionId;
+        }
+
+        _logger.Information("Accepted chat prompt for session {SessionId}", message.SessionId);
+        _chatCts = new CancellationTokenSource();
+
+        _ = Task.Run(async () =>
+        {
+            await using var outputBatcher = new OutputBatcher();
+            outputBatcher.OnFlush += async lines =>
+            {
+                try
+                {
+                    var response = new ChatResponseMessage
+                    {
+                        SessionId = message.SessionId,
+                        Lines = lines.ToList()
+                    };
+                    await _hubManager.Connection.InvokeAsync("ReportChatResponse", response);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to send chat response lines");
+                }
+            };
+
+            int exitCode = 1;
+            string? error = null;
+            try
+            {
+                // Write MCP config to the CLI's global settings location
+                var chatWorkspace = "/app/workspaces/chat";
+                Directory.CreateDirectory(chatWorkspace);
+
+                if (!message.UseResume && message.McpServers is { Count: > 0 })
+                {
+                    WriteMcpConfig(message.McpConfigPath, message.McpServers);
+                    await outputBatcher.AddLineAsync(
+                        $"🔌 Wrote MCP config with {message.McpServers.Count} server(s) to {message.McpConfigPath}");
+                }
+
+                // Execute the prompt directly via the orchestrator
+                var exitCode2 = await _orchestrator.ExecutePromptAsync(
+                    message.Prompt,
+                    chatWorkspace,
+                    useResume: message.UseResume,
+                    _chatCts.Token,
+                    onOutputLine: line =>
+                    {
+                        var clean = KiroCliLib.Core.AnsiStripper.Strip(line);
+                        outputBatcher.AddLineAsync(clean).GetAwaiter().GetResult();
+                    });
+
+                exitCode = exitCode2;
+            }
+            catch (OperationCanceledException)
+            {
+                exitCode = 130;
+                error = "Chat cancelled";
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Chat execution failed for session {SessionId}", message.SessionId);
+                exitCode = 1;
+                error = ex.Message;
+            }
+            finally
+            {
+                // Report completion
+                try
+                {
+                    var completed = new ChatCompletedMessage
+                    {
+                        SessionId = message.SessionId,
+                        ExitCode = exitCode,
+                        Error = error
+                    };
+                    await _hubManager.Connection.InvokeAsync("ReportChatCompleted", completed);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "Failed to report chat completion for session {SessionId}", message.SessionId);
+                }
+
+                lock (_busyLock)
+                {
+                    _activeChatSessionId = null;
+                }
+
+                _chatCts?.Dispose();
+                _chatCts = null;
+
+                // Do NOT send AgentReady — the chat session is still active.
+                // The agent will be released when CancelChat is received (End Chat / navigate away).
+            }
+        });
+    }
+
+    private async Task HandleCancelChatAsync(string sessionId)
+    {
+        lock (_busyLock)
+        {
+            if (_activeChatSessionId != sessionId)
+            {
+                _logger.Warning("Received CancelChat for {SessionId} but active session is {ActiveSessionId}",
+                    sessionId, _activeChatSessionId);
+                return;
+            }
+        }
+
+        _logger.Information("Cancelling chat session {SessionId}", sessionId);
+        _chatCts?.Cancel();
+
+        // Signal ready — the chat session is over, agent can accept jobs again
+        try
+        {
+            await _hubManager.Connection.InvokeAsync("AgentReady", _agentId);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to send AgentReady signal after chat cancellation");
+        }
+    }
+
+    /// <summary>
+    /// Writes MCP server configuration to the specified file path.
+    /// </summary>
+    private static void WriteMcpConfig(string fullPath, IReadOnlyList<McpServerConfig> mcpServers)
+    {
+        var directory = Path.GetDirectoryName(fullPath);
+        if (directory is not null)
+            Directory.CreateDirectory(directory);
+
+        var serversDict = new Dictionary<string, object>();
+        foreach (var server in mcpServers)
+        {
+            if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase))
+            {
+                serversDict[server.Name] = new
+                {
+                    type = "http",
+                    url = server.Url,
+                    disabled = server.Disabled,
+                    autoApprove = server.AutoApprove
+                };
+            }
+            else
+            {
+                serversDict[server.Name] = new
+                {
+                    command = server.Command,
+                    args = server.Args,
+                    env = server.Env,
+                    disabled = server.Disabled,
+                    autoApprove = server.AutoApprove
+                };
+            }
+        }
+
+        var mcpConfig = new { mcpServers = serversDict };
+        var json = System.Text.Json.JsonSerializer.Serialize(mcpConfig, new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true,
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+        });
+
+        File.WriteAllText(fullPath, json);
     }
 
     private async Task SendHeartbeatAsync(CancellationToken ct)

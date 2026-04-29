@@ -86,6 +86,7 @@ try
     builder.Services.AddSingleton(sp => new AgentWorkerService(
         sp.GetRequiredService<HubConnectionManager>(),
         sp.GetRequiredService<LocalPipelineExecutor>(),
+        sp.GetRequiredService<IKiroCliOrchestrator>(),
         Log.Logger));
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
 

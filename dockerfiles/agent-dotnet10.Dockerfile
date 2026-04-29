@@ -33,13 +33,15 @@ RUN dotnet publish src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -c R
 # Pinned to 10.0.200 feature band to match global.json (rollForward: latestFeature)
 FROM mcr.microsoft.com/dotnet/sdk:10.0.203 AS runtime
 
-# Install dependencies for Kiro CLI and pipeline execution (no Node.js — uv handles MCP servers)
+# Install dependencies for Kiro CLI and pipeline execution
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
         unzip \
         ca-certificates \
         git \
+        nodejs \
+        npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Reuse existing ubuntu user (UID 1000) from the base image
