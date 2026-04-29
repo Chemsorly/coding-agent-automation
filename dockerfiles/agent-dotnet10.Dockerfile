@@ -1,11 +1,8 @@
 # =============================================================================
-# CodingAgentWebUI Agent Dockerfile (kiro-dotnet)
+# CodingAgentWebUI Agent Dockerfile (kiro-dotnet10)
 # Runs the Agent Worker process that executes the full pipeline end-to-end.
-# Includes .NET SDK, Kiro CLI, Node.js, npm, uv, and git.
+# Includes .NET 10 SDK, Kiro CLI, Node.js, npm, uv, and git.
 # Does NOT include Blazor UI or presentation layer.
-#
-# To add more agent types (e.g., crush-dotnet, kiro-python311), create
-# separate Dockerfiles with different SDK/tool installations.
 # =============================================================================
 
 # Stage 1: Build
@@ -36,15 +33,13 @@ RUN dotnet publish src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -c R
 # Pinned to 10.0.200 feature band to match global.json (rollForward: latestFeature)
 FROM mcr.microsoft.com/dotnet/sdk:10.0.203 AS runtime
 
-# Install dependencies for Kiro CLI and pipeline execution
+# Install dependencies for Kiro CLI and pipeline execution (no Node.js — uv handles MCP servers)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
         unzip \
         ca-certificates \
         git \
-        nodejs \
-        npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Reuse existing ubuntu user (UID 1000) from the base image
@@ -79,12 +74,12 @@ RUN mkdir -p /app/workspaces
 ENV ORCHESTRATOR_URL=""
 # Optional: Agent identifier (defaults to container hostname if not set)
 ENV AGENT_ID=""
-# Required: Agent type for routing (e.g., kiro-dotnet)
-ENV AGENT_TYPE=""
+# Required: Agent type for routing (e.g., kiro-dotnet10)
+ENV AGENT_TYPE=kiro-dotnet10
 # Required: Shared secret for authenticating with the orchestrator
 ENV AGENT_API_KEY=""
 # Predefined agent labels for this image type (overridable at runtime)
-ENV AGENT_LABELS=kiro,dotnet
+ENV AGENT_LABELS=kiro,dotnet,dotnet10
 
 # Copy published Agent app (owned by ubuntu user)
 COPY --from=build --chown=ubuntu:ubuntu /app/publish .

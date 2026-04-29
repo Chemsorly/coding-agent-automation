@@ -27,7 +27,7 @@ The pipeline runs inside a Docker container with Kiro CLI installed. The web UI 
 ### Build the Docker image
 
 ```powershell
-docker build -f webUI.Dockerfile -t coding-agent-webui:latest .
+docker build -f dockerfiles/webui.Dockerfile -t coding-agent-webui:latest .
 ```
 
 ### Run the container
@@ -387,9 +387,9 @@ Agent labels:              ["kiro", "dotnet", "dotnet10"]
 
 | Agent Type | Labels | Docker Image | SDK |
 |-----------|--------|--------------|-----|
-| `kiro-dotnet10` | `kiro, dotnet, dotnet10` | `agent.Dockerfile` | .NET 10 |
-| `kiro-python312` | `kiro, python, python312` | `agent.Dockerfile` | Python 3.12 (planned) |
-| `kiro-java21` | `kiro, java, java21` | `agent.Dockerfile` | Java 21 (planned) |
+| `kiro-dotnet10` | `kiro, dotnet, dotnet10` | `dockerfiles/agent-dotnet10.Dockerfile` | .NET 10 |
+| `kiro-python312` | `kiro, python, python312` | `dockerfiles/agent-python312.Dockerfile` | Python 3.12 |
+| `kiro-java21` | `kiro, java, java21` | `dockerfiles/agent-java21.Dockerfile` | Java 21 |
 
 ### Agent Profiles
 

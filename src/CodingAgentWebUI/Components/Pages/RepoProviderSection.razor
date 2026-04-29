@@ -56,10 +56,13 @@
                         <option value="Brain">Brain</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label>Required Agent Labels <span class="form-hint">(comma-separated — determines agent routing and quality gates)</span></label>
-                    <input type="text" @bind="_form.RequiredLabels" placeholder="e.g. kiro, dotnet, dotnet10" />
-                </div>
+                @if (_form.RepositoryRole != "Brain")
+                {
+                    <div class="form-group">
+                        <label>Required Agent Labels <span class="form-hint">(comma-separated — determines agent routing and quality gates)</span></label>
+                        <input type="text" @bind="_form.RequiredLabels" placeholder="e.g. kiro, dotnet, dotnet10" />
+                    </div>
+                }
             </AdditionalFields>
             <HelpContent>
                 <h4>🔐 GitHub App Setup</h4>

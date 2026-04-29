@@ -14,7 +14,7 @@ services:
   orchestrator:
     build:
       context: .
-      dockerfile: webUI.Dockerfile
+      dockerfile: dockerfiles/webui.Dockerfile
     ports:
       - "5000:5000"
     volumes:
@@ -32,7 +32,7 @@ services:
   agent-dotnet-1:
     build:
       context: .
-      dockerfile: agent.Dockerfile
+      dockerfile: dockerfiles/agent-dotnet10.Dockerfile
     volumes:
       - ./config/kiro-cli-data-1:/home/ubuntu/.local/share/kiro-cli
       - ~/.aws:/home/ubuntu/.aws:ro
@@ -51,7 +51,7 @@ services:
   agent-dotnet-2:
     build:
       context: .
-      dockerfile: agent.Dockerfile
+      dockerfile: dockerfiles/agent-dotnet10.Dockerfile
     volumes:
       - ./config/kiro-cli-data-2:/home/ubuntu/.local/share/kiro-cli
       - ~/.aws:/home/ubuntu/.aws:ro
@@ -70,7 +70,7 @@ services:
   agent-python:
     build:
       context: .
-      dockerfile: agent.Dockerfile
+      dockerfile: dockerfiles/agent-python312.Dockerfile
     volumes:
       - ./config/kiro-cli-data-3:/home/ubuntu/.local/share/kiro-cli
       - ~/.aws:/home/ubuntu/.aws:ro
@@ -89,7 +89,7 @@ services:
   agent-java:
     build:
       context: .
-      dockerfile: agent.Dockerfile
+      dockerfile: dockerfiles/agent-java21.Dockerfile
     volumes:
       - ./config/kiro-cli-data-4:/home/ubuntu/.local/share/kiro-cli
       - ~/.aws:/home/ubuntu/.aws:ro

@@ -2,7 +2,7 @@
 # CodingAgentWebUI Orchestrator Dockerfile
 # Runs the Blazor Server UI + SignalR hub for agent coordination.
 # The orchestrator does NOT run Kiro CLI, dotnet build/test, or quality gates.
-# Those responsibilities belong to agent containers (see agent.Dockerfile).
+# Those responsibilities belong to agent containers (see agent-*.Dockerfile).
 # =============================================================================
 
 # Stage 1: Build
