@@ -193,6 +193,49 @@ public class JsonConfigurationStore : IConfigurationStore
         return Task.CompletedTask;
     }
 
+    // --- Reviewer Configurations ---
+
+    public async Task<IReadOnlyList<ReviewerConfiguration>> LoadReviewerConfigsAsync(CancellationToken ct)
+    {
+        var directory = Path.Combine(_baseDirectory, "reviewers");
+        if (!Directory.Exists(directory))
+            return Array.Empty<ReviewerConfiguration>();
+
+        var configs = new List<ReviewerConfiguration>();
+        foreach (var file in Directory.GetFiles(directory, "*.json"))
+        {
+            var config = await LoadJsonAsync<ReviewerConfiguration>(file, ct);
+            if (config is not null)
+            {
+                configs.Add(config);
+            }
+            else
+            {
+                _logger.Warning("Skipping corrupted reviewer configuration file: {FilePath}", file);
+            }
+        }
+
+        return configs.AsReadOnly();
+    }
+
+    public async Task SaveReviewerConfigAsync(ReviewerConfiguration config, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        var directory = Path.Combine(_baseDirectory, "reviewers");
+        var path = Path.Combine(directory, $"{config.Id}.json");
+        await SaveJsonAsync(path, config, ct);
+    }
+
+    public Task DeleteReviewerConfigAsync(string id, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        var path = Path.Combine(_baseDirectory, "reviewers", $"{id}.json");
+        if (File.Exists(path))
+            File.Delete(path);
+
+        return Task.CompletedTask;
+    }
+
     private string GetProviderDirectory(ProviderKind kind)
     {
         var subfolder = kind switch

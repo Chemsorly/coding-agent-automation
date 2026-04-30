@@ -17,4 +17,5 @@ public static class SettingsNodes
     public const string PipelineSecurity = "pipeline-security";
     public const string AgentProfiles = "agent-profiles";
     public const string QualityGateConfigs = "quality-gate-configs";
+    public const string ReviewerConfigs = "reviewer-configs";
 }

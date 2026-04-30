@@ -183,6 +183,7 @@ public sealed class JobDispatcherService
 
     /// <summary>
     /// Resolves the required agent labels for a repository provider config.
+    /// Delegates to <see cref="Pipeline.Services.LabelResolver.ResolveRequiredLabels"/> for the actual logic.
     /// Resolution order: <see cref="ProviderConfig.RequiredLabels"/> property →
     /// repo <c>requiredAgentLabels</c> setting →
     /// <see cref="PipelineConfiguration.DefaultRequiredAgentLabels"/> → empty (any agent).
@@ -191,32 +192,7 @@ public sealed class JobDispatcherService
         ProviderConfig? repoConfig,
         PipelineConfiguration pipelineConfig)
     {
-        // 0. Check the explicit RequiredLabels property first
-        if (repoConfig?.RequiredLabels is { Count: > 0 } explicitLabels)
-        {
-            return explicitLabels;
-        }
-
-        // 1. Check repo-level setting (legacy dictionary approach)
-        if (repoConfig?.Settings.TryGetValue(ProviderSettingsKeys.RequiredAgentLabels, out var repoLabels) == true
-            && !string.IsNullOrWhiteSpace(repoLabels))
-        {
-            return repoLabels.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList()
-                .AsReadOnly();
-        }
-
-        // 2. Fall back to pipeline-level default
-        if (!string.IsNullOrWhiteSpace(pipelineConfig?.DefaultRequiredAgentLabels))
-        {
-            return pipelineConfig.DefaultRequiredAgentLabels
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList()
-                .AsReadOnly();
-        }
-
-        // 3. No labels required — any agent matches
-        return [];
+        return Pipeline.Services.LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
     }
 
     /// <summary>

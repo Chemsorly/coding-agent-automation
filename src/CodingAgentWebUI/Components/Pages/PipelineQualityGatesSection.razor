@@ -1,6 +1,10 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 
+@{
+    #pragma warning disable CS0618 // Obsolete — setting Agents = null to stop writing legacy field
+}
+
 <section class="settings-section">
     <h2>Quality Gates</h2>
     <div class="provider-form">
@@ -13,45 +17,18 @@
         @if (_codeReviewEnabled)
         {
             <div class="config-sub-fields">
+                <div class="form-hint" style="margin-bottom: 0.75rem;">
+                    ℹ️ Review agents are configured in Settings → Reviewer Configs.
+                </div>
                 <div class="form-group">
                     <label>Max Review Iterations</label>
                     <input type="number" @bind="_codeReviewMaxIterations" min="1" max="5" />
                 </div>
-                <div class="form-group form-checkbox">
-                    <label>
-                        <input type="checkbox" @bind="_multiAgentReviewEnabled" />
-                        Use Specialized Review Agents
-                        <span class="form-hint-icon" aria-hidden="true" title="Run multiple specialized reviewers sequentially instead of a single prompt">?</span>
-                    </label>
+                <div class="form-group">
+                    <label>Review Prompt</label>
+                    <textarea @bind="_codeReviewPrompt" rows="4"></textarea>
+                    <button type="button" class="btn-revert" disabled="@(_codeReviewPrompt == PipelineConfiguration.DefaultCodeReviewPrompt)" @onclick="() => _codeReviewPrompt = PipelineConfiguration.DefaultCodeReviewPrompt">Reset to default</button>
                 </div>
-                @if (_multiAgentReviewEnabled)
-                {
-                    <div class="config-sub-fields">
-                        @for (var idx = 0; idx < _reviewAgents.Count; idx++)
-                        {
-                            var agentIdx = idx;
-                            <div class="form-group" style="border-left: 2px solid var(--border-color, #444); padding-left: 0.75rem; margin-bottom: 1rem;">
-                                <div style="display: flex; align-items: center; gap: 0.5rem;">
-                                    <label style="flex: 1;">Agent Name</label>
-                                    <button type="button" class="btn-revert" @onclick="() => _reviewAgents.RemoveAt(agentIdx)">Remove</button>
-                                </div>
-                                <input type="text" @bind="_reviewAgents[agentIdx].Name" />
-                                <label>Prompt</label>
-                                <textarea @bind="_reviewAgents[agentIdx].Prompt" rows="4"></textarea>
-                            </div>
-                        }
-                        <button type="button" class="btn-revert" @onclick="() => _reviewAgents.Add(new AgentFormEntry())">+ Add Agent</button>
-                        <button type="button" class="btn-revert" @onclick="ResetReviewAgentsToDefault">Reset to defaults</button>
-                    </div>
-                }
-                else
-                {
-                    <div class="form-group">
-                        <label>Review Prompt</label>
-                        <textarea @bind="_codeReviewPrompt" rows="4"></textarea>
-                        <button type="button" class="btn-revert" disabled="@(_codeReviewPrompt == PipelineConfiguration.DefaultCodeReviewPrompt)" @onclick="() => _codeReviewPrompt = PipelineConfiguration.DefaultCodeReviewPrompt">Reset to default</button>
-                    </div>
-                }
                 <div class="form-group">
                     <label>Fix Prompt <span class="form-hint">(leave empty for single-pass review)</span></label>
                     <textarea @bind="_codeReviewFixPrompt" rows="3"></textarea>
@@ -97,8 +74,6 @@
     private int _codeReviewMaxIterations = 1;
     private string _codeReviewPrompt = PipelineConfiguration.DefaultCodeReviewPrompt;
     private string? _codeReviewFixPrompt;
-    private bool _multiAgentReviewEnabled = false;
-    private List<AgentFormEntry> _reviewAgents = new();
     private bool _externalCiEnabled = false;
     private int _externalCiTimeoutMinutes = 15;
     private int _externalCiPollIntervalSeconds = 30;
@@ -110,19 +85,9 @@
         _codeReviewMaxIterations = config.CodeReview.MaxIterations;
         _codeReviewPrompt = config.CodeReview.Prompt;
         _codeReviewFixPrompt = config.CodeReview.FixPrompt;
-        _multiAgentReviewEnabled = config.CodeReview.Agents is { Count: > 0 };
-        _reviewAgents = config.CodeReview.Agents is { Count: > 0 }
-            ? config.CodeReview.Agents.Select(a => new AgentFormEntry { Name = a.Name, Prompt = a.Prompt }).ToList()
-            : PipelineConfiguration.DefaultReviewAgents.Select(a => new AgentFormEntry { Name = a.Name, Prompt = a.Prompt }).ToList();
         _externalCiEnabled = config.ExternalCiEnabled;
         _externalCiTimeoutMinutes = (int)config.ExternalCiTimeout.TotalMinutes;
         _externalCiPollIntervalSeconds = (int)config.ExternalCiPollInterval.TotalSeconds;
-    }
-
-    private void ResetReviewAgentsToDefault()
-    {
-        _reviewAgents = PipelineConfiguration.DefaultReviewAgents
-            .Select(a => new AgentFormEntry { Name = a.Name, Prompt = a.Prompt }).ToList();
     }
 
     private async Task SaveAsync()
@@ -138,12 +103,7 @@
                         MaxIterations = _codeReviewMaxIterations,
                         Prompt = _codeReviewPrompt,
                         FixPrompt = _codeReviewFixPrompt,
-                        Agents = _multiAgentReviewEnabled && _reviewAgents.Count > 0
-                            ? _reviewAgents
-                                .Where(a => !string.IsNullOrWhiteSpace(a.Name) && !string.IsNullOrWhiteSpace(a.Prompt))
-                                .Select(a => new ReviewAgentConfig { Name = a.Name.Trim(), Prompt = a.Prompt.Trim() })
-                                .ToArray()
-                            : null,
+                        Agents = null,
                     },
                     ExternalCiEnabled = _externalCiEnabled,
                     ExternalCiTimeout = TimeSpan.FromMinutes(_externalCiTimeoutMinutes),
@@ -156,11 +116,5 @@
         {
             await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
         }
-    }
-
-    private class AgentFormEntry
-    {
-        public string Name { get; set; } = "";
-        public string Prompt { get; set; } = "";
     }
 }

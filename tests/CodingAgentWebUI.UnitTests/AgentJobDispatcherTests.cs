@@ -65,6 +65,7 @@ public class AgentJobDispatcherTests
             _mockProviderFactory.Object,
             new ProfileResolver(),
             new QualityGateResolver(),
+            new ReviewerResolver(),
             _mockHubContext.Object,
             _mockLogger.Object);
     }

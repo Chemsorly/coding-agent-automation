@@ -1,0 +1,320 @@
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+
+<section class="settings-section">
+    <h2>Reviewer Configurations</h2>
+
+    @if (_configs.Count == 0)
+    {
+        <div class="monitoring-empty">No reviewer configurations. Add one to enable label-based review agent routing.</div>
+    }
+    else
+    {
+        <div class="monitoring-table-wrap">
+            <table class="monitoring-table">
+                <thead>
+                    <tr>
+                        <th>Display Name</th>
+                        <th>Match Labels</th>
+                        <th>Agents</th>
+                        <th>Enabled</th>
+                        <th>Order</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var rc in _configs.OrderBy(r => r.ExecutionOrder))
+                    {
+                        <tr>
+                            <td>
+                                @rc.DisplayName
+                                @if (rc.MatchLabels.Count == 0)
+                                {
+                                    <span class="badge-global">GLOBAL</span>
+                                }
+                            </td>
+                            <td>
+                                @if (rc.MatchLabels.Count > 0)
+                                {
+                                    @foreach (var label in rc.MatchLabels)
+                                    {
+                                        <span class="sidebar-label">@label</span>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="monitoring-muted">(all jobs)</span>
+                                }
+                            </td>
+                            <td title="@string.Join(", ", rc.Agents.Select(a => a.Name))">
+                                @FormatAgents(rc)
+                            </td>
+                            <td>@(rc.Enabled ? "✅" : "❌")</td>
+                            <td>@rc.ExecutionOrder</td>
+                            <td>
+                                <button class="btn-edit" @onclick="() => EditConfig(rc)">Edit</button>
+                                <button class="btn-delete" @onclick="() => ConfirmDelete(rc)">Delete</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @if (_showForm)
+    {
+        <div class="provider-form" style="margin-top: 12px;">
+            <h3>@(_editingConfig != null ? "Edit" : "Create") Reviewer Configuration</h3>
+
+            @if (!string.IsNullOrEmpty(_formError))
+            {
+                <div class="settings-status status-error">@_formError</div>
+            }
+
+            <div class="form-group">
+                <label>Display Name *</label>
+                <input type="text" @bind="_form.DisplayName" placeholder="e.g. DotNet Reviewers" />
+            </div>
+            <div class="form-group">
+                <label>Match Labels <span class="form-hint">(comma-separated, empty = global fallback)</span></label>
+                <input type="text" @bind="_form.MatchLabels" placeholder="e.g. dotnet, csharp" />
+            </div>
+            <div class="form-group form-checkbox">
+                <label>
+                    <input type="checkbox" @bind="_form.Enabled" />
+                    Enabled
+                </label>
+            </div>
+            <div class="form-group">
+                <label>Execution Order <span class="form-hint">(lower runs first)</span></label>
+                <input type="number" @bind="_form.ExecutionOrder" />
+            </div>
+
+            <div class="form-group">
+                <label>Agents *</label>
+                @for (var i = 0; i < _form.Agents.Count; i++)
+                {
+                    var index = i;
+                    <div style="border: 1px solid var(--border-color, #333); padding: 8px; margin-bottom: 8px; border-radius: 4px;">
+                        <div class="form-group">
+                            <label>Agent Name *</label>
+                            <input type="text" @bind="_form.Agents[index].Name" placeholder="e.g. Correctness" />
+                        </div>
+                        <div class="form-group">
+                            <label>Agent Prompt *</label>
+                            <textarea @bind="_form.Agents[index].Prompt" rows="3" placeholder="Review the changes for..."></textarea>
+                        </div>
+                        <button class="btn-delete" style="margin-top: 4px;" @onclick="() => RemoveAgent(index)">Remove</button>
+                    </div>
+                }
+                <button class="btn-add" @onclick="AddAgent">+ Add Agent</button>
+            </div>
+
+            <div class="form-buttons">
+                <button class="btn-save" @onclick="SaveConfig">Save</button>
+                <button class="btn-cancel" @onclick="CancelForm">Cancel</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <button class="btn-add" style="margin-top: 12px;" @onclick="ShowAddForm">+ Add Reviewer Configuration</button>
+    }
+
+    @if (_showDeleteConfirm && _deletingConfig != null)
+    {
+        <div class="agent-detail-confirm" style="margin-top: 12px;">
+            <p>Delete reviewer configuration <strong>@_deletingConfig.DisplayName</strong>?</p>
+            <div class="confirm-buttons">
+                <button class="btn-delete" @onclick="DeleteConfig">Delete</button>
+                <button class="btn-cancel" @onclick="() => _showDeleteConfirm = false">Cancel</button>
+            </div>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private List<ReviewerConfiguration> _configs = new();
+    private bool _showForm;
+    private ReviewerConfiguration? _editingConfig;
+    private ReviewerConfigForm _form = new();
+    private string? _formError;
+    private bool _showDeleteConfirm;
+    private ReviewerConfiguration? _deletingConfig;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadConfigs();
+    }
+
+    private async Task LoadConfigs()
+    {
+        try
+        {
+            _configs = (await ConfigStore.LoadReviewerConfigsAsync(CancellationToken.None)).ToList();
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to load reviewer configs: {ex.Message}", true));
+        }
+    }
+
+    private void ShowAddForm()
+    {
+        _editingConfig = null;
+        _form = new ReviewerConfigForm { Enabled = true, Agents = new List<AgentFormEntry> { new() } };
+        _formError = null;
+        _showForm = true;
+    }
+
+    private void EditConfig(ReviewerConfiguration rc)
+    {
+        _editingConfig = rc;
+        _form = new ReviewerConfigForm
+        {
+            DisplayName = rc.DisplayName,
+            MatchLabels = string.Join(", ", rc.MatchLabels),
+            Enabled = rc.Enabled,
+            ExecutionOrder = rc.ExecutionOrder,
+            Agents = rc.Agents.Select(a => new AgentFormEntry { Name = a.Name, Prompt = a.Prompt }).ToList()
+        };
+        _formError = null;
+        _showForm = true;
+    }
+
+    private void CancelForm()
+    {
+        _showForm = false;
+        _formError = null;
+    }
+
+    private void AddAgent()
+    {
+        _form.Agents.Add(new AgentFormEntry());
+    }
+
+    private void RemoveAgent(int index)
+    {
+        if (index >= 0 && index < _form.Agents.Count)
+            _form.Agents.RemoveAt(index);
+    }
+
+    private async Task SaveConfig()
+    {
+        _formError = null;
+
+        if (string.IsNullOrWhiteSpace(_form.DisplayName))
+        {
+            _formError = "Display Name is required.";
+            return;
+        }
+
+        if (_form.Agents.Count == 0)
+        {
+            _formError = "At least one agent is required.";
+            return;
+        }
+
+        for (var i = 0; i < _form.Agents.Count; i++)
+        {
+            var agent = _form.Agents[i];
+            if (string.IsNullOrWhiteSpace(agent.Name))
+            {
+                _formError = $"Agent #{i + 1}: Name is required.";
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(agent.Prompt))
+            {
+                _formError = $"Agent #{i + 1} ({agent.Name}): Prompt is required.";
+                return;
+            }
+        }
+
+        var labels = ParseLabels(_form.MatchLabels);
+        var agents = _form.Agents.Select(a => new ReviewAgent
+        {
+            Name = a.Name.Trim(),
+            Prompt = a.Prompt.Trim()
+        }).ToList();
+
+        var config = new ReviewerConfiguration
+        {
+            Id = _editingConfig?.Id ?? Guid.NewGuid().ToString(),
+            DisplayName = _form.DisplayName.Trim(),
+            MatchLabels = labels,
+            Agents = agents,
+            Enabled = _form.Enabled,
+            ExecutionOrder = _form.ExecutionOrder
+        };
+
+        try
+        {
+            await ConfigStore.SaveReviewerConfigAsync(config, CancellationToken.None);
+            _showForm = false;
+            await LoadConfigs();
+            await OnShowStatus.InvokeAsync(("Reviewer configuration saved.", false));
+        }
+        catch (Exception ex)
+        {
+            _formError = $"Failed to save: {ex.Message}";
+        }
+    }
+
+    private void ConfirmDelete(ReviewerConfiguration rc)
+    {
+        _deletingConfig = rc;
+        _showDeleteConfirm = true;
+    }
+
+    private async Task DeleteConfig()
+    {
+        if (_deletingConfig == null) return;
+
+        try
+        {
+            await ConfigStore.DeleteReviewerConfigAsync(_deletingConfig.Id, CancellationToken.None);
+            _showDeleteConfirm = false;
+            _deletingConfig = null;
+            await LoadConfigs();
+            await OnShowStatus.InvokeAsync(("Reviewer configuration deleted.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to delete: {ex.Message}", true));
+        }
+    }
+
+    private static string FormatAgents(ReviewerConfiguration rc)
+    {
+        var names = string.Join(", ", rc.Agents.Select(a => a.Name));
+        var display = $"{rc.Agents.Count}: {names}";
+        return display.Length > 35 ? display[..32] + "..." : display;
+    }
+
+    private static IReadOnlyList<string> ParseLabels(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return [];
+        return input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToList();
+    }
+
+    private class ReviewerConfigForm
+    {
+        public string DisplayName { get; set; } = "";
+        public string MatchLabels { get; set; } = "";
+        public bool Enabled { get; set; } = true;
+        public int ExecutionOrder { get; set; } = 0;
+        public List<AgentFormEntry> Agents { get; set; } = new();
+    }
+
+    private class AgentFormEntry
+    {
+        public string Name { get; set; } = "";
+        public string Prompt { get; set; } = "";
+    }
+}

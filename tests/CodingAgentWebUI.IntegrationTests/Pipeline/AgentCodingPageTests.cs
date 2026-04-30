@@ -73,6 +73,8 @@ public class AgentCodingPageTests
             {
                 new() { Id = "default", DisplayName = "Default", CompilationCommand = "dotnet", CompilationArguments = ["build"], TestCommand = "dotnet", TestArguments = ["test"], Enabled = true }
             });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>());
 
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail

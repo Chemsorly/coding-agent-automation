@@ -33,6 +33,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
     private readonly IProviderFactory _providerFactory;
     private readonly ProfileResolver _profileResolver;
     private readonly QualityGateResolver _qualityGateResolver;
+    private readonly ReviewerResolver _reviewerResolver;
     private readonly IHubContext<AgentHub, IAgentHubClient> _hubContext;
     private readonly ILogger _logger;
 
@@ -46,6 +47,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         IProviderFactory providerFactory,
         ProfileResolver profileResolver,
         QualityGateResolver qualityGateResolver,
+        ReviewerResolver reviewerResolver,
         IHubContext<AgentHub, IAgentHubClient> hubContext,
         ILogger logger)
     {
@@ -58,6 +60,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         ArgumentNullException.ThrowIfNull(providerFactory);
         ArgumentNullException.ThrowIfNull(profileResolver);
         ArgumentNullException.ThrowIfNull(qualityGateResolver);
+        ArgumentNullException.ThrowIfNull(reviewerResolver);
         ArgumentNullException.ThrowIfNull(hubContext);
         ArgumentNullException.ThrowIfNull(logger);
 
@@ -70,6 +73,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         _providerFactory = providerFactory;
         _profileResolver = profileResolver;
         _qualityGateResolver = qualityGateResolver;
+        _reviewerResolver = reviewerResolver;
         _hubContext = hubContext;
         _logger = logger;
     }
@@ -177,6 +181,10 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             var allQgcs = await _configStore.LoadQualityGateConfigsAsync(ct);
             var resolvedQgcs = _qualityGateResolver.Resolve(allQgcs, requiredLabels);
 
+            // Resolve reviewer configurations for this job
+            var allReviewerConfigs = await _configStore.LoadReviewerConfigsAsync(ct);
+            var resolvedReviewerConfigs = _reviewerResolver.Resolve(allReviewerConfigs, requiredLabels);
+
             // Create the dispatched run via PipelineOrchestrationService
             var run = await _orchestration.CreateDispatchedRunAsync(
                 issueProviderId, repoProviderId, issueIdentifier,
@@ -192,6 +200,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             // Populate resolved profile and QGC IDs on the run
             run.ResolvedProfileId = profile.Id;
             run.ResolvedQualityGateConfigIds = resolvedQgcs.Select(q => q.Id).ToList().AsReadOnly();
+            run.ResolvedReviewerConfigIds = resolvedReviewerConfigs.Select(r => r.Id).ToList().AsReadOnly();
 
             // Pre-fetch issue details and comments
             var issueContext = await PrepareIssueContextAsync(issueIdentifier, issueProviderId, ct);
@@ -229,7 +238,8 @@ public sealed class AgentJobDispatcher : IJobDispatcher
                 InitiatedBy = initiatedBy,
                 ResolvedProfileId = profile.Id,
                 QualityGateConfigs = resolvedQgcs,
-                McpServers = profile.McpServers
+                McpServers = profile.McpServers,
+                ReviewerConfigs = resolvedReviewerConfigs
             };
 
             // Assign the job to the agent in the registry
@@ -240,8 +250,15 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             await _hubContext.Clients.Client(agent.ConnectionId).AssignJob(message);
 
             _logger.Information(
-                "Job {JobId} dispatched to agent {AgentId} for issue {IssueIdentifier} (profile={ProfileId}, qgcs={QgcCount})",
-                run.RunId, agent.AgentId, issueIdentifier, profile.Id, resolvedQgcs.Count);
+                "Job {JobId} dispatched to agent {AgentId} for issue {IssueIdentifier} (profile={ProfileId}, qgcs={QgcCount}, reviewerConfigs={ReviewerConfigCount})",
+                run.RunId, agent.AgentId, issueIdentifier, profile.Id, resolvedQgcs.Count, resolvedReviewerConfigs.Count);
+
+            if (resolvedReviewerConfigs.Count > 0)
+            {
+                var reviewerSummary = string.Join(", ", resolvedReviewerConfigs.Select(r =>
+                    $"{r.DisplayName} (labels: [{string.Join(", ", r.MatchLabels)}])"));
+                _logger.Debug("Job {JobId} resolved reviewer configs: {ReviewerSummary}", run.RunId, reviewerSummary);
+            }
 
             return true;
         }

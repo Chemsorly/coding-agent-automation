@@ -95,6 +95,11 @@
                         ConfigStore="ConfigStore"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
+                case SettingsNodes.ReviewerConfigs:
+                    <ReviewerConfigSection
+                        ConfigStore="ConfigStore"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
             }
         </div>
     </div>

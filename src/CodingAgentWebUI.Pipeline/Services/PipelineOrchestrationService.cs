@@ -513,12 +513,20 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 { _logger.Warning(ex, "Pipeline {RunId} brain repo pull-before-write failed, continuing", run.RunId); }
             }
             // Code review phase
+            var allReviewerConfigs = await _configStore.LoadReviewerConfigsAsync(ct);
+            var reviewerResolver = new ReviewerResolver();
+            var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+            var repoConfigForLabels = repoConfigs.FirstOrDefault(c => c.Id == run.RepoProviderConfigId);
+            var requiredLabelsForReview = LabelResolver.ResolveRequiredLabels(repoConfigForLabels, _activeConfig!);
+            var resolvedReviewers = reviewerResolver.Resolve(allReviewerConfigs, requiredLabelsForReview);
+
             await _agentExecution.ExecuteCodeReviewAsync(
                 run, _activeConfig!, _activeAgentProvider!,
                 _activeIssue!, _activeParsedIssue!,
                 _cancellationTokenSource,
                 step => TransitionTo(run, step),
-                line => OnOutputLine?.Invoke(line), () => NotifyChange(), ct);
+                line => OnOutputLine?.Invoke(line), () => NotifyChange(), ct,
+                resolvedReviewers);
             // Quality gates
             var allQgcs = await _configStore.LoadQualityGateConfigsAsync(ct);
             var qualityGateContext = new QualityGateContext

@@ -65,6 +65,10 @@
                      @onclick="() => SelectNode(SettingsNodes.QualityGateConfigs)">
                     Quality Gate Configs
                 </div>
+                <div class="tree-node @(SelectedNode == SettingsNodes.ReviewerConfigs ? "active" : "")"
+                     @onclick="() => SelectNode(SettingsNodes.ReviewerConfigs)">
+                    Reviewer Configs
+                </div>
             </div>
         }
     </div>

@@ -101,6 +101,9 @@ public sealed record JobAssignmentMessage
 
     [Key(17)]
     public IReadOnlyList<McpServerConfig> McpServers { get; init; } = [];
+
+    [Key(18)]
+    public IReadOnlyList<ReviewerConfiguration> ReviewerConfigs { get; init; } = [];
 }
 
 /// <summary>

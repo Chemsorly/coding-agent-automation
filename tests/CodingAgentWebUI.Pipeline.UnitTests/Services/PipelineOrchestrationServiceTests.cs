@@ -1,3 +1,5 @@
+#pragma warning disable CS0618 // Obsolete — tests exercise legacy CodeReviewConfiguration.Agents field
+
 using AwesomeAssertions;
 using Moq;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -80,6 +82,8 @@ public class PipelineOrchestrationServiceTests
                 {
                     new() { Id = "default", DisplayName = "Default", CompilationCommand = "dotnet", CompilationArguments = ["build"], TestCommand = "dotnet", TestArguments = ["test"], Enabled = true }
                 });
+            _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<ReviewerConfiguration>());
 
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
@@ -1462,6 +1466,8 @@ public class PipelineOrchestrationServiceTests
             {
                 new() { Id = "default", DisplayName = "Default", CompilationCommand = "dotnet", CompilationArguments = ["build"], TestCommand = "dotnet", TestArguments = ["test"], Enabled = true }
             });
+        mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>());
 
         // Issue provider
         mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))

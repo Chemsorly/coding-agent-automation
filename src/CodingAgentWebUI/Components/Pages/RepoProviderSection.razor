@@ -13,6 +13,13 @@
                     <span class="provider-type">@p.ProviderType</span>
                     <span class="provider-detail">@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "") → @p.Settings.GetValueOrDefault("baseBranch", "main")</span>
                     <span class="provider-type">@p.RepositoryRole</span>
+                    @if (p.RepositoryRole == RepositoryRole.Work && p.RequiredLabels is { Count: > 0 })
+                    {
+                        @foreach (var label in p.RequiredLabels)
+                        {
+                            <span class="provider-label">@label</span>
+                        }
+                    }
                 </div>
                 <div class="provider-actions">
                     <button class="btn-edit" @onclick="() => EditProvider(p)">Edit</button>

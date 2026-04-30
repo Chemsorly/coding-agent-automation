@@ -87,6 +87,8 @@ public class PipelineRetryPropertyTests
                 {
                     new() { Id = "default", DisplayName = "Default", CompilationCommand = "dotnet", CompilationArguments = ["build"], TestCommand = "dotnet", TestArguments = ["test"], Enabled = true }
                 });
+        mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<ReviewerConfiguration>());
 
         var mockIssueProvider = new Mock<IIssueProvider>();
         mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))

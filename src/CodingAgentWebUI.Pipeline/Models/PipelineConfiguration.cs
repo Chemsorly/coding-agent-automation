@@ -39,6 +39,7 @@ public sealed record CodeReviewConfiguration
     /// single <see cref="Prompt"/>. The second agent onwards sees previous findings via
     /// <c>--resume</c>. When null or empty, falls back to the single <see cref="Prompt"/>.
     /// </summary>
+    [Obsolete("Use ReviewerConfiguration entities instead. See spec 014.")]
     public IReadOnlyList<ReviewAgentConfig>? Agents { get; init; } = PipelineConfiguration.DefaultReviewAgents;
 }
 

@@ -85,6 +85,11 @@ builder.Services.AddHostedService(sp => new QualityGateMigrationService(
     sp.GetRequiredService<IConfigurationStore>(),
     Serilog.Log.Logger));
 
+// Reviewer migration — ensures at least one ReviewerConfiguration exists before first dispatch
+builder.Services.AddHostedService(sp => new ReviewerMigrationService(
+    sp.GetRequiredService<IConfigurationStore>(),
+    Serilog.Log.Logger));
+
 // Job queue drain service — periodically matches queued jobs to idle agents
 builder.Services.AddSingleton(sp => new JobQueueDrainService(
     sp.GetRequiredService<JobDispatcherService>(),
@@ -96,6 +101,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<JobQueueDrainServi
 // Multi-agent job dispatcher (bridges loop service to agent dispatch)
 builder.Services.AddSingleton<ProfileResolver>();
 builder.Services.AddSingleton<QualityGateResolver>();
+builder.Services.AddSingleton<ReviewerResolver>();
 builder.Services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
     sp.GetRequiredService<JobDispatcherService>(),
     sp.GetRequiredService<AgentRegistryService>(),
@@ -106,6 +112,7 @@ builder.Services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
     sp.GetRequiredService<IProviderFactory>(),
     sp.GetRequiredService<ProfileResolver>(),
     sp.GetRequiredService<QualityGateResolver>(),
+    sp.GetRequiredService<ReviewerResolver>(),
     sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
     Serilog.Log.Logger));
 

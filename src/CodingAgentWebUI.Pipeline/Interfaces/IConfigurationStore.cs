@@ -28,4 +28,9 @@ public interface IConfigurationStore
     Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct);
     Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct);
     Task DeleteQualityGateConfigAsync(string id, CancellationToken ct);
+
+    // Reviewer Configurations
+    Task<IReadOnlyList<ReviewerConfiguration>> LoadReviewerConfigsAsync(CancellationToken ct);
+    Task SaveReviewerConfigAsync(ReviewerConfiguration config, CancellationToken ct);
+    Task DeleteReviewerConfigAsync(string id, CancellationToken ct);
 }

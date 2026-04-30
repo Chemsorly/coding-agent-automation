@@ -133,7 +133,58 @@
                                                         }
                                                     </td>
                                                     <td class="monitoring-mono">@GetProviderDisplayName(template.IssueProviderId, _issueProviders)</td>
-                                                    <td class="monitoring-mono">@GetProviderDisplayName(template.RepoProviderId, _repoProviders)</td>
+                                                    <td class="monitoring-mono template-repo-cell">
+                                                        @GetProviderDisplayName(template.RepoProviderId, _repoProviders)
+                                                        @{ var preview = GetLabelPreview(template.RepoProviderId); }
+                                                        @if (preview.Labels.Count > 0)
+                                                        {
+                                                            <div class="label-preview-tooltip">
+                                                                <div class="label-preview-section">
+                                                                    <span class="label-preview-heading">Labels:</span>
+                                                                    @foreach (var label in preview.Labels)
+                                                                    {
+                                                                        <span class="provider-label">@label</span>
+                                                                    }
+                                                                </div>
+                                                                @if (preview.QualityGates.Count > 0)
+                                                                {
+                                                                    <div class="label-preview-section">
+                                                                        <span class="label-preview-heading">Quality Gates:</span>
+                                                                        @foreach (var qg in preview.QualityGates)
+                                                                        {
+                                                                            <span class="label-preview-item label-preview-qg">@qg</span>
+                                                                        }
+                                                                    </div>
+                                                                }
+                                                                @if (preview.Reviewers.Count > 0)
+                                                                {
+                                                                    <div class="label-preview-section">
+                                                                        <span class="label-preview-heading">Reviewers:</span>
+                                                                        @foreach (var rv in preview.Reviewers)
+                                                                        {
+                                                                            <span class="label-preview-item label-preview-rv">@rv</span>
+                                                                        }
+                                                                    </div>
+                                                                }
+                                                                @if (preview.Profiles.Count > 0)
+                                                                {
+                                                                    <div class="label-preview-section">
+                                                                        <span class="label-preview-heading">Agent Profiles:</span>
+                                                                        @foreach (var pr in preview.Profiles)
+                                                                        {
+                                                                            <span class="label-preview-item label-preview-pr">@pr</span>
+                                                                        }
+                                                                    </div>
+                                                                }
+                                                                @if (preview.QualityGates.Count == 0 && preview.Reviewers.Count == 0 && preview.Profiles.Count == 0)
+                                                                {
+                                                                    <div class="label-preview-section">
+                                                                        <span class="monitoring-muted">No label-mapped resources match</span>
+                                                                    </div>
+                                                                }
+                                                            </div>
+                                                        }
+                                                    </td>
                                                     <td>@(string.IsNullOrEmpty(template.BrainProviderId) ? "—" : GetProviderDisplayName(template.BrainProviderId, _brainProviders))</td>
                                                     <td>@(string.IsNullOrEmpty(template.PipelineProviderId) ? "—" : GetProviderDisplayName(template.PipelineProviderId, _pipelineProviders))</td>
                                                     <td>
@@ -220,6 +271,58 @@
                                             }
                                         </select>
                                     </div>
+                                    @if (!string.IsNullOrEmpty(_addForm.RepoProviderId))
+                                    {
+                                        var formPreview = GetLabelPreview(_addForm.RepoProviderId);
+                                        @if (formPreview.Labels.Count > 0)
+                                        {
+                                            <div class="label-preview-inline">
+                                                <div class="label-preview-section">
+                                                    <span class="label-preview-heading">Resolved Labels:</span>
+                                                    @foreach (var label in formPreview.Labels)
+                                                    {
+                                                        <span class="provider-label">@label</span>
+                                                    }
+                                                </div>
+                                                @if (formPreview.QualityGates.Count > 0)
+                                                {
+                                                    <div class="label-preview-section">
+                                                        <span class="label-preview-heading">🔧 Quality Gates:</span>
+                                                        @foreach (var qg in formPreview.QualityGates)
+                                                        {
+                                                            <span class="label-preview-item label-preview-qg">@qg</span>
+                                                        }
+                                                    </div>
+                                                }
+                                                @if (formPreview.Reviewers.Count > 0)
+                                                {
+                                                    <div class="label-preview-section">
+                                                        <span class="label-preview-heading">📝 Reviewers:</span>
+                                                        @foreach (var rv in formPreview.Reviewers)
+                                                        {
+                                                            <span class="label-preview-item label-preview-rv">@rv</span>
+                                                        }
+                                                    </div>
+                                                }
+                                                @if (formPreview.Profiles.Count > 0)
+                                                {
+                                                    <div class="label-preview-section">
+                                                        <span class="label-preview-heading">🤖 Agent Profiles:</span>
+                                                        @foreach (var pr in formPreview.Profiles)
+                                                        {
+                                                            <span class="label-preview-item label-preview-pr">@pr</span>
+                                                        }
+                                                    </div>
+                                                }
+                                                @if (formPreview.QualityGates.Count == 0 && formPreview.Reviewers.Count == 0 && formPreview.Profiles.Count == 0)
+                                                {
+                                                    <div class="label-preview-section">
+                                                        <span class="monitoring-muted">No label-mapped resources match these labels</span>
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+                                    }
                                     <div class="form-group">
                                         <label>Brain Provider (optional)</label>
                                         <select @bind="_addForm.BrainProviderId">
@@ -463,6 +566,12 @@
     private readonly object _outputLock = new();
     private List<string> _outputLines = new();
 
+    // ── Label Preview State ──
+    private IReadOnlyList<QualityGateConfiguration> _qualityGateConfigs = [];
+    private IReadOnlyList<ReviewerConfiguration> _reviewerConfigs = [];
+    private IReadOnlyList<AgentProfile> _agentProfiles = [];
+    private PipelineConfiguration _pipelineConfig = new();
+
     private string? _errorMessage;
     private string? _successMessage;
     private bool _showCompletionOnly;
@@ -513,6 +622,11 @@
             var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
             _maxRetries = config.MaxRetries;
             _templates = config.PipelineJobTemplates.ToList();
+            _pipelineConfig = config;
+
+            _qualityGateConfigs = await ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None);
+            _reviewerConfigs = await ConfigStore.LoadReviewerConfigsAsync(CancellationToken.None);
+            _agentProfiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -953,6 +1067,50 @@
         PipelineService.OnChange -= HandleStateChanged;
         PipelineService.OnOutputLine -= HandleOutputLine;
         LoopService.OnChange -= HandleStateChanged;
+    }
+
+    // ── Label Preview ──
+
+    private LabelPreviewResult GetLabelPreview(string repoProviderId)
+    {
+        var repoConfig = _repoProviders.FirstOrDefault(p => p.Id == repoProviderId);
+        if (repoConfig is null)
+            return new LabelPreviewResult();
+
+        var labels = LabelResolver.ResolveRequiredLabels(repoConfig, _pipelineConfig);
+        if (labels.Count == 0)
+            return new LabelPreviewResult();
+
+        var qgResolver = new QualityGateResolver();
+        var matchedQgs = qgResolver.Resolve(_qualityGateConfigs, labels);
+
+        var rvResolver = new ReviewerResolver();
+        var matchedRvs = rvResolver.Resolve(_reviewerConfigs, labels);
+
+        var profileResolver = new ProfileResolver();
+        // Profiles use subset matching (profile labels ⊆ job labels)
+        var matchedProfiles = _agentProfiles
+            .Where(p => p.Enabled)
+            .Where(p => p.MatchLabels.Count == 0 || p.MatchLabels.All(l => labels.Contains(l, StringComparer.OrdinalIgnoreCase)))
+            .OrderByDescending(p => p.MatchLabels.Count)
+            .ThenByDescending(p => p.Priority)
+            .ToList();
+
+        return new LabelPreviewResult
+        {
+            Labels = labels,
+            QualityGates = matchedQgs.Select(q => q.DisplayName).ToList(),
+            Reviewers = matchedRvs.Select(r => $"{r.DisplayName} ({r.Agents.Count} agent{(r.Agents.Count != 1 ? "s" : "")})").ToList(),
+            Profiles = matchedProfiles.Select(p => p.DisplayName).ToList()
+        };
+    }
+
+    private sealed class LabelPreviewResult
+    {
+        public IReadOnlyList<string> Labels { get; init; } = [];
+        public List<string> QualityGates { get; init; } = new();
+        public List<string> Reviewers { get; init; } = new();
+        public List<string> Profiles { get; init; } = new();
     }
 
     private class TemplateFormModel

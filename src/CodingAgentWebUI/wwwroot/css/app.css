@@ -199,6 +199,30 @@ select option { background: var(--surface); color: var(--text); }
 .provider-type { font-size: 0.75rem; padding: 2px 8px; background: var(--surface-alt); border-radius: 10px; color: var(--text-muted); }
 .provider-actions { display: flex; gap: 6px; }
 .provider-detail { font-size: 0.78rem; color: var(--text-muted); font-family: monospace; }
+.provider-label { font-size: 0.7rem; padding: 1px 6px; background: #3b82f620; border: 1px solid #3b82f650; border-radius: 8px; color: #93c5fd; }
+
+/* Label Preview Tooltip (hover on template table rows) */
+.template-repo-cell { position: relative; }
+.template-repo-cell .label-preview-tooltip {
+    display: none; position: absolute; top: 100%; left: 0; z-index: 100;
+    min-width: 280px; max-width: 400px; padding: 10px 12px;
+    background: var(--surface, #1e1e2e); border: 1px solid var(--border, #333); border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4); font-size: 0.78rem; line-height: 1.5;
+}
+.template-repo-cell:hover .label-preview-tooltip { display: block; }
+.label-preview-section { margin-bottom: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.label-preview-section:last-child { margin-bottom: 0; }
+.label-preview-heading { font-weight: 600; color: var(--text-muted, #aaa); font-size: 0.72rem; text-transform: uppercase; margin-right: 4px; white-space: nowrap; }
+.label-preview-item { font-size: 0.72rem; padding: 1px 6px; border-radius: 8px; white-space: nowrap; }
+.label-preview-qg { background: #10b98120; border: 1px solid #10b98150; color: #6ee7b7; }
+.label-preview-rv { background: #a78bfa20; border: 1px solid #a78bfa50; color: #c4b5fd; }
+.label-preview-pr { background: #f59e0b20; border: 1px solid #f59e0b50; color: #fcd34d; }
+
+/* Label Preview Inline (in add template form) */
+.label-preview-inline {
+    padding: 10px 12px; background: var(--surface, #1e1e2e); border: 1px solid var(--border, #333);
+    border-radius: 6px; font-size: 0.78rem; line-height: 1.5;
+}
 
 .provider-form { display: flex; flex-direction: column; gap: 10px; padding: 12px; background: var(--bg); border-radius: var(--radius); border: 1px solid var(--border); flex: 1; min-width: 0; }
 .provider-form h3 { font-size: 0.9rem; font-weight: 600; color: var(--text); }

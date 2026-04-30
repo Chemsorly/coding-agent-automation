@@ -361,7 +361,8 @@ public sealed class LocalPipelineExecutor
                 job.IssueDetail, job.ParsedIssue,
                 localCts,
                 step => TransitionTo(step),
-                EmitOutputLine, () => { }, linkedCt);
+                EmitOutputLine, () => { }, linkedCt,
+                job.ReviewerConfigs);
 
             // ── Quality gates ──
             var qualityGateContext = new QualityGateContext

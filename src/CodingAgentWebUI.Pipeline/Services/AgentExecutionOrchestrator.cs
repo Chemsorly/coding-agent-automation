@@ -503,7 +503,8 @@ internal class AgentExecutionOrchestrator
         CancellationTokenSource? orchestratorCts,
         Action<PipelineStep> transitionTo,
         Action<string> onOutputLine, Action onChange,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<ReviewerConfiguration>? resolvedReviewerConfigs = null)
     {
         if (!config.CodeReview.Enabled || config.CodeReview.MaxIterations <= 0)
             return;
@@ -516,9 +517,25 @@ internal class AgentExecutionOrchestrator
             _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
                 run.RunId, i + 1, config.CodeReview.MaxIterations);
 
-            var agents = config.CodeReview.Agents is { Count: > 0 } configuredAgents
-                ? configuredAgents
-                : (IReadOnlyList<ReviewAgentConfig>)new[] { new ReviewAgentConfig { Name = "Review", Prompt = config.CodeReview.Prompt } };
+            // Determine which agents to run using the fallback chain:
+            // 1. resolvedReviewerConfigs (new entity-based routing)
+            // 2. config.CodeReview.Agents (legacy inline config)
+            // 3. Single-pass using config.CodeReview.Prompt
+            IReadOnlyList<ReviewAgentConfig> agents;
+            if (resolvedReviewerConfigs is { Count: > 0 })
+            {
+                agents = ReviewerResolver.FlattenAgents(resolvedReviewerConfigs);
+            }
+            #pragma warning disable CS0618 // Obsolete — legacy fallback until all callers migrate
+            else if (config.CodeReview.Agents is { Count: > 0 } configuredAgents)
+            {
+                agents = configuredAgents;
+            }
+            #pragma warning restore CS0618
+            else
+            {
+                agents = new[] { new ReviewAgentConfig { Name = "Review", Prompt = config.CodeReview.Prompt } };
+            }
 
             onOutputLine($"🔍 Starting code review iteration {i + 1}/{config.CodeReview.MaxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
 

@@ -1,3 +1,5 @@
+#pragma warning disable CS0618 // Obsolete — tests exercise legacy CodeReviewConfiguration.Agents field
+
 using AwesomeAssertions;
 using Moq;
 using CodingAgentWebUI.Pipeline.Interfaces;
