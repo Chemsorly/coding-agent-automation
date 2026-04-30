@@ -170,10 +170,6 @@ public sealed record PipelineConfiguration
 
     public int IssuePageSize { get; init; } = 25;
     public TimeSpan AgentTimeout { get; init; } = TimeSpan.FromMinutes(30);
-    [Obsolete("Use QualityGateConfiguration entities instead. See spec 011.")]
-    public double MinCoverageThreshold { get; init; } = 50.0;
-    [Obsolete("Use QualityGateConfiguration entities instead. See spec 011.")]
-    public bool SecurityScanEnabled { get; init; } = true;
     public string WorkspaceBaseDirectory { get; init; } = "./workspaces";
     public CodeReviewConfiguration CodeReview { get; init; } = new();
     public string AnalysisPrompt { get; init; } = DefaultAnalysisPrompt;

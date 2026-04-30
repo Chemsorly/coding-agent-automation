@@ -1,5 +1,4 @@
 using KiroCliLib.Core;
-using CodingAgentWebUI.Infrastructure.Agent;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;

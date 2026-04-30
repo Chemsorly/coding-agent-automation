@@ -21,8 +21,6 @@ public static class TestPipelineConfig
         MaxAnalysisRetries = 1,
         IssuePageSize = 25,
         AgentTimeout = TimeSpan.FromMinutes(30),
-        MinCoverageThreshold = 50.0,
-        SecurityScanEnabled = false,
         WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
         CodeReview = new CodeReviewConfiguration
         {
@@ -58,8 +56,6 @@ public static class TestPipelineConfig
         MaxAnalysisRetries = 1,
         IssuePageSize = 25,
         AgentTimeout = TimeSpan.FromMinutes(30),
-        MinCoverageThreshold = 50.0,
-        SecurityScanEnabled = false,
         WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
         CodeReview = new CodeReviewConfiguration
         {

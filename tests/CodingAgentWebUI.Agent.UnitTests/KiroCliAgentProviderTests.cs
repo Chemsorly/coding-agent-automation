@@ -2,12 +2,9 @@ using AwesomeAssertions;
 using Moq;
 using KiroCliLib.Core;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Infrastructure.GitHub;
-using CodingAgentWebUI.Infrastructure.Agent;
-using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Infrastructure;
+using CodingAgentWebUI.Agent;
 
-namespace CodingAgentWebUI.Infrastructure.UnitTests;
+namespace CodingAgentWebUI.Agent.UnitTests;
 
 public class KiroCliAgentProviderTests
 {
@@ -104,10 +101,7 @@ public class KiroCliAgentProviderTests
             .ThrowsAsync(new InvalidOperationException("agent crashed"))
             .ReturnsAsync(0);
 
-        // First call fails
         await _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
-
-        // Second call should retry (not no-op) because session was not established
         await _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
 
         _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
@@ -208,7 +202,7 @@ public class KiroCliAgentProviderTests
         result.Success.Should().BeFalse();
     }
 
-    // --- Model configuration tests ---
+    // --- KillAsync tests ---
 
     [Fact]
     public async Task KillAsync_DelegatesToOrchestrator()
@@ -221,13 +215,11 @@ public class KiroCliAgentProviderTests
     [Fact]
     public async Task KillAsync_NoOpWhenNoProcess()
     {
-        // Kill() on orchestrator is a no-op when no process is running.
-        // Verify it doesn't throw.
         var act = () => _provider.KillAsync();
         await act.Should().NotThrowAsync();
     }
 
-    // --- Model configuration tests (continued) ---
+    // --- Model configuration tests ---
 
     [Fact]
     public void Model_WhenNotProvided_ReturnsNull()
@@ -247,7 +239,6 @@ public class KiroCliAgentProviderTests
     public async Task ApplyModelSettingAsync_WhenModelIsNull_DoesNothing()
     {
         var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object, model: null);
-        // Should not throw — no process started
         await provider.ApplyModelSettingAsync(CancellationToken.None);
     }
 
@@ -255,7 +246,6 @@ public class KiroCliAgentProviderTests
     public async Task ApplyModelSettingAsync_WhenModelIsAuto_DoesNothing()
     {
         var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object, model: "auto");
-        // Should not throw — no process started
         await provider.ApplyModelSettingAsync(CancellationToken.None);
     }
 

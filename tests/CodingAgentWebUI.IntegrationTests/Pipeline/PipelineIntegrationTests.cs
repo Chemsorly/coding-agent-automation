@@ -29,8 +29,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
             MaxRetries = 5,
             IssuePageSize = 50,
             AgentTimeout = TimeSpan.FromMinutes(45),
-            MinCoverageThreshold = 92.5,
-            SecurityScanEnabled = true,
             WorkspaceBaseDirectory = "/tmp/custom-workspaces",
             CodeReview = new CodeReviewConfiguration
             {
@@ -76,8 +74,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
         loaded.MaxRetries.Should().Be(original.MaxRetries);
         loaded.IssuePageSize.Should().Be(original.IssuePageSize);
         loaded.AgentTimeout.Should().Be(original.AgentTimeout);
-        loaded.MinCoverageThreshold.Should().Be(original.MinCoverageThreshold);
-        loaded.SecurityScanEnabled.Should().Be(original.SecurityScanEnabled);
         loaded.WorkspaceBaseDirectory.Should().Be(original.WorkspaceBaseDirectory);
         loaded.AnalysisPrompt.Should().Be(original.AnalysisPrompt);
         loaded.ImplementationPrompt.Should().Be(original.ImplementationPrompt);

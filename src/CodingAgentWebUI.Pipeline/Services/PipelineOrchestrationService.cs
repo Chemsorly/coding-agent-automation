@@ -520,6 +520,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 step => TransitionTo(run, step),
                 line => OnOutputLine?.Invoke(line), () => NotifyChange(), ct);
             // Quality gates
+            var allQgcs = await _configStore.LoadQualityGateConfigsAsync(ct);
             var qualityGateContext = new QualityGateContext
             {
                 Run = run,
@@ -535,8 +536,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 OnOutputLine = line => OnOutputLine?.Invoke(line),
                 OnChange = () => NotifyChange(),
                 CreatePullRequest = (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, token),
-                QualityGateConfigs = [],
-                QgcsConfiguredAtDispatch = false
+                QualityGateConfigs = allQgcs,
+                QgcsConfiguredAtDispatch = allQgcs.Count > 0
             };
             await _qualityGates.ProceedToQualityGatesAsync(qualityGateContext, ct);
         }

@@ -1,6 +1,5 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.GitHub;
-using CodingAgentWebUI.Infrastructure.Agent;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure;
 using Octokit;

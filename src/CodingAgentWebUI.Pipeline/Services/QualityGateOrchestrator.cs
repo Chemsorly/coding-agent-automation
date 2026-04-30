@@ -347,27 +347,20 @@ internal class QualityGateOrchestrator
 
     /// <summary>
     /// Determines which ValidateAsync overload to call based on the QGC context:
-    /// - Non-empty QualityGateConfigs → new multi-QGC overload
-    /// - Empty AND QgcsConfiguredAtDispatch is false (pre-migration) → legacy overload
-    /// - Empty AND QgcsConfiguredAtDispatch is true (none matched) → skip, return passing report
+    /// - Non-empty QualityGateConfigs → multi-QGC validation
+    /// - Empty (none matched or none configured) → skip, return passing report
     /// </summary>
     private async Task<QualityGateReport> RunQualityGateValidationAsync(
         QualityGateContext context, string workspacePath, PipelineConfiguration config, CancellationToken ct)
     {
         if (context.QualityGateConfigs.Count > 0)
         {
-            // Multi-QGC mode: use the new overload
+            // Multi-QGC mode: validate against matched QGCs
             return await _qualityGateValidator.ValidateAsync(workspacePath, context.QualityGateConfigs, ct);
         }
 
-        if (!context.QgcsConfiguredAtDispatch)
-        {
-            // Legacy fallback: no QGCs configured at all (pre-migration/fresh install)
-            return await _qualityGateValidator.ValidateAsync(workspacePath, config, ct);
-        }
-
-        // QGCs exist in the store but none matched this job — skip quality gates
-        _logger.Warning("Pipeline {RunId} has no matching QGCs (QGCs are configured but none matched job labels). Skipping quality gates.",
+        // No QGCs matched (or none configured) — skip quality gates
+        _logger.Warning("Pipeline {RunId} has no matching QGCs. Skipping quality gates.",
             context.Run.RunId);
 
         return new QualityGateReport

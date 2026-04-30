@@ -38,9 +38,7 @@ public sealed class QualityGateMigrationService : IHostedService
                 return;
             }
 
-            // No QGCs exist — create a default one from PipelineConfiguration values
-            var pipelineConfig = await _configStore.LoadPipelineConfigAsync(cancellationToken);
-
+            // No QGCs exist — create a default one with standard .NET defaults
             var defaultQgc = new QualityGateConfiguration
             {
                 DisplayName = "Default (migrated)",
@@ -49,8 +47,8 @@ public sealed class QualityGateMigrationService : IHostedService
                 CompilationArguments = ["build", "--no-restore"],
                 TestCommand = "dotnet",
                 TestArguments = ["test", "--no-restore", "--no-build"],
-                CoverageThreshold = pipelineConfig.MinCoverageThreshold,
-                SecurityScanEnabled = pipelineConfig.SecurityScanEnabled,
+                CoverageThreshold = 50.0,
+                SecurityScanEnabled = true,
                 Enabled = true,
                 ExecutionOrder = 0
             };

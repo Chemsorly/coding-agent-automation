@@ -313,8 +313,6 @@ public class SettingsPageTests
         {
             MaxRetries = 5,
             AgentTimeout = TimeSpan.FromMinutes(60),
-            MinCoverageThreshold = 90.0,
-            SecurityScanEnabled = true
         };
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(config);
@@ -325,8 +323,6 @@ public class SettingsPageTests
         // Assert — verify the page would display these values
         loaded.MaxRetries.Should().Be(5);
         loaded.AgentTimeout.TotalMinutes.Should().Be(60);
-        loaded.MinCoverageThreshold.Should().Be(90.0);
-        loaded.SecurityScanEnabled.Should().BeTrue();
     }
 
     [Fact]
@@ -344,8 +340,6 @@ public class SettingsPageTests
         {
             MaxRetries = 7,
             AgentTimeout = TimeSpan.FromMinutes(agentTimeoutMinutes),
-            MinCoverageThreshold = 95.5,
-            SecurityScanEnabled = true
         };
         await _mockStore.Object.SavePipelineConfigAsync(config, CancellationToken.None);
 
@@ -353,8 +347,6 @@ public class SettingsPageTests
         savedConfig.Should().NotBeNull();
         savedConfig!.MaxRetries.Should().Be(7);
         savedConfig.AgentTimeout.Should().Be(TimeSpan.FromMinutes(45));
-        savedConfig.MinCoverageThreshold.Should().Be(95.5);
-        savedConfig.SecurityScanEnabled.Should().BeTrue();
     }
 
     [Fact]
@@ -374,8 +366,6 @@ public class SettingsPageTests
         savedConfig.Should().NotBeNull();
         savedConfig!.MaxRetries.Should().Be(3);
         savedConfig.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30));
-        savedConfig.MinCoverageThreshold.Should().Be(50.0);
-        savedConfig.SecurityScanEnabled.Should().BeTrue();
         savedConfig.BlacklistedPaths.Should().BeEquivalentTo(new[] { ".kiro", ".github", ".brain" });
         savedConfig.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
         savedConfig.CodeReview.Enabled.Should().BeTrue();
@@ -400,8 +390,6 @@ public class SettingsPageTests
         {
             MaxRetries = 10,
             AgentTimeout = TimeSpan.FromMinutes(120),
-            MinCoverageThreshold = 50.0,
-            SecurityScanEnabled = false,
             AnalysisPrompt = "Custom analysis",
             ImplementationPrompt = "Custom implementation"
         };
@@ -413,8 +401,6 @@ public class SettingsPageTests
         // Assert
         loaded.MaxRetries.Should().Be(10);
         loaded.AgentTimeout.Should().Be(TimeSpan.FromMinutes(120));
-        loaded.MinCoverageThreshold.Should().Be(50.0);
-        loaded.SecurityScanEnabled.Should().BeFalse();
         loaded.AnalysisPrompt.Should().Be("Custom analysis");
         loaded.ImplementationPrompt.Should().Be("Custom implementation");
     }
@@ -681,7 +667,7 @@ public class SettingsPageTests
         {
             var store = new JsonConfigurationStore(tempDir);
 
-            // Set non-default values for all 7 non-UI properties
+            // Set non-default values for all non-UI properties
             await store.SavePipelineConfigAsync(new PipelineConfiguration
             {
                 IssuePageSize = 50,
@@ -689,7 +675,6 @@ public class SettingsPageTests
                 StallWarningInterval = TimeSpan.FromMinutes(5),
                 StallPollInterval = TimeSpan.FromSeconds(10),
                 LastUsedProviderIds = new Dictionary<string, string> { ["issue"] = "test-id" },
-                SecurityScanEnabled = true,
                 ClosedLoopMaxPagesToFetch = 20
             }, CancellationToken.None);
 
@@ -698,14 +683,13 @@ public class SettingsPageTests
                 c => c with { MaxRetries = 5 },
                 CancellationToken.None);
 
-            // Verify all 7 non-UI fields survive
+            // Verify all non-UI fields survive
             var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
             loaded.IssuePageSize.Should().Be(50);
             loaded.WorkspaceBaseDirectory.Should().Be("/custom/workspaces");
             loaded.StallWarningInterval.Should().Be(TimeSpan.FromMinutes(5));
             loaded.StallPollInterval.Should().Be(TimeSpan.FromSeconds(10));
             loaded.LastUsedProviderIds.Should().ContainKey("issue");
-            loaded.SecurityScanEnabled.Should().BeTrue();
             loaded.ClosedLoopMaxPagesToFetch.Should().Be(20);
             // Also verify the saved field
             loaded.MaxRetries.Should().Be(5);

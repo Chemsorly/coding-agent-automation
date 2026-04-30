@@ -85,7 +85,7 @@ public class PipelineRunHighWaterMarkTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), MaxRetries = 1 });
 
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true },
@@ -173,6 +173,11 @@ public class PipelineRunHighWaterMarkTests
             {
                 new() { Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test" }
             });
+            _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<QualityGateConfiguration>
+                {
+                    new() { Id = "default", DisplayName = "Default", CompilationCommand = "dotnet", CompilationArguments = ["build"], TestCommand = "dotnet", TestArguments = ["test"], Enabled = true }
+                });
 
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
@@ -220,7 +225,7 @@ public class PipelineRunHighWaterMarkTests
 
     private void SetupAllGatesPass()
     {
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },

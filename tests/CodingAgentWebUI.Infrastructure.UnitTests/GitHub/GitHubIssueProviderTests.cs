@@ -2,7 +2,6 @@ using AwesomeAssertions;
 using Moq;
 using Octokit;
 using CodingAgentWebUI.Infrastructure.GitHub;
-using CodingAgentWebUI.Infrastructure.Agent;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline.Interfaces;

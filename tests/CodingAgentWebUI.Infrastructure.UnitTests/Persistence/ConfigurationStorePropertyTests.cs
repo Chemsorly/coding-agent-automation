@@ -2,7 +2,6 @@ using FsCheck;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
-using CodingAgentWebUI.Infrastructure.Agent;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure;
 using Xunit;
@@ -37,12 +36,10 @@ public class ConfigurationStorePropertyTests : IDisposable
     [Property(MaxTest = 20)]
     public void PipelineConfig_RoundTrip_PreservesData(
         int maxRetries,
-        bool securityScan,
         NonEmptyString workspaceDir)
     {
         // Constrain to reasonable values
         var clampedRetries = Math.Clamp(Math.Abs(maxRetries), 0, 100);
-        var clampedCoverage = Math.Round(Math.Abs(maxRetries % 101) * 1.0, 1);
         var timeoutMinutes = Math.Clamp(Math.Abs(maxRetries % 120) + 1, 1, 120);
         var blacklistMode = (Math.Abs(maxRetries) % 2 == 0) ? BlacklistMode.WarnAndExclude : BlacklistMode.Fail;
 
@@ -50,8 +47,6 @@ public class ConfigurationStorePropertyTests : IDisposable
         {
             MaxRetries = clampedRetries,
             AgentTimeout = TimeSpan.FromMinutes(timeoutMinutes),
-            MinCoverageThreshold = clampedCoverage,
-            SecurityScanEnabled = securityScan,
             WorkspaceBaseDirectory = workspaceDir.Get,
             BlacklistedPaths = new[] { ".kiro", ".github", $".custom-{Math.Abs(maxRetries % 10)}" },
             BlacklistMode = blacklistMode
@@ -64,8 +59,6 @@ public class ConfigurationStorePropertyTests : IDisposable
 
         Assert.Equal(original.MaxRetries, loaded.MaxRetries);
         Assert.Equal(original.AgentTimeout, loaded.AgentTimeout);
-        Assert.Equal(original.MinCoverageThreshold, loaded.MinCoverageThreshold);
-        Assert.Equal(original.SecurityScanEnabled, loaded.SecurityScanEnabled);
         Assert.Equal(original.WorkspaceBaseDirectory, loaded.WorkspaceBaseDirectory);
         Assert.Equal(original.BlacklistedPaths, loaded.BlacklistedPaths);
         Assert.Equal(original.BlacklistMode, loaded.BlacklistMode);

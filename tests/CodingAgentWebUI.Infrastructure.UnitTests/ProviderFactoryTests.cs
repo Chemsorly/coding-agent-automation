@@ -2,11 +2,8 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using AwesomeAssertions;
-using KiroCliLib.Core;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
-using CodingAgentWebUI.Infrastructure.Agent;
-using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure;
 using Moq;
 
@@ -17,8 +14,6 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests;
 /// </summary>
 public class ProviderFactoryTests
 {
-    private static readonly Mock<IKiroCliOrchestrator> MockOrchestrator = new();
-
     /// <summary>
     /// Generates a valid base64-encoded RSA private key PEM string for test configs.
     /// </summary>
@@ -41,7 +36,7 @@ public class ProviderFactoryTests
             ExternalCiPollInterval = expectedInterval
         };
 
-        var factory = new ProviderFactory(MockOrchestrator.Object, pipelineConfig);
+        var factory = new ProviderFactory(pipelineConfig);
 
         var providerConfig = new ProviderConfig
         {
@@ -77,7 +72,7 @@ public class ProviderFactoryTests
     {
         // Arrange — use default PipelineConfiguration
         var pipelineConfig = new PipelineConfiguration();
-        var factory = new ProviderFactory(MockOrchestrator.Object, pipelineConfig);
+        var factory = new ProviderFactory(pipelineConfig);
 
         var providerConfig = new ProviderConfig
         {
@@ -106,46 +101,5 @@ public class ProviderFactoryTests
             "default ExternalCiPollInterval should be 30 seconds");
     }
 
-    // --- Model passthrough tests ---
-
-    [Fact]
-    public void CreateAgentProvider_WithModelInConfig_PassesModelToProvider()
-    {
-        var pipelineConfig = new PipelineConfiguration();
-        var factory = new ProviderFactory(MockOrchestrator.Object, pipelineConfig);
-
-        var providerConfig = new ProviderConfig
-        {
-            Kind = ProviderKind.Agent,
-            ProviderType = "KiroCli",
-            DisplayName = "Test Agent",
-            Settings = new Dictionary<string, string>
-            {
-                ["model"] = "claude-sonnet-4.6",
-                ["executablePath"] = "/usr/bin/kiro-cli"
-            }
-        };
-
-        var provider = factory.CreateAgentProvider(providerConfig);
-        provider.Should().BeOfType<KiroCliAgentProvider>();
-        ((KiroCliAgentProvider)provider).Model.Should().Be("claude-sonnet-4.6");
-    }
-
-    [Fact]
-    public void CreateAgentProvider_WithoutModelInConfig_ModelIsNull()
-    {
-        var pipelineConfig = new PipelineConfiguration();
-        var factory = new ProviderFactory(MockOrchestrator.Object, pipelineConfig);
-
-        var providerConfig = new ProviderConfig
-        {
-            Kind = ProviderKind.Agent,
-            ProviderType = "KiroCli",
-            DisplayName = "Test Agent",
-            Settings = new Dictionary<string, string>()
-        };
-
-        var provider = factory.CreateAgentProvider(providerConfig);
-        ((KiroCliAgentProvider)provider).Model.Should().BeNull();
-    }
+    // --- Agent provider tests removed: KiroCliAgentProvider moved to CodingAgentWebUI.Agent project ---
 }

@@ -133,7 +133,7 @@ public sealed class LocalPipelineExecutor
             StartedAt = DateTime.UtcNow,
             CurrentStep = PipelineStep.Created,
             RepositoryName = repoProvider.RepositoryFullName,
-            ModelName = agentProvider is Infrastructure.Agent.KiroCliAgentProvider kp ? kp.Model : null,
+            ModelName = agentProvider is KiroCliAgentProvider kp ? kp.Model : null,
             BrainProviderConfigId = brainProvider is not null ? job.BrainProviderConfigId : null,
             PipelineProviderConfigId = job.PipelineProviderConfigId,
             InitiatedBy = job.InitiatedBy,

@@ -26,14 +26,9 @@ builder.Services.AddSingleton<IConfigurationStore>(configStore);
 var pipelineConfig = await configStore.LoadPipelineConfigAsync(CancellationToken.None);
 
 // Pipeline — Provider Factory (creates provider instances from ProviderConfig at runtime)
-// NOTE: The orchestrator project no longer executes Kiro CLI locally — agents connect via SignalR.
-// ProviderFactory still needs an IKiroCliOrchestrator for its KiroCli agent provider registration,
-// but CreateAgentProvider is only called by remote agent containers, not the orchestrator itself.
-// We pass a no-op stub to satisfy the constructor contract without pulling in KiroCliLib directly.
 builder.Services.AddSingleton<IProviderFactory>(sp =>
 {
-    var stubOrchestrator = new NoOpKiroCliOrchestrator();
-    return new ProviderFactory(stubOrchestrator, pipelineConfig);
+    return new ProviderFactory(pipelineConfig);
 });
 
 // Pipeline — Services

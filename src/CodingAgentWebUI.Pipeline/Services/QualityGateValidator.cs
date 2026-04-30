@@ -294,30 +294,6 @@ public class QualityGateValidator : IQualityGateValidator
         };
     }
 
-    public virtual async Task<QualityGateReport> ValidateAsync(
-        string workspacePath, PipelineConfiguration config, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(workspacePath);
-        ArgumentNullException.ThrowIfNull(config);
-
-        // Construct a default QGC from hardcoded values + PipelineConfiguration fields
-        var defaultQgc = new QualityGateConfiguration
-        {
-            Id = "legacy-default",
-            DisplayName = "Default",
-            CompilationCommand = "dotnet",
-            CompilationArguments = ["build", "--no-restore"],
-            TestCommand = "dotnet",
-            TestArguments = ["test", "--no-restore", "--no-build"],
-            CoverageThreshold = config.MinCoverageThreshold,
-            SecurityScanEnabled = config.SecurityScanEnabled,
-            Enabled = true,
-            ExecutionOrder = 0
-        };
-
-        return await ValidateAsync(workspacePath, [defaultQgc], ct);
-    }
-
     /// <summary>
     /// Formats a short CI failure summary for GateResult.Details.
     /// Verbose per-job logs are in .kiro/quality-gates/ — the retry prompt points there.

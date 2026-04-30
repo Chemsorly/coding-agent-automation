@@ -3,7 +3,6 @@ using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Infrastructure.GitHub;
-using CodingAgentWebUI.Infrastructure.Agent;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure;
 using Moq;

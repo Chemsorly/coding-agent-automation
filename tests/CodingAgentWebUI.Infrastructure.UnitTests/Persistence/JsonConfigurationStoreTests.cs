@@ -1,6 +1,5 @@
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
-using CodingAgentWebUI.Infrastructure.Agent;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure;
 using Xunit;
@@ -32,8 +31,6 @@ public class JsonConfigurationStoreTests : IDisposable
 
         Assert.Equal(3, config.MaxRetries);
         Assert.Equal(TimeSpan.FromMinutes(30), config.AgentTimeout);
-        Assert.Equal(50.0, config.MinCoverageThreshold);
-        Assert.True(config.SecurityScanEnabled);
         Assert.Equal("./workspaces", config.WorkspaceBaseDirectory);
     }
 
@@ -44,8 +41,6 @@ public class JsonConfigurationStoreTests : IDisposable
         {
             MaxRetries = 5,
             AgentTimeout = TimeSpan.FromMinutes(45),
-            MinCoverageThreshold = 90.0,
-            SecurityScanEnabled = true,
             WorkspaceBaseDirectory = "/tmp/workspaces",
             CleanupSuccessfulWorkspaces = false,
             FailedWorkspaceRetentionDays = 14,
@@ -58,8 +53,6 @@ public class JsonConfigurationStoreTests : IDisposable
 
         Assert.Equal(original.MaxRetries, loaded.MaxRetries);
         Assert.Equal(original.AgentTimeout, loaded.AgentTimeout);
-        Assert.Equal(original.MinCoverageThreshold, loaded.MinCoverageThreshold);
-        Assert.Equal(original.SecurityScanEnabled, loaded.SecurityScanEnabled);
         Assert.Equal(original.WorkspaceBaseDirectory, loaded.WorkspaceBaseDirectory);
         Assert.Equal(original.CleanupSuccessfulWorkspaces, loaded.CleanupSuccessfulWorkspaces);
         Assert.Equal(original.FailedWorkspaceRetentionDays, loaded.FailedWorkspaceRetentionDays);

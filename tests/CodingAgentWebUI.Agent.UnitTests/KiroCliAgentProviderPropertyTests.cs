@@ -4,12 +4,9 @@ using FsCheck.Xunit;
 using Moq;
 using KiroCliLib.Core;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Infrastructure.GitHub;
-using CodingAgentWebUI.Infrastructure.Agent;
-using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Infrastructure;
+using CodingAgentWebUI.Agent;
 
-namespace CodingAgentWebUI.Infrastructure.UnitTests;
+namespace CodingAgentWebUI.Agent.UnitTests;
 
 /// <summary>
 /// Property-based tests for KiroCliAgentProvider.
@@ -24,7 +21,6 @@ public class KiroCliAgentProviderPropertyTests
     /// to any output line returns the line unchanged.
     /// **Validates: REQ-1.3**
     /// </summary>
-    // Feature: provider-interface-gaps, Property 2: ANSI-free output
     [Property(MaxTest = 20, Arbitrary = [typeof(AnsiOutputArbitrary)])]
     public void ExecuteAsync_OutputLines_Contain_No_Ansi_Sequences(List<AnsiLine> rawLines)
     {
@@ -72,6 +68,7 @@ public class KiroCliAgentProviderPropertyTests
             Assert.Equal(line, AnsiStripper.Strip(line));
         }
     }
+
     /// <summary>
     /// Feature: provider-interface-gaps, Property 1: Session warm-up idempotence
     /// For any sequence of workspace path strings, EnsureSessionAsync calls result in exactly
@@ -118,7 +115,6 @@ public class KiroCliAgentProviderPropertyTests
     /// identical boolean to IKiroCliOrchestrator.ExecutePromptAsync.
     /// **Validates: Requirements 1.4**
     /// </summary>
-    // Feature: provider-interface-gaps, Property 3: UseResume flag forwarding
     [Property(MaxTest = 50)]
     public void ExecuteAsync_Forwards_UseResume_To_Orchestrator(bool useResume)
     {
@@ -165,8 +161,6 @@ public sealed class WorkspacePath
 
 /// <summary>
 /// FsCheck arbitrary that generates workspace path strings valid for Path.GetFullPath.
-/// Produces paths from a small pool (workspace-0 through workspace-9) rooted in the temp
-/// directory, with controlled repetition to exercise the idempotence property.
 /// </summary>
 public static class WorkspacePathArbitrary
 {
@@ -174,7 +168,6 @@ public static class WorkspacePathArbitrary
     {
         var tempRoot = Path.GetTempPath();
 
-        // Generate from a pool of 10 distinct path segments to get meaningful repetition
         var pathGen =
             from index in Gen.Choose(0, 9)
             select new WorkspacePath(Path.Combine(tempRoot, $"workspace-{index}"));
@@ -195,29 +188,27 @@ public sealed class AnsiLine
 
 /// <summary>
 /// FsCheck arbitrary that generates output lines mixing plain text with ANSI escape sequences.
-/// Covers standard ESC[...m color codes, OSC title sequences, bare bracket sequences, and [K erase.
 /// </summary>
 public static class AnsiOutputArbitrary
 {
     private static readonly string[] AnsiSequences =
     [
-        "\x1b[31m",          // red foreground
-        "\x1b[0m",           // reset
-        "\x1b[1;32m",        // bold green
-        "\x1b[38;5;196m",    // 256-color red
-        "\x1b[48;2;0;128;0m",// 24-bit green background
-        "\x1b[K",            // erase to end of line
-        "\x1b[2J",           // clear screen
-        "\x1b]0;title\x07",  // OSC window title
-        "[32m",              // bare bracket color (no ESC prefix)
-        "[0m",               // bare bracket reset
-        "[K",                // bare bracket erase
-        "[1;33m",            // bare bracket bold yellow
+        "\x1b[31m",
+        "\x1b[0m",
+        "\x1b[1;32m",
+        "\x1b[38;5;196m",
+        "\x1b[48;2;0;128;0m",
+        "\x1b[K",
+        "\x1b[2J",
+        "\x1b]0;title\x07",
+        "[32m",
+        "[0m",
+        "[K",
+        "[1;33m",
     ];
 
     public static Arbitrary<AnsiLine> AnsiLines()
     {
-        // Generator for a single line: interleave plain text segments with ANSI sequences
         var lineGen =
             from segmentCount in Gen.Choose(1, 5)
             from segments in Gen.ArrayOf(SegmentGen(), segmentCount)
@@ -228,7 +219,6 @@ public static class AnsiOutputArbitrary
 
     private static Gen<string> SegmentGen()
     {
-        // Safe characters that cannot form ANSI-like patterns (no ESC, no '[', no control chars)
         const string safeChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !@#$%^&*()_+-={}|:\"<>?,./~`';";
 
         var charGen = Gen.Elements(safeChars.ToCharArray());
@@ -242,7 +232,6 @@ public static class AnsiOutputArbitrary
             from idx in Gen.Choose(0, AnsiSequences.Length - 1)
             select AnsiSequences[idx];
 
-        // Combine ANSI sequences with plain text in various positions
         var ansiPrefixed = ansiGen.Zip(plainGen).Select(t => t.Item1 + t.Item2);
         var ansiSuffixed = plainGen.Zip(ansiGen).Select(t => t.Item1 + t.Item2);
         var ansiWrapped = ansiGen.Zip(plainGen).Zip(ansiGen)

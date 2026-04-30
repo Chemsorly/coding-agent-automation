@@ -4,7 +4,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Infrastructure.Agent;
+namespace CodingAgentWebUI.Agent;
 
 /// <summary>
 /// Agent provider that delegates to the existing KiroCliLib via IKiroCliOrchestrator.
@@ -100,9 +100,6 @@ public partial class KiroCliAgentProvider : IAgentProvider
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
-            // The timeout CTS fired, not the user's cancellation token.
-            // Convert to exit code 124 (timeout) so the orchestrator can distinguish
-            // timeout from user cancellation.
             _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
             exitCode = 124;
         }

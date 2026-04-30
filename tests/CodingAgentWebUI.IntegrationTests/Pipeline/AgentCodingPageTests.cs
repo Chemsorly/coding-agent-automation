@@ -68,6 +68,11 @@ public class AgentCodingPageTests
             {
                 new() { Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Kiro Agent" }
             });
+        _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<QualityGateConfiguration>
+            {
+                new() { Id = "default", DisplayName = "Default", CompilationCommand = "dotnet", CompilationArguments = ["build"], TestCommand = "dotnet", TestArguments = ["test"], Enabled = true }
+            });
 
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
@@ -139,7 +144,7 @@ public class AgentCodingPageTests
     public async Task AfterStartPipeline_WithPassingGates_RunCompletes()
     {
         // Pipeline now runs end-to-end: start → analyze → generate → quality gates → PR → completed
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true },
@@ -177,7 +182,7 @@ public class AgentCodingPageTests
     public async Task AfterQualityGatesPass_ShowsCompletionWithPrLink()
     {
         // When quality gates pass, PR is created and pipeline completes
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true },
@@ -196,7 +201,7 @@ public class AgentCodingPageTests
     {
         // When quality gates always fail, the pipeline auto-retries by sending fix prompts
         // to the agent, then re-running quality gates until max retries are exhausted.
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true },
@@ -233,7 +238,7 @@ public class AgentCodingPageTests
 
         // Cleanup
         agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true },
@@ -263,7 +268,7 @@ public class AgentCodingPageTests
 
         // Cleanup
         agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true },
@@ -313,7 +318,7 @@ public class AgentCodingPageTests
     {
         // Block the quality gate validator so we can observe RunningQualityGates
         var gateTcs = new TaskCompletionSource<QualityGateReport>();
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns(gateTcs.Task);
 
         var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -453,7 +458,7 @@ public class AgentCodingPageTests
     public async Task OnChange_FiresDuringPipelineExecution()
     {
         // The page subscribes to OnChange for StateHasChanged calls
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true },

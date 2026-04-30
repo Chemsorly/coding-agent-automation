@@ -198,8 +198,6 @@ public class PreparingForPullRequestPropertyTests
             MaxAnalysisRetries = config.MaxAnalysisRetries,
             IssuePageSize = config.IssuePageSize,
             AgentTimeout = config.AgentTimeout,
-            MinCoverageThreshold = config.MinCoverageThreshold,
-            SecurityScanEnabled = config.SecurityScanEnabled,
             WorkspaceBaseDirectory = config.WorkspaceBaseDirectory,
             CodeReview = new CodeReviewConfiguration { Enabled = false },
             ExternalCiEnabled = externalCiEnabled,
@@ -245,7 +243,7 @@ public class PreparingForPullRequestPropertyTests
         }
 
         var mockValidator = new Mock<IQualityGateValidator>();
-        mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+        mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = allGatesPass, Details = allGatesPass ? "OK" : "Failed" },
@@ -298,7 +296,7 @@ public class PreparingForPullRequestPropertyTests
 
         var mockValidator = new Mock<IQualityGateValidator>();
         var callIndex = 0;
-        mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+        mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 var idx = Interlocked.Increment(ref callIndex) - 1;
@@ -346,6 +344,11 @@ public class PreparingForPullRequestPropertyTests
             {
                 new() { Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test" }
             });
+        mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<QualityGateConfiguration>
+                {
+                    new() { Id = "default", DisplayName = "Default", CompilationCommand = "dotnet", CompilationArguments = ["build"], TestCommand = "dotnet", TestArguments = ["test"], Enabled = true }
+                });
 
         var mockIssueProvider = new Mock<IIssueProvider>();
         mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))

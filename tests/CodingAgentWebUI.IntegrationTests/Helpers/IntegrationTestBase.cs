@@ -90,7 +90,7 @@ public class IntegrationTestBase : IDisposable
         MockAgentProvider.Setup(p => p.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = false });
 
-        MockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+        MockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
@@ -136,6 +136,9 @@ public class IntegrationTestBase : IDisposable
         await ConfigStore.SaveProviderConfigAsync(
             new ProviderConfig { Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test Agent",
                 Settings = new Dictionary<string, string> { ["model"] = "test-model" } },
+            CancellationToken.None);
+        await ConfigStore.SaveQualityGateConfigAsync(
+            new QualityGateConfiguration { Id = "default", DisplayName = "Default", CompilationCommand = "dotnet", CompilationArguments = ["build"], TestCommand = "dotnet", TestArguments = ["test"], Enabled = true },
             CancellationToken.None);
     }
 

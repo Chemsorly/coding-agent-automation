@@ -20,7 +20,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
-    <ProjectReference Include="..\KiroCliLib\KiroCliLib.csproj" />
   </ItemGroup>
 
 </Project>

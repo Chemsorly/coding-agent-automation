@@ -443,10 +443,21 @@ public class QualityGateValidatorTests
 /// </summary>
 public class SecurityScanGateTests
 {
-    private static readonly PipelineConfiguration SecurityScanConfig = new()
+    private static readonly IReadOnlyList<QualityGateConfiguration> SecurityScanQgcs = new[]
     {
-        SecurityScanEnabled = true,
-        MinCoverageThreshold = 0 // skip coverage gate
+        new QualityGateConfiguration
+        {
+            Id = "test-security",
+            DisplayName = "Test Security",
+            CompilationCommand = "dotnet",
+            CompilationArguments = ["build"],
+            TestCommand = "dotnet",
+            TestArguments = ["test"],
+            CoverageThreshold = 0,
+            SecurityScanEnabled = true,
+            Enabled = true,
+            ExecutionOrder = 0
+        }
     };
 
     [Fact]
@@ -455,7 +466,7 @@ public class SecurityScanGateTests
         var stdout = "The following sources were used:\n   https://api.nuget.org/v3/index.json\n\nProject `MyProject` has no vulnerable packages given the current sources.";
         var validator = new TestableQualityGateValidator(exitCode: 0, stdout: stdout, stderr: "");
 
-        var report = await validator.ValidateAsync(CreateTempWorkspace(), SecurityScanConfig, CancellationToken.None);
+        var report = await validator.ValidateAsync(CreateTempWorkspace(), SecurityScanQgcs, CancellationToken.None);
 
         report.SecurityScan.Should().NotBeNull();
         report.SecurityScan!.Passed.Should().BeTrue();
@@ -468,7 +479,7 @@ public class SecurityScanGateTests
         var stdout = "Project `MyProject` has the following vulnerable packages\n   [net10.0]:\n   > SomePackage  1.0.0  1.0.0  High  https://github.com/advisories/GHSA-xxxx";
         var validator = new TestableQualityGateValidator(exitCode: 0, stdout: stdout, stderr: "");
 
-        var report = await validator.ValidateAsync(CreateTempWorkspace(), SecurityScanConfig, CancellationToken.None);
+        var report = await validator.ValidateAsync(CreateTempWorkspace(), SecurityScanQgcs, CancellationToken.None);
 
         report.SecurityScan.Should().NotBeNull();
         report.SecurityScan!.Passed.Should().BeFalse();
@@ -480,7 +491,7 @@ public class SecurityScanGateTests
     {
         var validator = new TestableQualityGateValidator(exitCode: 0, stdout: "", stderr: "");
 
-        var report = await validator.ValidateAsync(CreateTempWorkspace(), SecurityScanConfig, CancellationToken.None);
+        var report = await validator.ValidateAsync(CreateTempWorkspace(), SecurityScanQgcs, CancellationToken.None);
 
         report.SecurityScan.Should().NotBeNull();
         report.SecurityScan!.Passed.Should().BeTrue();
@@ -492,7 +503,7 @@ public class SecurityScanGateTests
     {
         var validator = new TestableQualityGateValidator(exitCode: 1, stdout: "", stderr: "error: something went wrong");
 
-        var report = await validator.ValidateAsync(CreateTempWorkspace(), SecurityScanConfig, CancellationToken.None);
+        var report = await validator.ValidateAsync(CreateTempWorkspace(), SecurityScanQgcs, CancellationToken.None);
 
         report.SecurityScan.Should().NotBeNull();
         report.SecurityScan!.Passed.Should().BeTrue();
@@ -507,7 +518,7 @@ public class SecurityScanGateTests
         var validator = new TestableQualityGateValidator(exitCode: 0, stdout: stdout, stderr: "");
         var workspace = CreateTempWorkspace();
 
-        await validator.ValidateAsync(workspace, SecurityScanConfig, CancellationToken.None);
+        await validator.ValidateAsync(workspace, SecurityScanQgcs, CancellationToken.None);
 
         var outputFile = Path.Combine(workspace, ".kiro", "quality-gates", "security-scan-stdout.txt");
         File.Exists(outputFile).Should().BeTrue();

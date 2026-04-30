@@ -3,13 +3,9 @@ using System.Text;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
-using KiroCliLib.Core;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
-using CodingAgentWebUI.Infrastructure.Agent;
-using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure;
-using Moq;
 using Xunit;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests;
@@ -20,7 +16,6 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests;
 /// </summary>
 public class ProviderFactoryPropertyTests
 {
-    private static readonly Mock<IKiroCliOrchestrator> MockOrchestrator = new();
     private static readonly PipelineConfiguration DefaultPipelineConfig = new();
 
     /// <summary>
@@ -82,7 +77,7 @@ public class ProviderFactoryPropertyTests
         // Assert: The ProviderFactory accepts this config without throwing a validation error.
         // CreateIssueProvider will call ValidateRequiredSettings internally.
         // It will also create a GitHubAppAuthService which validates the private key.
-        var factory = new ProviderFactory(MockOrchestrator.Object, DefaultPipelineConfig);
+        var factory = new ProviderFactory(DefaultPipelineConfig);
         var exception = Record.Exception(() => factory.CreateIssueProvider(config));
         Assert.Null(exception);
     }
@@ -128,7 +123,7 @@ public class ProviderFactoryPropertyTests
         Assert.False(config.Settings.ContainsKey("token"), "Settings must NOT contain 'token' — PAT has been replaced by GitHub App auth");
 
         // Assert: The ProviderFactory accepts this config without throwing a validation error.
-        var factory = new ProviderFactory(MockOrchestrator.Object, DefaultPipelineConfig);
+        var factory = new ProviderFactory(DefaultPipelineConfig);
         var exception = Record.Exception(() => factory.CreateRepositoryProvider(config));
         Assert.Null(exception);
     }
@@ -152,7 +147,7 @@ public class ProviderFactoryPropertyTests
     public void AuthServiceCache_SameKey_ReturnsSameInstance_DifferentKey_ReturnsDistinct(AuthCacheConsistencyInput input)
     {
         // Arrange
-        var factory = new ProviderFactory(MockOrchestrator.Object, DefaultPipelineConfig);
+        var factory = new ProviderFactory(DefaultPipelineConfig);
 
         // Act: Call GetOrCreateAuthService for each config and collect results
         var results = input.Configs
@@ -230,7 +225,7 @@ public class ProviderFactoryPropertyTests
         };
 
         // Act & Assert: The factory must throw ArgumentException
-        var factory = new ProviderFactory(MockOrchestrator.Object, DefaultPipelineConfig);
+        var factory = new ProviderFactory(DefaultPipelineConfig);
         var ex = Assert.Throws<ArgumentException>(() => factory.CreateIssueProvider(config));
 
         // Assert: The exception message identifies each missing setting
@@ -527,3 +522,4 @@ public static class AuthCacheConsistencyArbitrary
         return combined.ToArbitrary();
     }
 }
+

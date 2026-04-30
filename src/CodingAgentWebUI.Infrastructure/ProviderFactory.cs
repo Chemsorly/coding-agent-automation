@@ -1,5 +1,3 @@
-using KiroCliLib.Core;
-using CodingAgentWebUI.Infrastructure.Agent;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -20,9 +18,8 @@ public class ProviderFactory : IProviderFactory
     private readonly Dictionary<string, GitHubAppAuthService> _authServiceCache = new(StringComparer.Ordinal);
     private readonly PipelineConfiguration _pipelineConfig;
 
-    public ProviderFactory(IKiroCliOrchestrator orchestrator, PipelineConfiguration pipelineConfig)
+    public ProviderFactory(PipelineConfiguration pipelineConfig)
     {
-        ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(pipelineConfig);
 
         _pipelineConfig = pipelineConfig;
@@ -49,13 +46,6 @@ public class ProviderFactory : IProviderFactory
                 config.Settings["owner"],
                 config.Settings["repo"],
                 config.Settings["baseBranch"]);
-        });
-
-        RegisterAgentProvider("KiroCli", config =>
-        {
-            var model = config.Settings.GetValueOrDefault("model");
-            var executablePath = config.Settings.GetValueOrDefault("executablePath", "/home/ubuntu/.local/bin/kiro-cli");
-            return new KiroCliAgentProvider(orchestrator, Serilog.Log.Logger, model, executablePath);
         });
 
         RegisterPipelineProvider("GitHub", config =>

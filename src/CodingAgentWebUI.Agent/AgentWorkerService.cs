@@ -272,7 +272,7 @@ public sealed class AgentWorkerService : BackgroundService
 
         _ = Task.Run(async () =>
         {
-            await using var outputBatcher = new OutputBatcher();
+            var outputBatcher = new OutputBatcher();
             outputBatcher.OnFlush += async lines =>
             {
                 try
@@ -305,11 +305,24 @@ public sealed class AgentWorkerService : BackgroundService
                         $"🔌 Wrote MCP config with {message.McpServers.Count} server(s) to {message.McpConfigPath}");
                 }
 
-                // Execute the prompt directly via the orchestrator
+                // On the first prompt (no --resume), Kiro CLI suppresses response text because
+                // tool trust isn't established yet. Send a lightweight warm-up prompt first to
+                // establish the session, then send the real prompt with --resume.
+                if (!message.UseResume)
+                {
+                    _logger.Information("Sending warm-up prompt to establish chat session");
+                    await _orchestrator.ExecutePromptAsync(
+                        "hello, how are you?",
+                        chatWorkspace,
+                        useResume: false,
+                        _chatCts.Token);
+                }
+
+                // Execute the actual user prompt (always with --resume after warm-up)
                 var exitCode2 = await _orchestrator.ExecutePromptAsync(
                     message.Prompt,
                     chatWorkspace,
-                    useResume: message.UseResume,
+                    useResume: true,
                     _chatCts.Token,
                     onOutputLine: line =>
                     {
@@ -330,35 +343,36 @@ public sealed class AgentWorkerService : BackgroundService
                 exitCode = 1;
                 error = ex.Message;
             }
-            finally
+
+            // Dispose the batcher BEFORE reporting completion to ensure all buffered
+            // output lines are flushed to the orchestrator first.
+            await outputBatcher.DisposeAsync();
+
+            try
             {
-                // Report completion
-                try
+                var completed = new ChatCompletedMessage
                 {
-                    var completed = new ChatCompletedMessage
-                    {
-                        SessionId = message.SessionId,
-                        ExitCode = exitCode,
-                        Error = error
-                    };
-                    await _hubManager.Connection.InvokeAsync("ReportChatCompleted", completed);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Error(ex, "Failed to report chat completion for session {SessionId}", message.SessionId);
-                }
-
-                lock (_busyLock)
-                {
-                    _activeChatSessionId = null;
-                }
-
-                _chatCts?.Dispose();
-                _chatCts = null;
-
-                // Do NOT send AgentReady — the chat session is still active.
-                // The agent will be released when CancelChat is received (End Chat / navigate away).
+                    SessionId = message.SessionId,
+                    ExitCode = exitCode,
+                    Error = error
+                };
+                await _hubManager.Connection.InvokeAsync("ReportChatCompleted", completed);
             }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to report chat completion for session {SessionId}", message.SessionId);
+            }
+
+            lock (_busyLock)
+            {
+                _activeChatSessionId = null;
+            }
+
+            _chatCts?.Dispose();
+            _chatCts = null;
+
+            // Do NOT send AgentReady — the chat session is still active.
+            // The agent will be released when CancelChat is received (End Chat / navigate away).
         });
     }
 

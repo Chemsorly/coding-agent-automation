@@ -11,15 +11,21 @@ namespace CodingAgentWebUI.IntegrationTests.Pipeline;
 public class QualityGateValidatorIntegrationTests : IDisposable
 {
     private readonly QualityGateValidator _validator = new(Log.Logger);
-    // TODO: Use TestPipelineConfig.Default() with MinCoverageThreshold override to stay in sync with production defaults
-    private readonly PipelineConfiguration _config = new()
+    private static readonly IReadOnlyList<QualityGateConfiguration> DefaultQgcs = new[]
     {
-        MinCoverageThreshold = 0,
-        SecurityScanEnabled = false,
-        MaxRetries = 3,
-        IssuePageSize = 25,
-        AgentTimeout = TimeSpan.FromMinutes(30),
-        WorkspaceBaseDirectory = Path.GetTempPath()
+        new QualityGateConfiguration
+        {
+            Id = "test-default",
+            DisplayName = "Default",
+            CompilationCommand = "dotnet",
+            CompilationArguments = ["build", "--no-restore"],
+            TestCommand = "dotnet",
+            TestArguments = ["test", "--no-restore", "--no-build"],
+            CoverageThreshold = 0,
+            SecurityScanEnabled = false,
+            Enabled = true,
+            ExecutionOrder = 0
+        }
     };
     private readonly List<string> _tempDirs = [];
 
@@ -73,7 +79,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
     {
         var workspace = CopyFixtureToTemp("PassingProject");
 
-        var report = await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
+        var report = await _validator.ValidateAsync(workspace, DefaultQgcs, CancellationToken.None);
 
         report.Compilation.Passed.Should().BeTrue();
         report.Compilation.Details.Should().Be("All QGC compilations passed");
@@ -90,7 +96,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
     {
         var workspace = CopyFixtureToTemp("FailingBuildProject");
 
-        var report = await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
+        var report = await _validator.ValidateAsync(workspace, DefaultQgcs, CancellationToken.None);
 
         report.Compilation.Passed.Should().BeFalse();
         report.Compilation.Details.Should().NotBeNullOrEmpty();
@@ -101,7 +107,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
     {
         var workspace = CopyFixtureToTemp("FailingBuildProject");
 
-        await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
+        await _validator.ValidateAsync(workspace, DefaultQgcs, CancellationToken.None);
 
         var gatesDir = Path.Combine(workspace, PromptBuilder.QualityGatesOutputDirectory);
         Directory.Exists(gatesDir).Should().BeTrue();
@@ -113,7 +119,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
     {
         var workspace = CopyFixtureToTemp("FailingBuildProject");
 
-        var report = await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
+        var report = await _validator.ValidateAsync(workspace, DefaultQgcs, CancellationToken.None);
 
         // Aggregate details should indicate which QGC failed
         report.Compilation.Details.Should().Contain("Compilation failed in QGC");
@@ -130,7 +136,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
     {
         var workspace = CopyFixtureToTemp("FailingTestProject");
 
-        var report = await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
+        var report = await _validator.ValidateAsync(workspace, DefaultQgcs, CancellationToken.None);
 
         report.Compilation.Passed.Should().BeTrue();
         report.Tests.Passed.Should().BeFalse();
@@ -145,7 +151,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
     {
         var workspace = CopyFixtureToTemp("FailingTestProject");
 
-        await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
+        await _validator.ValidateAsync(workspace, DefaultQgcs, CancellationToken.None);
 
         var gatesDir = Path.Combine(workspace, PromptBuilder.QualityGatesOutputDirectory);
         Directory.Exists(gatesDir).Should().BeTrue();
@@ -158,7 +164,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
     {
         var workspace = CopyFixtureToTemp("FailingTestProject");
 
-        var report = await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
+        var report = await _validator.ValidateAsync(workspace, DefaultQgcs, CancellationToken.None);
 
         // Aggregate compilation should pass (only tests fail)
         report.Compilation.Passed.Should().BeTrue();
@@ -182,7 +188,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
         Directory.CreateDirectory(gatesDir);
         File.WriteAllText(Path.Combine(gatesDir, "stale-file.txt"), "old data");
 
-        await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
+        await _validator.ValidateAsync(workspace, DefaultQgcs, CancellationToken.None);
 
         File.Exists(Path.Combine(gatesDir, "stale-file.txt")).Should().BeFalse();
     }
@@ -194,7 +200,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
-        var act = () => _validator.ValidateAsync(workspace, _config, cts.Token);
+        var act = () => _validator.ValidateAsync(workspace, DefaultQgcs, cts.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
@@ -205,7 +211,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
         var workspace = CopyFixtureToTemp("PassingProject");
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
-        var act = () => _validator.ValidateAsync(workspace, _config, cts.Token);
+        var act = () => _validator.ValidateAsync(workspace, DefaultQgcs, cts.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
@@ -216,7 +222,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
         // TODO: Win32Exception is a Process.Start() implementation detail — consider asserting a broader exception type if this breaks across .NET versions
         var workspace = Path.Combine(Path.GetTempPath(), $"nonexistent-{Guid.NewGuid():N}");
 
-        var act = () => _validator.ValidateAsync(workspace, _config, CancellationToken.None);
+        var act = () => _validator.ValidateAsync(workspace, DefaultQgcs, CancellationToken.None);
 
         await act.Should().ThrowAsync<System.ComponentModel.Win32Exception>();
     }
