@@ -560,6 +560,7 @@ select option { background: var(--surface); color: var(--text); }
 .monitoring-table-wrap { overflow-x: auto; }
 .monitoring-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
 .monitoring-table th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.th-hint { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: var(--surface-alt, #2a2a3e); color: var(--text-muted, #aaa); font-size: 0.65rem; font-weight: 700; cursor: help; margin-left: 4px; vertical-align: middle; text-transform: none; letter-spacing: 0; }
 .monitoring-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .monitoring-table td:last-child { overflow: visible; text-overflow: unset; white-space: nowrap; }
 .monitoring-table tbody tr { cursor: default; transition: background 0.1s; }

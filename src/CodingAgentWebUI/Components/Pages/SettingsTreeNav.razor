@@ -32,7 +32,7 @@
     <div class="tree-group">
         <div class="tree-group-header" @onclick="TogglePipeline">
             <span class="tree-chevron">@(_pipelineExpanded ? "▼" : "▶")</span>
-            Pipeline Configuration
+            Pipeline
         </div>
         @if (_pipelineExpanded)
         {
@@ -57,6 +57,18 @@
                      @onclick="() => SelectNode(SettingsNodes.PipelineSecurity)">
                     Security &amp; Cleanup
                 </div>
+            </div>
+        }
+    </div>
+
+    <div class="tree-group">
+        <div class="tree-group-header" @onclick="ToggleLabelRouting">
+            <span class="tree-chevron">@(_labelRoutingExpanded ? "▼" : "▶")</span>
+            Label Routing
+        </div>
+        @if (_labelRoutingExpanded)
+        {
+            <div class="tree-group-children">
                 <div class="tree-node @(SelectedNode == SettingsNodes.AgentProfiles ? "active" : "")"
                      @onclick="() => SelectNode(SettingsNodes.AgentProfiles)">
                     Agent Profiles
@@ -86,6 +98,7 @@
 
     private bool _providersExpanded = true;
     private bool _pipelineExpanded = true;
+    private bool _labelRoutingExpanded = true;
 
     private void ToggleProviders()
     {
@@ -95,6 +108,11 @@
     private void TogglePipeline()
     {
         _pipelineExpanded = !_pipelineExpanded;
+    }
+
+    private void ToggleLabelRouting()
+    {
+        _labelRoutingExpanded = !_labelRoutingExpanded;
     }
 
     private async Task SelectNode(string nodeId)

@@ -15,6 +15,20 @@ An automated development pipeline that uses AI coding agents (Kiro CLI) to imple
 
 The pipeline runs inside a Docker container with Kiro CLI installed. The web UI provides real-time visibility into each step.
 
+## Features
+
+- **Multi-agent architecture** — Multiple agent containers run in parallel, each picking up jobs from a shared queue. Scale horizontally by adding more agent services to `docker-compose.yml`.
+- **Multi-stack support** — Label-based routing dispatches jobs to the right agent (dotnet, python, java) and applies stack-specific quality gates, review agents, and build commands.
+- **Brain repository** — A shared knowledge repo (`.brain/`) that agents read before starting and write to after completing a run. Accumulates lessons learned, architecture decisions, and project context across runs.
+- **Multi-agent code review** — After implementation, specialized review agents (Correctness, DotNetSpecialist, SecurityReviewer) analyze the changes sequentially. Critical findings are auto-fixed; warnings become TODO comments.
+- **Confidence gate** — Before writing code, the agent assesses whether the issue is clear enough. Vague issues get labeled `agent:needs-refinement` with specific feedback posted to GitHub.
+- **Pipeline job templates** — Define provider combinations for each repository. The UI shows a live preview of which quality gates, reviewers, and profiles will be assigned based on the repo's labels.
+- **Closed-loop automation** — The pipeline polls for `agent:next` issues and processes them autonomously with configurable rate limits and backoff.
+- **PR rework** — Re-queue an issue that already has an open PR, and the agent merges from main, incorporates review feedback, and pushes to the existing branch.
+- **External CI integration** — Optionally waits for GitHub Actions to pass before creating the final PR. Failures trigger the retry loop.
+- **Real-time web UI** — Blazor Server dashboard with live output streaming, pipeline step sidebar, agent monitoring, and manual dispatch drawer.
+- **Label-based routing** — Repository labels determine agent selection (superset match), quality gate configs (any-match), reviewer configs (any-match), and agent profiles (all-match).
+
 ## Prerequisites
 
 - **Docker** — For building and running the application
@@ -24,57 +38,71 @@ The pipeline runs inside a Docker container with Kiro CLI installed. The web UI 
 
 ## Quick Start
 
-### Build the Docker image
+### Run with Docker Compose (recommended)
 
-```powershell
-docker build -f dockerfiles/webui.Dockerfile -t coding-agent-webui:latest .
-```
+```bash
+# 1. Create a .env file with a shared API key for agent authentication
+echo "AGENT_API_KEY=your-secret-key-here" > .env
 
-### Run the container
-
-```powershell
-docker run -it --rm -p 5000:5000 -v ${PWD}/config/kiro-cli-data:/home/ubuntu/.local/share/kiro-cli -v "$env:USERPROFILE\.aws:/home/ubuntu/.aws" -v ${PWD}/config/kiro-settings:/home/ubuntu/.kiro/settings -v ${PWD}/config/pipeline:/app/config/pipeline coding-agent-webui:latest 2>&1 | Tee-Object -FilePath .kiro/debug.log
-```
-
-### Run the compose
-```powrshell
-docker compose up --build 2>&1 | Tee-Object -FilePath .kiro/debug.log
+# 2. Start the orchestrator and all agent containers
+docker compose up --build
 ```
 
 Open `http://localhost:5000` in your browser.
 
 ### First-time setup
 
-1. **Authenticate Kiro CLI** — On first run, exec into the container and run `kiro-cli login`. The auth tokens are persisted via the `kiro-cli-data` volume mount, so you only need to do this once.
-2. **Configure providers** — Go to **Settings** in the web UI and set up your Issue Provider (GitHub App), Repository Provider, Agent Provider, and Pipeline Provider.
-3. **Start a run** — Go to **Agent Coding**, select an issue, and click Start.
+1. **Authenticate Kiro CLI** — On first run, exec into each agent container and run `kiro-cli login`. The auth tokens are persisted via the `kiro-cli-data` volume mounts, so you only need to do this once per agent.
+2. **Configure providers** — Go to **Settings → Providers** in the web UI and set up your Issue Provider (GitHub App), Repository Provider, Agent Provider, and Pipeline Provider.
+3. **Configure label routing** — Go to **Settings → Label Routing** and set up Agent Profiles, Quality Gate Configs, and Reviewer Configs for your stack.
+4. **Create a pipeline job template** — Go to **Agent Coding** and add a template linking your providers.
+5. **Start a run** — Select a template, browse issues, and dispatch — or start the closed-loop mode.
 
 ## Volume Mounts
+
+### Orchestrator
+
+| Mount | Container Path | Purpose |
+|-------|---------------|---------|
+| Pipeline config | `/app/config/pipeline` | Provider configs, quality gates, profiles, reviewers, run history (persists across restarts) |
+
+### Agent Containers
 
 | Mount | Container Path | Purpose |
 |-------|---------------|---------|
 | Kiro CLI auth | `/home/ubuntu/.local/share/kiro-cli` | Kiro CLI login tokens (persists across container restarts) |
-| AWS SSO | `/home/ubuntu/.aws` | AWS SSO cache and config for Kiro CLI auth |
-| Kiro settings | `/home/ubuntu/.kiro/settings` | MCP server config and CLI settings |
-| Pipeline config | `/app/config/pipeline` | Provider configs, pipeline settings, run history (persists across restarts) |
+| AWS SSO | `/home/ubuntu/.aws` | AWS SSO cache and config for Kiro CLI auth (read-only) |
 
-Without the pipeline config mount, any providers configured in Settings will be lost when the container restarts.
+Each agent container needs its own Kiro CLI data volume (e.g., `kiro-cli-data-1`, `kiro-cli-data-2`) to avoid SQLite corruption from concurrent access.
+
+Without the pipeline config mount on the orchestrator, any providers configured in Settings will be lost when the container restarts.
 
 Workspaces are created inside the container at `/app/workspaces/` (configurable via `workspaceBaseDirectory` in pipeline config). The pipeline clones a fresh copy of the repository for each run, so no workspace volume mount is needed. Successful workspaces are cleaned up automatically; failed ones are retained based on the `failedWorkspaceRetentionDays` setting.
 
 ## Project Structure
 
-<!-- TODO: Update after ARC-11 (#146) and ARC-12 (#147) refactoring -->
-
 ```
 src/
-  KiroCliLib/          — Shared library: process management, output parsing, configuration
-  CodingAgentWebUI/           — Blazor Server app: UI, pipeline engine, providers, persistence
+  CodingAgentWebUI/              — Blazor Server app: UI components, DI wiring, entry point
+  CodingAgentWebUI.Pipeline/     — Core library: interfaces, models, orchestration services
+  CodingAgentWebUI.Infrastructure/ — Provider implementations (GitHub, Git, JSON persistence)
+  CodingAgentWebUI.Agent/        — Agent container: SignalR client, job execution, Kiro CLI invocation
+  KiroCliLib/                    — Shared library: Kiro CLI process management, output parsing
 tests/
-  CodingAgentWebUI.Tests/     — Unit, property, integration, and smoke tests
+  CodingAgentWebUI.UnitTests/              — WebUI unit tests
+  CodingAgentWebUI.Pipeline.UnitTests/     — Pipeline core unit + property tests
+  CodingAgentWebUI.Infrastructure.UnitTests/ — Infrastructure unit tests
+  CodingAgentWebUI.Agent.UnitTests/        — Agent unit tests
+  CodingAgentWebUI.IntegrationTests/       — Integration tests (bUnit, full-stack)
+  KiroCliLib.UnitTests/                    — KiroCliLib unit tests
 config/
-  pipeline/            — Provider configs and pipeline run history
+  pipeline/            — Provider configs, quality gates, profiles, reviewers, run history
   appsettings.json     — Application configuration
+dockerfiles/
+  webui.Dockerfile           — Orchestrator (Blazor Server web UI)
+  agent-dotnet10.Dockerfile  — .NET 10 agent container
+  agent-python312.Dockerfile — Python 3.12 agent container
+  agent-java21.Dockerfile    — Java 21 agent container
 ```
 
 ## User Interaction via GitHub Issues
@@ -343,17 +371,13 @@ Any step can transition to `Failed` on error. The pipeline catches exceptions at
 
 ## Architecture
 
-<!-- TODO: Add architecture diagram after ARC-12 (#147) refactoring completes.
-     Target structure:
-       CodingAgentWebUI (Presentation) → CodingAgentWebUI.Pipeline (Core) + CodingAgentWebUI.Infrastructure
-       See #147 for the full dependency graph and migration plan. -->
+The application follows Clean Architecture principles with a multi-container deployment:
 
-The application follows Clean Architecture principles:
-
-- **Pipeline (Core)** — Interfaces, models, and orchestration services. Defines the pipeline steps, provider contracts, and data models. Zero infrastructure dependencies.
-- **Infrastructure** — Provider implementations (GitHub API via Octokit, Kiro CLI agent, JSON config store, Git operations via LibGit2Sharp). Implements the interfaces defined in Pipeline.
-- **WebUI (Presentation)** — Blazor Server components, DI wiring, and the application entry point.
-- **KiroCliLib** — Shared library for Kiro CLI process management, output parsing, and configuration. Used by the agent provider to invoke Kiro CLI.
+- **Pipeline (Core)** — `CodingAgentWebUI.Pipeline` — Interfaces, models, and orchestration services. Defines the pipeline steps, provider contracts, and data models. Zero infrastructure dependencies.
+- **Infrastructure** — `CodingAgentWebUI.Infrastructure` — Provider implementations (GitHub API via Octokit, JSON config store, Git operations via LibGit2Sharp). Implements the interfaces defined in Pipeline.
+- **WebUI (Presentation)** — `CodingAgentWebUI` — Blazor Server components, DI wiring, SignalR hub for agent communication, and the application entry point.
+- **Agent** — `CodingAgentWebUI.Agent` — Standalone container that connects to the orchestrator via SignalR, receives job assignments, and executes Kiro CLI to implement issues.
+- **KiroCliLib** — Shared library for Kiro CLI process management, output parsing, and configuration. Used by the agent to invoke Kiro CLI.
 
 ## Label-Based Configuration System
 
@@ -380,8 +404,9 @@ Agent labels:              ["kiro", "dotnet", "dotnet10"]
 | System | Label Source | Matching Logic | Purpose |
 |--------|-------------|----------------|---------|
 | **Agent Selection** | Job's RequiredLabels (from repo) | Agent labels ⊇ job labels (superset) | Route job to capable agent |
-| **Profile Resolution** | Agent's labels | Profile MatchLabels ⊆ agent labels (subset) | Determine which provider config to send |
-| **QGC Resolution** | Job's RequiredLabels (from repo) | QGC MatchLabels ∩ job labels ≠ ∅ (intersection) | Determine which quality gates to run |
+| **Profile Resolution** | Agent's labels | Profile MatchLabels ⊆ agent labels (ALL match) | Determine which provider config to send |
+| **QGC Resolution** | Job's RequiredLabels (from repo) | QGC MatchLabels ∩ job labels ≠ ∅ (ANY match) | Determine which quality gates to run |
+| **Reviewer Resolution** | Job's RequiredLabels (from repo) | Reviewer MatchLabels ∩ job labels ≠ ∅ (ANY match) | Determine which review agents to run |
 
 ### Configured Agent Types
 
@@ -415,12 +440,24 @@ QGCs define per-stack quality gates. Configured in Settings → Quality Gate Con
 
 Resolution: all QGCs whose labels intersect with the job's labels are applied sequentially. A polyglot repo with labels `["dotnet", "python"]` gets both the .NET and Python quality gates.
 
+### Reviewer Configurations
+
+Reviewer Configurations define per-stack code review agents. Configured in Settings → Label Routing → Reviewer Configs.
+
+| Reviewer Config | Match Labels | Agents |
+|----------------|-------------|--------|
+| Default Reviewers (dotnet) | `dotnet` | Correctness, DotNetSpecialist, SecurityReviewer |
+
+Resolution: all Reviewer Configurations whose labels intersect with the job's labels are applied sequentially (ANY match). Each configuration contains one or more review agents that run in order. A configuration with empty MatchLabels acts as a global fallback (applies to all jobs).
+
 ### Setting Up a New Stack
 
 1. **Create an agent container** — Add a service to `docker-compose.yml` with the appropriate `AGENT_TYPE` and `AGENT_LABELS`
-2. **Create an Agent Profile** — In Settings → Agent Profiles, map the labels to a provider config
-3. **Create a QGC** — In Settings → Quality Gate Configs, define the build/test commands for the stack
-4. **Configure the repository** — Set `requiredLabels` on the repository provider config (include both stack and version labels)
+2. **Create an Agent Profile** — In Settings → Label Routing → Agent Profiles, map the labels to a provider config
+3. **Create a QGC** — In Settings → Label Routing → Quality Gate Configs, define the build/test commands for the stack
+4. **Create a Reviewer Config** (optional) — In Settings → Label Routing → Reviewer Configs, define stack-specific review agents
+5. **Configure the repository** — Set `requiredLabels` on the repository provider config (include both stack and version labels)
+6. **Create a Pipeline Job Template** — In Agent Coding → Pipeline Job Templates, link the issue provider, repo provider, and optional brain/CI providers
 
 ## Pipeline Configuration
 
@@ -429,8 +466,8 @@ Pipeline behavior is configured in `config/pipeline/pipeline-config.json`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `maxRetries` | 3 | Max retry attempts when quality gates fail |
-| `agentTimeout` | 01:00:00 | Maximum time for a single agent invocation |
-| `minCoverageThreshold` | 40 | Minimum test coverage percentage |
+| `agentTimeout` | 02:00:00 | Maximum time for a single agent invocation |
+| `minCoverageThreshold` | 50 | Minimum test coverage percentage |
 | `codeReview.enabled` | true | Enable multi-agent code review |
 | `codeReview.maxIterations` | 2 | Max review → fix cycles |
 | `externalCiEnabled` | true | Wait for GitHub Actions CI to pass |
@@ -449,6 +486,20 @@ The pipeline can run autonomously, polling for `agent:next` labeled issues and p
 | `closedLoopMaxRunsPerCycle` | 0 | Max issues per cycle (0 = unlimited) |
 | `closedLoopMaxConsecutivePollFailures` | 5 | Failures before backing off |
 | `closedLoopMaxBackoffInterval` | 00:15:00 | Max backoff between poll attempts |
+
+### Pipeline Job Templates
+
+Pipeline Job Templates define which provider combination to use when polling for issues. Each template links an issue provider, repository provider, and optional brain/CI providers. Multiple templates enable round-robin polling across repositories.
+
+Templates are managed in the **Agent Coding** page. When creating or viewing a template, the UI shows a preview of which label-mapped resources (quality gates, reviewers, agent profiles) will be assigned based on the repository's labels.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| Name | Yes | Display name for the template |
+| Issue Provider | Yes | Which GitHub repo to poll for `agent:next` issues |
+| Repo Provider | Yes | Which repository to clone and create PRs in |
+| Brain Provider | No | Brain repository for knowledge persistence |
+| Pipeline/CI Provider | No | External CI provider for GitHub Actions checks |
 
 ## MCP Server Support
 
@@ -505,11 +556,7 @@ dotnet run --project src/CodingAgentWebUI
 
 ## Roadmap
 
-See [open issues](https://github.com/Chemsorly/coding-agent-automation/issues) for planned features. Key upcoming work:
-
-- [ARC-12](https://github.com/Chemsorly/coding-agent-automation/issues/147) — Split CodingAgentWebUI into Pipeline, Infrastructure, and WebUI projects
-- [ARC-08a](https://github.com/Chemsorly/coding-agent-automation/issues/142) — Confidence gate for issue quality assessment
-- [AGT-01](https://github.com/Chemsorly/coding-agent-automation/issues/10) — Crush as alternative agent provider
+See [open issues](https://github.com/Chemsorly/coding-agent-automation/issues) for planned features.
 
 ## License
 

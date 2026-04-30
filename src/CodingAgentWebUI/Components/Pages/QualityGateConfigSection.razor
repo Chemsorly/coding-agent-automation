@@ -15,7 +15,7 @@
                 <thead>
                     <tr>
                         <th>Display Name</th>
-                        <th>Match Labels</th>
+                        <th>Match Labels <span class="th-hint" title="ANY match — applies if at least one label overlaps with the job's labels">?</span></th>
                         <th>Commands</th>
                         <th>Coverage</th>
                         <th>Enabled</th>
@@ -79,7 +79,7 @@
                 <input type="text" @bind="_form.DisplayName" placeholder="e.g. .NET Quality Gates" />
             </div>
             <div class="form-group">
-                <label>Match Labels <span class="form-hint">(comma-separated, empty = global fallback)</span></label>
+                <label>Match Labels <span class="form-hint">(comma-separated, empty = global fallback · ANY match — applies if at least one label overlaps)</span></label>
                 <input type="text" @bind="_form.MatchLabels" placeholder="e.g. dotnet, csharp" />
             </div>
             <div class="form-group">
