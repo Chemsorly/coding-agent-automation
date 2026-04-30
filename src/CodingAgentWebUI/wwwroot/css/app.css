@@ -201,15 +201,16 @@ select option { background: var(--surface); color: var(--text); }
 .provider-detail { font-size: 0.78rem; color: var(--text-muted); font-family: monospace; }
 .provider-label { font-size: 0.7rem; padding: 1px 6px; background: #3b82f620; border: 1px solid #3b82f650; border-radius: 8px; color: #93c5fd; }
 
-/* Label Preview Tooltip (hover on template table rows) */
-.template-repo-cell { position: relative; }
-.template-repo-cell .label-preview-tooltip {
-    display: none; position: absolute; top: 100%; left: 0; z-index: 100;
-    min-width: 280px; max-width: 400px; padding: 10px 12px;
-    background: var(--surface, #1e1e2e); border: 1px solid var(--border, #333); border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.4); font-size: 0.78rem; line-height: 1.5;
+/* Label Preview Button and Expandable Row */
+.btn-label-preview {
+    background: none; border: 1px solid var(--border, #333); border-radius: 50%;
+    width: 20px; height: 20px; font-size: 0.7rem; cursor: pointer;
+    color: var(--text-muted, #aaa); margin-left: 6px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background 0.15s, color 0.15s;
 }
-.template-repo-cell:hover .label-preview-tooltip { display: block; }
+.btn-label-preview:hover { background: var(--surface-alt, #2a2a3e); color: var(--text, #eee); }
+.label-preview-row td { padding: 0 10px 8px !important; border-bottom: 1px solid var(--border, #333); }
 .label-preview-section { margin-bottom: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .label-preview-section:last-child { margin-bottom: 0; }
 .label-preview-heading { font-weight: 600; color: var(--text-muted, #aaa); font-size: 0.72rem; text-transform: uppercase; margin-right: 4px; white-space: nowrap; }

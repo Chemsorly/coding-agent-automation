@@ -133,56 +133,12 @@
                                                         }
                                                     </td>
                                                     <td class="monitoring-mono">@GetProviderDisplayName(template.IssueProviderId, _issueProviders)</td>
-                                                    <td class="monitoring-mono template-repo-cell">
+                                                    <td class="monitoring-mono">
                                                         @GetProviderDisplayName(template.RepoProviderId, _repoProviders)
-                                                        @{ var preview = GetLabelPreview(template.RepoProviderId); }
-                                                        @if (preview.Labels.Count > 0)
+                                                        @{ var previewLabels = GetLabelPreview(template.RepoProviderId); }
+                                                        @if (previewLabels.Labels.Count > 0)
                                                         {
-                                                            <div class="label-preview-tooltip">
-                                                                <div class="label-preview-section">
-                                                                    <span class="label-preview-heading">Labels:</span>
-                                                                    @foreach (var label in preview.Labels)
-                                                                    {
-                                                                        <span class="provider-label">@label</span>
-                                                                    }
-                                                                </div>
-                                                                @if (preview.QualityGates.Count > 0)
-                                                                {
-                                                                    <div class="label-preview-section">
-                                                                        <span class="label-preview-heading">Quality Gates:</span>
-                                                                        @foreach (var qg in preview.QualityGates)
-                                                                        {
-                                                                            <span class="label-preview-item label-preview-qg">@qg</span>
-                                                                        }
-                                                                    </div>
-                                                                }
-                                                                @if (preview.Reviewers.Count > 0)
-                                                                {
-                                                                    <div class="label-preview-section">
-                                                                        <span class="label-preview-heading">Reviewers:</span>
-                                                                        @foreach (var rv in preview.Reviewers)
-                                                                        {
-                                                                            <span class="label-preview-item label-preview-rv">@rv</span>
-                                                                        }
-                                                                    </div>
-                                                                }
-                                                                @if (preview.Profiles.Count > 0)
-                                                                {
-                                                                    <div class="label-preview-section">
-                                                                        <span class="label-preview-heading">Agent Profiles:</span>
-                                                                        @foreach (var pr in preview.Profiles)
-                                                                        {
-                                                                            <span class="label-preview-item label-preview-pr">@pr</span>
-                                                                        }
-                                                                    </div>
-                                                                }
-                                                                @if (preview.QualityGates.Count == 0 && preview.Reviewers.Count == 0 && preview.Profiles.Count == 0)
-                                                                {
-                                                                    <div class="label-preview-section">
-                                                                        <span class="monitoring-muted">No label-mapped resources match</span>
-                                                                    </div>
-                                                                }
-                                                            </div>
+                                                            <button class="btn-label-preview" @onclick="() => ToggleLabelPreview(template.Id)" title="Show label-mapped resources">ℹ</button>
                                                         }
                                                     </td>
                                                     <td>@(string.IsNullOrEmpty(template.BrainProviderId) ? "—" : GetProviderDisplayName(template.BrainProviderId, _brainProviders))</td>
@@ -230,6 +186,58 @@
                                                         }
                                                     </td>
                                                 </tr>
+                                                @if (_expandedPreviewTemplateId == template.Id)
+                                                {
+                                                    <tr class="label-preview-row">
+                                                        <td colspan="8">
+                                                            <div class="label-preview-inline">
+                                                                <div class="label-preview-section">
+                                                                    <span class="label-preview-heading">Labels:</span>
+                                                                    @foreach (var label in previewLabels.Labels)
+                                                                    {
+                                                                        <span class="provider-label">@label</span>
+                                                                    }
+                                                                </div>
+                                                                @if (previewLabels.QualityGates.Count > 0)
+                                                                {
+                                                                    <div class="label-preview-section">
+                                                                        <span class="label-preview-heading">🔧 Quality Gates:</span>
+                                                                        @foreach (var qg in previewLabels.QualityGates)
+                                                                        {
+                                                                            <span class="label-preview-item label-preview-qg">@qg</span>
+                                                                        }
+                                                                    </div>
+                                                                }
+                                                                @if (previewLabels.Reviewers.Count > 0)
+                                                                {
+                                                                    <div class="label-preview-section">
+                                                                        <span class="label-preview-heading">📝 Reviewers:</span>
+                                                                        @foreach (var rv in previewLabels.Reviewers)
+                                                                        {
+                                                                            <span class="label-preview-item label-preview-rv">@rv</span>
+                                                                        }
+                                                                    </div>
+                                                                }
+                                                                @if (previewLabels.Profiles.Count > 0)
+                                                                {
+                                                                    <div class="label-preview-section">
+                                                                        <span class="label-preview-heading">🤖 Agent Profiles:</span>
+                                                                        @foreach (var pr in previewLabels.Profiles)
+                                                                        {
+                                                                            <span class="label-preview-item label-preview-pr">@pr</span>
+                                                                        }
+                                                                    </div>
+                                                                }
+                                                                @if (previewLabels.QualityGates.Count == 0 && previewLabels.Reviewers.Count == 0 && previewLabels.Profiles.Count == 0)
+                                                                {
+                                                                    <div class="label-preview-section">
+                                                                        <span class="monitoring-muted">No label-mapped resources match these labels</span>
+                                                                    </div>
+                                                                }
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                }
                                             }
                                         </tbody>
                                     </table>
@@ -588,6 +596,7 @@
     private bool _showDeleteConfirm;
     private PipelineJobTemplate? _deletingTemplate;
     private HashSet<string> _recentlyToggled = new();
+    private string? _expandedPreviewTemplateId;
 
     // ── Manual Dispatch Drawer State ──
     private string _manualDispatchTemplateId = "";
@@ -641,6 +650,11 @@
         _addForm = new TemplateFormModel();
         _formError = null;
         _showAddForm = true;
+    }
+
+    private void ToggleLabelPreview(string templateId)
+    {
+        _expandedPreviewTemplateId = _expandedPreviewTemplateId == templateId ? null : templateId;
     }
 
     private async Task AddTemplate()
