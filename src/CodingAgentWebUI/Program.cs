@@ -169,6 +169,10 @@ lifetime.ApplicationStopping.Register(() =>
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }))
     .AllowAnonymous();
 
+// Redirect root "/" to the main page
+app.MapGet("/", () => Results.Redirect("/agent-coding"))
+    .AllowAnonymous();
+
 app.UseStaticFiles();
 
 app.UseAuthentication();
