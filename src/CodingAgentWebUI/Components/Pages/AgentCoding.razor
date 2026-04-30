@@ -22,7 +22,6 @@
 
     @if (LoopService.IsLoopActive)
     {
-        @* TODO: [RES-03] Add && !LoopService.IsCircuitBroken to avoid duplicate status message when circuit breaker trips (review finding #2) *@
         <div class="settings-status status-info loop-status-bar">
             <span class="loop-status-text">@LoopService.StatusMessage</span>
             <button class="btn-revert loop-stop-btn" @onclick="StopLoop">⏹ Stop Loop</button>
@@ -89,44 +88,234 @@
                                      OnBackToIssues="BackToIssues" />
                 }
 
-                <!-- Issue Selection + Pipeline Setup (two-column) -->
                 @if (activeRun is null || hasFinishedRun)
                 {
                     @if (!_showCompletionOnly)
                     {
-                        <div class="pipeline-setup-layout">
-                            <IssueListPanel IssueProviders="_issueProviders"
-                                            ProviderFactory="ProviderFactory"
-                                            InitialIssueProviderId="@_selectedIssueProviderId"
-                                            IssuePageSize="_issuePageSize"
-                                            SelectedIssueId="@_selectedIssueId"
-                                            IsIssueProcessingOrQueued="id => JobDispatcher.IsIssueBeingProcessedOrQueued(id)"
-                                            OnIssueProviderIdChanged="HandleIssueProviderIdChanged"
-                                            OnIssueSelected="HandleIssueSelected"
-                                            OnError="HandleChildError" />
+                        <!-- ═══ Template Table ═══ -->
+                        <section class="settings-section" style="margin: 16px 20px;">
+                            <h2>Pipeline Job Templates</h2>
 
-                            <ProviderSelectionPanel RepoProviders="_repoProviders"
-                                                    PipelineProviders="_pipelineProviders"
-                                                    BrainProviders="_brainProviders"
-                                                    SelectedIssueProviderId="@_selectedIssueProviderId"
-                                                    SelectedIssueId="@_selectedIssueId"
-                                                    SelectedIssueDetail="_selectedIssueDetail"
-                                                    LinkedPullRequest="_linkedPullRequest"
-                                                    SelectedRepoProviderId="@_selectedRepoProviderId"
-                                                    SelectedAgentProviderId="@_selectedAgentProviderId"
-                                                    SelectedPipelineProviderId="@_selectedPipelineProviderId"
-                                                    SelectedBrainProviderId="@_selectedBrainProviderId"
-                                                    SelectedRepoProviderIdChanged="HandleRepoProviderIdChanged"
-                                                    SelectedPipelineProviderIdChanged="v => _selectedPipelineProviderId = v"
-                                                    SelectedBrainProviderIdChanged="v => _selectedBrainProviderId = v"
-                                                    OnStartPipeline="StartPipeline"
-                                                    IsLoopActive="LoopService.IsLoopActive"
-                                                    IsManualRunInProgress="PipelineService.IsRunning && !LoopService.IsLoopActive"
-                                                    IsDispatching="_isDispatching"
-                                                    IsDispatched="_isDispatched"
-                                                    OnStartLoop="StartLoop"
-                                                    OnStopLoop="StopLoop" />
-                        </div>
+                            @if (_templates.Count == 0)
+                            {
+                                <div class="monitoring-empty">No pipeline job templates configured. Add at least one template to enable the multi-repo loop.</div>
+                            }
+                            else
+                            {
+                                <div class="monitoring-table-wrap">
+                                    <table class="monitoring-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Name</th>
+                                                <th>Issue Provider</th>
+                                                <th>Repo Provider</th>
+                                                <th>Brain</th>
+                                                <th>CI</th>
+                                                <th>Enabled</th>
+                                                <th>Status</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var template in _templates)
+                                            {
+                                                var status = GetTemplateStatus(template.Id);
+                                                var isPolling = status?.IsCurrentlyPolling == true;
+                                                var hasError = !string.IsNullOrEmpty(status?.LastError);
+                                                var providerMissing = IsProviderMissing(template);
+
+                                                <tr class="@(isPolling ? "monitoring-row-busy" : "") @(!template.Enabled ? "monitoring-row-disabled" : "")">
+                                                    <td>
+                                                        @template.Name
+                                                        @if (providerMissing)
+                                                        {
+                                                            <span class="badge-disabled-table" title="Referenced provider no longer exists">⚠️</span>
+                                                        }
+                                                    </td>
+                                                    <td class="monitoring-mono">@GetProviderDisplayName(template.IssueProviderId, _issueProviders)</td>
+                                                    <td class="monitoring-mono">@GetProviderDisplayName(template.RepoProviderId, _repoProviders)</td>
+                                                    <td>@(string.IsNullOrEmpty(template.BrainProviderId) ? "—" : GetProviderDisplayName(template.BrainProviderId, _brainProviders))</td>
+                                                    <td>@(string.IsNullOrEmpty(template.PipelineProviderId) ? "—" : GetProviderDisplayName(template.PipelineProviderId, _pipelineProviders))</td>
+                                                    <td>
+                                                        <label class="toggle-switch">
+                                                            <input type="checkbox" checked="@template.Enabled"
+                                                                   @onchange="e => ToggleTemplateEnabled(template, (bool)(e.Value ?? false))" />
+                                                            <span class="toggle-slider"></span>
+                                                        </label>
+                                                        @if (LoopService.IsLoopActive && _recentlyToggled.Contains(template.Id))
+                                                        {
+                                                            <span class="monitoring-muted" style="font-size: 0.7rem; margin-left: 4px;">next cycle</span>
+                                                        }
+                                                    </td>
+                                                    <td>
+                                                        @if (LoopService.IsLoopActive && status != null)
+                                                        {
+                                                            @if (isPolling)
+                                                            {
+                                                                <span class="monitoring-status monitoring-status-busy">⟳ polling</span>
+                                                            }
+                                                            else if (hasError)
+                                                            {
+                                                                <span class="monitoring-status monitoring-status-disconnected" title="@status.LastError">
+                                                                    ⚠ @status.ConsecutiveFailures fail(s)
+                                                                </span>
+                                                            }
+                                                            else if (status.LastPollTime.HasValue)
+                                                            {
+                                                                <span class="monitoring-status monitoring-status-idle">
+                                                                    @FormatTimeAgo(status.LastPollTime.Value) · @status.LastPollIssueCount issue(s)
+                                                                </span>
+                                                            }
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="monitoring-muted">—</span>
+                                                        }
+                                                    </td>
+                                                    <td>
+                                                        @if (!LoopService.IsLoopActive)
+                                                        {
+                                                            <button class="btn-delete" @onclick="() => ConfirmRemoveTemplate(template)">Remove</button>
+                                                        }
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+
+                            @* Add Template Form *@
+                            @if (_showAddForm)
+                            {
+                                <div class="provider-form" style="margin-top: 12px;">
+                                    <h3>Add Pipeline Job Template</h3>
+
+                                    @if (!string.IsNullOrEmpty(_formError))
+                                    {
+                                        <div class="settings-status status-error">@_formError</div>
+                                    }
+
+                                    <div class="form-group">
+                                        <label>Name *</label>
+                                        <input type="text" @bind="_addForm.Name" placeholder="e.g. DotNet Main Repo" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Issue Provider *</label>
+                                        <select @bind="_addForm.IssueProviderId">
+                                            <option value="">-- Select --</option>
+                                            @foreach (var p in _issueProviders)
+                                            {
+                                                <option value="@p.Id">@p.DisplayName</option>
+                                            }
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Repo Provider *</label>
+                                        <select @bind="_addForm.RepoProviderId">
+                                            <option value="">-- Select --</option>
+                                            @foreach (var p in _repoProviders)
+                                            {
+                                                <option value="@p.Id">@p.DisplayName</option>
+                                            }
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Brain Provider (optional)</label>
+                                        <select @bind="_addForm.BrainProviderId">
+                                            <option value="">— None —</option>
+                                            @foreach (var p in _brainProviders)
+                                            {
+                                                <option value="@p.Id">@p.DisplayName</option>
+                                            }
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Pipeline/CI Provider (optional)</label>
+                                        <select @bind="_addForm.PipelineProviderId">
+                                            <option value="">— None —</option>
+                                            @foreach (var p in _pipelineProviders)
+                                            {
+                                                <option value="@p.Id">@p.DisplayName</option>
+                                            }
+                                        </select>
+                                    </div>
+                                    <div class="form-buttons">
+                                        <button class="btn-save" @onclick="AddTemplate">Save</button>
+                                        <button class="btn-cancel" @onclick="() => { _showAddForm = false; _formError = null; }">Cancel</button>
+                                    </div>
+                                </div>
+                            }
+                            else if (!LoopService.IsLoopActive)
+                            {
+                                <button class="btn-add" style="margin-top: 12px;" @onclick="ShowAddForm">+ Add Template</button>
+                            }
+
+                            @* Delete Confirmation *@
+                            @if (_showDeleteConfirm && _deletingTemplate != null)
+                            {
+                                <div class="agent-detail-confirm" style="margin-top: 12px;">
+                                    <p>Remove template <strong>@_deletingTemplate.Name</strong>?</p>
+                                    <div class="confirm-buttons">
+                                        <button class="btn-delete" @onclick="RemoveTemplate">Remove</button>
+                                        <button class="btn-cancel" @onclick="() => _showDeleteConfirm = false">Cancel</button>
+                                    </div>
+                                </div>
+                            }
+                        </section>
+
+                        <!-- ═══ Loop Controls ═══ -->
+                        <section class="settings-section" style="margin: 0 20px 16px;">
+                            <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                                @if (!LoopService.IsLoopActive)
+                                {
+                                    <button class="btn-save" @onclick="StartLoop" disabled="@(_templates.Count == 0)">▶ Start Loop</button>
+                                }
+                                else
+                                {
+                                    <button class="btn-revert" @onclick="StopLoop">⏹ Stop Loop</button>
+                                }
+
+                                @if (LoopService.IsLoopActive)
+                                {
+                                    <span class="monitoring-muted" style="font-size: 0.82rem;">
+                                        Polling template @(LoopService.CurrentCycleTemplateIndex + 1) of @LoopService.CurrentCycleTemplateCount
+                                        · Processed: @LoopService.ProcessedCount · Failed: @LoopService.FailedCount
+                                    </span>
+                                }
+                            </div>
+
+                            @if (LoopService.ValidationErrors.Count > 0)
+                            {
+                                <div class="settings-status status-error" style="margin-top: 8px;">
+                                    <strong>Validation errors:</strong>
+                                    <ul style="margin: 4px 0 0 16px; padding: 0;">
+                                        @foreach (var err in LoopService.ValidationErrors)
+                                        {
+                                            <li>@err</li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+                        </section>
+
+                        <!-- ═══ Manual Dispatch ═══ -->
+                        <section class="settings-section" style="margin: 0 20px 16px;">
+                            <h2>Manual Dispatch</h2>
+                            <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                                <select @bind="_manualDispatchTemplateId" class="dispatch-template-select">
+                                    <option value="">-- Select Template --</option>
+                                    @foreach (var t in _templates.Where(t => t.Enabled))
+                                    {
+                                        <option value="@t.Id">@t.Name</option>
+                                    }
+                                </select>
+                                <button class="btn-save" @onclick="OpenDrawer"
+                                        disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))">
+                                    Browse Issues
+                                </button>
+                            </div>
+                        </section>
                     }
                 }
             }
@@ -172,79 +361,137 @@
     </div>
 </div>
 
+<!-- ═══ Manual Dispatch Drawer ═══ -->
+<div class="dispatch-drawer-overlay @(_drawerOpen ? "open" : "")" @onclick="CloseDrawer"></div>
+<aside class="dispatch-drawer @(_drawerOpen ? "open" : "")">
+    <div class="agent-detail-header">
+        <h3>Browse Issues</h3>
+        <button class="agent-detail-close" @onclick="CloseDrawer" aria-label="Close drawer">✕</button>
+    </div>
+
+    @if (_drawerTemplate != null)
+    {
+        <div class="agent-detail-section">
+            <h4>Template: @_drawerTemplate.Name</h4>
+        </div>
+
+        @if (_drawerLoading)
+        {
+            <div class="loading-text" style="padding: 12px;">Loading issues...</div>
+        }
+        else
+        {
+            <!-- Filter -->
+            <div style="padding: 0 0 8px;">
+                <input type="text" @bind="_drawerFilter" @bind:event="oninput" @bind:after="FilterDrawerIssues"
+                       placeholder="Filter by number or title..." style="width: 100%; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 0.82rem;" />
+            </div>
+
+            @if (_drawerIssues.Count == 0)
+            {
+                <div class="monitoring-empty">No open issues found.</div>
+            }
+            else
+            {
+                <div class="agent-history-list" style="max-height: calc(100vh - 320px); overflow-y: auto;">
+                    @foreach (var issue in _filteredDrawerIssues)
+                    {
+                        var isProcessing = JobDispatcher.IsIssueBeingProcessedOrQueued(issue.Identifier);
+                        <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(_selectedDrawerIssue?.Identifier == issue.Identifier ? "drawer-issue-selected" : "")"
+                             @onclick="() => SelectDrawerIssue(issue)"
+                             style="@(isProcessing ? "opacity: 0.6; pointer-events: none;" : "")">
+                            <div class="drawer-issue-header">
+                                <span class="drawer-issue-number">#@issue.Identifier</span>
+                                @if (isProcessing)
+                                {
+                                    <span class="badge-default" style="background: var(--accent); color: white;">DISPATCHED</span>
+                                }
+                            </div>
+                            <div class="drawer-issue-title">@issue.Title</div>
+                            <div class="drawer-issue-labels">
+                                @foreach (var label in issue.Labels.Take(5))
+                                {
+                                    <span class="sidebar-label @GetLabelClass(label)">@label</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <!-- Pagination -->
+                @if (_drawerHasMore || _drawerPage > 1)
+                {
+                    <div style="display: flex; justify-content: center; gap: 8px; padding: 8px 0;">
+                        <button class="btn-cancel" @onclick="DrawerPrevPage" disabled="@(_drawerPage <= 1)">← Prev</button>
+                        <span class="monitoring-muted" style="align-self: center; font-size: 0.8rem;">Page @_drawerPage</span>
+                        <button class="btn-cancel" @onclick="DrawerNextPage" disabled="@(!_drawerHasMore)">Next →</button>
+                    </div>
+                }
+            }
+
+            <!-- Selected Issue Detail -->
+            @if (_selectedDrawerIssue != null)
+            {
+                <div class="agent-detail-section" style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
+                    <h4>#@_selectedDrawerIssue.Identifier — @_selectedDrawerIssue.Title</h4>
+                    <div class="drawer-issue-labels" style="margin-bottom: 8px;">
+                        @foreach (var label in _selectedDrawerIssue.Labels)
+                        {
+                            <span class="sidebar-label @GetLabelClass(label)">@label</span>
+                        }
+                    </div>
+                    @if (_selectedDrawerIssue.CreatedAt.HasValue)
+                    {
+                        <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0 0 8px;">
+                            Created: @_selectedDrawerIssue.CreatedAt.Value.ToString("g")
+                        </p>
+                    }
+                    <button class="btn-save" @onclick="DispatchFromDrawer" disabled="@_drawerDispatching">
+                        @(_drawerDispatching ? "Dispatching..." : $"Start Pipeline on #{_selectedDrawerIssue.Identifier}")
+                    </button>
+                </div>
+            }
+        }
+    }
+</aside>
+
 @code {
     private List<ProviderConfig> _issueProviders = new();
     private List<ProviderConfig> _repoProviders = new();
-    private List<ProviderConfig> _agentProviders = new();
     private List<ProviderConfig> _pipelineProviders = new();
     private List<ProviderConfig> _brainProviders = new();
     private readonly object _outputLock = new();
     private List<string> _outputLines = new();
 
-    private string _selectedIssueProviderId = "";
-    private string _selectedIssueId = "";
-    private IssueDetail? _selectedIssueDetail;
-    private LinkedPullRequest? _linkedPullRequest;
-    private string _selectedRepoProviderId = "";
-    private string _selectedAgentProviderId = "";
-    private string _selectedPipelineProviderId = "";
-    private string _selectedBrainProviderId = "";
     private string? _errorMessage;
     private string? _successMessage;
-    private bool _isDispatching;
-    private bool _isDispatched;
     private bool _showCompletionOnly;
     private string? _lastRunId;
     private bool _disposed;
     private Timer? _elapsedTimer;
     private int _maxRetries = 3;
-    private int _issuePageSize = 25;
 
-    private void HandleIssueProviderIdChanged(string providerId)
-    {
-        _selectedIssueProviderId = providerId;
-        _errorMessage = null;
-    }
+    // ── Template Table State ──
+    private List<PipelineJobTemplate> _templates = new();
+    private bool _showAddForm;
+    private TemplateFormModel _addForm = new();
+    private string? _formError;
+    private bool _showDeleteConfirm;
+    private PipelineJobTemplate? _deletingTemplate;
+    private HashSet<string> _recentlyToggled = new();
 
-    private async Task HandleIssueSelected((string IssueId, IssueDetail? Detail) selection)
-    {
-        _selectedIssueId = selection.IssueId;
-        _selectedIssueDetail = selection.Detail;
-        _isDispatched = false;
-        _successMessage = null;
-        await CheckForExistingPullRequestAsync();
-    }
-
-    private async Task HandleRepoProviderIdChanged(string providerId)
-    {
-        _selectedRepoProviderId = providerId;
-        await CheckForExistingPullRequestAsync();
-    }
-
-    private async Task CheckForExistingPullRequestAsync()
-    {
-        _linkedPullRequest = null;
-
-        if (string.IsNullOrEmpty(_selectedIssueId) || string.IsNullOrEmpty(_selectedRepoProviderId))
-            return;
-
-        var repoConfig = _repoProviders.FirstOrDefault(p => p.Id == _selectedRepoProviderId);
-        if (repoConfig is null)
-            return;
-
-        try
-        {
-            await using var repoProvider = ProviderFactory.CreateRepositoryProvider(repoConfig);
-            var prs = await repoProvider.GetAgentPullRequestsAsync(_selectedIssueId, CancellationToken.None);
-            _linkedPullRequest = prs.OrderByDescending(pr => pr.Number).FirstOrDefault();
-        }
-        catch (Exception) { /* Non-critical — pipeline will detect rework at runtime */ }
-    }
-
-    private void HandleChildError(string? error)
-    {
-        _errorMessage = error;
-    }
+    // ── Manual Dispatch Drawer State ──
+    private string _manualDispatchTemplateId = "";
+    private bool _drawerOpen;
+    private PipelineJobTemplate? _drawerTemplate;
+    private List<IssueSummary> _drawerIssues = new();
+    private List<IssueSummary> _filteredDrawerIssues = new();
+    private bool _drawerLoading;
+    private string _drawerFilter = "";
+    private int _drawerPage = 1;
+    private bool _drawerHasMore;
+    private IssueSummary? _selectedDrawerIssue;
+    private bool _drawerDispatching;
 
     protected override async Task OnInitializedAsync()
     {
@@ -258,7 +505,6 @@
         {
             _issueProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
             var allRepoProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
-            _agentProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None)).ToList();
             _pipelineProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
 
             _brainProviders = allRepoProviders.Where(p => p.RepositoryRole == RepositoryRole.Brain).ToList();
@@ -266,32 +512,354 @@
 
             var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
             _maxRetries = config.MaxRetries;
-            _issuePageSize = Math.Clamp(config.IssuePageSize, 1, 100);
-
-            if (config.LastUsedProviderIds.TryGetValue("issue", out var lastIssue) && _issueProviders.Any(p => p.Id == lastIssue))
-                _selectedIssueProviderId = lastIssue;
-            if (config.LastUsedProviderIds.TryGetValue("repository", out var lastRepo) && _repoProviders.Any(p => p.Id == lastRepo))
-                _selectedRepoProviderId = lastRepo;
-            if (config.LastUsedProviderIds.TryGetValue("agent", out var lastAgent) && _agentProviders.Any(p => p.Id == lastAgent))
-                _selectedAgentProviderId = lastAgent;
-            if (config.LastUsedProviderIds.TryGetValue("brain", out var lastBrain) && _brainProviders.Any(p => p.Id == lastBrain))
-                _selectedBrainProviderId = lastBrain;
-            if (config.LastUsedProviderIds.TryGetValue("pipeline", out var lastPipeline) && _pipelineProviders.Any(p => p.Id == lastPipeline))
-                _selectedPipelineProviderId = lastPipeline;
-
-            // Auto-select if only one provider of each type (fallback when no last-used)
-            if (string.IsNullOrEmpty(_selectedIssueProviderId) && _issueProviders.Count == 1) _selectedIssueProviderId = _issueProviders[0].Id;
-            if (string.IsNullOrEmpty(_selectedRepoProviderId) && _repoProviders.Count == 1) _selectedRepoProviderId = _repoProviders[0].Id;
-            if (string.IsNullOrEmpty(_selectedAgentProviderId) && _agentProviders.Count == 1) _selectedAgentProviderId = _agentProviders[0].Id;
-            if (string.IsNullOrEmpty(_selectedPipelineProviderId) && _pipelineProviders.Count == 1) _selectedPipelineProviderId = _pipelineProviders[0].Id;
-
-            // Issue loading is handled by IssueListPanel on firstRender when InitialIssueProviderId is set
+            _templates = config.PipelineJobTemplates.ToList();
         }
         catch (Exception ex)
         {
-            _errorMessage = $"Failed to load providers: {ex.Message}";
+            _errorMessage = $"Failed to load configuration: {ex.Message}";
         }
     }
+
+    // ── Template Table Methods ──
+
+    private void ShowAddForm()
+    {
+        _addForm = new TemplateFormModel();
+        _formError = null;
+        _showAddForm = true;
+    }
+
+    private async Task AddTemplate()
+    {
+        _formError = null;
+
+        if (string.IsNullOrWhiteSpace(_addForm.Name))
+        {
+            _formError = "Name is required.";
+            return;
+        }
+        if (string.IsNullOrEmpty(_addForm.IssueProviderId))
+        {
+            _formError = "Issue Provider is required.";
+            return;
+        }
+        if (string.IsNullOrEmpty(_addForm.RepoProviderId))
+        {
+            _formError = "Repo Provider is required.";
+            return;
+        }
+
+        // Duplicate detection
+        var isDuplicate = _templates.Any(t =>
+            t.IssueProviderId == _addForm.IssueProviderId && t.RepoProviderId == _addForm.RepoProviderId);
+        if (isDuplicate)
+        {
+            _formError = "A template with the same Issue Provider + Repo Provider combination already exists.";
+            return;
+        }
+
+        var newTemplate = new PipelineJobTemplate
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = _addForm.Name.Trim(),
+            IssueProviderId = _addForm.IssueProviderId,
+            RepoProviderId = _addForm.RepoProviderId,
+            BrainProviderId = string.IsNullOrEmpty(_addForm.BrainProviderId) ? null : _addForm.BrainProviderId,
+            PipelineProviderId = string.IsNullOrEmpty(_addForm.PipelineProviderId) ? null : _addForm.PipelineProviderId,
+            Enabled = true
+        };
+
+        _templates.Add(newTemplate);
+        await PersistTemplates();
+        _showAddForm = false;
+        _successMessage = $"Template \"{newTemplate.Name}\" added.";
+        _ = ClearSuccessAfterDelay();
+    }
+
+    private void ConfirmRemoveTemplate(PipelineJobTemplate template)
+    {
+        _deletingTemplate = template;
+        _showDeleteConfirm = true;
+    }
+
+    private async Task RemoveTemplate()
+    {
+        if (_deletingTemplate == null) return;
+        _templates.RemoveAll(t => t.Id == _deletingTemplate.Id);
+        await PersistTemplates();
+        _showDeleteConfirm = false;
+        _successMessage = $"Template \"{_deletingTemplate.Name}\" removed.";
+        _deletingTemplate = null;
+        _ = ClearSuccessAfterDelay();
+    }
+
+    private async Task ToggleTemplateEnabled(PipelineJobTemplate template, bool enabled)
+    {
+        var idx = _templates.FindIndex(t => t.Id == template.Id);
+        if (idx < 0) return;
+
+        _templates[idx] = template with { Enabled = enabled };
+        await PersistTemplates();
+
+        if (LoopService.IsLoopActive)
+        {
+            _recentlyToggled.Add(template.Id);
+            _ = ClearToggleIndicator(template.Id);
+        }
+    }
+
+    private async Task PersistTemplates()
+    {
+        try
+        {
+            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+            var updated = config with { PipelineJobTemplates = _templates.ToList() };
+            await ConfigStore.SavePipelineConfigAsync(updated, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to save: {ex.Message}";
+        }
+    }
+
+    private async Task ClearToggleIndicator(string templateId)
+    {
+        await Task.Delay(3000);
+        _recentlyToggled.Remove(templateId);
+        try { await InvokeAsync(() => { if (!_disposed) StateHasChanged(); }); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task ClearSuccessAfterDelay()
+    {
+        await Task.Delay(3000);
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                if (_disposed) return;
+                _successMessage = null;
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    // ── Loop Controls ──
+
+    private void StartLoop()
+    {
+        _errorMessage = null;
+        var started = LoopService.StartLoop();
+        if (!started)
+        {
+            if (LoopService.ValidationErrors.Count > 0)
+                _errorMessage = "Loop failed to start due to validation errors (see below).";
+            else if (LoopService.IsLoopActive)
+                _errorMessage = "Loop is already active.";
+            else
+                _errorMessage = "A manual run is in progress. Wait for it to complete.";
+        }
+    }
+
+    private void StopLoop()
+    {
+        LoopService.StopLoop();
+    }
+
+    private void ResumeLoop()
+    {
+        LoopService.ResumeLoop();
+    }
+
+    // ── Manual Dispatch Drawer ──
+
+    private async Task OpenDrawer()
+    {
+        var template = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
+        if (template == null) return;
+
+        _drawerTemplate = template;
+        _drawerOpen = true;
+        _selectedDrawerIssue = null;
+        _drawerFilter = "";
+        _drawerPage = 1;
+        await LoadDrawerIssues();
+    }
+
+    private void CloseDrawer()
+    {
+        _drawerOpen = false;
+        _drawerTemplate = null;
+        _drawerIssues.Clear();
+        _filteredDrawerIssues.Clear();
+        _selectedDrawerIssue = null;
+    }
+
+    private async Task LoadDrawerIssues()
+    {
+        if (_drawerTemplate == null) return;
+        _drawerLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var providerConfig = _issueProviders.FirstOrDefault(p => p.Id == _drawerTemplate.IssueProviderId);
+            if (providerConfig == null)
+            {
+                _errorMessage = "Issue provider not found for this template.";
+                _drawerLoading = false;
+                return;
+            }
+
+            await using var provider = ProviderFactory.CreateIssueProvider(providerConfig);
+            var result = await provider.ListOpenIssuesAsync(_drawerPage, 25, CancellationToken.None);
+            _drawerIssues = result.Items.ToList();
+            _drawerHasMore = result.HasMore;
+            FilterDrawerIssues();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to load issues: {ex.Message}";
+            _drawerIssues.Clear();
+            _filteredDrawerIssues.Clear();
+        }
+        finally
+        {
+            _drawerLoading = false;
+        }
+    }
+
+    private void FilterDrawerIssues()
+    {
+        if (string.IsNullOrWhiteSpace(_drawerFilter))
+        {
+            _filteredDrawerIssues = _drawerIssues;
+        }
+        else
+        {
+            var filter = _drawerFilter.Trim().ToLowerInvariant();
+            _filteredDrawerIssues = _drawerIssues
+                .Where(i => i.Identifier.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                         || i.Title.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+    }
+
+    private async Task DrawerPrevPage()
+    {
+        if (_drawerPage <= 1) return;
+        _drawerPage--;
+        _selectedDrawerIssue = null;
+        await LoadDrawerIssues();
+    }
+
+    private async Task DrawerNextPage()
+    {
+        if (!_drawerHasMore) return;
+        _drawerPage++;
+        _selectedDrawerIssue = null;
+        await LoadDrawerIssues();
+    }
+
+    private void SelectDrawerIssue(IssueSummary issue)
+    {
+        _selectedDrawerIssue = _selectedDrawerIssue?.Identifier == issue.Identifier ? null : issue;
+    }
+
+    private async Task DispatchFromDrawer()
+    {
+        if (_selectedDrawerIssue == null || _drawerTemplate == null) return;
+
+        // Validate provider IDs still exist
+        if (!_issueProviders.Any(p => p.Id == _drawerTemplate.IssueProviderId) ||
+            !_repoProviders.Any(p => p.Id == _drawerTemplate.RepoProviderId))
+        {
+            _errorMessage = "Template references providers that no longer exist.";
+            return;
+        }
+
+        _drawerDispatching = true;
+        StateHasChanged();
+
+        try
+        {
+            var dispatched = await JobDispatcher.TryDispatchAsync(
+                _selectedDrawerIssue.Identifier,
+                _drawerTemplate.IssueProviderId,
+                _drawerTemplate.RepoProviderId,
+                _drawerTemplate.BrainProviderId,
+                _drawerTemplate.PipelineProviderId,
+                initiatedBy: "manual",
+                CancellationToken.None);
+
+            if (dispatched)
+            {
+                _successMessage = $"✅ Dispatched #{_selectedDrawerIssue.Identifier}";
+                CloseDrawer();
+                _ = ClearSuccessAfterDelay();
+            }
+            else
+            {
+                _errorMessage = "Could not dispatch — issue is already being processed or queued, or no agents are available.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Dispatch failed: {ex.Message}";
+        }
+        finally
+        {
+            _drawerDispatching = false;
+        }
+    }
+
+    // ── Helpers ──
+
+    private ConfigStatusSnapshot? GetTemplateStatus(string templateId)
+    {
+        LoopService.TemplateStatuses.TryGetValue(templateId, out var status);
+        return status;
+    }
+
+    private bool IsProviderMissing(PipelineJobTemplate template)
+    {
+        return !_issueProviders.Any(p => p.Id == template.IssueProviderId)
+            || !_repoProviders.Any(p => p.Id == template.RepoProviderId);
+    }
+
+    private static string GetProviderDisplayName(string providerId, List<ProviderConfig> providers)
+    {
+        var provider = providers.FirstOrDefault(p => p.Id == providerId);
+        return provider?.DisplayName ?? Truncate(providerId, 12);
+    }
+
+    private static string GetLabelClass(string label) => label switch
+    {
+        "agent:next" => "label-agent-next",
+        "agent:in-progress" => "label-agent-progress",
+        "agent:error" => "label-agent-error",
+        "agent:needs-refinement" => "label-agent-refinement",
+        _ => ""
+    };
+
+    private static string FormatTimeAgo(DateTimeOffset timestamp)
+    {
+        var ago = DateTimeOffset.UtcNow - timestamp;
+        if (ago.TotalSeconds < 60) return $"{(int)ago.TotalSeconds}s ago";
+        if (ago.TotalMinutes < 60) return $"{(int)ago.TotalMinutes}m ago";
+        return $"{(int)ago.TotalHours}h ago";
+    }
+
+    private static string Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value)) return string.Empty;
+        return value.Length <= maxLength ? value : value[..(maxLength - 3)] + "...";
+    }
+
+
+
+    // ── Event Handlers ──
 
     private async void ElapsedTimerTick(object? state)
     {
@@ -360,147 +928,6 @@
         catch (ObjectDisposedException) { }
     }
 
-    private async Task StartPipeline()
-    {
-        _errorMessage = null;
-        _successMessage = null;
-
-        if (PipelineService.IsRunning)
-        {
-            _errorMessage = "A pipeline run is already in progress.";
-            return;
-        }
-
-        if (LoopService.IsLoopActive)
-        {
-            _errorMessage = "Stop the loop to run manually.";
-            return;
-        }
-
-        var canStart = !string.IsNullOrEmpty(_selectedIssueProviderId)
-            && !string.IsNullOrEmpty(_selectedIssueId)
-            && !string.IsNullOrEmpty(_selectedRepoProviderId);
-
-        if (!canStart)
-        {
-            _errorMessage = "Please select an issue and repository provider.";
-            return;
-        }
-
-        lock (_outputLock) { _outputLines.Clear(); }
-        _showCompletionOnly = false;
-        _isDispatching = true;
-        _isDispatched = false;
-
-        // Capture all IDs as locals before Task.Run — the user can change dropdowns while dispatch is in flight (review finding #1)
-        var dispatchedIssueId = _selectedIssueId;
-        var issueProviderId = _selectedIssueProviderId;
-        var repoProviderId = _selectedRepoProviderId;
-        var brainProviderId = string.IsNullOrEmpty(_selectedBrainProviderId) ? null : _selectedBrainProviderId;
-        var pipelineProviderId = string.IsNullOrEmpty(_selectedPipelineProviderId) ? null : _selectedPipelineProviderId;
-
-        try
-        {
-            // TODO: [ARC-10] Pass a component-scoped CancellationToken instead of CancellationToken.None so dispatch can be cancelled on navigation (review finding #2)
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var dispatched = await JobDispatcher.TryDispatchAsync(
-                        dispatchedIssueId,
-                        issueProviderId, repoProviderId,
-                        brainProviderId,
-                        pipelineProviderId,
-                        initiatedBy: "manual",
-                        CancellationToken.None);
-
-                    // TODO: [UX-22] Wrap InvokeAsync in try/catch ObjectDisposedException for consistency with the auto-clear path (review finding #3)
-                    await InvokeAsync(() =>
-                    {
-                        if (_disposed) return;
-                        _isDispatching = false;
-                        if (dispatched)
-                        {
-                            _isDispatched = true;
-                            _successMessage = $"✅ Dispatched #{dispatchedIssueId}";
-                        }
-                        else
-                        {
-                            _errorMessage = "Could not dispatch — issue is already being processed or queued, or no agents are available.";
-                        }
-                        StateHasChanged();
-                    });
-
-                    if (dispatched)
-                    {
-                        await Task.Delay(3000);
-                        try
-                        {
-                            await InvokeAsync(() =>
-                            {
-                                if (_disposed) return;
-                                _successMessage = null;
-                                StateHasChanged();
-                            });
-                        }
-                        catch (ObjectDisposedException) { }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    // TODO: [UX-22] Wrap InvokeAsync in try/catch ObjectDisposedException for consistency (review finding #3)
-                    await InvokeAsync(() =>
-                    {
-                        if (_disposed) return;
-                        _isDispatching = false;
-                        _errorMessage = $"Pipeline dispatch failed: {ex.Message}";
-                        StateHasChanged();
-                    });
-                }
-            });
-        }
-        catch (Exception ex)
-        {
-            // TODO: [UX-22] Add explicit StateHasChanged() for consistency with inner paths (review finding from correctness review #1)
-            _isDispatching = false;
-            _errorMessage = $"Failed to dispatch pipeline: {ex.Message}";
-        }
-    }
-
-    private void StartLoop()
-    {
-        _errorMessage = null;
-
-        var canStart = !string.IsNullOrEmpty(_selectedIssueProviderId)
-            && !string.IsNullOrEmpty(_selectedRepoProviderId);
-
-        if (!canStart)
-        {
-            _errorMessage = "Please select an issue provider and repository provider.";
-            return;
-        }
-
-        var started = LoopService.StartLoop(
-            _selectedIssueProviderId, _selectedRepoProviderId,
-            string.IsNullOrEmpty(_selectedBrainProviderId) ? null : _selectedBrainProviderId,
-            string.IsNullOrEmpty(_selectedPipelineProviderId) ? null : _selectedPipelineProviderId);
-
-        if (!started)
-            _errorMessage = LoopService.IsLoopActive
-                ? "Loop is already active."
-                : "A manual run is in progress. Wait for it to complete.";
-    }
-
-    private void StopLoop()
-    {
-        LoopService.StopLoop();
-    }
-
-    private void ResumeLoop()
-    {
-        LoopService.ResumeLoop();
-    }
-
     private async Task CancelPipeline()
     {
         try
@@ -526,5 +953,14 @@
         PipelineService.OnChange -= HandleStateChanged;
         PipelineService.OnOutputLine -= HandleOutputLine;
         LoopService.OnChange -= HandleStateChanged;
+    }
+
+    private class TemplateFormModel
+    {
+        public string Name { get; set; } = "";
+        public string IssueProviderId { get; set; } = "";
+        public string RepoProviderId { get; set; } = "";
+        public string BrainProviderId { get; set; } = "";
+        public string PipelineProviderId { get; set; } = "";
     }
 }

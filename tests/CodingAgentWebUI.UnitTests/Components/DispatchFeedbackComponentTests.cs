@@ -11,8 +11,8 @@ using Microsoft.JSInterop;
 namespace CodingAgentWebUI.UnitTests.Components;
 
 /// <summary>
-/// bUnit tests for dispatch visual feedback on the AgentCoding page.
-/// Covers: button state during dispatch, success message, dispatched indicator on issue cards.
+/// bUnit tests for dispatch visual feedback on the AgentCoding page (Template Table UI).
+/// Covers: template table rendering, loop start/stop, drawer open/close.
 /// </summary>
 public class DispatchFeedbackComponentTests : BunitContext
 {
@@ -32,6 +32,7 @@ public class DispatchFeedbackComponentTests : BunitContext
 
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockValidator = new Mock<IQualityGateValidator>();
+
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistory()).Returns(Array.Empty<PipelineRunSummary>());
 
@@ -80,31 +81,38 @@ public class DispatchFeedbackComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() });
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                PipelineJobTemplates = new List<PipelineJobTemplate>
+                {
+                    new() { Id = "t-1", Name = "DotNet Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true },
+                    new() { Id = "t-2", Name = "Python Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = false }
+                }
+            });
         _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentProfile>());
         _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+        _mockStore.Setup(s => s.SavePipelineConfigAsync(It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = new List<IssueSummary>
                 {
-                    new() { Identifier = "42", Title = "Test Issue", Labels = Array.Empty<string>() },
+                    new() { Identifier = "42", Title = "Test Issue", Labels = new[] { "agent:next" } },
                     new() { Identifier = "43", Title = "Bug Fix", Labels = new[] { "bug" } }
                 },
-                Page = 1, PageSize = 25, HasMore = false
-            });
-
-        _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string id, CancellationToken _) => new IssueDetail
-            {
-                Identifier = id, Title = "Test Issue", Description = "", Labels = Array.Empty<string>()
+                Page = 1,
+                PageSize = 25,
+                HasMore = false
             });
 
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(_mockIssueProvider.Object);
+
         _mockRepoProvider.Setup(r => r.GetAgentPullRequestsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<LinkedPullRequest>());
         _mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
@@ -112,155 +120,108 @@ public class DispatchFeedbackComponentTests : BunitContext
     }
 
     [Fact]
-    public async Task StartButton_ShowsDispatchingState_WhileInFlight()
+    public void TemplateTable_ShowsMultipleTemplates()
     {
-        var tcs = new TaskCompletionSource<bool>();
-        _mockJobDispatcher.Setup(d => d.TryDispatchAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(tcs.Task);
-
         var component = Render<AgentCoding>();
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
 
-        // Select an issue
-        var issueCard = component.Find(".issue-card");
-        await component.InvokeAsync(() => issueCard.Click());
-        component.WaitForAssertion(() => Assert.Contains("Selected Issue", component.Markup), timeout: TimeSpan.FromSeconds(5));
-
-        // Click Start Pipeline
-        var startBtn = component.Find(".pipeline-start-btn");
-        await component.InvokeAsync(() => startBtn.Click());
-
-        // Button should show dispatching state
-        component.WaitForAssertion(() => Assert.Contains("Dispatching", component.Markup), timeout: TimeSpan.FromSeconds(5));
-        var btn = component.Find(".pipeline-start-btn");
-        Assert.True(btn.HasAttribute("disabled"));
-
-        // Complete the dispatch
-        tcs.SetResult(true);
+        Assert.Contains("DotNet Repo", component.Markup);
+        Assert.Contains("Python Repo", component.Markup);
     }
 
     [Fact]
-    public async Task StartButton_ShowsDispatchedState_AfterSuccessfulDispatch()
+    public void TemplateTable_ShowsEnabledAndDisabledTemplates()
     {
-        _mockJobDispatcher.Setup(d => d.TryDispatchAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-
         var component = Render<AgentCoding>();
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
 
-        var issueCard = component.Find(".issue-card");
-        await component.InvokeAsync(() => issueCard.Click());
-        component.WaitForAssertion(() => Assert.Contains("Selected Issue", component.Markup), timeout: TimeSpan.FromSeconds(5));
-
-        var startBtn = component.Find(".pipeline-start-btn");
-        await component.InvokeAsync(() => startBtn.Click());
-
-        // Button should show dispatched state
-        component.WaitForAssertion(() => Assert.Contains("Dispatched", component.Markup), timeout: TimeSpan.FromSeconds(5));
-        var btn = component.Find(".pipeline-start-btn");
-        Assert.True(btn.HasAttribute("disabled"));
+        // Both templates should be visible in the table
+        Assert.Contains("DotNet Repo", component.Markup);
+        Assert.Contains("Python Repo", component.Markup);
+        // Toggle switches should be present
+        var toggles = component.FindAll("input[type='checkbox']");
+        Assert.True(toggles.Count >= 2);
     }
 
     [Fact]
-    public async Task SuccessMessage_AppearsAfterDispatch()
+    public void ManualDispatch_DropdownShowsOnlyEnabledTemplates()
     {
-        _mockJobDispatcher.Setup(d => d.TryDispatchAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-
         var component = Render<AgentCoding>();
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
 
-        var issueCard = component.Find(".issue-card");
-        await component.InvokeAsync(() => issueCard.Click());
-        component.WaitForAssertion(() => Assert.Contains("Selected Issue", component.Markup), timeout: TimeSpan.FromSeconds(5));
-
-        var startBtn = component.Find(".pipeline-start-btn");
-        await component.InvokeAsync(() => startBtn.Click());
-
-        component.WaitForAssertion(() => Assert.Contains("status-success", component.Markup), timeout: TimeSpan.FromSeconds(5));
-        Assert.Contains("Dispatched #42", component.Markup);
+        // The manual dispatch dropdown should only show enabled templates
+        var selects = component.FindAll("select");
+        var dispatchSelect = selects.Last(); // The manual dispatch dropdown is the last select
+        Assert.Contains("DotNet Repo", dispatchSelect.InnerHtml);
+        // Python Repo is disabled, should not appear in manual dispatch dropdown
+        Assert.DoesNotContain("Python Repo", dispatchSelect.InnerHtml);
     }
 
     [Fact]
-    public async Task FailedDispatch_ShowsErrorMessage_NotSuccessMessage()
+    public void BrowseIssues_DisabledWhenNoTemplateSelected()
     {
-        _mockJobDispatcher.Setup(d => d.TryDispatchAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
-
         var component = Render<AgentCoding>();
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
 
-        var issueCard = component.Find(".issue-card");
-        await component.InvokeAsync(() => issueCard.Click());
-        component.WaitForAssertion(() => Assert.Contains("Selected Issue", component.Markup), timeout: TimeSpan.FromSeconds(5));
-
-        var startBtn = component.Find(".pipeline-start-btn");
-        await component.InvokeAsync(() => startBtn.Click());
-
-        component.WaitForAssertion(() => Assert.Contains("Could not dispatch", component.Markup), timeout: TimeSpan.FromSeconds(5));
-        Assert.DoesNotContain("status-success", component.Markup);
+        var browseBtn = component.FindAll("button").First(b => b.TextContent.Contains("Browse Issues"));
+        Assert.True(browseBtn.HasAttribute("disabled"));
     }
 
     [Fact]
-    public void IssueCard_ShowsDispatchedBadge_WhenProcessingOrQueued()
+    public async Task BrowseIssues_OpensDrawer_WhenTemplateSelected()
     {
-        _mockJobDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued("42")).Returns(true);
-        _mockJobDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued("43")).Returns(false);
-
         var component = Render<AgentCoding>();
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
 
-        // Issue 42 should have the dispatched class and badge
-        var cards = component.FindAll(".issue-card");
-        var card42 = cards.First(c => c.InnerHtml.Contains("#42"));
-        Assert.Contains("issue-dispatched", card42.GetAttribute("class"));
-        Assert.Contains("🔄", card42.InnerHtml);
+        // Select a template in the manual dispatch dropdown
+        var selects = component.FindAll("select");
+        var dispatchSelect = selects.Last();
+        await component.InvokeAsync(() => dispatchSelect.Change("t-1"));
 
-        // Issue 43 should not
-        var card43 = cards.First(c => c.InnerHtml.Contains("#43"));
-        Assert.DoesNotContain("issue-dispatched", card43.GetAttribute("class") ?? "");
-        Assert.DoesNotContain("🔄", card43.InnerHtml);
+        // Click Browse Issues
+        var browseBtn = component.FindAll("button").First(b => b.TextContent.Contains("Browse Issues"));
+        await component.InvokeAsync(() => browseBtn.Click());
+
+        // Drawer should open
+        component.WaitForAssertion(() => Assert.Contains("dispatch-drawer open", component.Markup),
+            timeout: TimeSpan.FromSeconds(5));
+        Assert.Contains("DotNet Repo", component.Markup);
     }
 
     [Fact]
-    public async Task DispatchedState_ResetsWhenSelectingDifferentIssue()
+    public async Task Drawer_ShowsIssueList()
     {
-        _mockJobDispatcher.Setup(d => d.TryDispatchAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-
         var component = Render<AgentCoding>();
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
 
-        // Select issue 42 and dispatch
-        var issueCard42 = component.FindAll(".issue-card").First(c => c.InnerHtml.Contains("#42"));
-        await component.InvokeAsync(() => issueCard42.Click());
-        component.WaitForAssertion(() => Assert.Contains("Selected Issue", component.Markup), timeout: TimeSpan.FromSeconds(5));
+        var selects = component.FindAll("select");
+        var dispatchSelect = selects.Last();
+        await component.InvokeAsync(() => dispatchSelect.Change("t-1"));
 
-        var startBtn = component.Find(".pipeline-start-btn");
-        await component.InvokeAsync(() => startBtn.Click());
-        component.WaitForAssertion(() => Assert.Contains("✅ Dispatched", component.Markup), timeout: TimeSpan.FromSeconds(5));
+        var browseBtn = component.FindAll("button").First(b => b.TextContent.Contains("Browse Issues"));
+        await component.InvokeAsync(() => browseBtn.Click());
 
-        // Select a different issue
-        var issueCard43 = component.FindAll(".issue-card").First(c => c.InnerHtml.Contains("#43"));
-        await component.InvokeAsync(() => issueCard43.Click());
+        // Issues should be loaded and displayed
+        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup),
+            timeout: TimeSpan.FromSeconds(5));
+        Assert.Contains("Test Issue", component.Markup);
+        Assert.Contains("#43", component.Markup);
+    }
 
-        // Button should revert to normal text
-        component.WaitForAssertion(() => Assert.Contains("Start Pipeline on Issue", component.Markup), timeout: TimeSpan.FromSeconds(5));
-        Assert.DoesNotContain("✅ Dispatched", component.Markup);
+    [Fact]
+    public async Task Drawer_CloseButton_ClosesDrawer()
+    {
+        var component = Render<AgentCoding>();
+
+        var selects = component.FindAll("select");
+        var dispatchSelect = selects.Last();
+        await component.InvokeAsync(() => dispatchSelect.Change("t-1"));
+
+        var browseBtn = component.FindAll("button").First(b => b.TextContent.Contains("Browse Issues"));
+        await component.InvokeAsync(() => browseBtn.Click());
+
+        component.WaitForAssertion(() => Assert.Contains("dispatch-drawer open", component.Markup),
+            timeout: TimeSpan.FromSeconds(5));
+
+        // Click close button
+        var closeBtn = component.Find(".agent-detail-close");
+        await component.InvokeAsync(() => closeBtn.Click());
+
+        // Drawer should close
+        Assert.DoesNotContain("dispatch-drawer open", component.Markup);
     }
 }

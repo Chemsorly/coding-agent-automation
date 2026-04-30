@@ -524,25 +524,32 @@ public class SecurityScanGateTests
     /// <summary>
     /// Subclass that overrides RunProcessAsync to return controlled output,
     /// enabling unit testing of gate methods without running real processes.
+    /// Returns success (exit code 0) for compilation and test commands,
+    /// and the configured exit code/output only for the security scan command.
     /// </summary>
     private sealed class TestableQualityGateValidator : QualityGateValidator
     {
-        private readonly int _exitCode;
-        private readonly string _stdout;
-        private readonly string _stderr;
+        private readonly int _securityScanExitCode;
+        private readonly string _securityScanStdout;
+        private readonly string _securityScanStderr;
 
         public TestableQualityGateValidator(int exitCode, string stdout, string stderr)
             : base(Serilog.Log.Logger)
         {
-            _exitCode = exitCode;
-            _stdout = stdout;
-            _stderr = stderr;
+            _securityScanExitCode = exitCode;
+            _securityScanStdout = stdout;
+            _securityScanStderr = stderr;
         }
 
         private protected override Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
             string fileName, string arguments, string workingDirectory, CancellationToken ct)
         {
-            return Task.FromResult((_exitCode, _stdout, _stderr));
+            // Security scan uses "dotnet list ... --vulnerable"
+            if (arguments.Contains("--vulnerable"))
+                return Task.FromResult((_securityScanExitCode, _securityScanStdout, _securityScanStderr));
+
+            // Compilation and test commands succeed with empty output
+            return Task.FromResult((0, "Build succeeded.\n    0 Error(s)\n    0 Warning(s)", ""));
         }
     }
 }

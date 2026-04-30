@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.Extensions.Hosting;
@@ -25,14 +26,16 @@ public sealed class PipelineLoopService : BackgroundService
     private CancellationTokenSource? _loopCts;
     private TaskCompletionSource? _resumeSignal;
 
-    // Captured provider IDs at start time
-    private string _issueProviderId = "";
-    private string _repoProviderId = "";
-    private string? _brainProviderId;
-    private string? _pipelineProviderId;
+    // ── Multi-template fields ───────────────────────────────────────────
 
-    // Polling provider (separate from per-run providers)
-    private IIssueProvider? _pollingIssueProvider;
+    /// <summary>Provider cache keyed by IssueProviderId. Reused across cycles.</summary>
+    private readonly Dictionary<string, IIssueProvider> _providerCache = new();
+
+    /// <summary>Per-template runtime status. Immutable records swapped atomically.</summary>
+    private readonly ConcurrentDictionary<string, ConfigStatusSnapshot> _templateStatuses = new();
+
+    /// <summary>Validation errors from the last StartLoop() call.</summary>
+    private List<string> _validationErrors = new();
 
     /// <summary>Fired when loop state changes, for UI binding.</summary>
     public event Action? OnChange;
@@ -56,7 +59,7 @@ public sealed class PipelineLoopService : BackgroundService
     public int QueueCount { get; private set; }
 
     /// <summary>Number of consecutive poll failures since last successful poll.</summary>
-    // TODO: [RES-03] ConsecutivePollFailures, IsCircuitBroken, and LastPollError are written in RunLoopAsync without _lock — consider wrapping writes under lock for consistency with StartLoop/StopLoop/ResumeLoop (review finding .NET #1)
+    // TODO: [RES-03] ConsecutivePollFailures, IsCircuitBroken, and LastPollError are written in RunMultiTemplateLoopAsync without _lock — consider wrapping writes under lock for consistency with StartLoop/StopLoop/ResumeLoop (review finding .NET #1)
     public int ConsecutivePollFailures { get; private set; }
 
     /// <summary>Whether the circuit breaker has tripped due to consecutive poll failures.</summary>
@@ -64,6 +67,20 @@ public sealed class PipelineLoopService : BackgroundService
 
     /// <summary>Last poll error message, or null if last poll succeeded.</summary>
     public string? LastPollError { get; private set; }
+
+    // ── Multi-template public API ───────────────────────────────────────
+
+    /// <summary>Per-template status for UI binding (immutable snapshots, atomically swapped).</summary>
+    public IReadOnlyDictionary<string, ConfigStatusSnapshot> TemplateStatuses => _templateStatuses;
+
+    /// <summary>Index of the template currently being polled in this cycle (0-based).</summary>
+    public int CurrentCycleTemplateIndex { get; private set; }
+
+    /// <summary>Total number of enabled templates in the current cycle.</summary>
+    public int CurrentCycleTemplateCount { get; private set; }
+
+    /// <summary>Validation errors from the last failed StartLoop() call.</summary>
+    public IReadOnlyList<string> ValidationErrors => _validationErrors;
 
     public PipelineLoopService(
         PipelineOrchestrationService orchestration,
@@ -82,48 +99,6 @@ public sealed class PipelineLoopService : BackgroundService
         _configStore = configStore;
         _logger = logger;
         _jobDispatcher = jobDispatcher;
-    }
-
-    /// <summary>
-    /// Activates the loop with the given provider IDs. Rejects if already active or a manual run is in progress.
-    /// </summary>
-    public bool StartLoop(string issueProviderId, string repoProviderId,
-        string? brainProviderId, string? pipelineProviderId)
-    {
-        // TODO: [UX-12b] Add ArgumentNullException.ThrowIfNull for issueProviderId, repoProviderId (review finding #14)
-        lock (_lock)
-        {
-            if (IsLoopActive)
-                return false;
-            if (_orchestration.IsRunning)
-                return false;
-
-            _issueProviderId = issueProviderId;
-            _repoProviderId = repoProviderId;
-            _brainProviderId = brainProviderId;
-            _pipelineProviderId = pipelineProviderId;
-
-            _stopRequested = false;
-            ProcessedCount = 0;
-            FailedCount = 0;
-            QueueCount = 0;
-            ConsecutivePollFailures = 0;
-            IsCircuitBroken = false;
-            LastPollError = null;
-            CurrentIssueIdentifier = null;
-            IsLoopActive = true;
-            StatusMessage = "🔄 Loop starting…";
-
-            _loopCts = new CancellationTokenSource();
-
-            // Signal the background loop to wake up
-            _activationSignal.TrySetResult();
-
-            NotifyChange();
-            _logger.Information("Pipeline loop started with issue={IssueProvider}, repo={RepoProvider}",
-                issueProviderId, repoProviderId);
-            return true;
-        }
     }
 
     /// <summary>
@@ -164,6 +139,121 @@ public sealed class PipelineLoopService : BackgroundService
         }
     }
 
+    /// <summary>
+    /// Activates the multi-template round-robin loop using PipelineJobTemplates from config.
+    /// Returns false if no enabled templates exist or validation fails.
+    /// </summary>
+    public bool StartLoop()
+    {
+        lock (_lock)
+        {
+            if (IsLoopActive)
+                return false;
+            if (_orchestration.IsRunning)
+                return false;
+
+            // Load config synchronously for validation (we're in a lock)
+            var config = _configStore.LoadPipelineConfigAsync(CancellationToken.None).GetAwaiter().GetResult();
+            var templates = config.PipelineJobTemplates;
+            var enabledTemplates = templates.Where(t => t.Enabled).ToList();
+
+            _validationErrors = new List<string>();
+
+            if (enabledTemplates.Count == 0)
+            {
+                _validationErrors.Add("No enabled pipeline job templates configured.");
+                return false;
+            }
+
+            // Validate all enabled templates reference existing provider IDs
+            var issueProviders = _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None).GetAwaiter().GetResult();
+            var repoProviders = _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None).GetAwaiter().GetResult();
+            var issueProviderIds = issueProviders.Select(p => p.Id).ToHashSet();
+            var repoProviderIds = repoProviders.Select(p => p.Id).ToHashSet();
+
+            foreach (var template in enabledTemplates)
+            {
+                if (!issueProviderIds.Contains(template.IssueProviderId))
+                    _validationErrors.Add($"Template '{template.Name}' references non-existent issue provider '{template.IssueProviderId}'.");
+                if (!repoProviderIds.Contains(template.RepoProviderId))
+                    _validationErrors.Add($"Template '{template.Name}' references non-existent repo provider '{template.RepoProviderId}'.");
+            }
+
+            if (_validationErrors.Count > 0)
+                return false;
+
+            _stopRequested = false;
+            ProcessedCount = 0;
+            FailedCount = 0;
+            QueueCount = 0;
+            ConsecutivePollFailures = 0;
+            IsCircuitBroken = false;
+            LastPollError = null;
+            CurrentIssueIdentifier = null;
+            CurrentCycleTemplateIndex = 0;
+            CurrentCycleTemplateCount = enabledTemplates.Count;
+            IsLoopActive = true;
+            StatusMessage = "🔄 Loop starting…";
+
+            _loopCts = new CancellationTokenSource();
+            _activationSignal.TrySetResult();
+
+            NotifyChange();
+            _logger.Information("Pipeline loop started in multi-template mode with {Count} enabled templates",
+                enabledTemplates.Count);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Reconciles the provider cache with the needed set of IssueProviderIds.
+    /// Evicts stale entries (disposes before removing), creates missing entries.
+    /// </summary>
+    private async Task ReconcileProviderCacheAsync(
+        HashSet<string> neededIssueProviderIds,
+        IReadOnlyList<ProviderConfig> issueProviderConfigs,
+        CancellationToken ct)
+    {
+        // Evict stale entries
+        var staleKeys = _providerCache.Keys.Where(k => !neededIssueProviderIds.Contains(k)).ToList();
+        foreach (var key in staleKeys)
+        {
+            if (_providerCache.TryGetValue(key, out var provider))
+            {
+                try { await provider.DisposeAsync(); }
+                catch (Exception ex) { _logger.Warning(ex, "Failed to dispose cached provider {ProviderId}", key); }
+                _providerCache.Remove(key);
+            }
+        }
+
+        // Create missing entries
+        foreach (var neededId in neededIssueProviderIds)
+        {
+            if (!_providerCache.ContainsKey(neededId))
+            {
+                var config = issueProviderConfigs.FirstOrDefault(c => c.Id == neededId);
+                if (config is not null)
+                {
+                    _providerCache[neededId] = _providerFactory.CreateIssueProvider(config);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Evicts a provider from the cache due to an auth error. Disposes and removes it
+    /// so the next cycle recreates a fresh instance.
+    /// </summary>
+    private async Task EvictProviderOnAuthErrorAsync(string issueProviderId)
+    {
+        if (_providerCache.TryGetValue(issueProviderId, out var provider))
+        {
+            try { await provider.DisposeAsync(); }
+            catch (Exception ex) { _logger.Warning(ex, "Failed to dispose provider {ProviderId} after auth error", issueProviderId); }
+            _providerCache.Remove(issueProviderId);
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -173,7 +263,7 @@ public sealed class PipelineLoopService : BackgroundService
 
             try
             {
-                await RunLoopAsync(stoppingToken);
+                await RunMultiTemplateLoopAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -190,207 +280,260 @@ public sealed class PipelineLoopService : BackgroundService
         }
     }
 
-    private async Task RunLoopAsync(CancellationToken stoppingToken)
+    /// <summary>
+    /// Multi-template round-robin loop. Reads config snapshot at cycle start, reconciles
+    /// provider cache, polls each enabled template, then dispatches issues fairly.
+    /// </summary>
+    private async Task RunMultiTemplateLoopAsync(CancellationToken stoppingToken)
     {
-        // Create polling issue provider
-        var issueProviderConfig = (await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, stoppingToken))
-            .FirstOrDefault(c => c.Id == _issueProviderId)
-            ?? throw new InvalidOperationException($"Issue provider '{_issueProviderId}' not found.");
-
-        _pollingIssueProvider = _providerFactory.CreateIssueProvider(issueProviderConfig);
-
-        // TODO: [UX-12b] Config is read once at loop start; changes via Settings page won't take effect until loop restart (review finding #5)
-        var config = await _configStore.LoadPipelineConfigAsync(stoppingToken);
-        var pollInterval = config.ClosedLoopPollInterval;
-        var maxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
-        var maxConsecutiveFailures = config.ClosedLoopMaxConsecutivePollFailures;
-        var maxBackoff = config.ClosedLoopMaxBackoffInterval;
-        var maxPagesToFetch = config.ClosedLoopMaxPagesToFetch;
-
-        // ct is linked to both stoppingToken and _loopCts — used for delays and polling.
-        // StopLoop cancels _loopCts to break out of delays promptly.
-        // Pipeline runs receive stoppingToken only — StopLoop does not cancel active runs (review finding #7).
-        // TODO: [RES-03] _loopCts is read here without _lock — could race with CleanupAsync disposing it; capture token under lock (review finding .NET #2)
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, _loopCts?.Token ?? CancellationToken.None);
         var ct = linkedCts.Token;
 
         while (!_stopRequested && !ct.IsCancellationRequested)
         {
-            int runsThisCycle = 0;
+            // Step 1: Snapshot — read config at cycle start (immutable for cycle duration)
+            var config = await _configStore.LoadPipelineConfigAsync(ct);
+            var pollInterval = config.ClosedLoopPollInterval;
+            var maxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
+            var maxConsecutiveFailures = config.ClosedLoopMaxConsecutivePollFailures;
+            var maxPagesToFetch = config.ClosedLoopMaxPagesToFetch;
 
-            // Poll for agent:next issues
-            List<IssueSummary> candidates;
-            try
+            var enabledTemplates = config.PipelineJobTemplates.Where(t => t.Enabled).ToList();
+
+            // Filter out rate-limited templates
+            var now = DateTimeOffset.UtcNow;
+            var pollableTemplates = enabledTemplates.Where(t =>
             {
-                candidates = await FetchAgentNextIssuesAsync(maxPagesToFetch, ct);
-                // Success — reset backoff state
-                ConsecutivePollFailures = 0;
-                LastPollError = null;
-            }
-            catch (OperationCanceledException)
+                if (_templateStatuses.TryGetValue(t.Id, out var status) && status.RateLimitResetAt.HasValue)
+                    return now >= status.RateLimitResetAt.Value;
+                return true;
+            }).ToList();
+
+            CurrentCycleTemplateCount = enabledTemplates.Count;
+
+            // Step 2: Provider cache reconciliation
+            var neededIds = enabledTemplates.Select(t => t.IssueProviderId).ToHashSet();
+            var issueProviderConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
+            await ReconcileProviderCacheAsync(neededIds, issueProviderConfigs, ct);
+
+            // Step 3: Poll once per pollable template
+            var issueQueues = new Dictionary<string, List<IssueSummary>>();
+            for (int i = 0; i < pollableTemplates.Count; i++)
             {
-                break;
-            }
-            catch (RateLimitExceededException ex)
-            {
-                // Rate limits are expected — wait until reset, don't count as failure
-                var waitUntil = ex.ResetAt - DateTimeOffset.UtcNow;
-                if (waitUntil < TimeSpan.Zero) waitUntil = pollInterval;
-                _logger.Warning("Rate limit exceeded, waiting until {ResetAt} ({WaitDuration})",
-                    ex.ResetAt, waitUntil);
-                StatusMessage = $"🔄 Loop idle — rate limited. Resuming at {ex.ResetAt:HH:mm:ss} UTC.";
+                if (_stopRequested || ct.IsCancellationRequested) break;
+
+                var template = pollableTemplates[i];
+                CurrentCycleTemplateIndex = i;
+                StatusMessage = $"🔄 Polling template '{template.Name}' ({i + 1} of {pollableTemplates.Count})";
+
+                // Mark as currently polling
+                _templateStatuses[template.Id] = (_templateStatuses.TryGetValue(template.Id, out var prev) ? prev : ConfigStatusSnapshot.Empty)
+                    with { IsCurrentlyPolling = true };
                 NotifyChange();
-                await DelayOrStop(waitUntil, ct);
-                continue;
-            }
-            catch (Exception ex)
-            {
-                ConsecutivePollFailures++;
-                LastPollError = ex.Message;
 
-                // Circuit breaker — pause after N consecutive failures
-                if (ConsecutivePollFailures >= maxConsecutiveFailures)
+                try
                 {
-                    IsCircuitBroken = true;
-                    StatusMessage = $"⚠️ Loop paused — polling failed {ConsecutivePollFailures} times consecutively. Last error: {ex.Message}";
-                    NotifyChange();
-                    _logger.Warning("Loop paused after {FailureCount} consecutive poll failures. Last error: {ErrorMessage}",
-                        ConsecutivePollFailures, ex.Message);
-
-                    // Wait for ResumeLoop or StopLoop
-                    _resumeSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    try
+                    if (!_providerCache.TryGetValue(template.IssueProviderId, out var provider))
                     {
-                        await _resumeSignal.Task.WaitAsync(ct);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-
-                    if (_stopRequested) break;
-                    continue;
-                }
-
-                // Exponential backoff: pollInterval × 2^(failures-1), capped at maxBackoff
-                var shift = Math.Min(ConsecutivePollFailures - 1, 30);
-                var backoffTicks = pollInterval.Ticks * (1L << shift);
-                var backoffInterval = backoffTicks > maxBackoff.Ticks || backoffTicks <= 0
-                    ? maxBackoff : TimeSpan.FromTicks(backoffTicks);
-
-                _logger.Warning(ex, "Poll failure #{FailureCount}, backing off to {NextRetryIn}. ErrorType={ErrorType}, ErrorMessage={ErrorMessage}",
-                    ConsecutivePollFailures, backoffInterval, ex.GetType().Name, ex.Message);
-                StatusMessage = $"🔄 Loop idle — poll failure #{ConsecutivePollFailures}, retrying in {(int)backoffInterval.TotalSeconds}s.";
-                NotifyChange();
-                await DelayOrStop(backoffInterval, ct);
-                continue;
-            }
-
-            if (candidates.Count == 0)
-            {
-                StatusMessage = "🔄 Loop idle — no `agent:next` issues. Polling every " + (int)pollInterval.TotalSeconds + "s.";
-                QueueCount = 0;
-                NotifyChange();
-                await DelayOrStop(pollInterval, ct);
-                continue;
-            }
-
-            // Check if all candidates have agent:error or agent:needs-refinement
-            if (candidates.All(c => c.Labels.Contains(AgentLabels.Error) || c.Labels.Contains(AgentLabels.NeedsRefinement)))
-            {
-                StatusMessage = "🔄 Loop idle — all `agent:next` issues have errors or need refinement. Polling every " + (int)pollInterval.TotalSeconds + "s.";
-                QueueCount = candidates.Count;
-                NotifyChange();
-                await DelayOrStop(pollInterval, ct);
-                continue;
-            }
-
-            // Process issues FIFO (oldest first)
-            foreach (var issue in candidates)
-            {
-                if (_stopRequested || stoppingToken.IsCancellationRequested) break;
-                if (maxRunsPerCycle > 0 && runsThisCycle >= maxRunsPerCycle) break;
-
-                // Skip issues with agent:error or agent:needs-refinement
-                if (issue.Labels.Contains(AgentLabels.Error) || issue.Labels.Contains(AgentLabels.NeedsRefinement))
-                {
-                    _logger.Information("Pipeline loop skipping issue #{Issue} (has error/needs-refinement label)", issue.Identifier);
-                    continue;
-                }
-
-                // Skip issues already being processed (local or agent) or queued
-                if (_orchestration.IsIssueBeingProcessed(issue.Identifier))
-                {
-                    _logger.Information("Pipeline loop skipping issue #{Issue} (already being processed)", issue.Identifier);
-                    continue;
-                }
-
-                if (_jobDispatcher?.IsIssueBeingProcessedOrQueued(issue.Identifier) == true)
-                {
-                    _logger.Information("Pipeline loop skipping issue #{Issue} (already queued or dispatched)", issue.Identifier);
-                    continue;
-                }
-
-                // Dispatch mode: send to agents via JobDispatcher
-                if (_jobDispatcher != null)
-                {
-                    CurrentIssueIdentifier = issue.Identifier;
-                    QueueCount = candidates.Count - runsThisCycle;
-                    StatusMessage = $"🔄 Loop active — dispatching issue #{issue.Identifier} ({runsThisCycle + 1} of {candidates.Count} in queue)";
-                    NotifyChange();
-
-                    try
-                    {
-                        var dispatched = await _jobDispatcher.TryDispatchAsync(
-                            issue.Identifier,
-                            _issueProviderId, _repoProviderId,
-                            _brainProviderId, _pipelineProviderId,
-                            initiatedBy: "loop",
-                            stoppingToken);
-
-                        if (dispatched)
+                        // Provider not in cache (config issue) — skip
+                        _templateStatuses[template.Id] = new ConfigStatusSnapshot
                         {
+                            LastPollTime = DateTimeOffset.UtcNow,
+                            LastError = $"Issue provider '{template.IssueProviderId}' not found in cache.",
+                            IsCurrentlyPolling = false
+                        };
+                        issueQueues[template.Id] = new List<IssueSummary>();
+                        continue;
+                    }
+
+                    var issues = await FetchAgentNextIssuesForProviderAsync(provider, maxPagesToFetch, ct);
+                    issueQueues[template.Id] = issues;
+
+                    // Success — update status
+                    _templateStatuses[template.Id] = new ConfigStatusSnapshot
+                    {
+                        LastPollTime = DateTimeOffset.UtcNow,
+                        LastPollIssueCount = issues.Count,
+                        LastError = null,
+                        ConsecutiveFailures = 0,
+                        RateLimitResetAt = null,
+                        IsCurrentlyPolling = false
+                    };
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (RateLimitExceededException ex)
+                {
+                    _logger.Warning("Template '{TemplateName}' rate limited until {ResetAt}", template.Name, ex.ResetAt);
+                    var prevStatus = _templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
+                    _templateStatuses[template.Id] = prevStatus with
+                    {
+                        LastPollTime = DateTimeOffset.UtcNow,
+                        RateLimitResetAt = ex.ResetAt,
+                        IsCurrentlyPolling = false
+                    };
+                    issueQueues[template.Id] = new List<IssueSummary>();
+                }
+                catch (Exception ex) when (IsAuthError(ex))
+                {
+                    _logger.Warning(ex, "Template '{TemplateName}' auth error, evicting cached provider", template.Name);
+                    await EvictProviderOnAuthErrorAsync(template.IssueProviderId);
+                    var prevStatus = _templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
+                    _templateStatuses[template.Id] = prevStatus with
+                    {
+                        LastPollTime = DateTimeOffset.UtcNow,
+                        LastError = ex.Message,
+                        ConsecutiveFailures = prevStatus.ConsecutiveFailures + 1,
+                        IsCurrentlyPolling = false
+                    };
+                    issueQueues[template.Id] = new List<IssueSummary>();
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Template '{TemplateName}' poll failed: {Error}", template.Name, ex.Message);
+                    var prevStatus = _templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
+                    _templateStatuses[template.Id] = prevStatus with
+                    {
+                        LastPollTime = DateTimeOffset.UtcNow,
+                        LastError = ex.Message,
+                        ConsecutiveFailures = prevStatus.ConsecutiveFailures + 1,
+                        IsCurrentlyPolling = false
+                    };
+                    issueQueues[template.Id] = new List<IssueSummary>();
+                }
+            }
+
+            if (_stopRequested || ct.IsCancellationRequested) break;
+
+            // Step 4: Circuit breaker — trip only when ALL enabled templates are failing
+            var allFailing = enabledTemplates.Count > 0 && enabledTemplates.All(t =>
+            {
+                if (_templateStatuses.TryGetValue(t.Id, out var s))
+                    return s.ConsecutiveFailures >= maxConsecutiveFailures;
+                return false;
+            });
+
+            if (allFailing)
+            {
+                IsCircuitBroken = true;
+                StatusMessage = $"⚠️ Loop paused — all {enabledTemplates.Count} templates failing.";
+                NotifyChange();
+                _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures",
+                    enabledTemplates.Count, maxConsecutiveFailures);
+
+                _resumeSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                try { await _resumeSignal.Task.WaitAsync(ct); }
+                catch (OperationCanceledException) { break; }
+                if (_stopRequested) break;
+                continue;
+            }
+
+            // Step 5: Fair dispatch — round-robin across templates
+            if (_jobDispatcher != null)
+            {
+                int remaining = maxRunsPerCycle > 0 ? maxRunsPerCycle : int.MaxValue;
+                while (remaining > 0)
+                {
+                    if (_stopRequested || ct.IsCancellationRequested) break;
+
+                    int dispatchedThisPass = 0;
+                    foreach (var template in pollableTemplates)
+                    {
+                        if (remaining <= 0) break;
+                        if (!issueQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
+                            continue;
+
+                        // Dequeue next valid issue
+                        IssueSummary? issue = null;
+                        while (queue.Count > 0)
+                        {
+                            var candidate = queue[0];
+                            queue.RemoveAt(0);
+
+                            // Skip errored/needs-refinement
+                            if (candidate.Labels.Contains(AgentLabels.Error) || candidate.Labels.Contains(AgentLabels.NeedsRefinement))
+                                continue;
+                            // Skip already processing
+                            if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
+                                continue;
+                            if (_jobDispatcher.IsIssueBeingProcessedOrQueued(candidate.Identifier))
+                                continue;
+
+                            issue = candidate;
+                            break;
+                        }
+
+                        if (issue is null) continue;
+
+                        CurrentIssueIdentifier = issue.Identifier;
+                        StatusMessage = $"🔄 Dispatching #{issue.Identifier} from '{template.Name}'";
+                        NotifyChange();
+
+                        try
+                        {
+                            var dispatched = await _jobDispatcher.TryDispatchAsync(
+                                issue.Identifier,
+                                template.IssueProviderId, template.RepoProviderId,
+                                template.BrainProviderId, template.PipelineProviderId,
+                                initiatedBy: "loop",
+                                stoppingToken);
+
+                            if (dispatched)
+                            {
+                                ProcessedCount++;
+                                remaining--;
+                                dispatchedThisPass++;
+                                _logger.Information("Dispatched issue #{Issue} from template '{Template}'",
+                                    issue.Identifier, template.Name);
+                            }
+                        }
+                        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                        {
+                            break;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.Error(ex, "Dispatch failed for issue #{Issue} from template '{Template}'",
+                                issue.Identifier, template.Name);
+                            FailedCount++;
                             ProcessedCount++;
-                            runsThisCycle++;
-                            _logger.Information("Pipeline loop dispatched issue #{Issue}: {Title}", issue.Identifier, issue.Title);
+                            remaining--;
+                            dispatchedThisPass++;
                         }
-                        else
-                        {
-                            _logger.Information("Pipeline loop could not dispatch issue #{Issue} (already processing or no agents)", issue.Identifier);
-                        }
-                    }
-                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                    {
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Error(ex, "Pipeline loop dispatch failed for issue #{Issue}", issue.Identifier);
-                        FailedCount++;
-                        ProcessedCount++;
-                        runsThisCycle++;
                     }
 
-                    continue;
+                    if (dispatchedThisPass == 0) break; // All queues empty
                 }
-
-                // No agents available and no dispatcher — skip this issue
-                _logger.Warning("Pipeline loop skipping issue #{Issue} — no agents available for dispatch", issue.Identifier);
-                continue;
             }
 
             CurrentIssueIdentifier = null;
+            if (_stopRequested || ct.IsCancellationRequested) break;
 
-            if (_stopRequested || stoppingToken.IsCancellationRequested) break;
-
-            // Cycle complete — wait before next poll
-            StatusMessage = "🔄 Loop idle — cycle complete. Polling every " + (int)pollInterval.TotalSeconds + "s.";
+            // Step 6: Wait before next cycle
+            StatusMessage = $"🔄 Cycle complete. Polling {enabledTemplates.Count} templates every {(int)pollInterval.TotalSeconds}s.";
             NotifyChange();
             await DelayOrStop(pollInterval, ct);
         }
     }
 
-    private async Task<List<IssueSummary>> FetchAgentNextIssuesAsync(int maxPages, CancellationToken ct)
+    /// <summary>Determines if an exception is an auth-related error (401/403/credential).</summary>
+    private static bool IsAuthError(Exception ex)
+    {
+        if (ex is HttpRequestException httpEx)
+        {
+            var statusCode = httpEx.StatusCode;
+            return statusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden;
+        }
+        // Check for common auth-related exception messages
+        var msg = ex.Message.ToLowerInvariant();
+        return msg.Contains("unauthorized") || msg.Contains("forbidden") || msg.Contains("credential");
+    }
+
+    /// <summary>Fetches agent:next issues from a specific provider (used in multi-template mode).</summary>
+    private async Task<List<IssueSummary>> FetchAgentNextIssuesForProviderAsync(
+        IIssueProvider provider, int maxPages, CancellationToken ct)
     {
         var result = new List<IssueSummary>();
         int page = 1;
@@ -398,20 +541,15 @@ public sealed class PipelineLoopService : BackgroundService
 
         while (true)
         {
-            var pagedResult = await _pollingIssueProvider!.ListOpenIssuesAsync(page, pageSize,
+            var pagedResult = await provider.ListOpenIssuesAsync(page, pageSize,
                 new[] { AgentLabels.Next }, ct);
             result.AddRange(pagedResult.Items);
             if (!pagedResult.HasMore) break;
-            if (page >= maxPages)
-            {
-                _logger.Warning("Reached max page limit ({MaxPages}) while fetching agent:next issues; {Count} issues fetched, more available",
-                    maxPages, result.Count);
-                break;
-            }
+            if (page >= maxPages) break;
             page++;
         }
 
-        // FIFO: oldest first by CreatedAt
+        // FIFO: oldest first
         result.Sort((a, b) =>
         {
             var aDate = a.CreatedAt ?? DateTime.MaxValue;
@@ -438,6 +576,8 @@ public sealed class PipelineLoopService : BackgroundService
             IsLoopActive = false;
             _stopRequested = false;
             CurrentIssueIdentifier = null;
+            CurrentCycleTemplateIndex = 0;
+            CurrentCycleTemplateCount = 0;
             ConsecutivePollFailures = 0;
             IsCircuitBroken = false;
             LastPollError = null;
@@ -449,12 +589,14 @@ public sealed class PipelineLoopService : BackgroundService
             _loopCts = null;
         }
 
-        if (_pollingIssueProvider is not null)
+        // Dispose all cached providers
+        foreach (var kvp in _providerCache)
         {
-            try { await _pollingIssueProvider.DisposeAsync(); }
-            catch (Exception ex) { _logger.Warning(ex, "Failed to dispose polling issue provider"); }
-            _pollingIssueProvider = null;
+            try { await kvp.Value.DisposeAsync(); }
+            catch (Exception ex) { _logger.Warning(ex, "Failed to dispose cached provider {ProviderId}", kvp.Key); }
         }
+        _providerCache.Clear();
+        _templateStatuses.Clear();
 
         NotifyChange();
         _logger.Information("Pipeline loop stopped. Processed: {Processed}, Failed: {Failed}", ProcessedCount, FailedCount);

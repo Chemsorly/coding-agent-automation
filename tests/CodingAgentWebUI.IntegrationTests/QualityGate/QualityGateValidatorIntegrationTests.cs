@@ -25,7 +25,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
 
     /// <summary>
     /// Copies a fixture project to a unique temp directory so parallel tests don't conflict
-    /// on bin/obj locks, and returns the temp directory path.
+    /// on bin/obj locks, restores NuGet packages, and returns the temp directory path.
     /// </summary>
     private string CopyFixtureToTemp(string fixtureName)
     {
@@ -36,6 +36,18 @@ public class QualityGateValidatorIntegrationTests : IDisposable
         var tempDir = Path.Combine(Path.GetTempPath(), $"qg-fixture-{Guid.NewGuid():N}");
         CopyDirectory(fixtureSource, tempDir);
         _tempDirs.Add(tempDir);
+
+        // Restore NuGet packages so --no-restore builds work
+        var psi = new System.Diagnostics.ProcessStartInfo("dotnet", "restore")
+        {
+            WorkingDirectory = tempDir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        using var proc = System.Diagnostics.Process.Start(psi)!;
+        proc.WaitForExit(60_000);
+
         return tempDir;
     }
 
@@ -64,10 +76,13 @@ public class QualityGateValidatorIntegrationTests : IDisposable
         var report = await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
 
         report.Compilation.Passed.Should().BeTrue();
+        report.Compilation.Details.Should().Be("All QGC compilations passed");
         report.Tests.Passed.Should().BeTrue();
         report.AllPassed.Should().BeTrue();
-        report.Tests.TestsPassed.Should().BeGreaterThanOrEqualTo(1);
-        report.Tests.TestsFailed.Should().Be(0);
+        // Per-QGC result has the detailed test counts
+        var qgcResult = report.QgcResults[0];
+        qgcResult.Tests!.TestsPassed.Should().BeGreaterThanOrEqualTo(1);
+        qgcResult.Tests.TestsFailed.Should().Be(0);
     }
 
     [Fact]
@@ -90,7 +105,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
 
         var gatesDir = Path.Combine(workspace, PromptBuilder.QualityGatesOutputDirectory);
         Directory.Exists(gatesDir).Should().BeTrue();
-        File.Exists(Path.Combine(gatesDir, "compilation-stdout.txt")).Should().BeTrue();
+        File.Exists(Path.Combine(gatesDir, "Default-compilation-stdout.txt")).Should().BeTrue();
     }
 
     [Fact]
@@ -100,10 +115,14 @@ public class QualityGateValidatorIntegrationTests : IDisposable
 
         var report = await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
 
-        // Details should be a short summary, not contain raw stderr
-        report.Compilation.Details.Should().Contain("Build failed with exit code");
-        report.Compilation.Details.Should().Contain("error(s)");
-        report.Compilation.Details.Should().NotContain("error CS");
+        // Aggregate details should indicate which QGC failed
+        report.Compilation.Details.Should().Contain("Compilation failed in QGC");
+        // Per-QGC result should have the detailed build failure info
+        report.QgcResults.Should().NotBeEmpty();
+        var qgcResult = report.QgcResults[0];
+        qgcResult.Compilation!.Details.Should().Contain("Build failed with exit code");
+        qgcResult.Compilation.Details.Should().Contain("error(s)");
+        qgcResult.Compilation.Details.Should().NotContain("error CS");
     }
 
     [Fact]
@@ -115,8 +134,10 @@ public class QualityGateValidatorIntegrationTests : IDisposable
 
         report.Compilation.Passed.Should().BeTrue();
         report.Tests.Passed.Should().BeFalse();
-        report.Tests.TestsFailed.Should().BeGreaterThanOrEqualTo(1);
-        report.Tests.Details.Should().NotBeNullOrEmpty();
+        // Per-QGC result has the detailed test counts
+        var qgcResult = report.QgcResults[0];
+        qgcResult.Tests!.TestsFailed.Should().BeGreaterThanOrEqualTo(1);
+        qgcResult.Tests.Details.Should().NotBeNullOrEmpty();
     }
 
     [Fact]
@@ -128,7 +149,8 @@ public class QualityGateValidatorIntegrationTests : IDisposable
 
         var gatesDir = Path.Combine(workspace, PromptBuilder.QualityGatesOutputDirectory);
         Directory.Exists(gatesDir).Should().BeTrue();
-        File.Exists(Path.Combine(gatesDir, "tests-stderr.txt")).Should().BeTrue();
+        // Test output is written as stdout (stderr may or may not be present depending on test runner version)
+        File.Exists(Path.Combine(gatesDir, "Default-tests-stdout.txt")).Should().BeTrue();
     }
 
     [Fact]
@@ -138,10 +160,16 @@ public class QualityGateValidatorIntegrationTests : IDisposable
 
         var report = await _validator.ValidateAsync(workspace, _config, CancellationToken.None);
 
-        // Details should end with a period after the counts, not contain raw stderr
-        report.Compilation.Details.Should().Be("Build succeeded");
-        report.Tests.Details.Should().StartWith("Tests failed:");
-        report.Tests.Details.Should().EndWith("skipped.");
+        // Aggregate compilation should pass (only tests fail)
+        report.Compilation.Passed.Should().BeTrue();
+        report.Compilation.Details.Should().Be("All QGC compilations passed");
+        // Aggregate tests should report failure
+        report.Tests.Passed.Should().BeFalse();
+        report.Tests.Details.Should().Contain("Tests failed in QGC");
+        // Per-QGC test details should have the counts
+        var qgcResult = report.QgcResults[0];
+        qgcResult.Tests!.Details.Should().StartWith("Tests failed:");
+        qgcResult.Tests.Details.Should().EndWith("skipped.");
     }
 
     [Fact]

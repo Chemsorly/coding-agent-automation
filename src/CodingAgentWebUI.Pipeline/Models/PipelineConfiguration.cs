@@ -281,4 +281,13 @@ public sealed record PipelineConfiguration
     /// Default: 10,000.
     /// </summary>
     public int OutputBufferCapacity { get; init; } = 10_000;
+
+    // ── Multi-repo pipeline loop ────────────────────────────────────────
+
+    /// <summary>
+    /// List of pipeline job templates for multi-repo round-robin polling.
+    /// Each template pairs an issue provider with a repository provider.
+    /// When non-empty, the pipeline loop iterates through enabled templates each cycle.
+    /// </summary>
+    public IReadOnlyList<PipelineJobTemplate> PipelineJobTemplates { get; init; } = Array.Empty<PipelineJobTemplate>();
 }

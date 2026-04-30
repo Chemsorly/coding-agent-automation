@@ -235,7 +235,7 @@ public class AgentMonitoringPageComponentTests : BunitContext
     }
 
     [Fact]
-    public void RecentRuns_HasColgroup()
+    public void RecentRuns_HasSevenColumns()
     {
         var history = new List<PipelineRunSummary>
         {
@@ -244,11 +244,8 @@ public class AgentMonitoringPageComponentTests : BunitContext
         RegisterDefaults(history);
         var cut = Render<AgentMonitoring>();
 
-        var colgroups = cut.FindAll(".monitoring-table:last-of-type colgroup");
-        Assert.NotEmpty(colgroups);
-
-        var cols = colgroups[0].QuerySelectorAll("col");
-        Assert.Equal(7, cols.Length);
+        var headerCells = cut.FindAll(".monitoring-table:last-of-type thead th");
+        Assert.Equal(7, headerCells.Count);
     }
 
     [Fact]

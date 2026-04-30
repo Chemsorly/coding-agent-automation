@@ -113,17 +113,14 @@ public class AgentMonitoringComponentTests : BunitContext
     }
 
     [Fact]
-    public void ActiveRunsTable_HasColgroup()
+    public void ActiveRunsTable_HasSevenColumns()
     {
         SetActiveRun(CreateRun("Title"));
 
         var cut = Render<AgentMonitoring>();
 
-        var colgroups = cut.FindAll("colgroup");
-        Assert.NotEmpty(colgroups);
-
-        var cols = colgroups[0].QuerySelectorAll("col");
-        Assert.Equal(7, cols.Length);
+        var headerCells = cut.FindAll(".monitoring-table thead th");
+        Assert.Equal(7, headerCells.Count);
     }
 
     [Fact]

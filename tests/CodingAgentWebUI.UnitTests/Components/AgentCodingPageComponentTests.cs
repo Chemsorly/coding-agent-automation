@@ -11,7 +11,7 @@ using Microsoft.JSInterop;
 namespace CodingAgentWebUI.UnitTests.Components;
 
 /// <summary>
-/// bUnit component tests for the AgentCoding page.
+/// bUnit component tests for the AgentCoding page (Template Table UI).
 /// Renders the actual Blazor component and asserts on markup and view switching.
 /// </summary>
 public class AgentCodingPageComponentTests : BunitContext
@@ -20,6 +20,7 @@ public class AgentCodingPageComponentTests : BunitContext
     private readonly Mock<IProviderFactory> _mockFactory;
     private readonly Mock<IIssueProvider> _mockIssueProvider;
     private readonly Mock<IRepositoryProvider> _mockRepoProvider;
+    private readonly Mock<IJobDispatcher> _mockJobDispatcher;
     private readonly PipelineOrchestrationService _pipelineService;
 
     public AgentCodingPageComponentTests()
@@ -28,6 +29,7 @@ public class AgentCodingPageComponentTests : BunitContext
         _mockFactory = new Mock<IProviderFactory>();
         _mockIssueProvider = new Mock<IIssueProvider>();
         _mockRepoProvider = new Mock<IRepositoryProvider>();
+        _mockJobDispatcher = new Mock<IJobDispatcher>();
 
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockValidator = new Mock<IQualityGateValidator>();
@@ -57,7 +59,7 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddSingleton(registry);
         Services.AddSingleton(new JobDispatcherService(registry, mockLogger.Object));
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
-        Services.AddSingleton<IJobDispatcher>(new Mock<IJobDispatcher>().Object);
+        Services.AddSingleton<IJobDispatcher>(_mockJobDispatcher.Object);
     }
 
     private void SetupDefaults()
@@ -80,18 +82,27 @@ public class AgentCodingPageComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() });
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                PipelineJobTemplates = new List<PipelineJobTemplate>
+                {
+                    new() { Id = "t-1", Name = "DotNet Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true }
+                }
+            });
         _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentProfile>());
         _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+        _mockStore.Setup(s => s.SavePipelineConfigAsync(It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = new List<IssueSummary>
                 {
-                    new() { Identifier = "42", Title = "Test Issue", Labels = Array.Empty<string>() },
+                    new() { Identifier = "42", Title = "Test Issue", Labels = new[] { "agent:next" } },
                     new() { Identifier = "43", Title = "Bug Fix", Labels = new[] { "bug" } }
                 },
                 Page = 1,
@@ -118,42 +129,71 @@ public class AgentCodingPageComponentTests : BunitContext
     }
 
     [Fact]
-    public void AgentCoding_InitialState_ShowsIssueSelectionView()
+    public void AgentCoding_ShowsTemplateTable()
     {
         var component = Render<AgentCoding>();
 
-        Assert.Contains("Browse Issues", component.Markup);
-        Assert.Contains("Issue Provider", component.Markup);
-    }
-
-    [Fact]
-    public void AgentCoding_ShowsIssueProviderDropdown()
-    {
-        var component = Render<AgentCoding>();
-
+        Assert.Contains("Pipeline Job Templates", component.Markup);
+        Assert.Contains("DotNet Repo", component.Markup);
         Assert.Contains("GitHub Issues", component.Markup);
-        Assert.Contains("-- Select Provider --", component.Markup);
+        Assert.Contains("GitHub Repo", component.Markup);
     }
 
     [Fact]
-    public void AgentCoding_ShowsRunHistorySection()
+    public void AgentCoding_ShowsLoopControls()
     {
         var component = Render<AgentCoding>();
 
-        // Run history only appears in the pipeline setup panel when there are history items.
-        // With no history, the section is not rendered at all.
-        Assert.DoesNotContain("Run History", component.Markup);
+        // Start Loop button should be present
+        Assert.Contains("Start Loop", component.Markup);
     }
 
     [Fact]
-    public void AgentCoding_StartPipelineButton_IsDisabled_WhenNoIssueSelected()
+    public void AgentCoding_ShowsManualDispatchSection()
     {
         var component = Render<AgentCoding>();
 
-        // Start Pipeline button is always visible but disabled until all providers and issue are selected
-        Assert.Contains("Start Pipeline on Issue", component.Markup);
-        var btn = component.Find(".pipeline-start-btn");
-        Assert.True(btn.HasAttribute("disabled"));
+        Assert.Contains("Manual Dispatch", component.Markup);
+        Assert.Contains("Browse Issues", component.Markup);
+    }
+
+    [Fact]
+    public void AgentCoding_WhenNoTemplates_ShowsEmptyMessage()
+    {
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                PipelineJobTemplates = new List<PipelineJobTemplate>()
+            });
+
+        var component = Render<AgentCoding>();
+
+        Assert.Contains("No pipeline job templates configured", component.Markup);
+    }
+
+    [Fact]
+    public void AgentCoding_WhenNoTemplates_StartLoopDisabled()
+    {
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                PipelineJobTemplates = new List<PipelineJobTemplate>()
+            });
+
+        var component = Render<AgentCoding>();
+
+        var startBtn = component.FindAll("button").First(b => b.TextContent.Contains("Start Loop"));
+        Assert.True(startBtn.HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void AgentCoding_ShowsAddTemplateButton()
+    {
+        var component = Render<AgentCoding>();
+
+        Assert.Contains("+ Add Template", component.Markup);
     }
 
     [Fact]
@@ -164,19 +204,8 @@ public class AgentCodingPageComponentTests : BunitContext
 
         var component = Render<AgentCoding>();
 
-        Assert.Contains("Failed to load providers", component.Markup);
+        Assert.Contains("Failed to load configuration", component.Markup);
         Assert.Contains("Connection failed", component.Markup);
-    }
-
-    [Fact]
-    public void AgentCoding_RendersStepProgressSteps()
-    {
-        // The progress steps array is used for the step indicator
-        var component = Render<AgentCoding>();
-
-        // These are defined in the component but only shown during active pipeline
-        // Just verify the component renders without error
-        Assert.NotNull(component);
     }
 
     [Fact]
@@ -189,172 +218,63 @@ public class AgentCodingPageComponentTests : BunitContext
     }
 
     [Fact]
-    public async Task AgentCoding_WhenIssuesHaveAgentNextLabel_AutoFiltersToAgentNext()
+    public void AgentCoding_TemplateTable_ShowsEnabledToggle()
     {
-        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary>
-            {
-                Items = new List<IssueSummary>
-                {
-                    new() { Identifier = "1", Title = "Ready Issue", Labels = new[] { "agent:next" } },
-                    new() { Identifier = "2", Title = "Other Issue", Labels = new[] { "bug" } }
-                },
-                Page = 1, PageSize = 25, HasMore = false
-            });
-
         var component = Render<AgentCoding>();
-        var select = component.Find("select");
-        await component.InvokeAsync(() => select.Change("ip-1"));
 
-        // Only the agent:next issue should be visible
-        Assert.Contains("#1", component.Markup);
-        Assert.Contains("Ready Issue", component.Markup);
-        Assert.DoesNotContain("#2", component.Markup);
-        Assert.DoesNotContain("Other Issue", component.Markup);
-        // The label chip should be active
-        Assert.Contains("label-chip-active", component.Markup);
-        Assert.Contains("agent:next", component.Markup);
+        // Should have a toggle switch for the template
+        Assert.Contains("toggle-switch", component.Markup);
     }
 
     [Fact]
-    public async Task AgentCoding_WhenNoIssuesHaveAgentNextLabel_ShowsAllIssues()
+    public void AgentCoding_TemplateTable_ShowsRemoveButton()
     {
         var component = Render<AgentCoding>();
-        var select = component.Find("select");
-        await component.InvokeAsync(() => select.Change("ip-1"));
 
-        // Wait for async issue loading to complete
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup),
-            timeout: TimeSpan.FromSeconds(5));
-
-        // Default mock has no agent:next labels — all issues should show
-        Assert.Contains("#42", component.Markup);
-        Assert.Contains("#43", component.Markup);
-        Assert.DoesNotContain("label-chip-active", component.Markup);
+        Assert.Contains("Remove", component.Markup);
     }
 
     [Fact]
-    public async Task AgentCoding_WhenAgentNextAutoFiltered_ClearAllRemovesFilter()
+    public void AgentCoding_TemplateTable_ShowsProviderWarning_WhenProviderMissing()
     {
-        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary>
-            {
-                Items = new List<IssueSummary>
-                {
-                    new() { Identifier = "1", Title = "Ready Issue", Labels = new[] { "agent:next" } },
-                    new() { Identifier = "2", Title = "Other Issue", Labels = new[] { "bug" } }
-                },
-                Page = 1, PageSize = 25, HasMore = false
-            });
-
-        var component = Render<AgentCoding>();
-        var select = component.Find("select");
-        await component.InvokeAsync(() => select.Change("ip-1"));
-
-        // Click "Clear all"
-        var clearBtn = component.Find(".label-clear-btn");
-        await component.InvokeAsync(() => clearBtn.Click());
-
-        // Both issues should now be visible
-        Assert.Contains("#1", component.Markup);
-        Assert.Contains("#2", component.Markup);
-    }
-
-    [Fact]
-    public async Task AgentCoding_WhenAllIssuesMatchAgentNext_ShowsEmptyStateAfterToggleOff()
-    {
-        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary>
-            {
-                Items = new List<IssueSummary>
-                {
-                    new() { Identifier = "1", Title = "Ready Issue", Labels = new[] { "agent:next" } }
-                },
-                Page = 1, PageSize = 25, HasMore = false
-            });
-
-        var component = Render<AgentCoding>();
-        var select = component.Find("select");
-        await component.InvokeAsync(() => select.Change("ip-1"));
-
-        // Toggle off agent:next, then select a non-existent label by toggling agent:next off
-        // First clear, then manually select a label that no issue has — but we can't do that easily.
-        // Instead, verify the empty state markup exists in the component when filter yields 0 results.
-        // The auto-filter shows 1 issue. Let's toggle it off and verify all show.
-        var activeChip = component.Find(".label-chip-active");
-        await component.InvokeAsync(() => activeChip.Click());
-
-        // After toggling off, all issues visible (1 issue), no empty state
-        Assert.Contains("#1", component.Markup);
-        Assert.DoesNotContain("issue-list-empty", component.Markup);
-    }
-
-    // TODO: [UX-12a] Add test for pagination re-filter scenario: user clears agent:next filter,
-    // navigates to next page, and asserts the user's filter choice is preserved (not re-auto-filtered).
-
-    [Fact]
-    public void AgentCoding_WhenSingleProvider_AutoSelectsSyncsToDropdownAndLoadsIssues()
-    {
-        // With one issue provider, the parent auto-selects it in OnInitializedAsync.
-        // IssueListPanel.OnParametersSetAsync should sync and load issues automatically.
-        var component = Render<AgentCoding>();
-
-        // Wait for async lifecycle (OnInitializedAsync → auto-select → load issues) to complete
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup),
-            timeout: TimeSpan.FromSeconds(5));
-
-        // Issues should be loaded without manual dropdown interaction
-        Assert.Contains("#42", component.Markup);
-        Assert.Contains("Test Issue", component.Markup);
-        _mockIssueProvider.Verify(
-            p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
-            Times.Once);
-    }
-
-    [Fact]
-    public void AgentCoding_WhenLastUsedProviderSet_SyncsToDropdownAndLoadsIssues()
-    {
-        // Setup: two issue providers, last-used points to the second one
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>
-            {
-                new() { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Provider One" },
-                new() { Id = "ip-2", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Provider Two" }
-            });
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                LastUsedProviderIds = new Dictionary<string, string> { ["issue"] = "ip-2" }
+                PipelineJobTemplates = new List<PipelineJobTemplate>
+                {
+                    new() { Id = "t-1", Name = "Bad Template", IssueProviderId = "nonexistent", RepoProviderId = "rp-1", Enabled = true }
+                }
             });
 
         var component = Render<AgentCoding>();
 
-        // Wait for async lifecycle (OnInitializedAsync → last-used restore → load issues) to complete
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup),
-            timeout: TimeSpan.FromSeconds(5));
-
-        // Issues should load automatically from the last-used provider
-        Assert.Contains("#42", component.Markup);
-        _mockIssueProvider.Verify(
-            p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
-            Times.Once);
+        // Should show warning indicator for missing provider
+        Assert.Contains("⚠️", component.Markup);
     }
 
     [Fact]
-    public void AgentCoding_WhenNoProviders_DropdownShowsPlaceholderAndNoIssuesLoad()
+    public void AgentCoding_TemplateTable_ShowsDash_WhenNoBrainOrPipeline()
     {
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>());
-
         var component = Render<AgentCoding>();
 
-        // Dropdown should show placeholder, no issues loaded
-        Assert.Contains("-- Select Provider --", component.Markup);
-        Assert.DoesNotContain("#42", component.Markup);
-        _mockIssueProvider.Verify(
-            p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        // Brain and CI columns should show "—" when not configured
+        var markup = component.Markup;
+        Assert.Contains("—", markup);
+    }
+
+    [Fact]
+    public async Task AgentCoding_AddTemplate_ShowsForm()
+    {
+        var component = Render<AgentCoding>();
+
+        var addBtn = component.FindAll("button").First(b => b.TextContent.Contains("+ Add Template"));
+        await component.InvokeAsync(() => addBtn.Click());
+
+        Assert.Contains("Add Pipeline Job Template", component.Markup);
+        Assert.Contains("Name", component.Markup);
+        Assert.Contains("Issue Provider", component.Markup);
+        Assert.Contains("Repo Provider", component.Markup);
     }
 
     [Fact]
@@ -380,7 +300,7 @@ public class AgentCodingPageComponentTests : BunitContext
         component.WaitForAssertion(() => Assert.Contains("output from run 1", component.Markup),
             timeout: TimeSpan.FromSeconds(5));
 
-        // Simulate second run starting (as the loop service would)
+        // Simulate second run starting
         var run2 = new PipelineRun
         {
             RunId = "run-2",
@@ -411,224 +331,5 @@ public class AgentCodingPageComponentTests : BunitContext
             .GetField(eventName, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
         var del = field?.GetValue(target) as Delegate;
         del?.DynamicInvoke(args.Length > 0 ? args : []);
-    }
-
-    [Fact]
-    public void AgentCoding_RepoDropdown_ExcludesBrainRepositories()
-    {
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>
-            {
-                new() { Id = "rp-work", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Work Repo", RepositoryRole = RepositoryRole.Work },
-                new() { Id = "rp-brain", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain Repo", RepositoryRole = RepositoryRole.Brain }
-            });
-
-        var component = Render<AgentCoding>();
-
-        // The Repository Provider dropdown should contain the work repo but not the brain repo
-        var repoSelect = component.FindAll("select").First(s => s.InnerHtml.Contains("-- Select Repository --"));
-        Assert.Contains("Work Repo", repoSelect.InnerHtml);
-        Assert.DoesNotContain("Brain Repo", repoSelect.InnerHtml);
-    }
-
-    [Fact]
-    public void AgentCoding_BrainDropdown_ShowsOnlyBrainRepositories()
-    {
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>
-            {
-                new() { Id = "rp-work", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Work Repo", RepositoryRole = RepositoryRole.Work },
-                new() { Id = "rp-brain", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain Repo", RepositoryRole = RepositoryRole.Brain }
-            });
-
-        var component = Render<AgentCoding>();
-
-        // Brain Repository dropdown should appear (since there's a brain provider)
-        Assert.Contains("Brain Repository", component.Markup);
-        // The brain repo name should appear in the brain dropdown
-        var brainSelect = component.FindAll("select").First(s => s.InnerHtml.Contains("Brain Repo"));
-        Assert.DoesNotContain("Work Repo", brainSelect.InnerHtml);
-    }
-
-    [Fact]
-    public void AgentCoding_WhenSingleWorkRepo_AutoSelectsEvenWithBrainRepo()
-    {
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>
-            {
-                new() { Id = "rp-work", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Work Repo", RepositoryRole = RepositoryRole.Work },
-                new() { Id = "rp-brain", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain Repo", RepositoryRole = RepositoryRole.Brain }
-            });
-
-        var component = Render<AgentCoding>();
-
-        // With 1 work repo + 1 brain repo, the work repo should be auto-selected
-        var repoSelect = component.FindAll("select").First(s => s.InnerHtml.Contains("-- Select Repository --"));
-        Assert.Contains("rp-work", repoSelect.InnerHtml);
-    }
-
-    [Fact]
-    public void AgentCoding_LastUsedBrainRepoId_NotRestoredAsWorkRepo()
-    {
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>
-            {
-                new() { Id = "rp-work", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Work Repo", RepositoryRole = RepositoryRole.Work },
-                new() { Id = "rp-brain", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain Repo", RepositoryRole = RepositoryRole.Brain }
-            });
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration
-            {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
-                LastUsedProviderIds = new Dictionary<string, string> { ["repository"] = "rp-brain" }
-            });
-
-        var component = Render<AgentCoding>();
-
-        // The brain repo ID should NOT be restored as the selected work repository.
-        // Instead, auto-select should kick in since there's only 1 work repo.
-        var repoSelect = component.FindAll("select").First(s => s.InnerHtml.Contains("-- Select Repository --"));
-        // The selected value should be rp-work (auto-selected), not rp-brain
-        Assert.Contains("Work Repo", repoSelect.InnerHtml);
-        Assert.DoesNotContain("Brain Repo", repoSelect.InnerHtml);
-    }
-
-    [Fact]
-    public void AgentCoding_LoopButton_DisabledWhenRepoAndAgentMissing()
-    {
-        // Issue provider auto-selects (single provider), but repo/agent are empty
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>());
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>());
-
-        var component = Render<AgentCoding>();
-
-        // Loop button should be disabled because repo/agent are missing
-        var loopBtn = component.Find(".pipeline-loop-btn");
-        Assert.True(loopBtn.HasAttribute("disabled"));
-    }
-
-    [Fact]
-    public async Task AgentCoding_WhenIssueHasOpenAgentPr_ShowsReworkIndicator()
-    {
-        var linkedPr = new LinkedPullRequest
-        {
-            Number = 186,
-            BranchName = "feature/auto-42-test-issue-abc12345",
-            Url = "https://github.com/owner/repo/pull/186",
-            IsDraft = false
-        };
-        _mockRepoProvider.Setup(r => r.GetAgentPullRequestsAsync("42", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { linkedPr });
-        _mockIssueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "", Labels = Array.Empty<string>() });
-
-        var component = Render<AgentCoding>();
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
-
-        // Click the issue card to select it
-        var issueCard = component.Find(".issue-card");
-        await component.InvokeAsync(() => issueCard.Click());
-
-        component.WaitForAssertion(() => Assert.Contains("rework-indicator", component.Markup), timeout: TimeSpan.FromSeconds(5));
-        Assert.Contains("#186", component.Markup);
-        Assert.Contains("https://github.com/owner/repo/pull/186", component.Markup);
-        Assert.Contains("pipeline will enter rework mode", component.Markup);
-        Assert.Contains("Open PR", component.Markup);
-        Assert.DoesNotContain("draft", component.Markup);
-    }
-
-    [Fact]
-    public async Task AgentCoding_WhenIssueHasDraftAgentPr_ShowsDraftInReworkIndicator()
-    {
-        var linkedPr = new LinkedPullRequest
-        {
-            Number = 200,
-            BranchName = "feature/auto-42-test-issue-abc12345",
-            Url = "https://github.com/owner/repo/pull/200",
-            IsDraft = true
-        };
-        _mockRepoProvider.Setup(r => r.GetAgentPullRequestsAsync("42", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { linkedPr });
-        _mockIssueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "", Labels = Array.Empty<string>() });
-
-        var component = Render<AgentCoding>();
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
-
-        var issueCard = component.Find(".issue-card");
-        await component.InvokeAsync(() => issueCard.Click());
-
-        component.WaitForAssertion(() => Assert.Contains("rework-indicator", component.Markup), timeout: TimeSpan.FromSeconds(5));
-        Assert.Contains("Open draft PR", component.Markup);
-        Assert.Contains("#200", component.Markup);
-    }
-
-    [Fact]
-    public async Task AgentCoding_WhenIssueHasNoAgentPr_NoReworkIndicator()
-    {
-        _mockIssueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "", Labels = Array.Empty<string>() });
-
-        var component = Render<AgentCoding>();
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
-
-        var issueCard = component.Find(".issue-card");
-        await component.InvokeAsync(() => issueCard.Click());
-
-        // Wait for issue detail to render
-        component.WaitForAssertion(() => Assert.Contains("Selected Issue", component.Markup), timeout: TimeSpan.FromSeconds(5));
-        Assert.DoesNotContain("rework-indicator", component.Markup);
-        Assert.DoesNotContain("pipeline will enter rework mode", component.Markup);
-    }
-
-    [Fact]
-    public async Task AgentCoding_ReworkIndicator_LinkOpensInNewTab()
-    {
-        var linkedPr = new LinkedPullRequest
-        {
-            Number = 99,
-            BranchName = "feature/auto-42-test-abc",
-            Url = "https://github.com/owner/repo/pull/99",
-            IsDraft = false
-        };
-        _mockRepoProvider.Setup(r => r.GetAgentPullRequestsAsync("42", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { linkedPr });
-        _mockIssueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "", Labels = Array.Empty<string>() });
-
-        var component = Render<AgentCoding>();
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
-
-        var issueCard = component.Find(".issue-card");
-        await component.InvokeAsync(() => issueCard.Click());
-
-        component.WaitForAssertion(() => Assert.Contains("rework-indicator", component.Markup), timeout: TimeSpan.FromSeconds(5));
-        var link = component.Find(".rework-indicator a");
-        Assert.Equal("https://github.com/owner/repo/pull/99", link.GetAttribute("href"));
-        Assert.Equal("_blank", link.GetAttribute("target"));
-        Assert.Equal("noopener noreferrer", link.GetAttribute("rel"));
-    }
-
-    [Fact]
-    public async Task AgentCoding_WhenNoRepoProviderSelected_NoReworkCheck()
-    {
-        // Setup: no repo providers available
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>());
-        _mockIssueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "", Labels = Array.Empty<string>() });
-
-        var component = Render<AgentCoding>();
-        component.WaitForAssertion(() => Assert.Contains("#42", component.Markup), timeout: TimeSpan.FromSeconds(5));
-
-        var issueCard = component.Find(".issue-card");
-        await component.InvokeAsync(() => issueCard.Click());
-
-        component.WaitForAssertion(() => Assert.Contains("Selected Issue", component.Markup), timeout: TimeSpan.FromSeconds(5));
-        Assert.DoesNotContain("rework-indicator", component.Markup);
-        // CreateRepositoryProvider should never be called when no repo provider is selected
-        _mockFactory.Verify(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()), Times.Never);
     }
 }
