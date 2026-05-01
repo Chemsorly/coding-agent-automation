@@ -26,13 +26,13 @@ public sealed record PendingJob
 /// <see cref="ConcurrentDictionary{TKey,TValue}"/> for duplicate issue detection.
 /// Registered as a singleton in DI.
 /// </summary>
-public sealed class JobDispatcherService
+public class JobDispatcherService
 {
     private readonly AgentRegistryService _registry;
-    private readonly ConcurrentQueue<PendingJob> _jobQueue = new();
-    private readonly ConcurrentDictionary<string, bool> _processingIssues = new();
+    protected readonly ConcurrentQueue<PendingJob> _jobQueue = new();
+    protected readonly ConcurrentDictionary<string, bool> _processingIssues = new();
     private readonly ILogger _logger;
-    private readonly object _queueLock = new();
+    protected readonly object _queueLock = new();
 
     public JobDispatcherService(AgentRegistryService registry, ILogger logger)
     {
@@ -206,17 +206,5 @@ public sealed class JobDispatcherService
 
         var agentLabelSet = new HashSet<string>(agentLabels, StringComparer.OrdinalIgnoreCase);
         return requiredLabels.All(label => agentLabelSet.Contains(label));
-    }
-
-    /// <summary>
-    /// Resets mutable state for test isolation. Called between E2E tests to prevent state leakage.
-    /// </summary>
-    internal void ResetForTesting()
-    {
-        lock (_queueLock)
-        {
-            while (_jobQueue.TryDequeue(out _)) { }
-        }
-        _processingIssues.Clear();
     }
 }

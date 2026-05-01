@@ -1,4 +1,5 @@
 using CodingAgentWebUI.E2ETests.Fakes;
+using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
@@ -23,6 +24,12 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
     public FakeProviderFactory FakeProviders { get; } = new();
     public ConfigurableQualityGateValidator QualityGateValidator { get; } = new();
     public InMemoryPipelineRunHistoryService HistoryService { get; } = new();
+
+    // Resettable service subclasses — created during ConfigureServices, used in ResetAll
+    private ResettablePipelineOrchestrationService? _orchestration;
+    private ResettableAgentRegistryService? _registry;
+    private ResettableOrchestratorRunService? _runService;
+    private ResettableJobDispatcherService? _dispatcher;
 
     public E2EWebApplicationFactory()
     {
@@ -52,9 +59,50 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
             ReplaceService<IQualityGateValidator>(services, QualityGateValidator);
             ReplaceService<IPipelineRunHistoryService>(services, HistoryService);
 
+            // Replace singleton services with resettable subclasses
+            ReplaceWithResettableServices(services);
+
             // Disable PipelineLoopService (background polling)
             RemoveHostedService<PipelineLoopService>(services);
         });
+    }
+
+    private void ReplaceWithResettableServices(IServiceCollection services)
+    {
+        // AgentRegistryService → ResettableAgentRegistryService
+        _registry = new ResettableAgentRegistryService(Serilog.Log.Logger);
+        RemoveService<AgentRegistryService>(services);
+        services.AddSingleton(_registry);
+        services.AddSingleton<AgentRegistryService>(_registry);
+
+        // OrchestratorRunService → ResettableOrchestratorRunService
+        _runService = new ResettableOrchestratorRunService(Serilog.Log.Logger);
+        RemoveService<OrchestratorRunService>(services);
+        RemoveService<IOrchestratorRunService>(services);
+        services.AddSingleton(_runService);
+        services.AddSingleton<OrchestratorRunService>(_runService);
+        services.AddSingleton<IOrchestratorRunService>(_runService);
+
+        // JobDispatcherService → ResettableJobDispatcherService
+        _dispatcher = new ResettableJobDispatcherService(_registry, Serilog.Log.Logger);
+        RemoveService<JobDispatcherService>(services);
+        services.AddSingleton(_dispatcher);
+        services.AddSingleton<JobDispatcherService>(_dispatcher);
+
+        // PipelineOrchestrationService → ResettablePipelineOrchestrationService
+        _orchestration = new ResettablePipelineOrchestrationService(
+            ConfigStore,
+            FakeProviders,
+            new IssueDescriptionParser(),
+            QualityGateValidator,
+            new CiLogWriter(Serilog.Log.Logger),
+            Serilog.Log.Logger,
+            new BrainUpdateService(Serilog.Log.Logger),
+            HistoryService,
+            _runService);
+        RemoveService<PipelineOrchestrationService>(services);
+        services.AddSingleton(_orchestration);
+        services.AddSingleton<PipelineOrchestrationService>(_orchestration);
     }
 
     /// <summary>
@@ -68,28 +116,24 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
         QualityGateValidator.Reset();
         HistoryService.Reset();
 
-        // Reset singleton services in the running host
-        var orchestration = Services.GetRequiredService<PipelineOrchestrationService>();
-        orchestration.ResetForTesting();
-
-        var registry = Services.GetRequiredService<AgentRegistryService>();
-        registry.ResetForTesting();
-
-        var runService = Services.GetRequiredService<OrchestratorRunService>();
-        runService.ResetForTesting();
-
-        var dispatcher = Services.GetRequiredService<JobDispatcherService>();
-        dispatcher.ResetForTesting();
+        // Reset resettable service subclasses
+        _orchestration?.Reset();
+        _registry?.Reset();
+        _runService?.Reset();
+        _dispatcher?.Reset();
     }
 
     private static void ReplaceService<T>(IServiceCollection services, T implementation) where T : class
     {
-        // Remove all registrations for this type
+        RemoveService<T>(services);
+        services.AddSingleton(implementation);
+    }
+
+    private static void RemoveService<T>(IServiceCollection services)
+    {
         var descriptors = services.Where(d => d.ServiceType == typeof(T)).ToList();
         foreach (var descriptor in descriptors)
             services.Remove(descriptor);
-
-        services.AddSingleton(implementation);
     }
 
     private static void RemoveHostedService<T>(IServiceCollection services) where T : class
