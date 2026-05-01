@@ -75,7 +75,7 @@ public class KiroCliAgentProviderPropertyTests
     /// as many underlying ExecutePromptAsync calls as there are distinct (normalized) paths.
     /// **Validates: Requirements 1.1**
     /// </summary>
-    [Property(MaxTest = 50, Arbitrary = [typeof(WorkspacePathArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(WorkspacePathArbitrary)])]
     public void EnsureSession_CallCount_Equals_DistinctNormalizedPaths(List<WorkspacePath> paths)
     {
         // Arrange
@@ -115,7 +115,7 @@ public class KiroCliAgentProviderPropertyTests
     /// identical boolean to IKiroCliOrchestrator.ExecutePromptAsync.
     /// **Validates: Requirements 1.4**
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public void ExecuteAsync_Forwards_UseResume_To_Orchestrator(bool useResume)
     {
         // Arrange

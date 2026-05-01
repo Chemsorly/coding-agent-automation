@@ -176,6 +176,7 @@ app.MapGet("/", () => Results.Redirect("/agent-coding"))
     .AllowAnonymous();
 
 app.UseStaticFiles();
+app.MapStaticAssets();
 
 app.UseAuthentication();
 app.UseAuthorization();

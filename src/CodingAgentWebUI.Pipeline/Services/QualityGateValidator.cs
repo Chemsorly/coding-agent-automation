@@ -270,15 +270,19 @@ public class QualityGateValidator : IQualityGateValidator
         _logger.Information("QGC {QgcName} test results: {Passed} passed, {Failed} failed, {Skipped} skipped",
             qgc.DisplayName, passed, failed, skipped);
 
-        // Clean up results directory (non-fatal)
-        try
+        // Clean up results directory (non-fatal) — skip when coverage was collected
+        // so ParseCoverageFromReports can find the Cobertura XML files afterward
+        if (!collectCoverage)
         {
-            if (Directory.Exists(resultsDir))
-                Directory.Delete(resultsDir, recursive: true);
-        }
-        catch (Exception ex)
-        {
-            _logger.Debug(ex, "Failed to clean up test results directory {ResultsDir}", resultsDir);
+            try
+            {
+                if (Directory.Exists(resultsDir))
+                    Directory.Delete(resultsDir, recursive: true);
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Failed to clean up test results directory {ResultsDir}", resultsDir);
+            }
         }
 
         return new GateResult

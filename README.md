@@ -48,7 +48,7 @@ echo "AGENT_API_KEY=your-secret-key-here" > .env
 docker compose up --build
 ```
 
-Open `http://localhost:5000` in your browser.
+Open `http://localhost:8080` in your browser.
 
 ### First-time setup
 

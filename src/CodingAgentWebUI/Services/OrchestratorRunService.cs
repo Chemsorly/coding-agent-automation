@@ -112,4 +112,13 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// Returns the number of currently active runs.
     /// </summary>
     public int ActiveRunCount => _activeRuns.Count;
+
+    /// <summary>
+    /// Resets mutable state for test isolation. Called between E2E tests to prevent state leakage.
+    /// </summary>
+    internal void ResetForTesting()
+    {
+        _activeRuns.Clear();
+        _outputBuffers.Clear();
+    }
 }

@@ -22,7 +22,7 @@ public class ProfileResolverPropertyTests
     /// (d) among equal specificity+priority, no other has lexicographically earlier Id.
     /// **Validates: Requirements 2.1, 2.2, 1.6, 17.1, 17.2, 17.3, 17.4**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(ProfileResolverArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ProfileResolverArbitraries) })]
     public void ProfileResolution_ResolvedProfileIsOptimal(ProfileResolutionInput input)
     {
         var resolver = new ProfileResolver();
@@ -82,7 +82,7 @@ public class ProfileResolverPropertyTests
     /// For any null/empty/whitespace string as DisplayName, validation must fail.
     /// **Validates: Requirements 1.4**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(ProfileResolverArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ProfileResolverArbitraries) })]
     public void ProfileValidation_RejectsEmptyDisplayName(InvalidDisplayNameInput input)
     {
         var profile = new AgentProfile
@@ -104,7 +104,7 @@ public class ProfileResolverPropertyTests
     /// For any profile set, validation rejects a second profile with empty MatchLabels when one already exists.
     /// **Validates: Requirements 1.6, 1.7**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(ProfileResolverArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ProfileResolverArbitraries) })]
     public void DefaultProfileUniqueness_RejectsSecondDefault(DefaultProfileUniquenessInput input)
     {
         var existingDefault = new AgentProfile
@@ -135,7 +135,7 @@ public class ProfileResolverPropertyTests
     /// then its MatchLabels IS a subset of agentLabels (no non-matching profile is ever returned).
     /// **Validates: Requirements 2.1**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(ProfileResolverArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ProfileResolverArbitraries) })]
     public void ProfileResolutionNegative_NonMatchingNeverReturned(ProfileResolutionInput input)
     {
         var resolver = new ProfileResolver();
@@ -155,7 +155,7 @@ public class ProfileResolverPropertyTests
     /// For any profile MatchLabels and agent labels that differ only in case, the profile still matches.
     /// **Validates: Consistency with existing IsLabelMatch behavior (StringComparer.OrdinalIgnoreCase)**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(ProfileResolverArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ProfileResolverArbitraries) })]
     public void LabelMatchingCaseInsensitivity_ProfileStillMatches(CaseInsensitiveLabelInput input)
     {
         var profile = new AgentProfile

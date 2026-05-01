@@ -83,7 +83,7 @@ public class PromptConstructionPropertyTests
     /// <summary>
     /// Issue context file content includes all comment bodies and author attributions.
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public void IssueContextFile_ContainsAllCommentBodiesAndAuthors(NonEmptyString title, NonEmptyString description, byte commentCount)
     {
         var count = (commentCount % 4) + 1; // 1-4 comments

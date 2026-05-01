@@ -207,4 +207,16 @@ public sealed class JobDispatcherService
         var agentLabelSet = new HashSet<string>(agentLabels, StringComparer.OrdinalIgnoreCase);
         return requiredLabels.All(label => agentLabelSet.Contains(label));
     }
+
+    /// <summary>
+    /// Resets mutable state for test isolation. Called between E2E tests to prevent state leakage.
+    /// </summary>
+    internal void ResetForTesting()
+    {
+        lock (_queueLock)
+        {
+            while (_jobQueue.TryDequeue(out _)) { }
+        }
+        _processingIssues.Clear();
+    }
 }

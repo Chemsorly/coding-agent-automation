@@ -9,6 +9,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="CodingAgentWebUI.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.IntegrationTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.E2ETests" />
   </ItemGroup>
 
   <ItemGroup>

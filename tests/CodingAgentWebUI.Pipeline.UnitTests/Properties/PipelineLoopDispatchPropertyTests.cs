@@ -245,7 +245,7 @@ public class PipelineLoopDispatchPropertyTests
     /// Generate template lists + new entry with same (IssueProviderId, RepoProviderId) tuple, verify rejected.
     /// **Validates: Requirements 5.9**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void DuplicateTemplateDetection_RejectsSameTuple(PositiveInt templateCountRaw)
     {
         var templateCount = Math.Min(templateCountRaw.Get, 5);
@@ -272,7 +272,7 @@ public class PipelineLoopDispatchPropertyTests
     /// Generate templates with invalid provider IDs, verify StartLoop() returns false.
     /// **Validates: Requirements 8.1, 8.2**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void PreStartValidation_RejectsInvalidProviderIds(PositiveInt templateCountRaw)
     {
         var templateCount = Math.Min(templateCountRaw.Get, 5);

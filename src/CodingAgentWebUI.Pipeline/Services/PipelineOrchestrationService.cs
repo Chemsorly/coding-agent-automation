@@ -821,6 +821,28 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
+    /// Resets mutable state for test isolation. Called between E2E tests to prevent state leakage.
+    /// </summary>
+    internal void ResetForTesting()
+    {
+        _cancellationTokenSource?.Cancel();
+        _cancellationTokenSource?.Dispose();
+        _cancellationTokenSource = null;
+        ActiveRun = null;
+        _activeAgentProvider = null;
+        _activeRepoProvider = null;
+        _activeBrainProvider = null;
+        _activeIssueProvider = null;
+        _activePipelineProvider = null;
+        _activeConfig = null;
+        _activeIssue = null;
+        _activeParsedIssue = null;
+        _activeIssueComments = null;
+        OnChange = null;
+        OnOutputLine = null;
+    }
+
+    /// <summary>
     /// Adapts <see cref="IIssueProvider"/> to <see cref="IAgentIssueOperations"/> for use
     /// by <see cref="AgentExecutionOrchestrator"/> and <see cref="QualityGateOrchestrator"/>.
     /// Implements the label swap logic (remove all agent labels, add new label) inline.

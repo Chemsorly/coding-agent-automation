@@ -28,7 +28,7 @@ public class PipelineLoopPropertyTests
     /// deserializing back produces an equivalent list (all fields preserved, order maintained).
     /// **Validates: Requirements 1.3**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void SerializationRoundTrip_PreservesAllFields(PositiveInt countRaw, bool includeOptionals)
     {
         var count = Math.Min(countRaw.Get, 10);

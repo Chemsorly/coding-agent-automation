@@ -194,4 +194,12 @@ public sealed class AgentRegistryService
     {
         return _agents.Values.ToList().AsReadOnly();
     }
+
+    /// <summary>
+    /// Resets mutable state for test isolation. Called between E2E tests to prevent state leakage.
+    /// </summary>
+    internal void ResetForTesting()
+    {
+        _agents.Clear();
+    }
 }

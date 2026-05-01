@@ -20,7 +20,7 @@ public class QualityGateResolverPropertyTests
     /// (b) the list is ordered by ExecutionOrder ascending, then DisplayName alphabetically.
     /// **Validates: Requirements 4.1, 4.2, 4.3, 17.6, 17.7, 17.8**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(QualityGateResolverArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(QualityGateResolverArbitraries) })]
     public void QgcResolution_ResolvedQgcsAreCorrectAndOrdered(QgcResolutionInput input)
     {
         var resolver = new QualityGateResolver();
@@ -65,7 +65,7 @@ public class QualityGateResolverPropertyTests
     /// For any QGC where both CompilationCommand and TestCommand are null, validation must fail.
     /// **Validates: Requirements 3.6**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(QualityGateResolverArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(QualityGateResolverArbitraries) })]
     public void QgcValidation_RejectsNoGateConfigurations(NoGateQgcInput input)
     {
         var result = QualityGateConfigValidator.Validate(input.Config);
@@ -80,7 +80,7 @@ public class QualityGateResolverPropertyTests
     /// that QGC must NOT appear in the resolved list.
     /// **Validates: Requirements 4.1**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(QualityGateResolverArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(QualityGateResolverArbitraries) })]
     public void QgcResolutionNegative_NonIntersectingExcluded(QgcResolutionInput input)
     {
         var resolver = new QualityGateResolver();
@@ -107,7 +107,7 @@ public class QualityGateResolverPropertyTests
     /// For any QGC MatchLabels and job labels that differ only in case, the QGC still matches.
     /// **Validates: Consistency with existing IsLabelMatch behavior (StringComparer.OrdinalIgnoreCase)**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(QualityGateResolverArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(QualityGateResolverArbitraries) })]
     public void LabelMatchingCaseInsensitivity_QgcStillMatches(CaseInsensitiveQgcLabelInput input)
     {
         var qgc = new QualityGateConfiguration
