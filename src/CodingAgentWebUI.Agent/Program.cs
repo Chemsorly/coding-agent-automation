@@ -92,8 +92,11 @@ try
 
     var app = builder.Build();
 
-    // ── Health endpoints ──
+    // ── Health endpoints (Kubernetes probes) ──
     app.MapHealthEndpoints();
+
+    // Mark startup complete once the host is listening
+    app.Lifetime.ApplicationStarted.Register(HealthEndpoints.MarkStarted);
 
     await app.RunAsync();
 }

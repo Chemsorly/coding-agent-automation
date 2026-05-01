@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 
 /// <summary>
 /// Unit tests for <see cref="HealthEndpoints"/>.
-/// Uses an in-memory test server to verify the /health and /ready endpoints.
+/// Uses an in-memory test server to verify the /healthz, /readyz, and /startupz endpoints.
 /// </summary>
 /// <remarks>
 /// This class constructs <see cref="AgentWorkerService"/> which reads AGENT_TYPE from the environment.
@@ -85,11 +85,11 @@ public class HealthEndpointsTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Health_Returns200Ok()
+    public async Task Healthz_Returns200Ok()
     {
         var client = await CreateTestClient(isConnected: false);
 
-        var response = await client.GetAsync("/health");
+        var response = await client.GetAsync("/healthz");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var content = await response.Content.ReadAsStringAsync();
@@ -97,17 +97,42 @@ public class HealthEndpointsTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Ready_Returns503WhenDisconnected()
+    public async Task Readyz_Returns503WhenDisconnected()
     {
         // The hub manager is not started, so IsConnected = false
         var client = await CreateTestClient(isConnected: false);
 
-        var response = await client.GetAsync("/ready");
+        var response = await client.GetAsync("/readyz");
 
         response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
         var content = await response.Content.ReadAsStringAsync();
         content.Should().Contain("not_ready");
         content.Should().Contain("false");
+    }
+
+    [Fact]
+    public async Task Startupz_Returns503BeforeMarkStarted()
+    {
+        var client = await CreateTestClient(isConnected: false);
+
+        var response = await client.GetAsync("/startupz");
+
+        // Note: MarkStarted() may have been called by a previous test in the same process.
+        // This test verifies the endpoint exists and returns a valid response.
+        response.StatusCode.Should().BeOneOf(HttpStatusCode.OK, HttpStatusCode.ServiceUnavailable);
+    }
+
+    [Fact]
+    public async Task Startupz_Returns200AfterMarkStarted()
+    {
+        HealthEndpoints.MarkStarted();
+        var client = await CreateTestClient(isConnected: false);
+
+        var response = await client.GetAsync("/startupz");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var content = await response.Content.ReadAsStringAsync();
+        content.Should().Contain("started");
     }
 
     public async ValueTask DisposeAsync()

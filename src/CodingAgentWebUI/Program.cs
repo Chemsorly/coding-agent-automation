@@ -165,8 +165,10 @@ lifetime.ApplicationStopping.Register(() =>
     }
 });
 
-// GET /health — anonymous, no auth required
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }))
+// Kubernetes-style health probes — anonymous, no auth required
+app.MapGet("/healthz", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }))
+    .AllowAnonymous();
+app.MapGet("/readyz", () => Results.Ok(new { status = "ready", timestamp = DateTime.UtcNow }))
     .AllowAnonymous();
 
 // Redirect root "/" to the main page
