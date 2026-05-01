@@ -18,9 +18,9 @@ The pipeline runs inside a Docker container with Kiro CLI installed. The web UI 
 ## Features
 
 - **Multi-agent architecture** — Multiple agent containers run in parallel, each picking up jobs from a shared queue. Scale horizontally by adding more agent services to `docker-compose.yml`.
-- **Multi-stack support** — Label-based routing dispatches jobs to the right agent (dotnet, python, java) and applies stack-specific quality gates, review agents, and build commands.
+- **Multi-stack support** — Label-based routing dispatches jobs to the right agent (dotnet, python, java) and applies stack-specific quality gates, review agents, and build commands. Coverage reporting supports Cobertura XML and JaCoCo XML formats with configurable file discovery.
 - **Brain repository** — A shared knowledge repo (`.brain/`) that agents read before starting and write to after completing a run. Accumulates lessons learned, architecture decisions, and project context across runs.
-- **Multi-agent code review** — After implementation, specialized review agents (Correctness, DotNetSpecialist, SecurityReviewer) analyze the changes sequentially. Critical findings are auto-fixed; warnings become TODO comments.
+- **Multi-agent code review** — After implementation, specialized review agents (Correctness, SecurityReviewer) analyze the changes sequentially. Critical findings are auto-fixed; warnings become TODO comments. Language-specific reviewers (e.g., DotNetSpecialist) can be added via label-matched Reviewer Configurations.
 - **Confidence gate** — Before writing code, the agent assesses whether the issue is clear enough. Vague issues get labeled `agent:needs-refinement` with specific feedback posted to GitHub.
 - **Pipeline job templates** — Define provider combinations for each repository. The UI shows a live preview of which quality gates, reviewers, and profiles will be assigned based on the repo's labels.
 - **Closed-loop automation** — The pipeline polls for `agent:next` issues and processes them autonomously with configurable rate limits and backoff.
@@ -322,11 +322,10 @@ flowchart TD
 ```
 
 Quality gates checked (in order):
-1. **Compilation** — `dotnet build` must succeed with 0 errors
-2. **Tests** — `dotnet test` must have 0 failures
-3. **Coverage** — Code coverage must meet `minCoverageThreshold` (if > 0)
-4. **Security Scan** — Placeholder (not yet implemented)
-5. **External CI** — GitHub Actions must pass (if enabled). Requires commit + push before checking
+1. **Compilation** — Build command must succeed with 0 errors
+2. **Tests** — Test command must have 0 failures
+3. **Coverage** — Code coverage must meet `coverageThreshold` (if configured). Supports Cobertura XML (Python, .NET) and JaCoCo XML (Java) formats
+4. **External CI** — GitHub Actions must pass (if enabled). Requires commit + push before checking
 
 External CI is only evaluated after local gates (compilation, tests, coverage) pass. If external CI fails, it does not enter the agent retry loop — the failure goes straight to a draft PR. Only local gate failures trigger retries with agent error feedback.
 
@@ -432,13 +431,15 @@ Resolution: most specific match wins (highest label count). A profile with empty
 
 QGCs define per-stack quality gates. Configured in Settings → Quality Gate Configs.
 
-| QGC | Match Labels | Compilation | Tests |
-|-----|-------------|-------------|-------|
-| .NET Quality Gate | `dotnet` | `dotnet build --no-restore` | `dotnet test --no-restore --no-build` |
-| Python Quality Gate | `python` | `python -m pytest --collect-only` | `python -m pytest` |
-| Java Quality Gate | `java` | `mvn compile -q` | `mvn test -q` |
+| QGC | Match Labels | Compilation | Tests | Coverage |
+|-----|-------------|-------------|-------|----------|
+| .NET Quality Gate | `dotnet` | `dotnet build --no-restore` | `dotnet test --no-restore --no-build` | Cobertura (auto-collected via coverlet) |
+| Python Quality Gate | `python` | `python -m pytest --collect-only` | `python -m pytest --cov=. --cov-report=xml` | Cobertura (`coverage.xml`) |
+| Java Quality Gate | `java` | `mvn compile -q` | `mvn test -q` | JaCoCo (`target/site/jacoco/jacoco.xml`) |
 
 Resolution: all QGCs whose labels intersect with the job's labels are applied sequentially. A polyglot repo with labels `["dotnet", "python"]` gets both the .NET and Python quality gates.
+
+Coverage report format and file paths are configurable per QGC via `coverageReportFormat` ("cobertura" or "jacoco") and `coverageReportPaths` (explicit file globs). When not specified, convention-based discovery is used.
 
 ### Reviewer Configurations
 
@@ -448,7 +449,7 @@ Reviewer Configurations define per-stack code review agents. Configured in Setti
 |----------------|-------------|--------|
 | Default Reviewers (dotnet) | `dotnet` | Correctness, DotNetSpecialist, SecurityReviewer |
 
-Resolution: all Reviewer Configurations whose labels intersect with the job's labels are applied sequentially (ANY match). Each configuration contains one or more review agents that run in order. A configuration with empty MatchLabels acts as a global fallback (applies to all jobs).
+Resolution: all Reviewer Configurations whose labels intersect with the job's labels are applied sequentially (ANY match). Each configuration contains one or more review agents that run in order. A configuration with empty MatchLabels acts as a global fallback (applies to all jobs). When no reviewer config matches, the default agents (Correctness, SecurityReviewer) are used as a fallback.
 
 ### Setting Up a New Stack
 
@@ -467,7 +468,6 @@ Pipeline behavior is configured in `config/pipeline/pipeline-config.json`:
 |---------|---------|-------------|
 | `maxRetries` | 3 | Max retry attempts when quality gates fail |
 | `agentTimeout` | 02:00:00 | Maximum time for a single agent invocation |
-| `minCoverageThreshold` | 50 | Minimum test coverage percentage |
 | `codeReview.enabled` | true | Enable multi-agent code review |
 | `codeReview.maxIterations` | 2 | Max review → fix cycles |
 | `externalCiEnabled` | true | Wait for GitHub Actions CI to pass |

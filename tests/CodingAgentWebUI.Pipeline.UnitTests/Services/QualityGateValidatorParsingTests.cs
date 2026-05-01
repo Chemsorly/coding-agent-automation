@@ -52,31 +52,6 @@ public class QualityGateValidatorParsingTests : IDisposable
     }
 
     [Fact]
-    public void ParseSecurityScanOutput_WithVulnerabilities_DetectsCount()
-    {
-        var output = "Project A has the following vulnerable packages\nProject B has the following vulnerable packages";
-        var (hasVuln, count) = QualityGateValidator.ParseSecurityScanOutput(output);
-        hasVuln.Should().BeTrue();
-        count.Should().Be(2);
-    }
-
-    [Fact]
-    public void ParseSecurityScanOutput_NoVulnerabilities_ReturnsFalse()
-    {
-        var (hasVuln, count) = QualityGateValidator.ParseSecurityScanOutput("No packages with known vulnerabilities");
-        hasVuln.Should().BeFalse();
-        count.Should().Be(0);
-    }
-
-    [Fact]
-    public void ParseSecurityScanOutput_NullInput_ReturnsFalse()
-    {
-        var (hasVuln, count) = QualityGateValidator.ParseSecurityScanOutput(null);
-        hasVuln.Should().BeFalse();
-        count.Should().Be(0);
-    }
-
-    [Fact]
     public void ParseBuildErrorCounts_WithErrorsAndWarnings_ParsesCorrectly()
     {
         var output = "Build FAILED.\n    3 Error(s)\n    5 Warning(s)";
@@ -306,20 +281,71 @@ public class QualityGateValidatorParsingTests : IDisposable
     }
 
     [Fact]
-    public void ParseSecurityScanOutput_EmptyString_ReturnsFalse()
-    {
-        var (hasVuln, count) = QualityGateValidator.ParseSecurityScanOutput("");
-        hasVuln.Should().BeFalse();
-        count.Should().Be(0);
-    }
-
-    [Fact]
     public void ParseTestCountsFromStdout_NoMatchingLines_ReturnsZeros()
     {
         var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromStdout("Build succeeded.");
         passed.Should().Be(0);
         failed.Should().Be(0);
         skipped.Should().Be(0);
+    }
+
+    // --- Pytest Stdout Parsing Tests ---
+
+    [Fact]
+    public void ParseTestCountsFromStdout_PytestAllPassed_ParsesCorrectly()
+    {
+        var output = "========================= 5 passed in 1.23s =========================";
+        var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromStdout(output);
+        passed.Should().Be(5);
+        failed.Should().Be(0);
+        skipped.Should().Be(0);
+    }
+
+    [Fact]
+    public void ParseTestCountsFromStdout_PytestMixed_ParsesCorrectly()
+    {
+        var output = "=================== 3 passed, 2 failed, 1 skipped in 4.56s ===================";
+        var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromStdout(output);
+        passed.Should().Be(3);
+        failed.Should().Be(2);
+        skipped.Should().Be(1);
+    }
+
+    [Fact]
+    public void ParseTestCountsFromStdout_PytestWithErrors_CountsErrorsAsFailed()
+    {
+        var output = "=================== 5 passed, 1 error in 2.00s ===================";
+        var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromStdout(output);
+        passed.Should().Be(5);
+        failed.Should().Be(1);
+        skipped.Should().Be(0);
+    }
+
+    // --- Maven/JUnit Stdout Parsing Tests ---
+
+    [Fact]
+    public void ParseTestCountsFromStdout_MavenSingleModule_ParsesCorrectly()
+    {
+        var output = "Tests run: 10, Failures: 2, Errors: 1, Skipped: 3";
+        var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromStdout(output);
+        passed.Should().Be(4); // 10 - 2 - 1 - 3
+        failed.Should().Be(3); // 2 failures + 1 error
+        skipped.Should().Be(3);
+    }
+
+    [Fact]
+    public void ParseTestCountsFromStdout_MavenMultiModule_SumsAcrossModules()
+    {
+        var output = """
+            [INFO] Results:
+            Tests run: 5, Failures: 0, Errors: 0, Skipped: 0
+            [INFO] Results:
+            Tests run: 8, Failures: 1, Errors: 0, Skipped: 2
+            """;
+        var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromStdout(output);
+        passed.Should().Be(10); // (5-0-0-0) + (8-1-0-2) = 5 + 5
+        failed.Should().Be(1);
+        skipped.Should().Be(2);
     }
 
     [Fact]
@@ -340,12 +366,168 @@ public class QualityGateValidatorParsingTests : IDisposable
         result.Should().Be(50.0); // 1 of 2 lines covered
     }
 
+    // --- JaCoCo Coverage Parsing Tests ---
+
     [Fact]
-    public void ParseSecurityScanOutput_SingleVulnerability_ReturnsOne()
+    public void ParseCoverageFromJacoco_WithValidFile_ReturnsCorrectPercentage()
     {
-        var output = "Project X has the following vulnerable packages";
-        var (hasVuln, count) = QualityGateValidator.ParseSecurityScanOutput(output);
-        hasVuln.Should().BeTrue();
-        count.Should().Be(1);
+        var jacocoXml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <report name="MyProject">
+              <package name="com/example">
+                <class name="com/example/MyClass" sourcefilename="MyClass.java">
+                  <method name="doSomething" desc="()V" line="10">
+                    <counter type="INSTRUCTION" missed="5" covered="10"/>
+                    <counter type="LINE" missed="2" covered="8"/>
+                  </method>
+                  <counter type="INSTRUCTION" missed="5" covered="10"/>
+                  <counter type="LINE" missed="2" covered="8"/>
+                </class>
+              </package>
+              <counter type="INSTRUCTION" missed="5" covered="10"/>
+              <counter type="LINE" missed="2" covered="8"/>
+            </report>
+            """;
+        var filePath = Path.Combine(_tempDir, "jacoco.xml");
+        File.WriteAllText(filePath, jacocoXml);
+
+        var result = QualityGateValidator.ParseCoverageFromJacoco([filePath]);
+        result.Should().Be(80.0); // 8 covered / (8 + 2 missed) = 80%
+    }
+
+    [Fact]
+    public void ParseCoverageFromJacoco_MultipleClasses_SumsCounters()
+    {
+        var jacocoXml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <report name="MyProject">
+              <package name="com/example">
+                <class name="com/example/ClassA" sourcefilename="ClassA.java">
+                  <counter type="LINE" missed="5" covered="15"/>
+                </class>
+                <class name="com/example/ClassB" sourcefilename="ClassB.java">
+                  <counter type="LINE" missed="10" covered="10"/>
+                </class>
+              </package>
+            </report>
+            """;
+        var filePath = Path.Combine(_tempDir, "jacoco.xml");
+        File.WriteAllText(filePath, jacocoXml);
+
+        var result = QualityGateValidator.ParseCoverageFromJacoco([filePath]);
+        // ClassA: 15/(15+5)=75%, ClassB: 10/(10+10)=50%, Total: 25/(25+15)=62.5%
+        result.Should().Be(62.5);
+    }
+
+    [Fact]
+    public void ParseCoverageFromJacoco_IgnoresNonClassCounters()
+    {
+        // Only class-level LINE counters should be counted, not package or report-level
+        var jacocoXml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <report name="MyProject">
+              <package name="com/example">
+                <class name="com/example/MyClass" sourcefilename="MyClass.java">
+                  <counter type="LINE" missed="3" covered="7"/>
+                </class>
+                <counter type="LINE" missed="3" covered="7"/>
+              </package>
+              <counter type="LINE" missed="3" covered="7"/>
+            </report>
+            """;
+        var filePath = Path.Combine(_tempDir, "jacoco.xml");
+        File.WriteAllText(filePath, jacocoXml);
+
+        var result = QualityGateValidator.ParseCoverageFromJacoco([filePath]);
+        // Only class-level counter: 7/(7+3) = 70%
+        result.Should().Be(70.0);
+    }
+
+    [Fact]
+    public void ParseCoverageFromJacoco_EmptyFiles_ReturnsZero()
+    {
+        var result = QualityGateValidator.ParseCoverageFromJacoco([]);
+        result.Should().Be(0.0);
+    }
+
+    [Fact]
+    public void ParseCoverageFromJacoco_MalformedXml_SkipsFile()
+    {
+        var badFile = Path.Combine(_tempDir, "bad.xml");
+        File.WriteAllText(badFile, "not xml at all");
+
+        var goodXml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <report name="MyProject">
+              <package name="com/example">
+                <class name="com/example/MyClass" sourcefilename="MyClass.java">
+                  <counter type="LINE" missed="0" covered="10"/>
+                </class>
+              </package>
+            </report>
+            """;
+        var goodFile = Path.Combine(_tempDir, "good.xml");
+        File.WriteAllText(goodFile, goodXml);
+
+        var result = QualityGateValidator.ParseCoverageFromJacoco([badFile, goodFile]);
+        result.Should().Be(100.0);
+    }
+
+    [Fact]
+    public void ParseCoverageFromJacoco_MultipleFiles_SumsAcrossFiles()
+    {
+        var xml1 = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <report name="Module1">
+              <package name="com/example">
+                <class name="com/example/ClassA" sourcefilename="ClassA.java">
+                  <counter type="LINE" missed="0" covered="10"/>
+                </class>
+              </package>
+            </report>
+            """;
+        var xml2 = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <report name="Module2">
+              <package name="com/example">
+                <class name="com/example/ClassB" sourcefilename="ClassB.java">
+                  <counter type="LINE" missed="10" covered="0"/>
+                </class>
+              </package>
+            </report>
+            """;
+        var f1 = Path.Combine(_tempDir, "jacoco1.xml");
+        var f2 = Path.Combine(_tempDir, "jacoco2.xml");
+        File.WriteAllText(f1, xml1);
+        File.WriteAllText(f2, xml2);
+
+        var result = QualityGateValidator.ParseCoverageFromJacoco([f1, f2]);
+        // 10 covered / (10 + 10 missed) = 50%
+        result.Should().Be(50.0);
+    }
+
+    [Fact]
+    public void ParseCoverageFromJacoco_IgnoresNonLineCounterTypes()
+    {
+        var jacocoXml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <report name="MyProject">
+              <package name="com/example">
+                <class name="com/example/MyClass" sourcefilename="MyClass.java">
+                  <counter type="INSTRUCTION" missed="100" covered="0"/>
+                  <counter type="BRANCH" missed="50" covered="0"/>
+                  <counter type="COMPLEXITY" missed="20" covered="0"/>
+                  <counter type="METHOD" missed="10" covered="0"/>
+                  <counter type="LINE" missed="2" covered="8"/>
+                </class>
+              </package>
+            </report>
+            """;
+        var filePath = Path.Combine(_tempDir, "jacoco.xml");
+        File.WriteAllText(filePath, jacocoXml);
+
+        var result = QualityGateValidator.ParseCoverageFromJacoco([filePath]);
+        // Only LINE counter matters: 8/(8+2) = 80%
+        result.Should().Be(80.0);
     }
 }

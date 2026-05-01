@@ -52,12 +52,11 @@ public sealed record PipelineConfiguration
         "- Logic errors against acceptance criteria\n" +
         "- Unhandled null references and exception paths\n" +
         "- Off-by-one errors in loops and collections\n" +
-        "- Race conditions in async code\n" +
+        "- Race conditions in async/concurrent code\n" +
         "- Missing input validation on public API boundaries\n" +
         "- Edge cases not covered by the implementation\n" +
-        "- IDisposable resources not properly disposed (missing using/await using)\n" +
-        "- Async/await deadlock patterns (sync-over-async, .Result, .Wait())\n" +
-        "- CancellationToken not propagated through async call chains\n\n" +
+        "- Resources not properly released (file handles, connections, streams)\n" +
+        "- Error handling gaps (swallowed exceptions, missing cleanup on failure)\n\n" +
         "DO NOT FLAG:\n" +
         "- Style preferences or naming conventions\n" +
         "- Missing XML documentation comments\n" +
@@ -112,8 +111,8 @@ public sealed record PipelineConfiguration
         "Do NOT fix anything. Only report findings.";
 
     public const string DefaultSecurityReviewPrompt =
-        "Review the changes for security issues. The previous reviews covered correctness and .NET-specific " +
-        "patterns — do not duplicate those findings. Output findings as a numbered list with severity " +
+        "Review the changes for security issues. The previous review covered correctness " +
+        "— do not duplicate those findings. Output findings as a numbered list with severity " +
         "[CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
         "CHECK FOR:\n" +
         "- Hardcoded credentials, API keys, connection strings, or tokens\n" +
@@ -127,19 +126,18 @@ public sealed record PipelineConfiguration
         "- Missing input validation or sanitization on external input boundaries\n" +
         "- Secrets or credentials in committed files\n\n" +
         "DO NOT FLAG:\n" +
-        "- Issues already covered by Correctness or DotNet Specialist reviews\n" +
+        "- Issues already covered by previous reviews\n" +
         "- Theoretical attacks requiring physical access or pre-existing compromise\n" +
         "- Missing HTTPS enforcement (infrastructure concern, not code)\n" +
         "- Test code, sample data, or placeholder values in test fixtures\n" +
-        "- Dependency vulnerabilities (covered by the quality gate)\n" +
+        "- Dependency vulnerabilities (covered by external CI)\n" +
         "- General code quality or style issues\n\n" +
         "Do NOT fix anything. Only report findings.";
 
-    /// <summary>Default review agents: Correctness + .NET Specialist + Security.</summary>
+    /// <summary>Default review agents: Correctness + Security.</summary>
     public static IReadOnlyList<ReviewAgentConfig> DefaultReviewAgents { get; } = new[]
     {
         new ReviewAgentConfig { Name = "Correctness", Prompt = DefaultCorrectnessReviewPrompt },
-        new ReviewAgentConfig { Name = "DotNetSpecialist", Prompt = DefaultDotNetSpecialistReviewPrompt },
         new ReviewAgentConfig { Name = "SecurityReviewer", Prompt = DefaultSecurityReviewPrompt }
     };
 

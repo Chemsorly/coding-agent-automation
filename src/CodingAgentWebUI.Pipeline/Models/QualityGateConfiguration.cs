@@ -34,6 +34,12 @@ public sealed record QualityGateConfiguration
     [Key(7)]
     public double? CoverageThreshold { get; init; }
 
+    /// <summary>
+    /// Obsolete: Security scanning has been removed from the quality gate validator.
+    /// Dependency vulnerability scanning should be handled by external CI/CD pipelines.
+    /// This field is retained for backward compatibility with existing serialized configurations.
+    /// </summary>
+    [Obsolete("Security scanning removed — use external CI/CD for dependency vulnerability checks.")]
     [Key(8)]
     public bool SecurityScanEnabled { get; init; } = false;
 
@@ -42,4 +48,21 @@ public sealed record QualityGateConfiguration
 
     [Key(10)]
     public int ExecutionOrder { get; init; } = 0;
+
+    /// <summary>
+    /// Format of the coverage report produced by the test command.
+    /// Supported values: "cobertura" (default), "jacoco".
+    /// </summary>
+    [Key(11)]
+    public string CoverageReportFormat { get; init; } = "cobertura";
+
+    /// <summary>
+    /// Glob patterns for locating coverage report files relative to the workspace root.
+    /// If null/empty, defaults are used based on the test command:
+    /// - dotnet: TestResults/**/coverage.cobertura.xml
+    /// - jacoco: **/target/site/jacoco/jacoco.xml
+    /// - cobertura (non-dotnet): **/coverage.xml
+    /// </summary>
+    [Key(12)]
+    public IReadOnlyList<string>? CoverageReportPaths { get; init; }
 }
