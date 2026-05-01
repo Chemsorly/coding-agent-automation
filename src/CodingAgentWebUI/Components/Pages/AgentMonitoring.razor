@@ -507,6 +507,7 @@
     {
         Dispatcher.RemoveFromQueue(issueIdentifier);
         RefreshData();
+        StateHasChanged();
     }
 
     private void SelectAgent(string agentId)

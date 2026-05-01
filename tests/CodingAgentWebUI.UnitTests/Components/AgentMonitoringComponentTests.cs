@@ -138,6 +138,73 @@ public class AgentMonitoringComponentTests : BunitContext
         Assert.Equal(run.RunId, monoTds[0].GetAttribute("title"));
     }
 
+    [Fact]
+    public void RemoveFromQueue_Button_RemovesJobAndUpdatesUI()
+    {
+        // Arrange: enqueue a job
+        var dispatcher = Services.GetRequiredService<JobDispatcherService>();
+        dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = "org/repo#42",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            InitiatedBy = "test"
+        });
+
+        var cut = Render<AgentMonitoring>();
+
+        // Verify job appears in the queue
+        Assert.Contains("org/repo#42", cut.Markup);
+        Assert.Contains("Job Queue (1)", cut.Markup);
+
+        // Act: click the Remove button
+        var removeBtn = cut.FindAll("button")
+            .First(b => b.TextContent.Contains("Remove"));
+        removeBtn.Click();
+
+        // Assert: job is removed from UI
+        Assert.DoesNotContain("org/repo#42", cut.Markup);
+        Assert.Contains("No pending jobs in queue.", cut.Markup);
+    }
+
+    [Fact]
+    public void RemoveFromQueue_Button_RemovesCorrectJob_WhenMultipleQueued()
+    {
+        // Arrange: enqueue two jobs
+        var dispatcher = Services.GetRequiredService<JobDispatcherService>();
+        dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = "org/repo#10",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            InitiatedBy = "loop"
+        });
+        dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = "org/repo#20",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            InitiatedBy = "loop"
+        });
+
+        var cut = Render<AgentMonitoring>();
+        Assert.Contains("Job Queue (2)", cut.Markup);
+
+        // Act: click the Remove button for the first job
+        var removeButtons = cut.FindAll("button.btn-cancel-small")
+            .Where(b => b.TextContent.Trim() == "Remove")
+            .ToList();
+        removeButtons[0].Click();
+
+        // Assert: first job removed, second remains
+        Assert.DoesNotContain("org/repo#10", cut.Markup);
+        Assert.Contains("org/repo#20", cut.Markup);
+        Assert.Contains("Job Queue (1)", cut.Markup);
+    }
+
     private static PipelineRun CreateRun(string issueTitle) => new()
     {
         RunId = "abcd1234-5678-9012-3456-789012345678",
