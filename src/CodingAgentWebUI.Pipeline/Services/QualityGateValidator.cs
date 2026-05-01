@@ -270,8 +270,8 @@ public class QualityGateValidator : IQualityGateValidator
         _logger.Information("QGC {QgcName} test results: {Passed} passed, {Failed} failed, {Skipped} skipped",
             qgc.DisplayName, passed, failed, skipped);
 
-        // Clean up results directory (non-fatal) — skip when coverage was collected
-        // so ParseCoverageFromReports can find the Cobertura XML files afterward
+        // Clean up results directory (non-fatal) — skip if coverage was collected,
+        // because ParseCoverageFromReports needs the Cobertura XML files afterward.
         if (!collectCoverage)
         {
             try

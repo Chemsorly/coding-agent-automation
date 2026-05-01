@@ -17,7 +17,7 @@ public class QualityGateReportPropertyTests
     /// every present gate has Passed == true.
     /// **Validates: Requirements 4.3, 4.5**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void AllPassed_IsConsistentWithIndividualGateResults(
         bool compilationPassed,
         bool testsPassed,

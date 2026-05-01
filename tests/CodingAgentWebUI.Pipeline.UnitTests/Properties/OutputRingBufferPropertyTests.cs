@@ -15,7 +15,7 @@ public class OutputRingBufferPropertyTests
     /// For any sequence of output lines, stored count never exceeds capacity.
     /// **Validates: Requirements 5.9**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void Count_NeverExceedsCapacity(PositiveInt capacity, NonEmptyString[] lines)
     {
         var cap = Math.Min(capacity.Get, 1000); // Keep capacity reasonable for tests
@@ -32,7 +32,7 @@ public class OutputRingBufferPropertyTests
     /// Property 12 (continued): When full, adding discards oldest.
     /// **Validates: Requirements 5.9**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void WhenFull_AddingDiscardsOldest(PositiveInt extraCount)
     {
         const int capacity = 5;
@@ -69,7 +69,7 @@ public class OutputRingBufferPropertyTests
     /// Property 12 (continued): GetAll() returns lines in insertion order (oldest to newest).
     /// **Validates: Requirements 5.9**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void GetAll_ReturnsLinesInInsertionOrder(PositiveInt capacity)
     {
         var cap = Math.Clamp(capacity.Get, 1, 100);
@@ -96,7 +96,7 @@ public class OutputRingBufferPropertyTests
     /// Property 12 (continued): AddRange respects capacity invariant.
     /// **Validates: Requirements 5.9**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void AddRange_RespectsCapacityInvariant(PositiveInt capacity, NonEmptyString[] lines)
     {
         var cap = Math.Min(capacity.Get, 500);

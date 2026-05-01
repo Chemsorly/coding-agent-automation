@@ -33,7 +33,7 @@ public class AgentRegistryServicePropertyTests
     /// For any agentId not in registry, GetByConnectionId returns null.
     /// **Validates: Requirements 1.7**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void UnregisteredAgent_ReturnsNull(NonEmptyString connectionId)
     {
         var registry = CreateRegistry();
@@ -46,7 +46,7 @@ public class AgentRegistryServicePropertyTests
     /// Receiving heartbeat updates LastHeartbeatAt.
     /// **Validates: Requirements 3.3, 3.4**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void Heartbeat_UpdatesLastHeartbeatAt(NonEmptyString agentId)
     {
         var registry = CreateRegistry();
@@ -65,7 +65,7 @@ public class AgentRegistryServicePropertyTests
     /// Connection loss → Disconnected + DisconnectedAt set.
     /// **Validates: Requirements 2.6, 3.6, 3.7**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void Disconnect_SetsDisconnectedStatus(NonEmptyString agentId)
     {
         var registry = CreateRegistry();
@@ -83,7 +83,7 @@ public class AgentRegistryServicePropertyTests
     /// Property 7 (continued): Reconnect within grace period resets to Idle.
     /// **Validates: Requirements 2.6, 3.6, 3.7**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void Reconnect_AfterDisconnect_ResetsToIdle(NonEmptyString agentId, NonEmptyString newConn)
     {
         var registry = CreateRegistry();
@@ -102,7 +102,7 @@ public class AgentRegistryServicePropertyTests
     /// Property 7 (continued): Grace period expiry without active job → removed from registry.
     /// **Validates: Requirements 2.6, 3.6, 3.7**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void Deregister_RemovesFromRegistry(NonEmptyString agentId)
     {
         var registry = CreateRegistry();
@@ -121,7 +121,7 @@ public class AgentRegistryServicePropertyTests
     /// LastJobCompletedAt (or RegisteredAt).
     /// **Validates: Requirements 4.1, 4.2**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void SelectAgent_PicksOldestIdleAgent(PositiveInt agentCount)
     {
         var count = Math.Min(agentCount.Get, 10);
@@ -147,7 +147,7 @@ public class AgentRegistryServicePropertyTests
     /// Transitioning to Busy sets status and ActiveJobId.
     /// **Validates: Requirements 4.5**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void JobAcceptance_TransitionsToBusy(NonEmptyString agentId, NonEmptyString jobId)
     {
         var registry = CreateRegistry();
@@ -167,7 +167,7 @@ public class AgentRegistryServicePropertyTests
     /// Agent transitions Busy → Idle, ActiveJobId cleared.
     /// **Validates: Requirements 6.3**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void JobCompletion_TransitionsToIdle(NonEmptyString agentId, NonEmptyString jobId)
     {
         var registry = CreateRegistry();

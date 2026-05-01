@@ -16,7 +16,7 @@ public class LabelRoutingFallbackPropertyTests
     /// When repo config has requiredAgentLabels, those are used.
     /// **Validates: Requirements 19.3**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void ResolveLabels_UsesRepoLabels_WhenPresent(NonEmptyString label1, NonEmptyString label2)
     {
         var l1 = label1.Get.Replace(",", "").Trim();
@@ -51,7 +51,7 @@ public class LabelRoutingFallbackPropertyTests
     /// falls back to DefaultRequiredAgentLabels.
     /// **Validates: Requirements 19.3**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void ResolveLabels_FallsBackToDefault_WhenRepoHasNoLabels(NonEmptyString defaultLabel)
     {
         var label = defaultLabel.Get.Replace(",", "").Trim();
@@ -99,7 +99,7 @@ public class LabelRoutingFallbackPropertyTests
     /// Property 23 (continued): Agent matches iff its labels are a superset of resolved required labels.
     /// **Validates: Requirements 19.3**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void AgentMatches_WhenLabelsAreSupersetOfRequired(NonEmptyString[] extraLabels)
     {
         var requiredLabels = new[] { "kiro", "dotnet" };
@@ -127,7 +127,7 @@ public class LabelRoutingFallbackPropertyTests
     /// Property 23 (continued): Agent does NOT match when it's missing a required label.
     /// **Validates: Requirements 19.3**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void AgentDoesNotMatch_WhenMissingRequiredLabel(NonEmptyString missingLabel)
     {
         var missing = missingLabel.Get.Replace(",", "").Trim();

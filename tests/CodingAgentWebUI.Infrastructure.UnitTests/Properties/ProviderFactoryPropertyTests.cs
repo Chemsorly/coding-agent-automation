@@ -43,7 +43,7 @@ public class ProviderFactoryPropertyTests
     ///
     /// **Validates: Requirements 2.1, 2.4**
     /// </summary>
-    [Property(MaxTest = 20, Arbitrary = [typeof(ConfigKeyCorrectnessArbitrary)])]
+    [Property(Arbitrary = [typeof(ConfigKeyCorrectnessArbitrary)])]
     public void ConfigKeys_IssueProvider_ContainsCorrectKeysAndNoToken(ConfigKeyCorrectnessInput input)
     {
         // Arrange: Build a ProviderConfig with the expected GitHub App keys for an issue provider
@@ -89,7 +89,7 @@ public class ProviderFactoryPropertyTests
     ///
     /// **Validates: Requirements 2.1, 2.4**
     /// </summary>
-    [Property(MaxTest = 20, Arbitrary = [typeof(ConfigKeyCorrectnessArbitrary)])]
+    [Property(Arbitrary = [typeof(ConfigKeyCorrectnessArbitrary)])]
     public void ConfigKeys_RepoProvider_ContainsCorrectKeysAndNoToken(ConfigKeyCorrectnessInput input)
     {
         // Arrange: Build a ProviderConfig with the expected GitHub App keys for a repo provider
@@ -143,7 +143,7 @@ public class ProviderFactoryPropertyTests
     ///
     /// **Validates: Requirements 5.1**
     /// </summary>
-    [Property(MaxTest = 20, Arbitrary = [typeof(AuthCacheConsistencyArbitrary)])]
+    [Property(Arbitrary = [typeof(AuthCacheConsistencyArbitrary)])]
     public void AuthServiceCache_SameKey_ReturnsSameInstance_DifferentKey_ReturnsDistinct(AuthCacheConsistencyInput input)
     {
         // Arrange
@@ -189,7 +189,7 @@ public class ProviderFactoryPropertyTests
     ///
     /// **Validates: Requirements 2.1, 2.4**
     /// </summary>
-    [Property(MaxTest = 20, Arbitrary = [typeof(MissingConfigFieldArbitrary)])]
+    [Property(Arbitrary = [typeof(MissingConfigFieldArbitrary)])]
     public void MissingConfigField_ThrowsArgumentExceptionIdentifyingMissingSettings(MissingConfigFieldInput input)
     {
         // Arrange: Build a ProviderConfig with some fields missing or empty

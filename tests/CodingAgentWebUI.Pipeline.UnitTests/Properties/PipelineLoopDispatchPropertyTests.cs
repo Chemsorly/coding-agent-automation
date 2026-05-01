@@ -20,7 +20,7 @@ public class PipelineLoopDispatchPropertyTests
     /// Generate templates + issues, capture TryDispatchAsync args, assert provider IDs match sourcing template.
     /// **Validates: Requirements 2.4**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public async Task DispatchProviderIdCorrectness_MatchesTemplate(PositiveInt templateCountRaw)
     {
         var templateCount = Math.Min(templateCountRaw.Get, 4);
@@ -101,7 +101,7 @@ public class PipelineLoopDispatchPropertyTests
     /// Generate N templates x M issues with limit L, verify dispatch counts differ by at most 1.
     /// **Validates: Requirements 2.8**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public async Task FairDispatch_EqualIssues_DiffersAtMostOne(PositiveInt templateCountRaw, PositiveInt issuesRaw, PositiveInt limitRaw)
     {
         var templateCount = Math.Max(Math.Min(templateCountRaw.Get, 4), 2);
@@ -191,7 +191,7 @@ public class PipelineLoopDispatchPropertyTests
     /// Generate failure patterns, verify trips iff ALL enabled templates at threshold.
     /// **Validates: Requirements 3.4**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public async Task CircuitBreaker_TripsOnlyWhenAllFailing(PositiveInt templateCountRaw)
     {
         var templateCount = Math.Max(Math.Min(templateCountRaw.Get, 4), 2);
@@ -245,7 +245,7 @@ public class PipelineLoopDispatchPropertyTests
     /// Generate template lists + new entry with same (IssueProviderId, RepoProviderId) tuple, verify rejected.
     /// **Validates: Requirements 5.9**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void DuplicateTemplateDetection_RejectsSameTuple(PositiveInt templateCountRaw)
     {
         var templateCount = Math.Min(templateCountRaw.Get, 5);
@@ -272,7 +272,7 @@ public class PipelineLoopDispatchPropertyTests
     /// Generate templates with invalid provider IDs, verify StartLoop() returns false.
     /// **Validates: Requirements 8.1, 8.2**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void PreStartValidation_RejectsInvalidProviderIds(PositiveInt templateCountRaw)
     {
         var templateCount = Math.Min(templateCountRaw.Get, 5);
@@ -312,7 +312,7 @@ public class PipelineLoopDispatchPropertyTests
     /// Simulate auth exceptions (401/403), verify cached provider disposed and removed, next cycle recreates.
     /// **Validates: Requirements 2.3 (cache correctness under failure)**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public async Task ProviderCacheEvictionOnAuthError_RecreatesProvider(PositiveInt templateCountRaw)
     {
         var templateCount = Math.Max(Math.Min(templateCountRaw.Get, 3), 1);
@@ -385,7 +385,7 @@ public class PipelineLoopDispatchPropertyTests
     /// Populate cache with N providers, call StopLoop(), verify ALL providers have DisposeAsync called.
     /// **Validates: Resource management (no leaks)**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public async Task ProviderCacheDisposal_AllDisposedOnStop(PositiveInt templateCountRaw)
     {
         var templateCount = Math.Min(templateCountRaw.Get, 5);
@@ -444,7 +444,7 @@ public class PipelineLoopDispatchPropertyTests
     /// Generate poll outcome sequences (success/failure), verify ConfigStatusSnapshot fields after each.
     /// **Validates: Requirements 3.2, 3.3**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public async Task ConfigStatusAccuracy_ReflectsOutcomes(PositiveInt templateCountRaw)
     {
         var templateCount = Math.Max(Math.Min(templateCountRaw.Get, 3), 1);
