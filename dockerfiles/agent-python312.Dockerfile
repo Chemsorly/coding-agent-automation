@@ -9,19 +9,13 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0.203 AS build
 WORKDIR /src
 
-COPY CodingAgentAutomation.sln ./
+# Copy only the project files needed for the Agent and its dependencies (not test projects)
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
 COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAgentWebUI.Pipeline/
 COPY src/CodingAgentWebUI.Infrastructure/CodingAgentWebUI.Infrastructure.csproj src/CodingAgentWebUI.Infrastructure/
 COPY src/CodingAgentWebUI/CodingAgentWebUI.csproj src/CodingAgentWebUI/
 COPY src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj src/CodingAgentWebUI.Agent/
-COPY tests/CodingAgentWebUI.Pipeline.UnitTests/CodingAgentWebUI.Pipeline.UnitTests.csproj tests/CodingAgentWebUI.Pipeline.UnitTests/
-COPY tests/CodingAgentWebUI.Infrastructure.UnitTests/CodingAgentWebUI.Infrastructure.UnitTests.csproj tests/CodingAgentWebUI.Infrastructure.UnitTests/
-COPY tests/CodingAgentWebUI.UnitTests/CodingAgentWebUI.UnitTests.csproj tests/CodingAgentWebUI.UnitTests/
-COPY tests/CodingAgentWebUI.IntegrationTests/CodingAgentWebUI.IntegrationTests.csproj tests/CodingAgentWebUI.IntegrationTests/
-COPY tests/KiroCliLib.UnitTests/KiroCliLib.UnitTests.csproj tests/KiroCliLib.UnitTests/
-COPY tests/CodingAgentWebUI.Agent.UnitTests/CodingAgentWebUI.Agent.UnitTests.csproj tests/CodingAgentWebUI.Agent.UnitTests/
-RUN dotnet restore
+RUN dotnet restore src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj
 
 COPY . .
 RUN dotnet publish src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -c Release -o /app/publish

@@ -16,16 +16,17 @@ services:
       context: .
       dockerfile: dockerfiles/webui.Dockerfile
     ports:
-      - "5000:5000"
+      - "8080:8080"
     volumes:
       - ./config/pipeline:/app/config/pipeline
     environment:
       - AGENT_API_KEY=${AGENT_API_KEY}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 10s
     networks:
       - coding-agent-net
 
@@ -37,11 +38,17 @@ services:
       - ./config/kiro-cli-data-1:/home/ubuntu/.local/share/kiro-cli
       - ~/.aws:/home/ubuntu/.aws:ro
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:5000
+      - ORCHESTRATOR_URL=http://orchestrator:8080
       - AGENT_ID=agent-1
       - AGENT_TYPE=kiro-dotnet10
       - AGENT_LABELS=kiro,dotnet,dotnet10
       - AGENT_API_KEY=${AGENT_API_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       orchestrator:
         condition: service_healthy
@@ -56,11 +63,17 @@ services:
       - ./config/kiro-cli-data-2:/home/ubuntu/.local/share/kiro-cli
       - ~/.aws:/home/ubuntu/.aws:ro
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:5000
+      - ORCHESTRATOR_URL=http://orchestrator:8080
       - AGENT_ID=agent-2
       - AGENT_TYPE=kiro-dotnet10
       - AGENT_LABELS=kiro,dotnet,dotnet10
       - AGENT_API_KEY=${AGENT_API_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       orchestrator:
         condition: service_healthy
@@ -75,11 +88,17 @@ services:
       - ./config/kiro-cli-data-3:/home/ubuntu/.local/share/kiro-cli
       - ~/.aws:/home/ubuntu/.aws:ro
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:5000
+      - ORCHESTRATOR_URL=http://orchestrator:8080
       - AGENT_ID=agent-python
       - AGENT_TYPE=kiro-python312
       - AGENT_LABELS=kiro,python,python312
       - AGENT_API_KEY=${AGENT_API_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       orchestrator:
         condition: service_healthy
@@ -94,11 +113,17 @@ services:
       - ./config/kiro-cli-data-4:/home/ubuntu/.local/share/kiro-cli
       - ~/.aws:/home/ubuntu/.aws:ro
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:5000
+      - ORCHESTRATOR_URL=http://orchestrator:8080
       - AGENT_ID=agent-java
       - AGENT_TYPE=kiro-java21
       - AGENT_LABELS=kiro,java,java21
       - AGENT_API_KEY=${AGENT_API_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       orchestrator:
         condition: service_healthy
