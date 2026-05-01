@@ -111,7 +111,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         await loopService.StartAsync(cts.Token);
 
         // Act: Start the loop
-        var started = loopService.StartLoop();
+        var started = await loopService.StartLoopAsync();
         started.Should().BeTrue();
 
         // Wait for at least one cycle to complete
@@ -236,7 +236,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             orchestration, MockFactory.Object, ConfigStore, MockLogger.Object);
 
         // Act
-        var started = loopService.StartLoop();
+        var started = await loopService.StartLoopAsync();
 
         // Assert
         started.Should().BeFalse();

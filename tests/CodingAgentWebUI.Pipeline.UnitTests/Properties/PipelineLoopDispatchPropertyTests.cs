@@ -74,7 +74,7 @@ public class PipelineLoopDispatchPropertyTests
         using var cts = new CancellationTokenSource();
         await svc.StartAsync(cts.Token);
 
-        var started = svc.StartLoop();
+        var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         await Task.Delay(500);
@@ -164,7 +164,7 @@ public class PipelineLoopDispatchPropertyTests
         using var cts = new CancellationTokenSource();
         await svc.StartAsync(cts.Token);
 
-        var started = svc.StartLoop();
+        var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         // Wait for the cycle to complete (status changes to "Cycle complete")
@@ -225,7 +225,7 @@ public class PipelineLoopDispatchPropertyTests
         using var cts = new CancellationTokenSource();
         await svc.StartAsync(cts.Token);
 
-        var started = svc.StartLoop();
+        var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -273,7 +273,7 @@ public class PipelineLoopDispatchPropertyTests
     /// **Validates: Requirements 8.1, 8.2**
     /// </summary>
     [Property]
-    public void PreStartValidation_RejectsInvalidProviderIds(PositiveInt templateCountRaw)
+    public async Task PreStartValidation_RejectsInvalidProviderIds(PositiveInt templateCountRaw)
     {
         var templateCount = Math.Min(templateCountRaw.Get, 5);
         var templates = Enumerable.Range(0, templateCount).Select(i => new PipelineJobTemplate
@@ -300,7 +300,7 @@ public class PipelineLoopDispatchPropertyTests
 
         var svc = CreateService(mockStore, new Mock<IProviderFactory>());
 
-        var result = svc.StartLoop();
+        var result = await svc.StartLoopAsync();
 
         result.Should().BeFalse("StartLoop should reject invalid provider IDs");
         svc.ValidationErrors.Should().NotBeEmpty();
@@ -366,7 +366,7 @@ public class PipelineLoopDispatchPropertyTests
         using var cts = new CancellationTokenSource();
         await svc.StartAsync(cts.Token);
 
-        var started = svc.StartLoop();
+        var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         await Task.Delay(500);
@@ -421,7 +421,7 @@ public class PipelineLoopDispatchPropertyTests
         using var cts = new CancellationTokenSource();
         await svc.StartAsync(cts.Token);
 
-        var started = svc.StartLoop();
+        var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         await Task.Delay(300);
@@ -484,7 +484,7 @@ public class PipelineLoopDispatchPropertyTests
         using var cts = new CancellationTokenSource();
         await svc.StartAsync(cts.Token);
 
-        var started = svc.StartLoop();
+        var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         await Task.Delay(300);

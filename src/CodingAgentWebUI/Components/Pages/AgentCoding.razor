@@ -783,10 +783,10 @@
 
     // ── Loop Controls ──
 
-    private void StartLoop()
+    private async Task StartLoop()
     {
         _errorMessage = null;
-        var started = LoopService.StartLoop();
+        var started = await LoopService.StartLoopAsync();
         if (!started)
         {
             if (LoopService.ValidationErrors.Count > 0)
