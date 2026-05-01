@@ -21,7 +21,7 @@ public class PromptBuilderPropertyTests
     /// 
     /// **Validates: Requirements REQ-8.2**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(ReworkPromptArbitraries) })]
+    [Property(Arbitrary = new[] { typeof(ReworkPromptArbitraries) })]
     public void BuildReworkPrompt_ConflictFilesAppearInOutput(NonEmptyFilePathList conflictFiles)
     {
         var files = conflictFiles.Paths;
@@ -48,7 +48,7 @@ public class PromptBuilderPropertyTests
     /// 
     /// **Validates: Requirements REQ-8.3**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(ReworkPromptArbitraries) })]
+    [Property(Arbitrary = new[] { typeof(ReworkPromptArbitraries) })]
     public void BuildReworkPrompt_ReviewCommentsAppearInOutput(NonEmptyReviewCommentList commentList)
     {
         var comments = commentList.Comments;

@@ -26,7 +26,7 @@ public class ReviewerMigrationTests
     /// (3) CodeReviewConfiguration.Agents contains entries (non-null, non-empty)
     /// **Validates: Requirements 9.1, 9.2**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(MigrationPreconditionArbitraries) })]
+    [Property(Arbitrary = new[] { typeof(MigrationPreconditionArbitraries) })]
     public async void MigrationPreconditionGate_SaveCalledIffAllPreconditionsMet(MigrationPreconditionInput input)
     {
         // Arrange

@@ -46,7 +46,7 @@ public class TokenProviderInvocationPropertyTests
     ///
     /// **Validates: Requirements 5.2, 5.3, 5.4**
     /// </summary>
-    [Property(MaxTest = 20, Arbitrary = [typeof(TokenProviderInvocationArbitrary)])]
+    [Property(Arbitrary = [typeof(TokenProviderInvocationArbitrary)])]
     public void TokenProvider_IsInvokedBeforeApiCall(TokenProviderInvocationInput input)
     {
         // Arrange: Create a tracking delegate that throws a sentinel exception.

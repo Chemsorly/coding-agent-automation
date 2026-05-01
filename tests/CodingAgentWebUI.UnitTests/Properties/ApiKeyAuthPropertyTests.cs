@@ -18,7 +18,7 @@ public class ApiKeyAuthPropertyTests
     /// For any API key that doesn't match configured AGENT_API_KEY, constant-time comparison fails.
     /// **Validates: Requirements 1.8, 18.3**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void InvalidApiKey_IsRejected(NonEmptyString configuredKey, NonEmptyString providedKey)
     {
         // Ensure the keys are different
@@ -36,7 +36,7 @@ public class ApiKeyAuthPropertyTests
     /// Property 3 (continued): Missing or empty token is always rejected.
     /// **Validates: Requirements 1.8, 18.3**
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property]
     public void EmptyToken_IsRejected(NonEmptyString configuredKey)
     {
         var token = string.Empty;
@@ -48,7 +48,7 @@ public class ApiKeyAuthPropertyTests
     /// Property 3 (continued): Valid API key passes constant-time comparison.
     /// **Validates: Requirements 1.8, 18.3**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void ValidApiKey_IsAccepted(NonEmptyString apiKey)
     {
         var configuredBytes = Encoding.UTF8.GetBytes(apiKey.Get);
@@ -63,7 +63,7 @@ public class ApiKeyAuthPropertyTests
     /// Property 3 (continued): Constant-time comparison is symmetric.
     /// **Validates: Requirements 1.8, 18.3**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void ConstantTimeComparison_IsSymmetric(NonEmptyString key1, NonEmptyString key2)
     {
         var bytes1 = Encoding.UTF8.GetBytes(key1.Get);

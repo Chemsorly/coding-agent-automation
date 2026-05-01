@@ -28,7 +28,7 @@ public class PipelineLoopPropertyTests
     /// deserializing back produces an equivalent list (all fields preserved, order maintained).
     /// **Validates: Requirements 1.3**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void SerializationRoundTrip_PreservesAllFields(PositiveInt countRaw, bool includeOptionals)
     {
         var count = Math.Min(countRaw.Get, 10);
@@ -70,7 +70,7 @@ public class PipelineLoopPropertyTests
     /// Start cycle, mutate config store mid-cycle via mock, verify cycle used original snapshot.
     /// **Validates: Requirements 2.1**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public async Task SnapshotIsolation_CycleUsesOriginalConfig(PositiveInt templateCountRaw)
     {
         var templateCount = Math.Min(templateCountRaw.Get, 4);
@@ -128,7 +128,7 @@ public class PipelineLoopPropertyTests
     /// Run N cycles with stable config, count CreateIssueProvider calls, assert equals unique IssueProviderId count.
     /// **Validates: Requirements 2.3**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public async Task ProviderCacheCorrectness_CreatesOncePerUniqueId(PositiveInt templateCountRaw)
     {
         var templateCount = Math.Min(templateCountRaw.Get, 5);
@@ -179,7 +179,7 @@ public class PipelineLoopPropertyTests
     /// Generate failure patterns (subset of templates throw), verify non-throwing templates still polled.
     /// **Validates: Requirements 2.5, 3.1**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public async Task ErrorIsolation_NonFailingTemplatesStillPolled(PositiveInt templateCountRaw)
     {
         var templateCount = Math.Max(Math.Min(templateCountRaw.Get, 5), 2);
@@ -246,7 +246,7 @@ public class PipelineLoopPropertyTests
     /// Generate rate limit scenarios with reset times, verify skip during cycle and re-inclusion after reset.
     /// **Validates: Requirements 2.6**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public async Task RateLimitSkipAndRecovery_SkipsDuringCycleRecoversAfter(PositiveInt templateCountRaw)
     {
         var templateCount = Math.Max(Math.Min(templateCountRaw.Get, 4), 2);
@@ -317,7 +317,7 @@ public class PipelineLoopPropertyTests
     /// Generate mixed enabled/disabled template lists, verify only enabled templates have their IIssueProvider invoked.
     /// **Validates: Requirements 2.7**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public async Task DisabledTemplatesExcluded_OnlyEnabledPolled(PositiveInt enabledCountRaw, PositiveInt disabledCountRaw)
     {
         var enabledCount = Math.Min(enabledCountRaw.Get, 3);

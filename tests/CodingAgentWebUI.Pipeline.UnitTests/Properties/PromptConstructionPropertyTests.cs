@@ -19,7 +19,7 @@ public class PromptConstructionPropertyTests
     /// Prompt contains the issue title and acceptance criteria inline,
     /// but references the issue context file instead of inlining description.
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void Prompt_ContainsTitleAndCriteriaButReferencesFile(NonEmptyString title, NonEmptyString description, byte criteriaCount)
     {
         var count = criteriaCount % 6;
@@ -83,7 +83,7 @@ public class PromptConstructionPropertyTests
     /// <summary>
     /// Issue context file content includes all comment bodies and author attributions.
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property]
     public void IssueContextFile_ContainsAllCommentBodiesAndAuthors(NonEmptyString title, NonEmptyString description, byte commentCount)
     {
         var count = (commentCount % 4) + 1; // 1-4 comments
