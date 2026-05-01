@@ -80,11 +80,6 @@ builder.Services.AddHostedService(sp => new HeartbeatMonitorService(
     sp.GetRequiredService<IConfigurationStore>(),
     Serilog.Log.Logger));
 
-// Quality gate migration — ensures at least one QGC exists before first dispatch
-builder.Services.AddHostedService(sp => new QualityGateMigrationService(
-    sp.GetRequiredService<IConfigurationStore>(),
-    Serilog.Log.Logger));
-
 // Job queue drain service — periodically matches queued jobs to idle agents
 builder.Services.AddSingleton(sp => new JobQueueDrainService(
     sp.GetRequiredService<JobDispatcherService>(),
