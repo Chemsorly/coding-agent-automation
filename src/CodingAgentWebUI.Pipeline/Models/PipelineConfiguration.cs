@@ -50,7 +50,6 @@ public sealed record PipelineConfiguration
         "Review the changes against the original issue requirements. Use a sub-agent for the review.\n" +
         "Output findings as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
         "CHECK FOR:\n" +
-        "- Logic errors against acceptance criteria\n" +
         "- Unhandled null references and exception paths\n" +
         "- Off-by-one errors in loops and collections\n" +
         "- Race conditions in async/concurrent code\n" +
@@ -77,7 +76,6 @@ public sealed record PipelineConfiguration
         "Review the changes against the original issue requirements. Use a sub-agent for the review. " +
         "Output findings as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
         "CHECK FOR:\n" +
-        "- Logic errors against acceptance criteria\n" +
         "- Unhandled null references and exception paths\n" +
         "- Off-by-one errors in loops and collections\n" +
         "- Race conditions in async code\n" +
@@ -135,11 +133,40 @@ public sealed record PipelineConfiguration
         "- General code quality or style issues\n\n" +
         "Do NOT fix anything. Only report findings.";
 
-    /// <summary>Default review agents: Correctness + Security.</summary>
+    public const string DefaultAcceptanceCriteriaReviewPrompt =
+        "Review the changes against the acceptance criteria from the original issue. " +
+        "The previous reviews covered code correctness, .NET patterns, and security — " +
+        "do not duplicate those findings.\n\n" +
+        "Go through EACH acceptance criterion listed in the issue one by one. " +
+        "For each criterion, determine whether the implementation satisfies it.\n\n" +
+        "Output your findings as a numbered list with severity markers:\n" +
+        "- [CRITICAL] — Acceptance criterion is NOT met. The implementation is missing " +
+        "the required behavior or contradicts the requirement.\n" +
+        "- [WARNING] — Acceptance criterion is PARTIALLY met. The core behavior exists " +
+        "but edge cases or secondary aspects are missing.\n" +
+        "- [SUGGESTION] — Acceptance criterion is met, but the implementation could " +
+        "better align with the intent.\n\n" +
+        "For each finding, quote the specific acceptance criterion and explain " +
+        "what is missing or incomplete with references to the relevant code.\n\n" +
+        "If ALL acceptance criteria are fully met, state that explicitly — " +
+        "do not invent findings.\n\n" +
+        "If the issue has no acceptance criteria section, check whether the " +
+        "implementation addresses the issue description and stated goals instead.\n\n" +
+        "DO NOT FLAG:\n" +
+        "- Code quality issues (already covered by previous reviews)\n" +
+        "- .NET-specific patterns (already covered by previous reviews)\n" +
+        "- Security issues (already covered by previous reviews)\n" +
+        "- Style or formatting preferences\n" +
+        "- Suggestions to add features beyond what the issue requests\n\n" +
+        "Do NOT fix anything. Only report findings.";
+
+    /// <summary>Default review agents: Correctness + DotNetSpecialist + Security + AcceptanceCriteria.</summary>
     public static IReadOnlyList<ReviewAgentConfig> DefaultReviewAgents { get; } = new[]
     {
         new ReviewAgentConfig { Name = "Correctness", Prompt = DefaultCorrectnessReviewPrompt },
-        new ReviewAgentConfig { Name = "SecurityReviewer", Prompt = DefaultSecurityReviewPrompt }
+        new ReviewAgentConfig { Name = "DotNetSpecialist", Prompt = DefaultDotNetSpecialistReviewPrompt },
+        new ReviewAgentConfig { Name = "SecurityReviewer", Prompt = DefaultSecurityReviewPrompt },
+        new ReviewAgentConfig { Name = "AcceptanceCriteria", Prompt = DefaultAcceptanceCriteriaReviewPrompt }
     };
 
     public const string DefaultAnalysisPrompt =
