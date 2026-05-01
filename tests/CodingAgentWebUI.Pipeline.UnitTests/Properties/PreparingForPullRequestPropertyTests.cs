@@ -152,7 +152,7 @@ public class PreparingForPullRequestPropertyTests
     /// Property: For any combination of initial retries used and final QG results,
     /// the total retry count never exceeds MaxRetries and the terminal state is correct.
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property]
     public void TotalRetryCount_NeverExceedsMaxRetries(
         PositiveInt maxRetriesRaw,
         NonNegativeInt initialFailsRaw,

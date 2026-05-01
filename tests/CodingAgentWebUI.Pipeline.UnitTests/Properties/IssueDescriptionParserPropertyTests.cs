@@ -19,7 +19,7 @@ public class IssueDescriptionParserPropertyTests
     /// Property 9: For random markdown strings, Parse(Format(Parse(description))) ≡ Parse(description).
     /// **Validates: Requirements 12.5**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void ParseFormatParse_RoundTrip_ProducesEquivalentParsedIssue(byte scenarioSeed)
     {
         // Generate a variety of markdown descriptions
@@ -41,7 +41,7 @@ public class IssueDescriptionParserPropertyTests
     /// Property 9 with structured headings: descriptions with ## Requirements and ## Acceptance Criteria.
     /// **Validates: Requirements 12.5**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void ParseFormatParse_WithStructuredHeadings_RoundTrips(
         NonEmptyString requirements,
         byte criteriaCount)
@@ -69,7 +69,7 @@ public class IssueDescriptionParserPropertyTests
     /// Property 9 with checkbox-only descriptions.
     /// **Validates: Requirements 12.5**
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public void ParseFormatParse_WithCheckboxOnly_RoundTrips(
         NonEmptyString item1,
         NonEmptyString item2)

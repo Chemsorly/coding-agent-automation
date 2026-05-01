@@ -23,7 +23,7 @@ public class GitHubIssueProviderPropertyTests
     /// those labels. When the label list is null or empty, no label filter is applied.
     /// **Validates: Requirements 3.4**
     /// </summary>
-    [Property(MaxTest = 20, Arbitrary = [typeof(LabelListArbitrary)])]
+    [Property(Arbitrary = [typeof(LabelListArbitrary)])]
     public void ListOpenIssuesAsync_Labels_PassedThrough_To_RepositoryIssueRequest(LabelInput input)
     {
         // Arrange

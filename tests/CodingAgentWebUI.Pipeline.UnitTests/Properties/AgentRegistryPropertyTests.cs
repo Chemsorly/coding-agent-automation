@@ -25,7 +25,7 @@ public class AgentRegistryPropertyTests
     /// entry (no duplicate), resets status to Idle if Disconnected.
     /// **Validates: Requirements 2.2, 2.3**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void Registration_ProducesExactlyOneIdleEntry(NonEmptyString agentId, NonEmptyString hostname, NonEmptyString agentType, NonEmptyString connectionId)
     {
         var registry = CreateRegistry();
@@ -51,7 +51,7 @@ public class AgentRegistryPropertyTests
     /// updates entry without creating a duplicate.
     /// **Validates: Requirements 2.2, 2.3**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void ReRegistration_UpdatesConnectionId_NoDuplicate(NonEmptyString agentId, NonEmptyString conn1, NonEmptyString conn2)
     {
         var registry = CreateRegistry();
@@ -75,7 +75,7 @@ public class AgentRegistryPropertyTests
     /// Property 1 (continued): Re-registering a Disconnected agent resets status to Idle.
     /// **Validates: Requirements 2.2, 2.3**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void ReRegistration_ResetsDisconnectedToIdle(NonEmptyString agentId, NonEmptyString conn1, NonEmptyString conn2)
     {
         var registry = CreateRegistry();

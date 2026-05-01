@@ -179,7 +179,7 @@ public class FileSystemMonitorTests
     /// has matching type, and union of all groups equals original list.
     /// Migrated from CodingAgentWebUI.IntegrationTests.
     /// </summary>
-    [Property(MaxTest = 20, Arbitrary = new[] { typeof(Generators) })]
+    [Property(Arbitrary = new[] { typeof(Generators) })]
     public void GroupByType_PreservesAllItems_WithCorrectTypes(List<FileChange> fileChanges)
     {
         var grouped = fileChanges.GroupBy(fc => fc.Type).ToList();
@@ -195,7 +195,7 @@ public class FileSystemMonitorTests
     /// Property: CompareSnapshots detects the correct number of changes
     /// when given disjoint before/after sets (all created + all deleted).
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property]
     public bool CompareSnapshots_DisjointSets_AllCreatedAndDeleted(byte[] seeds)
     {
         if (seeds == null || seeds.Length < 2) return true;

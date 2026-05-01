@@ -46,7 +46,7 @@ public class JobDispatcherPropertyTests
     /// When no idle agent has matching labels, job is enqueued (not dropped).
     /// **Validates: Requirements 4.3, 19.4**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void NoCompatibleAgent_JobIsEnqueued(NonEmptyString issueId)
     {
         var (registry, dispatcher) = CreateServices();
@@ -65,7 +65,7 @@ public class JobDispatcherPropertyTests
     /// Property 9 (continued): Queue preserves FIFO ordering.
     /// **Validates: Requirements 4.3, 19.4**
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property]
     public void Queue_PreservesFIFOOrdering(PositiveInt jobCount)
     {
         var count = Math.Min(jobCount.Get, 20);
@@ -95,7 +95,7 @@ public class JobDispatcherPropertyTests
     /// (excluding terminal states).
     /// **Validates: Requirements 5.2**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void HighWaterMark_IsMonotonicallyNonDecreasing(int[] stepIndices)
     {
         var nonTerminalSteps = Enum.GetValues<PipelineStep>()
@@ -136,7 +136,7 @@ public class JobDispatcherPropertyTests
     /// For concurrent dispatch requests for same issueIdentifier, at most one is enqueued.
     /// **Validates: Requirements 9.6**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void DuplicateIssue_IsRejected(NonEmptyString issueId)
     {
         var (_, dispatcher) = CreateServices();
@@ -157,7 +157,7 @@ public class JobDispatcherPropertyTests
     /// Queue contains at most one entry per issueIdentifier. Duplicate enqueue rejected.
     /// **Validates: Requirements 17.6**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void NoDuplicateQueueEntries(NonEmptyString issueId)
     {
         var (_, dispatcher) = CreateServices();
@@ -175,7 +175,7 @@ public class JobDispatcherPropertyTests
     /// No compatible job → agent stays Idle, queue unchanged.
     /// **Validates: Requirements 17.3**
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property]
     public void AgentIdle_DequeuesToCompatibleJob(NonEmptyString issueId)
     {
         var (registry, dispatcher) = CreateServices();
@@ -195,7 +195,7 @@ public class JobDispatcherPropertyTests
     /// Property 22 (continued): No compatible job → agent stays Idle, queue unchanged.
     /// **Validates: Requirements 17.3**
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property]
     public void AgentIdle_NoCompatibleJob_QueueUnchanged(NonEmptyString issueId)
     {
         var (registry, dispatcher) = CreateServices();

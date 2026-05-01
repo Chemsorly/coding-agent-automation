@@ -20,7 +20,7 @@ public class MessageSerializationPropertyTests
     /// For any AgentRegistrationMessage, serialize then deserialize produces equivalent object.
     /// **Validates: Requirements 15.3, 15.4, 15.5, 15.6, 15.7**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void AgentRegistrationMessage_RoundTrip(
         NonEmptyString agentId,
         NonEmptyString hostname,
@@ -48,7 +48,7 @@ public class MessageSerializationPropertyTests
     /// Property 18 (continued): HeartbeatMessage round-trip with DateTimeOffset and nullable PipelineStep.
     /// **Validates: Requirements 15.3, 15.4, 15.5, 15.6, 15.7**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void HeartbeatMessage_RoundTrip(
         NonEmptyString agentId,
         bool hasCurrentStep,
@@ -75,7 +75,7 @@ public class MessageSerializationPropertyTests
     /// Property 18 (continued): JobCompletionPayload round-trip with all fields.
     /// **Validates: Requirements 15.3, 15.4, 15.5, 15.6, 15.7**
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property]
     public void JobCompletionPayload_RoundTrip(
         bool isDraftPr,
         int retryCount,
@@ -129,7 +129,7 @@ public class MessageSerializationPropertyTests
     /// Property 18 (continued): TokenRefreshResponse round-trip with DateTimeOffset.
     /// **Validates: Requirements 15.3, 15.4, 15.5, 15.6, 15.7**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void TokenRefreshResponse_RoundTrip(NonEmptyString token)
     {
         var original = new TokenRefreshResponse
@@ -149,7 +149,7 @@ public class MessageSerializationPropertyTests
     /// Property 18 (continued): CommentPayload round-trip with nullable fields.
     /// **Validates: Requirements 15.3, 15.4, 15.5, 15.6, 15.7**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property]
     public void CommentPayload_RoundTrip(bool hasAnalysis, bool hasAssessment)
     {
         var original = new CommentPayload

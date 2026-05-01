@@ -37,7 +37,7 @@ public class ReviewerSerializationPropertyTests
     /// SHALL produce an object with identical field values using record equality.
     /// **Validates: Requirements 1.6, 2.2**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(ReviewerSerializationArbitraries) })]
+    [Property(Arbitrary = new[] { typeof(ReviewerSerializationArbitraries) })]
     public void JsonRoundTrip_SerializeDeserialize_ProducesEqualObject(ReviewerConfiguration original)
     {
         var json = JsonSerializer.Serialize(original, JsonOptions);
@@ -64,7 +64,7 @@ public class ReviewerSerializationPropertyTests
     /// SHALL produce an object with identical field values.
     /// **Validates: Requirements 1.5, 1.6**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(ReviewerSerializationArbitraries) })]
+    [Property(Arbitrary = new[] { typeof(ReviewerSerializationArbitraries) })]
     public void MessagePackRoundTrip_SerializeDeserialize_ProducesEqualObject(ReviewerConfiguration original)
     {
         var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
