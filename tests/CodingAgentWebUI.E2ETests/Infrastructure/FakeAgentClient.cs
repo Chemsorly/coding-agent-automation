@@ -65,6 +65,33 @@ public sealed class FakeAgentClient : IAsyncDisposable
     }
 
     /// <summary>
+    /// Accepts a job without completing it. Use with <see cref="ReportStepAsync"/> for fine-grained control.
+    /// </summary>
+    public async Task AcceptJobAsync(string jobId)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        await _connection.InvokeAsync("JobAccepted", jobId);
+    }
+
+    /// <summary>
+    /// Reports a single step transition for a job. Use after <see cref="AcceptJobAsync"/> for fine-grained control.
+    /// </summary>
+    public async Task ReportStepAsync(string jobId, PipelineStep step)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        await _connection.InvokeAsync("ReportStepTransition", jobId, step, DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>
+    /// Reports job completion with a full payload. Use after <see cref="AcceptJobAsync"/> and <see cref="ReportStepAsync"/>.
+    /// </summary>
+    public async Task ReportCompletionAsync(string jobId, JobCompletionPayload payload)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        await _connection.InvokeAsync("ReportJobCompleted", jobId, payload);
+    }
+
+    /// <summary>
     /// Accepts a job and reports completion with the given final step.
     /// </summary>
     public async Task AcceptAndCompleteJobAsync(
@@ -102,6 +129,27 @@ public sealed class FakeAgentClient : IAsyncDisposable
             CodeReviewWarningCount = 0,
             CodeReviewSuggestionCount = 0
         });
+    }
+
+    /// <summary>
+    /// Accepts a job and reports completion with a fully custom payload.
+    /// Use this for tests that need to control RetryCount, FailureReason, IsDraftPr, etc.
+    /// </summary>
+    public async Task AcceptAndCompleteJobWithPayloadAsync(string jobId, JobCompletionPayload payload)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+
+        // Accept the job
+        await _connection.InvokeAsync("JobAccepted", jobId);
+
+        // Report step transitions leading up to the final step
+        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.CloningRepository, DateTimeOffset.UtcNow);
+        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.GeneratingCode, DateTimeOffset.UtcNow);
+        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow);
+        await _connection.InvokeAsync("ReportStepTransition", jobId, payload.FinalStep, DateTimeOffset.UtcNow);
+
+        // Report completion with the provided payload
+        await _connection.InvokeAsync("ReportJobCompleted", jobId, payload);
     }
 
     /// <summary>
