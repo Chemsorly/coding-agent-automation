@@ -58,7 +58,7 @@ public class SettingsPageComponentTests : BunitContext
 
         // Tree nav contains group headers
         Assert.Contains("Providers", component.Markup);
-        Assert.Contains("Pipeline Configuration", component.Markup);
+        Assert.Contains("Pipeline", component.Markup);
 
         // Default selected node is Issue Providers — its section is visible
         Assert.Contains("Issue Providers", component.Markup);
