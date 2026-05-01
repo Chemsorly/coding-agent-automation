@@ -38,8 +38,9 @@ public sealed record CodeReviewConfiguration
     /// When populated, the review step runs each agent sequentially instead of using the
     /// single <see cref="Prompt"/>. The second agent onwards sees previous findings via
     /// <c>--resume</c>. When null or empty, falls back to the single <see cref="Prompt"/>.
+    /// Superseded by ReviewerConfiguration entities for label-based routing (see spec 014),
+    /// but still used as an inline fallback when no ReviewerConfigurations match.
     /// </summary>
-    [Obsolete("Use ReviewerConfiguration entities instead. See spec 014.")]
     public IReadOnlyList<ReviewAgentConfig>? Agents { get; init; } = PipelineConfiguration.DefaultReviewAgents;
 }
 

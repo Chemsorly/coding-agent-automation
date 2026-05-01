@@ -526,12 +526,10 @@ internal class AgentExecutionOrchestrator
             {
                 agents = ReviewerResolver.FlattenAgents(resolvedReviewerConfigs);
             }
-            #pragma warning disable CS0618 // Obsolete — legacy fallback until all callers migrate
             else if (config.CodeReview.Agents is { Count: > 0 } configuredAgents)
             {
                 agents = configuredAgents;
             }
-            #pragma warning restore CS0618
             else
             {
                 agents = new[] { new ReviewAgentConfig { Name = "Review", Prompt = config.CodeReview.Prompt } };

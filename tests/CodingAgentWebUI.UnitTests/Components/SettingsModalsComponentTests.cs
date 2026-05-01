@@ -255,7 +255,7 @@ public class SettingsModalsComponentTests : BunitContext
             }
         };
 
-        component.InvokeAsync(() => component.Instance.ShowRelatedProviders(savedConfig));
+        await component.InvokeAsync(() => component.Instance.ShowRelatedProviders(savedConfig));
 
         // Click "Create Selected"
         var saveButton = component.Find(".btn-save");

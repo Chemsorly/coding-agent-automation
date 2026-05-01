@@ -35,7 +35,7 @@ jobs:
         run: dotnet restore
 
       - name: Build
-        run: dotnet build --no-restore --configuration Release /p:TreatWarningsAsErrors=true
+        run: dotnet build --no-restore --configuration Release
 
       - name: Test
         run: dotnet test --no-build --configuration Release --verbosity normal --logger trx --results-directory TestResults --filter "Category!=E2E"

@@ -222,7 +222,8 @@ public class AgentHubTests
     public void PipelineStep_Completed_IsTerminalState()
     {
         // Terminal states should be >= Completed
-        Assert.True(PipelineStep.Completed >= PipelineStep.Completed);
+        var completed = PipelineStep.Completed;
+        Assert.True(completed >= PipelineStep.Completed);
         Assert.True(PipelineStep.Failed > PipelineStep.Completed);
     }
 

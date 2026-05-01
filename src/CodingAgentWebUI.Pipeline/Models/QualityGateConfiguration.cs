@@ -35,11 +35,10 @@ public sealed record QualityGateConfiguration
     public double? CoverageThreshold { get; init; }
 
     /// <summary>
-    /// Obsolete: Security scanning has been removed from the quality gate validator.
+    /// Security scanning has been removed from the quality gate validator.
     /// Dependency vulnerability scanning should be handled by external CI/CD pipelines.
     /// This field is retained for backward compatibility with existing serialized configurations.
     /// </summary>
-    [Obsolete("Security scanning removed — use external CI/CD for dependency vulnerability checks.")]
     [Key(8)]
     public bool SecurityScanEnabled { get; init; } = false;
 
