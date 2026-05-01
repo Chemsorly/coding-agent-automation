@@ -11,8 +11,6 @@ namespace CodingAgentWebUI.IntegrationTests.Pipeline;
 /// <summary>
 /// Unit tests for Settings page logic.
 /// Tests provider CRUD operations and pipeline config save/load via mocked IConfigurationStore.
-/// Since bunit is not available, these tests validate the same operations the Settings page performs
-/// against IConfigurationStore — add, edit, delete providers and save/load pipeline configuration.
 /// </summary>
 public class SettingsPageTests
 {

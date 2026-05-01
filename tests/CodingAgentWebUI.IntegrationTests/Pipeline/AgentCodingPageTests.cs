@@ -13,7 +13,6 @@ namespace CodingAgentWebUI.IntegrationTests.Pipeline;
 /// Unit tests for AgentCoding page logic.
 /// Tests view switching, concurrent start rejection, and button disabled states
 /// via the same operations the AgentCoding page performs against PipelineOrchestrationService and mocked providers.
-/// Since bunit is not available, these tests validate the page's behavioral logic through its dependencies.
 /// </summary>
 public class AgentCodingPageTests
 {

@@ -23,7 +23,7 @@ public class AppStartupTests : IClassFixture<CustomWebApplicationFactory>
     {
         using var client = _factory.CreateClient();
 
-        var response = await client.GetAsync("/health");
+        var response = await client.GetAsync("/healthz");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
