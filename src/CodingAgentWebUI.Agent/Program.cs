@@ -23,6 +23,8 @@ if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AGENT_TYPE")))
 // ── Configure Serilog ──
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
+    // Suppress noisy ASP.NET Core request logging (health checks every 10s)
+    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .Enrich.WithProperty("AgentId", agentId)
     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{AgentId}] {Message:lj}{NewLine}{Exception}")

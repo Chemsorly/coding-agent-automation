@@ -13,10 +13,10 @@ namespace CodingAgentWebUI.Services;
 /// Also manages per-run <see cref="OutputRingBuffer"/> instances.
 /// Registered as a singleton in DI.
 /// </summary>
-public sealed class OrchestratorRunService : IOrchestratorRunService
+public class OrchestratorRunService : IOrchestratorRunService
 {
-    private readonly ConcurrentDictionary<string, PipelineRun> _activeRuns = new();
-    private readonly ConcurrentDictionary<string, OutputRingBuffer> _outputBuffers = new();
+    protected readonly ConcurrentDictionary<string, PipelineRun> _activeRuns = new();
+    protected readonly ConcurrentDictionary<string, OutputRingBuffer> _outputBuffers = new();
     private readonly int _defaultBufferCapacity;
     private readonly ILogger _logger;
 

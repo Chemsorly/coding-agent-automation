@@ -28,7 +28,7 @@
 
     @if (!string.IsNullOrEmpty(Run.FailureReason))
     {
-        <div class="summary-failure-callout" role="alert">⚠️ @Run.FailureReason</div>
+        <div class="summary-failure-callout" role="alert" data-testid="failure-reason">⚠️ @Run.FailureReason</div>
     }
 
     @if ((Run.BlacklistedFilesDetected?.Count ?? 0) > 0)
@@ -73,7 +73,7 @@
 
     @if (!string.IsNullOrEmpty(Run.PullRequestUrl))
     {
-        <div class="summary-pr-link">
+        <div class="summary-pr-link" data-testid="pr-link">
             🔗 PR @(!string.IsNullOrEmpty(Run.PullRequestNumber) ? $"#{Run.PullRequestNumber}" : "")
             (@(Run.IsDraftPr ? "draft" : "final")) —
             <a href="@Run.PullRequestUrl" target="_blank" rel="noopener noreferrer">View on GitHub →</a>
