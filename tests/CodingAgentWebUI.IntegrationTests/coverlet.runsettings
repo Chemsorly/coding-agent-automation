@@ -4,7 +4,8 @@
     <DataCollectors>
       <DataCollector friendlyName="XPlat Code Coverage">
         <Configuration>
-          <Include>[KiroCliLib]*</Include>
+          <Include>[CodingAgentWebUI]*,[CodingAgentWebUI.Pipeline]*,[CodingAgentWebUI.Infrastructure]*</Include>
+          <Exclude>[CodingAgentWebUI.*.UnitTests]*,[CodingAgentWebUI.IntegrationTests]*,[CodingAgentWebUI.E2ETests]*</Exclude>
           <IncludeTestAssembly>false</IncludeTestAssembly>
           <SkipAutoProps>true</SkipAutoProps>
         </Configuration>
