@@ -152,51 +152,13 @@ var app = builder.Build();
 var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
 lifetime.ApplicationStopping.Register(() =>
 {
-    var logger = Serilog.Log.Logger;
-
     var pipeline = app.Services.GetRequiredService<PipelineOrchestrationService>();
     if (pipeline.IsRunning)
     {
         pipeline.CancelPipelineAsync().GetAwaiter().GetResult();
     }
 
-    // Swap agent:cancelled label on all agent-dispatched active runs
-    var runService = app.Services.GetRequiredService<IOrchestratorRunService>();
-    var activeRuns = runService.GetActiveRuns();
-    if (activeRuns.Count == 0) return;
-
-    var configStore = app.Services.GetRequiredService<IConfigurationStore>();
-    var providerFactory = app.Services.GetRequiredService<IProviderFactory>();
-
-    foreach (var run in activeRuns)
-    {
-        try
-        {
-            var issueConfigs = configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)
-                .GetAwaiter().GetResult();
-            var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
-            if (issueConfig is null) continue;
-
-            var issueProvider = providerFactory.CreateIssueProvider(issueConfig);
-            try
-            {
-                foreach (var label in AgentLabels.All)
-                    issueProvider.RemoveLabelAsync(run.IssueIdentifier, label, CancellationToken.None)
-                        .GetAwaiter().GetResult();
-                issueProvider.AddLabelAsync(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None)
-                    .GetAwaiter().GetResult();
-            }
-            finally
-            {
-                issueProvider.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.Warning(ex, "Best-effort label swap to agent:cancelled failed for run {RunId} on issue {Issue}",
-                run.RunId, run.IssueIdentifier);
-        }
-    }
+    pipeline.CancelActiveAgentRunsAsync().GetAwaiter().GetResult();
 });
 
 // Kubernetes-style health probes — anonymous, no auth required
