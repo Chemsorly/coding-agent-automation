@@ -291,7 +291,7 @@ public sealed class AgentWorkerService : BackgroundService
                 }
             };
 
-            int exitCode = 1;
+            int exitCode = ExitCodes.GeneralFailure;
             string? error = null;
             try
             {
@@ -335,13 +335,13 @@ public sealed class AgentWorkerService : BackgroundService
             }
             catch (OperationCanceledException)
             {
-                exitCode = 130;
+                exitCode = ExitCodes.Cancelled;
                 error = "Chat cancelled";
             }
             catch (Exception ex)
             {
                 _logger.Error(ex, "Chat execution failed for session {SessionId}", message.SessionId);
-                exitCode = 1;
+                exitCode = ExitCodes.GeneralFailure;
                 error = ex.Message;
             }
 

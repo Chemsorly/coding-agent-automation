@@ -76,12 +76,12 @@ public class ChatPromptTests
         var message = new ChatCompletedMessage
         {
             SessionId = "test-session",
-            ExitCode = 1,
+            ExitCode = ExitCodes.GeneralFailure,
             Error = "Access denied"
         };
 
         message.SessionId.Should().Be("test-session");
-        message.ExitCode.Should().Be(1);
+        message.ExitCode.Should().Be(ExitCodes.GeneralFailure);
         message.Error.Should().Be("Access denied");
     }
 

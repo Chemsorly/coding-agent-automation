@@ -541,7 +541,7 @@ public sealed class PipelineLoopService : BackgroundService
     {
         var result = new List<IssueSummary>();
         int page = 1;
-        const int pageSize = 100;
+        const int pageSize = PipelineConstants.DefaultPageSize;
 
         while (true)
         {
