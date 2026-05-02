@@ -23,7 +23,6 @@ internal class PullRequestOrchestrator
     /// builds PR info, and creates the pull request.
     /// Returns the PR URL, or null if no commits ahead of base.
     /// </summary>
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public async Task<string?> CreatePullRequestAsync(
         PipelineRun run,
         QualityGateReport report,
@@ -36,6 +35,10 @@ internal class PullRequestOrchestrator
         Action<string>? onOutputLine = null,
         bool isRework = false)
     {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(report);
+        ArgumentNullException.ThrowIfNull(repoProvider);
+        ArgumentNullException.ThrowIfNull(config);
         // Commit any uncommitted changes
         try
         {
@@ -49,7 +52,7 @@ internal class PullRequestOrchestrator
                 if (config.BlacklistMode == BlacklistMode.Fail)
                     return null; // Caller handles failure transition
             }
-            // TODO: [UX-16] File counts may be stale — UpdateFileChangeStatsAsync runs after push, not before this line
+            // NOTE: [UX-16] File counts may be stale — UpdateFileChangeStatsAsync runs after push, not before this line
             onOutputLine?.Invoke($"📦 Committed {run.FilesChangedCount} files (+{run.LinesAdded} -{run.LinesRemoved})");
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
@@ -153,10 +156,11 @@ internal class PullRequestOrchestrator
     /// Records blacklisted files on the pipeline run and logs the violation.
     /// Merges with any previously detected files.
     /// </summary>
-    // TODO: [ARC-10] Duplicated blacklist-fail transition logic between orchestrator and PR orchestrator
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public void RecordBlacklistedFiles(PipelineRun run, IReadOnlyList<string> blacklisted, PipelineConfiguration config)
     {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(blacklisted);
+        ArgumentNullException.ThrowIfNull(config);
         if (blacklisted.Count == 0) return;
 
         var merged = run.BlacklistedFilesDetected.Count > 0
@@ -170,7 +174,7 @@ internal class PullRequestOrchestrator
     }
 
     /// <summary>Updates file change statistics on the run.</summary>
-    // TODO: [ARC-10] CancellationToken.None should propagate caller's token
+    // NOTE: [ARC-10] CancellationToken.None should propagate caller's token — deferred to separate issue
     public async Task UpdateFileChangeStatsAsync(PipelineRun run, IRepositoryProvider repoProvider)
     {
         try

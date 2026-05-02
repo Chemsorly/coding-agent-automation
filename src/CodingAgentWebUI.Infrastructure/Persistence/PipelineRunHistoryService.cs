@@ -43,9 +43,9 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     }
 
     /// <summary>Adds a completed run to history and persists the summary to disk.</summary>
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public void AddRunToHistory(PipelineRun run)
     {
+        ArgumentNullException.ThrowIfNull(run);
         var summary = run.ToSummary();
         _runHistory.Insert(0, summary);
         PersistRunSummary(summary);
@@ -141,9 +141,9 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     /// <summary>
     /// Cleans up expired workspace folders for failed/cancelled runs based on retention policy.
     /// </summary>
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null)
     {
+        ArgumentNullException.ThrowIfNull(config);
         if (config.FailedWorkspaceRetentionDays < 0)
             return;
 

@@ -2458,7 +2458,7 @@ public class PipelineOrchestrationServiceTests
 
         // Note: CompletedAt is not set by QualityGateOrchestrator's exception handler
         // (unlike FailRunAsync which sets it). This is the actual production behavior.
-        // TODO: Consider fixing production code to set CompletedAt on all terminal states.
+        // NOTE: Consider fixing production code to set CompletedAt on all terminal states.
 
         // Verify agent:error label was set
         _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);

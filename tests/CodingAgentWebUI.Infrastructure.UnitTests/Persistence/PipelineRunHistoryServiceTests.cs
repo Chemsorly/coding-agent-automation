@@ -187,4 +187,26 @@ public class PipelineRunHistoryServiceTests
             rate.Should().Be(expectedRate);
         }
     }
+
+    [Fact]
+    public void AddRunToHistory_ThrowsOnNull()
+    {
+        var runsDir = Path.Combine(Path.GetTempPath(), $"runs-{Guid.NewGuid()}");
+        var service = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
+
+        var act = () => service.AddRunToHistory(null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("run");
+    }
+
+    [Fact]
+    public void CleanupExpiredWorkspaces_ThrowsOnNullConfig()
+    {
+        var runsDir = Path.Combine(Path.GetTempPath(), $"runs-{Guid.NewGuid()}");
+        var service = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
+
+        var act = () => service.CleanupExpiredWorkspaces(null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("config");
+    }
 }

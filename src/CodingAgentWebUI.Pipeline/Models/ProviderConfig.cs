@@ -17,7 +17,7 @@ public static class ProviderSettingsKeys
 /// <summary>
 /// Configuration for a provider instance (issue, repository, or agent).
 /// WARNING: Settings dictionary stores sensitive values (tokens, credentials) as plain text.
-/// TODO: Before production use, encrypt sensitive Settings values using ASP.NET Data Protection
+/// NOTE: Before production use, encrypt sensitive Settings values using ASP.NET Data Protection
 /// or a secrets manager. See post-poc-improvements.md for details.
 /// </summary>
 public sealed class ProviderConfig

@@ -89,7 +89,7 @@ public class GitHubIssueProviderWireMockTests : WireMockTestBase
         result[0].Id.Should().Be("1");
         result[0].Body.Should().Be("First comment");
         result[0].Author.Should().Be("alice");
-        // TODO: Assert CreatedAt timestamp deserialization (issue requires "including author and timestamps")
+        // NOTE: Assert CreatedAt timestamp deserialization (issue requires "including author and timestamps")
         result[1].Id.Should().Be("2");
         result[1].Author.Should().Be("bob");
     }
@@ -255,7 +255,7 @@ public class GitHubIssueProviderWireMockTests : WireMockTestBase
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/1"), BuildIssueJson(1, "T", "B", []));
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/2"), BuildIssueJson(2, "T2", "B2", []));
 
-        // TODO: Token assertion uses substring matching (Contain). If tokens shared a common prefix
+        // NOTE: Token assertion uses substring matching (Contain). If tokens shared a common prefix
         // (e.g., "token" and "token-extended"), the assertion could pass incorrectly. Consider using
         // exact match on the full "Token <value>" header string for stricter verification.
         await using var provider = CreateProviderWithTokenProvider(ct =>

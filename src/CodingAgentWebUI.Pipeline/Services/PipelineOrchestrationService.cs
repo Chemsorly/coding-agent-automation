@@ -694,10 +694,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             TransitionTo(run, finalStep);
             AddRunToHistory(run);
 
-            // TODO: [UX-16] duration.TotalMinutes:F0 rounds instead of truncating — use (int)duration.TotalMinutes
             var duration = run.CompletedAt!.Value - run.StartedAt;
             if (finalStep == PipelineStep.Completed)
-                EmitOutputLine($"✅ Pipeline completed in {duration.TotalMinutes:F0}m {duration.Seconds}s");
+                EmitOutputLine($"✅ Pipeline completed in {(int)duration.TotalMinutes}m {duration.Seconds}s");
             else
                 EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
 

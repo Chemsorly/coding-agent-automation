@@ -245,7 +245,7 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                 throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
 
             var signature = new Signature("CodingAgentWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
-            // TODO: [ARC-07a] The allowEmpty path is currently only exercised by the retry loop's empty commit
+            // NOTE: [ARC-07a] The allowEmpty path is currently only exercised by the retry loop's empty commit
             // for CI re-trigger. Add an integration test with a real LibGit2Sharp repo to verify AllowEmptyCommit works.
             var commitOptions = allowEmpty ? new CommitOptions { AllowEmptyCommit = true } : new CommitOptions();
             repo.Commit(message, signature, signature, commitOptions);

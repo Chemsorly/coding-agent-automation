@@ -40,7 +40,7 @@ public static class TestPipelineConfig
         ClosedLoopMaxRunsPerCycle = 0,
         ClosedLoopMaxConsecutivePollFailures = 5,
         ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15),
-        // TODO: [REF-01] Add ClosedLoopMaxPagesToFetch = 10 — omitted from explicit property list (review finding #1)
+        ClosedLoopMaxPagesToFetch = 10,
     };
 
     /// <summary>
@@ -75,6 +75,6 @@ public static class TestPipelineConfig
         ClosedLoopMaxRunsPerCycle = 0,
         ClosedLoopMaxConsecutivePollFailures = 5,
         ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15),
-        // TODO: [REF-01] Add ClosedLoopMaxPagesToFetch = 10 — omitted from explicit property list (review finding #1)
+        ClosedLoopMaxPagesToFetch = 10,
     };
 }

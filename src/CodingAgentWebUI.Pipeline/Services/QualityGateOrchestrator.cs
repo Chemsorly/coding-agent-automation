@@ -329,7 +329,7 @@ internal class QualityGateOrchestrator
                 _logger.Information("Pipeline {RunId} was cancelled during quality gates", run.RunId);
                 run.CompletedAt = DateTime.UtcNow;
                 await removeAllAgentLabels(run.IssueIdentifier, CancellationToken.None);
-                // TODO: [UX-16] Emit onOutputLine("🚫 Pipeline cancelled") for output log consistency
+                onOutputLine("🚫 Pipeline cancelled");
                 transitionTo(PipelineStep.Cancelled);
                 addRunToHistory(run);
             }
@@ -339,7 +339,7 @@ internal class QualityGateOrchestrator
             _logger.Error(ex, "Pipeline {RunId} quality gate validation failed", run.RunId);
             run.FailureReason = $"Quality gate validation error: {ex.Message}";
             await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
-            // TODO: [UX-16] Emit onOutputLine($"❌ Pipeline failed: {run.FailureReason}") for output log consistency
+            onOutputLine($"❌ Pipeline failed: {run.FailureReason}");
             transitionTo(PipelineStep.Failed);
             addRunToHistory(run);
         }

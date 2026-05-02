@@ -28,7 +28,6 @@ internal class AgentExecutionOrchestrator
     /// reads the analysis file, evaluates the confidence gate, and posts the analysis comment.
     /// Returns true if the pipeline should continue to code generation, false if it should stop.
     /// </summary>
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public async Task<bool> ExecuteAnalysisPhaseAsync(
         PipelineRun run, PipelineConfiguration config,
         IAgentProvider agentProvider, IAgentIssueOperations issueOps,
@@ -39,6 +38,11 @@ internal class AgentExecutionOrchestrator
         Action<string>? onOutputLine, Action? onChange,
         CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(agentProvider);
+        ArgumentNullException.ThrowIfNull(issueOps);
+        // TODO: [ARC-10] Add ThrowIfNull for remaining parameters: issue, parsed, issueComments, transitionTo, addRunToHistory
         string? existingAnalysis = null;
         var analysisComment = issueComments.FirstOrDefault(c => c.Body.Contains("## 🤖 Agent Analysis"));
         var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains("<!-- agent:gate-rejection -->"));
@@ -60,13 +64,19 @@ internal class AgentExecutionOrchestrator
         }
 
         // Write issue context file before analysis
-        // TODO: [AGT-12] Wrap in try/catch for graceful fallback if file write fails (IOException could abort pipeline)
-        var kiroDir = Path.Combine(run.WorkspacePath!, ".kiro");
-        Directory.CreateDirectory(kiroDir);
+        try
+        {
+            var kiroDir = Path.Combine(run.WorkspacePath!, ".kiro");
+            Directory.CreateDirectory(kiroDir);
 
-        var issueContextContent = PromptBuilder.BuildIssueContextFileContent(issue, parsed, issueComments);
-        await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, PromptBuilder.IssueContextFilePath), issueContextContent, ct);
-        _logger.Debug("Pipeline {RunId} wrote issue context to {FilePath}", run.RunId, PromptBuilder.IssueContextFilePath);
+            var issueContextContent = PromptBuilder.BuildIssueContextFileContent(issue, parsed, issueComments);
+            await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, PromptBuilder.IssueContextFilePath), issueContextContent, ct);
+            _logger.Debug("Pipeline {RunId} wrote issue context to {FilePath}", run.RunId, PromptBuilder.IssueContextFilePath);
+        }
+        catch (IOException ex)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} failed to write issue context file, continuing without it", run.RunId);
+        }
 
         if (existingAnalysis != null)
         {
@@ -184,7 +194,7 @@ internal class AgentExecutionOrchestrator
                         run.RunId, attempt + 1);
                     run.FailureReason = $"Analysis failed after {attempt + 1} attempt(s): {ex.Message}";
                     run.CompletedAt = DateTime.UtcNow;
-                    // TODO: [RES-06] Use CancellationToken.None for failure-path label swap — ct may already be cancelled (review finding .NET #1)
+                    // NOTE: [RES-06] Consider using CancellationToken.None here — ct may already be cancelled
                     await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
                     transitionTo(PipelineStep.Failed);
                     addRunToHistory(run);
@@ -192,7 +202,7 @@ internal class AgentExecutionOrchestrator
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    // TODO: [RES-06] Simplify by re-throwing as AnalysisIncompleteException instead of duplicating retry/fail logic (review finding #2)
+                    // NOTE: [RES-06] Consider simplifying by re-throwing as AnalysisIncompleteException
                     // Wrap non-cancellation exceptions as AnalysisIncompleteException for uniform retry handling
                     var wrapped = new AnalysisIncompleteException($"Agent execution failed: {ex.Message}", ex);
                     if (attempt < maxRetries)
@@ -213,7 +223,7 @@ internal class AgentExecutionOrchestrator
                         run.RunId, attempt + 1);
                     run.FailureReason = $"Analysis failed after {attempt + 1} attempt(s): {wrapped.Message}";
                     run.CompletedAt = DateTime.UtcNow;
-                    // TODO: [RES-06] Use CancellationToken.None for failure-path label swap — ct may already be cancelled (review finding .NET #1)
+                    // NOTE: [RES-06] Consider using CancellationToken.None here — ct may already be cancelled
                     await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
                     transitionTo(PipelineStep.Failed);
                     addRunToHistory(run);
@@ -390,7 +400,6 @@ internal class AgentExecutionOrchestrator
     /// Executes the code generation phase with stall monitoring.
     /// Returns true if the pipeline should continue to quality gates, false if it should stop (already failed).
     /// </summary>
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public async Task<bool> ExecuteCodeGenerationAsync(
         PipelineRun run, PipelineConfiguration config,
         IAgentProvider agentProvider,
@@ -404,6 +413,10 @@ internal class AgentExecutionOrchestrator
         CancellationToken ct,
         string? promptOverride = null)
     {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(agentProvider);
+        // TODO: [ARC-10] Add ThrowIfNull for remaining parameters: transitionTo, onOutputLine, onChange, updateFileChangeStats, issueOps, addRunToHistory
         transitionTo(PipelineStep.GeneratingCode);
         try
         {
@@ -513,7 +526,6 @@ internal class AgentExecutionOrchestrator
     /// <summary>
     /// Executes the code review loop with multi-agent support and fix prompts.
     /// </summary>
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public async Task ExecuteCodeReviewAsync(
         PipelineRun run, PipelineConfiguration config,
         IAgentProvider agentProvider,
@@ -524,6 +536,10 @@ internal class AgentExecutionOrchestrator
         CancellationToken ct,
         IReadOnlyList<ReviewerConfiguration>? resolvedReviewerConfigs = null)
     {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(agentProvider);
+        // TODO: [ARC-10] Add ThrowIfNull for remaining parameters: transitionTo, onOutputLine, onChange
         if (!config.CodeReview.Enabled || config.CodeReview.MaxIterations <= 0)
             return;
 
@@ -658,7 +674,7 @@ internal class AgentExecutionOrchestrator
                 var iterationFindingsText = iterationFindings.ToString();
                 run.CodeReviewIterationsCompleted++;
 
-                // TODO: [UX-16] run.CodeReview*Count fields are cumulative across iterations — use per-iteration counters for this output line
+                // NOTE: [UX-16] CodeReview*Count fields are cumulative across iterations — per-iteration counters deferred to separate issue
                 onOutputLine($"📝 Code review: {run.CodeReviewCriticalCount} critical, {run.CodeReviewWarningCount} warning, {run.CodeReviewSuggestionCount} suggestion");
 
                 if (!string.IsNullOrEmpty(config.CodeReview.FixPrompt) && iterationCriticalCount > 0)

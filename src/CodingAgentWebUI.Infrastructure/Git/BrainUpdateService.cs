@@ -207,7 +207,7 @@ public partial class BrainUpdateService : IBrainUpdateService
         ArgumentNullException.ThrowIfNull(runId);
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(brainProvider);
-        // TODO: [GIT-05] Add ArgumentOutOfRangeException guard for maxPushRetries <= 0
+        // NOTE: [GIT-05] Add ArgumentOutOfRangeException guard for maxPushRetries <= 0
 
         try
         {
@@ -255,7 +255,7 @@ public partial class BrainUpdateService : IBrainUpdateService
                 FilesCommitted = filesCommitted
             };
         }
-        // TODO: [GIT-05] Use `when (ex is not OperationCanceledException)` to propagate cancellation per project convention
+        // NOTE: [GIT-05] Use `when (ex is not OperationCanceledException)` to propagate cancellation per project convention
         catch (Exception ex)
         {
             _logger.Warning(ex, "Brain repo commit/push failed for run {RunId}", runId);
@@ -353,7 +353,7 @@ public partial class BrainUpdateService : IBrainUpdateService
                 await Task.Delay(Random.Shared.Next(200, 501), ct);
 
                 // Rebase: fetch, reset to remote, re-apply our changes
-                // TODO: [GIT-05] Log resolution outcome (success/failure) after rebase for complete structured logging
+                // NOTE: [GIT-05] Log resolution outcome (success/failure) after rebase for complete structured logging
                 await RebaseOntoRemoteAsync(brainPath, brainProvider, commitMessage, ct);
             }
         }
@@ -380,7 +380,7 @@ public partial class BrainUpdateService : IBrainUpdateService
         {
             // Expected — local uncommitted changes conflict with fetched remote
         }
-        // TODO: [GIT-05] If fetch fails (network error), origin/branch is stale and rebase will produce same diverged commit — consider re-throwing to skip this retry attempt
+        // NOTE: [GIT-05] If fetch fails (network error), origin/branch is stale and rebase will produce same diverged commit — consider re-throwing to skip this retry attempt
         catch (Exception ex)
         {
             _logger.Warning(ex, "Brain repo fetch during rebase failed, attempting manual rebase");
@@ -396,12 +396,12 @@ public partial class BrainUpdateService : IBrainUpdateService
             var parentTree = ourCommit.Parents.FirstOrDefault()?.Tree;
 
             // Determine which files we changed
-            // TODO: [GIT-05] parentTree null edge case — repo.Diff.Compare with null may throw on some LibGit2Sharp versions
+            // NOTE: [GIT-05] parentTree null edge case — repo.Diff.Compare with null may throw on some LibGit2Sharp versions
             var ourChanges = parentTree != null
                 ? repo.Diff.Compare<TreeChanges>(parentTree, ourTree)
                 : repo.Diff.Compare<TreeChanges>(null, ourTree);
 
-            // TODO: [GIT-05] remoteBranch null — if fetch failed, this skips reset and rebase produces same diverged commit
+            // NOTE: [GIT-05] remoteBranch null — if fetch failed, this skips reset and rebase produces same diverged commit
             // Reset to remote branch tip
             var remoteBranch = repo.Branches[$"origin/{brainProvider.BaseBranch}"];
             if (remoteBranch != null)
@@ -458,7 +458,7 @@ public partial class BrainUpdateService : IBrainUpdateService
             }
 
             // Stage and recommit
-            // TODO: [GIT-05] EmptyCommitException possible if remote already has identical changes
+            // NOTE: [GIT-05] EmptyCommitException possible if remote already has identical changes
             Commands.Stage(repo, "*");
             var signature = new Signature("CodingAgentWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
             repo.Commit(commitMessage, signature, signature);

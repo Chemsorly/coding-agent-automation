@@ -261,8 +261,14 @@ public sealed record PipelineConfiguration
     /// Number of consecutive poll failures before the circuit breaker pauses the loop.
     /// Default: 5.
     /// </summary>
-    // TODO: [RES-03] Add server-side validation to reject values < 1 — UI has min="1" but JSON config can bypass it (review finding #3)
-    public int ClosedLoopMaxConsecutivePollFailures { get; init; } = 5;
+    public int ClosedLoopMaxConsecutivePollFailures
+    {
+        get => _closedLoopMaxConsecutivePollFailures;
+        init => _closedLoopMaxConsecutivePollFailures = value >= 1
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(ClosedLoopMaxConsecutivePollFailures), value, "Value must be at least 1.");
+    }
+    private readonly int _closedLoopMaxConsecutivePollFailures = 5;
 
     /// <summary>
     /// Maximum backoff interval between poll retries after consecutive failures.
@@ -274,8 +280,14 @@ public sealed record PipelineConfiguration
     /// Maximum number of pages to fetch when polling for agent:next issues.
     /// Each page contains up to 100 issues. Default: 10 (1000 issues max).
     /// </summary>
-    // TODO: [REF-01] Add server-side validation to reject values < 1 — values ≤ 0 silently fetch only 1 page (review finding #2)
-    public int ClosedLoopMaxPagesToFetch { get; init; } = 10;
+    public int ClosedLoopMaxPagesToFetch
+    {
+        get => _closedLoopMaxPagesToFetch;
+        init => _closedLoopMaxPagesToFetch = value >= 1
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(ClosedLoopMaxPagesToFetch), value, "Value must be at least 1.");
+    }
+    private readonly int _closedLoopMaxPagesToFetch = 10;
 
     // ── Multi-agent fields ──────────────────────────────────────────────
 

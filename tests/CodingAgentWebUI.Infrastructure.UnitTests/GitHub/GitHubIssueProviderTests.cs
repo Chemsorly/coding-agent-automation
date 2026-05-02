@@ -524,7 +524,7 @@ public class GitHubIssueProviderTests
         ex.Which.InnerException.Should().BeOfType<Octokit.RateLimitExceededException>();
     }
 
-    // TODO: [RES-03] Add tests for AbuseException wrapping — both RetryAfterSeconds.HasValue and fallback branches are untested (review finding #5)
+    // NOTE: [RES-03] Add tests for AbuseException wrapping — both RetryAfterSeconds.HasValue and fallback branches are untested (review finding #5)
 
     private static Issue CreateOctokitIssue(int number, string title, string? body, string[] labels)
     {

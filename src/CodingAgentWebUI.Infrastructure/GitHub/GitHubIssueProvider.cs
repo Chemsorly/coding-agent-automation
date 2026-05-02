@@ -75,7 +75,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
 
         var client = await GetClientAsync(ct);
         IReadOnlyList<Issue> issues;
-        // TODO: [RES-03] Rate limit wrapping only covers ListOpenIssuesAsync — other API methods (GetIssueAsync, AddLabelsAsync, etc.) propagate raw Octokit exceptions (review finding #4)
+        // NOTE: [RES-03] Rate limit wrapping only covers ListOpenIssuesAsync — other API methods (GetIssueAsync, AddLabelsAsync, etc.) propagate raw Octokit exceptions (review finding #4)
         try
         {
             issues = await client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions);
@@ -222,7 +222,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     /// <inheritdoc />
     public override async Task ValidateAsync(CancellationToken ct)
     {
-        // TODO: [GH-06] Exception filters match on message substrings — fragile if upstream wording changes. Consider defining sentinel exception types in GitHubAppAuthService instead.
+        // NOTE: [GH-06] Exception filters match on message substrings — fragile if upstream wording changes. Consider defining sentinel exception types in GitHubAppAuthService instead.
         try
         {
             await base.ValidateAsync(ct);

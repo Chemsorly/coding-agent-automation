@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests;
 /// Octokit prepends /api/v3 to all paths when using a non-github.com base URL,
 /// so all stubs must use the <see cref="ApiPath"/> helper.
 /// </summary>
-// TODO: WireMockTestBase implements IDisposable but providers implement IAsyncDisposable.
+// NOTE: WireMockTestBase implements IDisposable but providers implement IAsyncDisposable.
 // xUnit calls Dispose() on the test class but not DisposeAsync(). Providers should be
 // disposed via "await using" at the individual test level. If a centralized cleanup pattern
 // is needed, consider implementing IAsyncLifetime instead.
@@ -82,7 +82,7 @@ public abstract class WireMockTestBase : IDisposable
             .RespondWith(Response.Create().WithStatusCode(statusCode));
     }
 
-    // TODO: StubError and StubRateLimited match any HTTP method. If a test stubs both a happy path
+    // NOTE: StubError and StubRateLimited match any HTTP method. If a test stubs both a happy path
     // and an error on the same path, the last-registered stub wins for all methods. Consider adding
     // method-specific error stubs if this causes issues in more complex test scenarios.
 

@@ -219,7 +219,6 @@ public class QualityGateValidatorIntegrationTests : IDisposable
     [Fact]
     public async Task NonExistentDirectory_ThrowsWin32Exception()
     {
-        // TODO: Win32Exception is a Process.Start() implementation detail — consider asserting a broader exception type if this breaks across .NET versions
         var workspace = Path.Combine(Path.GetTempPath(), $"nonexistent-{Guid.NewGuid():N}");
 
         var act = () => _validator.ValidateAsync(workspace, DefaultQgcs, CancellationToken.None);
