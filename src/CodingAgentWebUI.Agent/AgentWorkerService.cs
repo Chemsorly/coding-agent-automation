@@ -74,6 +74,7 @@ public sealed class AgentWorkerService : BackgroundService
         _hubManager.OnCancelJob += HandleCancelJobAsync;
         _hubManager.OnAssignChatPrompt += HandleChatPromptAsync;
         _hubManager.OnCancelChat += HandleCancelChatAsync;
+        _hubManager.OnFetchModels += HandleFetchModelsAsync;
 
         try
         {
@@ -399,6 +400,83 @@ public sealed class AgentWorkerService : BackgroundService
         catch (Exception ex)
         {
             _logger.Warning(ex, "Failed to send AgentReady signal after chat cancellation");
+        }
+    }
+
+    private async Task HandleFetchModelsAsync(FetchModelsRequest request)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = Environment.GetEnvironmentVariable("KIRO_CLI_PATH") ?? "/home/ubuntu/.local/bin/kiro-cli",
+                Arguments = "chat --list-models --format json",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(psi);
+            if (process is null)
+            {
+                await ReportFetchModelsError(request.RequestId, "Failed to start kiro-cli process.");
+                return;
+            }
+
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var output = await process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            await process.WaitForExitAsync(timeoutCts.Token);
+
+            if (process.ExitCode != 0)
+            {
+                var stderr = await process.StandardError.ReadToEndAsync(timeoutCts.Token);
+                await ReportFetchModelsError(request.RequestId, $"kiro-cli exited with code {process.ExitCode}: {stderr}");
+                return;
+            }
+
+            using var doc = System.Text.Json.JsonDocument.Parse(output);
+            var models = new List<AgentModelInfo>();
+            if (doc.RootElement.TryGetProperty("models", out var modelsArray))
+            {
+                foreach (var m in modelsArray.EnumerateArray())
+                {
+                    models.Add(new AgentModelInfo
+                    {
+                        ModelId = m.GetProperty("model_id").GetString() ?? "",
+                        Description = m.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "",
+                        RateMultiplier = m.TryGetProperty("rate_multiplier", out var r) ? r.GetDouble() : 1.0
+                    });
+                }
+            }
+
+            await _hubManager.Connection.InvokeAsync("ReportFetchModelsResult", new FetchModelsResponse
+            {
+                RequestId = request.RequestId,
+                Models = models
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to fetch models for request {RequestId}", request.RequestId);
+            await ReportFetchModelsError(request.RequestId, $"Failed to fetch models: {ex.Message}");
+        }
+    }
+
+    private async Task ReportFetchModelsError(string requestId, string error)
+    {
+        try
+        {
+            await _hubManager.Connection.InvokeAsync("ReportFetchModelsResult", new FetchModelsResponse
+            {
+                RequestId = requestId,
+                Models = [],
+                Error = error
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to report FetchModels error for request {RequestId}", requestId);
         }
     }
 
