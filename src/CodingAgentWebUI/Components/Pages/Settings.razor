@@ -3,9 +3,11 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Infrastructure.GitHub
+@using CodingAgentWebUI.Services
 @inject IConfigurationStore ConfigStore
 @inject GitHubValidationService GitHubValidator
 @inject IProviderFactory ProviderFactory
+@inject ModelFetchService ModelFetchService
 
 <div class="settings-page">
     <header class="settings-header">
@@ -48,7 +50,8 @@
                         ConfigStore="ConfigStore"
                         OnDelete="id => DeleteProvider(id, ProviderKind.Agent)"
                         OnSaved="OnAgentProviderSaved"
-                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)"
+                        ModelFetchService="ModelFetchService" />
                     break;
                 case SettingsNodes.ProvidersPipeline:
                     <PipelineProviderSection

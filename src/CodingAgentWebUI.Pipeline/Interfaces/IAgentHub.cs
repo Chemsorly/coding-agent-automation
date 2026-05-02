@@ -38,6 +38,9 @@ public interface IAgentHub
     // Interactive chat
     Task ReportChatResponse(ChatResponseMessage message);
     Task ReportChatCompleted(ChatCompletedMessage message);
+
+    // Model fetch
+    Task ReportFetchModelsResult(FetchModelsResponse response);
 }
 
 /// <summary>
@@ -50,4 +53,5 @@ public interface IAgentHubClient
     Task AssignChatPrompt(ChatPromptMessage message);
     Task CancelChat(string sessionId);
     Task ForceDisconnect();
+    Task RequestFetchModels(FetchModelsRequest request);
 }

@@ -1,8 +1,11 @@
 using Bunit;
 using Moq;
 using CodingAgentWebUI.Components.Pages;
+using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Services;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgentWebUI.UnitTests.Components;
@@ -24,6 +27,10 @@ public class SettingsPageComponentTests : BunitContext
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(new CodingAgentWebUI.Infrastructure.GitHub.GitHubValidationService());
         Services.AddSingleton(_mockProviderFactory.Object);
+        Services.AddSingleton(new ModelFetchService(
+            new AgentRegistryService(Serilog.Log.Logger),
+            new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object,
+            Serilog.Log.Logger));
     }
 
     private void SetupDefaults()
