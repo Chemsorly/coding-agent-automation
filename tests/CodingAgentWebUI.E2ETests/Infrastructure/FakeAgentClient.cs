@@ -40,6 +40,7 @@ public sealed class FakeAgentClient : IAsyncDisposable
         _connection.On<string>("CancelJob", _ => { });
         _connection.On<ChatPromptMessage>("AssignChatPrompt", _ => { });
         _connection.On<string>("CancelChat", _ => { });
+        _connection.On<FetchModelsRequest>("RequestFetchModels", _ => { });
         _connection.On("ForceDisconnect", async () =>
         {
             if (_connection is not null)
