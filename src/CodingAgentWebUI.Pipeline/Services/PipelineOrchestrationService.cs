@@ -584,6 +584,37 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         TransitionTo(run, PipelineStep.Cancelled);
         AddRunToHistory(run);
     }
+
+    /// <summary>
+    /// Best-effort label swap to <see cref="AgentLabels.Cancelled"/> for all agent-dispatched active runs.
+    /// Called during graceful shutdown to mark interrupted runs.
+    /// </summary>
+    public async Task CancelActiveAgentRunsAsync()
+    {
+        if (_runService is null) return;
+        var activeRuns = _runService.GetActiveRuns();
+        if (activeRuns.Count == 0) return;
+
+        foreach (var run in activeRuns)
+        {
+            try
+            {
+                var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+                var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
+                if (issueConfig is null) continue;
+
+                await using var issueProvider = _providerFactory.CreateIssueProvider(issueConfig);
+                foreach (var label in AgentLabels.All)
+                    await issueProvider.RemoveLabelAsync(run.IssueIdentifier, label, CancellationToken.None);
+                await issueProvider.AddLabelAsync(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Best-effort label swap to agent:cancelled failed for run {RunId} on issue {Issue}",
+                    run.RunId, run.IssueIdentifier);
+            }
+        }
+    }
     /// <summary>Returns the in-memory run history.</summary>
     public IReadOnlyList<PipelineRunSummary> GetRunHistory() => _historyService.GetRunHistory();
     // --- Private helpers ---

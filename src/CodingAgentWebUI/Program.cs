@@ -157,6 +157,8 @@ lifetime.ApplicationStopping.Register(() =>
     {
         pipeline.CancelPipelineAsync().GetAwaiter().GetResult();
     }
+
+    pipeline.CancelActiveAgentRunsAsync().GetAwaiter().GetResult();
 });
 
 // Kubernetes-style health probes — anonymous, no auth required
