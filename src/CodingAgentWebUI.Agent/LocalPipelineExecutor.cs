@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
 namespace CodingAgentWebUI.Agent;
 
@@ -11,22 +12,26 @@ namespace CodingAgentWebUI.Agent;
 /// </summary>
 public sealed class LocalPipelineExecutor
 {
-    private readonly IProviderFactory _providerFactory;
+    private readonly IKiroCliOrchestrator _orchestrator;
+    private readonly PipelineConfiguration _defaultPipelineConfig;
     private readonly IQualityGateValidator _qualityGateValidator;
     private readonly IBrainUpdateService? _brainUpdateService;
     private readonly Serilog.ILogger _logger;
 
     public LocalPipelineExecutor(
-        IProviderFactory providerFactory,
+        IKiroCliOrchestrator orchestrator,
+        PipelineConfiguration defaultPipelineConfig,
         IQualityGateValidator qualityGateValidator,
         Serilog.ILogger logger,
         IBrainUpdateService? brainUpdateService = null)
     {
-        ArgumentNullException.ThrowIfNull(providerFactory);
+        ArgumentNullException.ThrowIfNull(orchestrator);
+        ArgumentNullException.ThrowIfNull(defaultPipelineConfig);
         ArgumentNullException.ThrowIfNull(qualityGateValidator);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _providerFactory = providerFactory;
+        _orchestrator = orchestrator;
+        _defaultPipelineConfig = defaultPipelineConfig;
         _qualityGateValidator = qualityGateValidator;
         _brainUpdateService = brainUpdateService;
         _logger = logger;
@@ -50,6 +55,9 @@ public sealed class LocalPipelineExecutor
         var config = job.PipelineConfiguration;
         var issueOps = new OrchestratorProxy(connection, job.JobId);
 
+        // Construct a per-job provider factory with the OrchestratorProxy for token refresh
+        var providerFactory = new AgentProviderFactory(_orchestrator, config, issueOps);
+
         // Resolve provider configs from the job assignment
         var repoConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.RepoProviderConfigId)
             ?? throw new InvalidOperationException($"Repository provider config '{job.RepoProviderConfigId}' not found in job assignment");
@@ -63,8 +71,8 @@ public sealed class LocalPipelineExecutor
 
         try
         {
-            repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
-            agentProvider = _providerFactory.CreateAgentProvider(agentConfig);
+            repoProvider = providerFactory.CreateRepositoryProvider(repoConfig);
+            agentProvider = providerFactory.CreateAgentProvider(agentConfig);
 
             if (!string.IsNullOrEmpty(job.BrainProviderConfigId))
             {
@@ -73,7 +81,7 @@ public sealed class LocalPipelineExecutor
                 {
                     try
                     {
-                        brainProvider = _providerFactory.CreateRepositoryProvider(brainConfig);
+                        brainProvider = providerFactory.CreateRepositoryProvider(brainConfig);
                         await brainProvider.ValidateAsync(ct);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
@@ -89,7 +97,7 @@ public sealed class LocalPipelineExecutor
             {
                 var pipelineConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.PipelineProviderConfigId);
                 if (pipelineConfig is not null)
-                    pipelineProvider = _providerFactory.CreatePipelineProvider(pipelineConfig);
+                    pipelineProvider = providerFactory.CreatePipelineProvider(pipelineConfig);
             }
 
             await repoProvider.ValidateAsync(ct);

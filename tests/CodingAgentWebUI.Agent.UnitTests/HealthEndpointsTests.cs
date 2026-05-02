@@ -2,6 +2,7 @@ using System.Net;
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
@@ -40,7 +41,7 @@ public class HealthEndpointsTests : IAsyncDisposable
         // Since AgentWorkerService has concrete dependencies, we register a real one
         // with a mock hub manager that reports the desired connection state
         var mockLogger = new Mock<Serilog.ILogger>();
-        var mockProviderFactory = new Mock<IProviderFactory>();
+        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var mockQualityGateValidator = new Mock<IQualityGateValidator>();
 
         // Ensure AGENT_TYPE is set
@@ -53,11 +54,12 @@ public class HealthEndpointsTests : IAsyncDisposable
             mockLogger.Object);
 
         var executor = new LocalPipelineExecutor(
-            mockProviderFactory.Object,
+            mockOrchestrator.Object,
+            new PipelineConfiguration(),
             mockQualityGateValidator.Object,
             mockLogger.Object);
 
-        var workerService = new AgentWorkerService(hubManager, executor, new Mock<KiroCliLib.Core.IKiroCliOrchestrator>().Object, mockLogger.Object);
+        var workerService = new AgentWorkerService(hubManager, executor, mockOrchestrator.Object, mockLogger.Object);
 
         _host = await new HostBuilder()
             .ConfigureWebHost(webBuilder =>
