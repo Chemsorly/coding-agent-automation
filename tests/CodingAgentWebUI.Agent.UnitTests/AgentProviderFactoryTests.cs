@@ -1,6 +1,5 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
-using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
