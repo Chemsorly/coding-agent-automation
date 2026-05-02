@@ -17,7 +17,7 @@
                     @* TODO: [GH-06] Button only disables for the current provider — concurrent clicks on different providers race on shared state. Disable all buttons while any initialization is in progress. *@
                     <button class="btn-edit" @onclick="() => InitializeRepository(p)"
                             disabled="@(_initializingProviderId == p.Id)">
-                        @(_initializingProviderId == p.Id ? "Initializing..." : "Initialize Repository")
+                        @(_initializingProviderId == p.Id ? "Initializing..." : "Initialize Provider")
                     </button>
                     <button class="btn-edit" @onclick="() => EditProvider(p)">Edit</button>
                     <button class="btn-delete" @onclick="() => OnDelete.InvokeAsync(p.Id)">Delete</button>

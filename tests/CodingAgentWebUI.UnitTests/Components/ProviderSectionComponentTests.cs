@@ -373,7 +373,7 @@ public class ProviderSectionComponentTests : BunitContext
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
 
-        Assert.Contains("Initialize Repository", cut.Markup);
+        Assert.Contains("Initialize Provider", cut.Markup);
     }
 
     [Fact]
@@ -513,7 +513,7 @@ public class ProviderSectionComponentTests : BunitContext
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
 
-        var initButton = cut.FindAll("button").First(b => b.TextContent.Contains("Initialize Repository"));
+        var initButton = cut.FindAll("button").First(b => b.TextContent.Contains("Initialize Provider"));
         await initButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
         Assert.Contains("initialized successfully", cut.Markup);
@@ -556,7 +556,7 @@ public class ProviderSectionComponentTests : BunitContext
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
 
-        var initButton = cut.FindAll("button").First(b => b.TextContent.Contains("Initialize Repository"));
+        var initButton = cut.FindAll("button").First(b => b.TextContent.Contains("Initialize Provider"));
         await initButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
         Assert.Contains("Initialization failed", cut.Markup);
