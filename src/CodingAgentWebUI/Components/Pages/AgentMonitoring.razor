@@ -135,6 +135,120 @@
                                 }
                             </div>
 
+                            @* ── Agent Info Section ── *@
+                            @{
+                                var modalAgent = modalRun.AgentId != null ? Registry.GetByAgentId(modalRun.AgentId) : null;
+                            }
+                            <div class="modal-agent-section">
+                                <div class="modal-agent-header" @onclick="() => _agentSectionExpanded = !_agentSectionExpanded"
+                                     role="button" tabindex="0">
+                                    <h4 style="font-size: 0.85rem; margin: 0;">Agent</h4>
+                                    <span class="monitoring-toggle-icon">@(_agentSectionExpanded ? "▾" : "▸")</span>
+                                </div>
+                                @if (_agentSectionExpanded)
+                                {
+                                    @if (modalAgent == null)
+                                    {
+                                        <div class="modal-agent-unavailable">
+                                            @if (modalRun.AgentId == null)
+                                            {
+                                                <span>Local run — no agent assigned</span>
+                                            }
+                                            else
+                                            {
+                                                <span>Agent unavailable (disconnected or deregistered)</span>
+                                            }
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="modal-agent-grid">
+                                            <div class="detail-label">Agent ID</div>
+                                            <div class="detail-value detail-mono">@modalAgent.AgentId</div>
+                                            <div class="detail-label">Hostname</div>
+                                            <div class="detail-value">@modalAgent.Hostname</div>
+                                            <div class="detail-label">Type</div>
+                                            <div class="detail-value">@modalAgent.AgentType</div>
+                                            <div class="detail-label">Labels</div>
+                                            <div class="detail-value">
+                                                @foreach (var label in modalAgent.Labels)
+                                                {
+                                                    <span class="sidebar-label">@label</span>
+                                                }
+                                            </div>
+                                            <div class="detail-label">Connection</div>
+                                            <div class="detail-value detail-mono">@Truncate(modalAgent.ConnectionId, 20)</div>
+                                        </div>
+
+                                        <div class="modal-agent-grid" style="margin-top: 8px;">
+                                            <div class="detail-label">Status</div>
+                                            <div class="detail-value">
+                                                <span class="monitoring-status monitoring-status-@modalAgent.Status.ToString().ToLowerInvariant()">
+                                                    @GetStatusIcon(modalAgent.Status) @modalAgent.Status
+                                                </span>
+                                                @if (modalAgent.Disabled)
+                                                {
+                                                    <span class="badge-disabled-table">disabled</span>
+                                                }
+                                            </div>
+                                            <div class="detail-label">Last Heartbeat</div>
+                                            <div class="detail-value">@FormatTimeAgo(modalAgent.LastHeartbeatAt)</div>
+                                        </div>
+
+                                        <div class="modal-agent-history">
+                                            <div class="detail-label" style="margin-top: 8px;">Job History</div>
+                                            @{ var agentRuns = HistoryService.GetRunsByAgentId(modalAgent.AgentId, 10); }
+                                            @if (agentRuns.Count == 0)
+                                            {
+                                                <div class="modal-agent-unavailable">No completed jobs yet.</div>
+                                            }
+                                            else
+                                            {
+                                                <div class="modal-agent-stats">
+                                                    <span>Total: @agentRuns.Count</span>
+                                                    <span>Success: @ComputeSuccessRate(agentRuns)%</span>
+                                                    <span>Avg: @ComputeAverageDuration(agentRuns)</span>
+                                                </div>
+                                                <div class="modal-agent-history-list">
+                                                    @foreach (var histRun in agentRuns)
+                                                    {
+                                                        <div class="modal-agent-history-item">
+                                                            <span class="history-issue">#@histRun.IssueIdentifier</span>
+                                                            <span class="step-badge step-@histRun.FinalStep.ToString().ToLowerInvariant()">@GetStepIcon(histRun.FinalStep)</span>
+                                                            <span class="history-duration">@FormatDuration(histRun.StartedAt, histRun.CompletedAt)</span>
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                        </div>
+
+                                        <div class="modal-agent-actions">
+                                            @if (modalAgent.Disabled)
+                                            {
+                                                <button class="btn-enable" @onclick="() => EnableAgent(modalAgent)">✓ Enable</button>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn-disable" @onclick="() => DisableAgent(modalAgent)">⊘ Disable</button>
+                                            }
+                                            <button class="btn-force-disconnect" @onclick="() => _showAgentDisconnectConfirm = true">⚡ Force Disconnect</button>
+                                        </div>
+
+                                        @if (_showAgentDisconnectConfirm)
+                                        {
+                                            <div class="modal-agent-confirm">
+                                                <p>Force disconnect <strong>@modalAgent.AgentId</strong>?</p>
+                                                <p class="confirm-warning">This will deregister the agent and mark any active run as Failed.</p>
+                                                <div class="confirm-buttons">
+                                                    <button class="btn-force-disconnect" @onclick="() => ForceDisconnectAgent(modalAgent)">Confirm</button>
+                                                    <button class="btn-cancel" @onclick="() => _showAgentDisconnectConfirm = false">Cancel</button>
+                                                </div>
+                                            </div>
+                                        }
+                                    }
+                                }
+                            </div>
+
                             @{
                                 var buffer = RunService.GetOutputBuffer(modalRun.RunId);
                                 var outputLines = buffer.GetAll();
@@ -199,8 +313,7 @@
                     <tbody>
                         @foreach (var agent in _agents)
                         {
-                            <tr class="monitoring-row-@agent.Status.ToString().ToLowerInvariant() @(agent.Disabled ? "monitoring-row-disabled" : "") monitoring-row-clickable"
-                                @onclick="() => SelectAgent(agent.AgentId)">
+                            <tr class="monitoring-row-@agent.Status.ToString().ToLowerInvariant() @(agent.Disabled ? "monitoring-row-disabled" : "")">
                                 <td class="monitoring-mono" title="@agent.AgentId">@agent.AgentId</td>
                                 <td>@agent.AgentType</td>
                                 <td>
@@ -350,8 +463,6 @@
         }
     </section>
 
-    <!-- Agent Detail Panel (slide-out) -->
-    <AgentDetailPanel Agent="_selectedAgent" IsOpen="_detailPanelOpen" OnClose="CloseDetailPanel" />
 </div>
 
 @code {
@@ -369,8 +480,8 @@
     private bool _disposed;
     private Timer? _refreshTimer;
     private int _maxRetries = 3;
-    private AgentEntry? _selectedAgent;
-    private bool _detailPanelOpen;
+    private bool _agentSectionExpanded = true;
+    private bool _showAgentDisconnectConfirm;
 
     protected override async Task OnInitializedAsync()
     {
@@ -470,12 +581,14 @@
         _selectedRunId = runId;
         _showRunDetailModal = true;
         _scrollModalOnNextRender = true;
+        _showAgentDisconnectConfirm = false;
     }
 
     private void DismissRunDetailModal()
     {
         _showRunDetailModal = false;
         _selectedRunId = null;
+        _showAgentDisconnectConfirm = false;
     }
 
     private void HandleModalKeyDown(KeyboardEventArgs e)
@@ -508,18 +621,6 @@
         Dispatcher.RemoveFromQueue(issueIdentifier);
         RefreshData();
         StateHasChanged();
-    }
-
-    private void SelectAgent(string agentId)
-    {
-        _selectedAgent = _agents.FirstOrDefault(a => a.AgentId == agentId);
-        _detailPanelOpen = _selectedAgent != null;
-    }
-
-    private void CloseDetailPanel()
-    {
-        _detailPanelOpen = false;
-        _selectedAgent = null;
     }
 
     private static string GetStatusIcon(AgentStatus status) => status switch
@@ -583,6 +684,75 @@
     {
         var qgc = _qgcLookup.GetValueOrDefault(qgcId);
         return qgc != null ? qgc.DisplayName : $"{Truncate(qgcId, 8)} (deleted)";
+    }
+
+    private static string GetStepIcon(PipelineStep step) => step switch
+    {
+        PipelineStep.Completed => "✅",
+        PipelineStep.Failed => "❌",
+        PipelineStep.Cancelled => "⊘",
+        _ => "○"
+    };
+
+    private static int ComputeSuccessRate(IReadOnlyList<PipelineRunSummary> runs)
+    {
+        if (runs.Count == 0) return 0;
+        var completed = runs.Count(r => r.FinalStep == PipelineStep.Completed);
+        return (int)Math.Round(100.0 * completed / runs.Count);
+    }
+
+    private static string ComputeAverageDuration(IReadOnlyList<PipelineRunSummary> runs)
+    {
+        var withDuration = runs
+            .Where(r => r.CompletedAt.HasValue)
+            .Select(r => r.CompletedAt!.Value - r.StartedAt)
+            .ToList();
+        if (withDuration.Count == 0) return "N/A";
+        var avg = TimeSpan.FromTicks((long)withDuration.Average(d => d.Ticks));
+        return avg.ToString(@"hh\:mm\:ss");
+    }
+
+    private void EnableAgent(AgentEntry agent)
+    {
+        agent.Disabled = false;
+    }
+
+    private void DisableAgent(AgentEntry agent)
+    {
+        agent.Disabled = true;
+    }
+
+    private async Task ForceDisconnectAgent(AgentEntry agent)
+    {
+        try
+        {
+            if (agent.Status != AgentStatus.Disconnected)
+            {
+                try
+                {
+                    await HubContext.Clients.Client(agent.ConnectionId).ForceDisconnect();
+                }
+                catch { /* Agent may not respond */ }
+            }
+
+            if (agent.ActiveJobId != null)
+            {
+                var activeRun = PipelineService.GetAllActiveRuns()
+                    .FirstOrDefault(r => r.RunId == agent.ActiveJobId);
+                if (activeRun != null)
+                {
+                    activeRun.FailureReason = "Force disconnected by operator";
+                    activeRun.CurrentStep = PipelineStep.Failed;
+                    activeRun.CompletedAt = DateTime.UtcNow;
+                }
+            }
+
+            Registry.Deregister(agent.AgentId);
+        }
+        catch { /* Best effort */ }
+
+        _showAgentDisconnectConfirm = false;
+        DismissRunDetailModal();
     }
 
     public void Dispose()

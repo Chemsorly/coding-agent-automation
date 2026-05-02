@@ -329,6 +329,33 @@ select option { background: var(--surface); color: var(--text); }
 }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 
+/* Agent info section within run detail modal */
+.modal-agent-section { border-top: 1px solid var(--border); padding-top: 10px; }
+.modal-agent-header { display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 2px 0; }
+.modal-agent-grid { display: grid; grid-template-columns: 90px 1fr; gap: 3px 8px; font-size: 0.82rem; margin-top: 6px; }
+.modal-agent-grid .detail-label { color: var(--text-muted); }
+.modal-agent-grid .detail-value { color: var(--text); word-break: break-all; }
+.modal-agent-grid .detail-mono { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.78rem; }
+.modal-agent-unavailable { color: var(--text-muted); font-size: 0.82rem; font-style: italic; margin-top: 6px; }
+.modal-agent-stats { display: flex; gap: 12px; font-size: 0.78rem; color: var(--text-muted); margin-top: 6px; }
+.modal-agent-history-list { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.modal-agent-history-item { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; padding: 3px 6px; background: var(--surface-alt); border-radius: 4px; }
+.modal-agent-history-item .history-issue { flex: 1; color: var(--text); }
+.modal-agent-history-item .history-duration { color: var(--text-muted); font-family: monospace; font-size: 0.73rem; }
+.modal-agent-actions { display: flex; gap: 8px; margin-top: 10px; }
+.modal-agent-actions .btn-enable { background: rgba(34, 197, 94, 0.15); color: var(--success); border: 1px solid var(--success); padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+.modal-agent-actions .btn-enable:hover { background: rgba(34, 197, 94, 0.3); }
+.modal-agent-actions .btn-disable { background: rgba(239, 68, 68, 0.1); color: var(--error); border: 1px solid var(--error); padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+.modal-agent-actions .btn-disable:hover { background: rgba(239, 68, 68, 0.25); }
+.modal-agent-actions .btn-force-disconnect { background: rgba(239, 68, 68, 0.1); color: var(--error); border: 1px solid var(--error); padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+.modal-agent-actions .btn-force-disconnect:hover { background: rgba(239, 68, 68, 0.3); }
+.modal-agent-confirm { margin-top: 8px; padding: 10px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; font-size: 0.82rem; }
+.modal-agent-confirm p { margin: 0 0 6px; color: var(--text); }
+.modal-agent-confirm .confirm-warning { color: var(--warning); font-size: 0.78rem; }
+.modal-agent-confirm .confirm-buttons { display: flex; gap: 8px; margin-top: 6px; }
+.modal-agent-confirm .btn-force-disconnect { background: rgba(239, 68, 68, 0.1); color: var(--error); border: 1px solid var(--error); padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+.modal-agent-confirm .btn-force-disconnect:hover { background: rgba(239, 68, 68, 0.3); }
+
 /* ===== Agent Coding Page ===== */
 .agent-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
 .agent-header h1 { font-size: 1.25rem; font-weight: 600; }
