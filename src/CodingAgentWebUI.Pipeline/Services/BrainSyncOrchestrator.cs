@@ -25,11 +25,13 @@ internal class BrainSyncOrchestrator
     /// Clones or pulls the brain repository into the workspace .brain/ directory,
     /// ensures .gitignore entry, and counts knowledge files.
     /// </summary>
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public async Task SyncPreRunAsync(
         PipelineRun run, IRepositoryProvider brainProvider, string workspacePath,
         CancellationToken ct, Action<string>? onOutputLine = null)
     {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(brainProvider);
+        ArgumentNullException.ThrowIfNull(workspacePath);
         onOutputLine?.Invoke("🧠 Syncing brain repository...");
         var brainSw = System.Diagnostics.Stopwatch.StartNew();
         var brainPath = Path.Combine(workspacePath, ".brain");
@@ -75,10 +77,11 @@ internal class BrainSyncOrchestrator
     /// <summary>
     /// Pulls the brain repo before the agent writes lessons (minimizes merge conflicts).
     /// </summary>
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public async Task PullBeforeWriteAsync(
         PipelineRun run, IRepositoryProvider brainProvider, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(brainProvider);
         var brainPath = Path.Combine(run.WorkspacePath!, ".brain");
         await brainProvider.PullAsync(brainPath, ct);
         _logger.Information("Pipeline {RunId} brain repo pulled before write phase", run.RunId);
@@ -87,11 +90,12 @@ internal class BrainSyncOrchestrator
     /// <summary>
     /// Detects brain changes, validates, appends fallback log if needed, commits and pushes.
     /// </summary>
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public async Task SyncPostRunAsync(
         PipelineRun run, IRepositoryProvider brainProvider,
         CancellationToken ct, Action<string>? onOutputLine = null, int maxPushRetries = 3)
     {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(brainProvider);
         var brainSw = System.Diagnostics.Stopwatch.StartNew();
         var brainPath = Path.Combine(run.WorkspacePath!, ".brain");
         var changedFiles = await _brainUpdateService.DetectChangesAsync(brainPath, ct);
