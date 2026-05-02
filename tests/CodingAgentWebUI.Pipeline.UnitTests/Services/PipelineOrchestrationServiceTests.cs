@@ -447,7 +447,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, Agents = null }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -475,7 +475,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 3, Agents = null }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 3 }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -491,7 +491,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 3, Agents = null }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 3 }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Review", Prompt = "Review the changes." } } }
             });
 
         var callCount = 0;
@@ -512,14 +517,19 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task CodeReviewPrompt_IsConfigurable()
+    public async Task CodeReviewPrompt_IsConfigurableViaReviewerConfig()
     {
         var customPrompt = "Custom review: check for bugs only.";
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, Prompt = customPrompt, Agents = null }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Custom", Agents = new[] { new ReviewAgent { Name = "CustomReviewer", Prompt = customPrompt } } }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -540,12 +550,12 @@ public class PipelineOrchestrationServiceTests
         config.CodeReview.Prompt.Should().Contain("sub-agent");
         config.CodeReview.Prompt.Should().Contain("[CRITICAL]");
         config.CodeReview.FixPrompt.Should().BeNull();
-        config.CodeReview.Agents.Should().NotBeNull();
-        config.CodeReview.Agents!.Count.Should().Be(4);
-        config.CodeReview.Agents[0].Name.Should().Be("Correctness");
-        config.CodeReview.Agents[1].Name.Should().Be("DotNetSpecialist");
-        config.CodeReview.Agents[2].Name.Should().Be("SecurityReviewer");
-        config.CodeReview.Agents[3].Name.Should().Be("AcceptanceCriteria");
+        PipelineConfiguration.DefaultReviewAgents.Should().NotBeNull();
+        PipelineConfiguration.DefaultReviewAgents.Count.Should().Be(4);
+        PipelineConfiguration.DefaultReviewAgents[0].Name.Should().Be("Correctness");
+        PipelineConfiguration.DefaultReviewAgents[1].Name.Should().Be("DotNetSpecialist");
+        PipelineConfiguration.DefaultReviewAgents[2].Name.Should().Be("SecurityReviewer");
+        PipelineConfiguration.DefaultReviewAgents[3].Name.Should().Be("AcceptanceCriteria");
     }
 
     // --- Fix prompt tests ---
@@ -557,7 +567,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt, Agents = null }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Review", Prompt = "Review the changes." } } }
             });
 
         SetupReviewAgentWithFindings("Review the changes", "[CRITICAL] Missing null check\n[WARNING] Consider renaming");
@@ -578,7 +593,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt, Agents = null }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Review", Prompt = "Review the changes." } } }
             });
 
         SetupReviewAgentWithFindings("Review the changes", "[WARNING] Consider renaming\n[SUGGESTION] Use var");
@@ -598,7 +618,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = null, Agents = null }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = null }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Review", Prompt = "Review the changes." } } }
             });
 
         SetupReviewAgentWithFindings("Review the changes", "[CRITICAL] Missing null check");
@@ -618,7 +643,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, Agents = null }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Review", Prompt = "Review the changes." } } }
             });
 
         SetupReviewAgentWithFindings("Review the changes",
@@ -1041,7 +1071,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, Agents = new[] { new ReviewAgentConfig { Name = "Correctness", Prompt = "Check correctness." }, new ReviewAgentConfig { Name = "DotNetSpecialist", Prompt = "Check .NET issues." } } }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Correctness", Prompt = "Check correctness." }, new ReviewAgent { Name = "DotNetSpecialist", Prompt = "Check .NET issues." } } }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -1057,7 +1092,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, Agents = new[] { new ReviewAgentConfig { Name = "Agent1", Prompt = "Agent1 prompt" }, new ReviewAgentConfig { Name = "Agent2", Prompt = "Agent2 prompt" } } }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Agent1", Prompt = "Agent1 prompt" }, new ReviewAgent { Name = "Agent2", Prompt = "Agent2 prompt" } } }
             });
 
         var callCount = 0;
@@ -1085,7 +1125,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt, Agents = new[] { new ReviewAgentConfig { Name = "Agent1", Prompt = "Agent1 prompt" }, new ReviewAgentConfig { Name = "Agent2", Prompt = "Agent2 prompt" } } }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Agent1", Prompt = "Agent1 prompt" }, new ReviewAgent { Name = "Agent2", Prompt = "Agent2 prompt" } } }
             });
 
         var agentCallCount = 0;
@@ -1111,7 +1156,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt, Agents = new[] { new ReviewAgentConfig { Name = "Agent1", Prompt = "Agent1 prompt" }, new ReviewAgentConfig { Name = "Agent2", Prompt = "Agent2 prompt" } } }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Agent1", Prompt = "Agent1 prompt" }, new ReviewAgent { Name = "Agent2", Prompt = "Agent2 prompt" } } }
             });
 
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Agent1 prompt") || r.Prompt.Contains("Agent2 prompt")), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
@@ -1126,33 +1176,18 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task StartPipeline_WithNullAgents_FallsBackToSinglePrompt()
+    public async Task StartPipeline_WithNoReviewerConfigs_FallsBackToDefaultAgents()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, Prompt = "Single review prompt.", Agents = null }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CodeReviewIterationsCompleted.Should().Be(1);
-        _mockAgentProvider.Verify(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Single review prompt.") && r.UseResume), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task StartPipeline_WithEmptyAgents_FallsBackToSinglePrompt()
-    {
-        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration
-            {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, Prompt = "Fallback prompt.", Agents = Array.Empty<ReviewAgentConfig>() }
-            });
-
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        run.CodeReviewIterationsCompleted.Should().Be(1);
-        _mockAgentProvider.Verify(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Fallback prompt.") && r.UseResume), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
+        run.CodeReviewAgentsRun.Should().Contain("Correctness");
     }
 
     [Fact]
@@ -1162,7 +1197,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, Agents = new[] { new ReviewAgentConfig { Name = "Correctness", Prompt = "Check correctness." }, new ReviewAgentConfig { Name = "DotNetSpecialist", Prompt = "Check .NET." } } }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Correctness", Prompt = "Check correctness." }, new ReviewAgent { Name = "DotNetSpecialist", Prompt = "Check .NET." } } }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -1176,7 +1216,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, Agents = new[] { new ReviewAgentConfig { Name = "Agent1", Prompt = "Agent1 prompt" }, new ReviewAgentConfig { Name = "Agent2", Prompt = "Agent2 prompt" } } }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Agent1", Prompt = "Agent1 prompt" }, new ReviewAgent { Name = "Agent2", Prompt = "Agent2 prompt" } } }
             });
 
         var agentCallCount = 0;
@@ -1203,7 +1248,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 2, Agents = new[] { new ReviewAgentConfig { Name = "A1", Prompt = "A1 prompt" }, new ReviewAgentConfig { Name = "A2", Prompt = "A2 prompt" } } }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 2 }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "A1", Prompt = "A1 prompt" }, new ReviewAgent { Name = "A2", Prompt = "A2 prompt" } } }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -1224,17 +1274,17 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task StartPipeline_WithNullAgents_TracksReviewFallbackName()
+    public async Task StartPipeline_WithNoReviewerConfigs_TracksDefaultAgentNames()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, Agents = null }
+                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "Review" });
+        run.CodeReviewAgentsRun.Should().Contain("Correctness");
     }
 
     [Fact]
