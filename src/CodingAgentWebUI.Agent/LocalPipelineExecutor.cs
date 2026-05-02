@@ -308,7 +308,7 @@ public sealed class LocalPipelineExecutor
         var steps = new List<IPipelineStep>
         {
             new CloneRepositoryStep(),
-            new WriteMcpConfigStep(job, connection),
+            new WriteMcpConfigStep(job),
             new SyncBrainPreRunStep(),
             new DetectReworkStep(),
             new CreateBranchStep(),

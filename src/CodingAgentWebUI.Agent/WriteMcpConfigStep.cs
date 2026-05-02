@@ -1,6 +1,5 @@
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Steps;
-using Microsoft.AspNetCore.SignalR.Client;
 
 namespace CodingAgentWebUI.Agent;
 
@@ -10,9 +9,8 @@ namespace CodingAgentWebUI.Agent;
 internal sealed class WriteMcpConfigStep : IPipelineStep
 {
     private readonly JobAssignmentMessage _job;
-    // TODO: [WARNING] _connection field is unused — remove it. Holding a reference to HubConnection (IAsyncDisposable) unnecessarily.
 
-    public WriteMcpConfigStep(JobAssignmentMessage job, HubConnection connection)
+    public WriteMcpConfigStep(JobAssignmentMessage job)
     {
         _job = job;
     }
