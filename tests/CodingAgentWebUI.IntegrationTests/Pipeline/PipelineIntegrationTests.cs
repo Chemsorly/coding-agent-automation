@@ -35,12 +35,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
                 Enabled = true,
                 MaxIterations = 3,
                 Prompt = "Custom review prompt",
-                FixPrompt = "Custom fix prompt",
-                Agents = new[]
-                {
-                    new ReviewAgentConfig { Name = "Correctness", Prompt = "Check correctness" },
-                    new ReviewAgentConfig { Name = "Security", Prompt = "Check security" }
-                }
+                FixPrompt = "Custom fix prompt"
             },
             AnalysisPrompt = "Custom analysis",
             ImplementationPrompt = "Custom implementation",
@@ -97,12 +92,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
         loaded.CodeReview.MaxIterations.Should().Be(3);
         loaded.CodeReview.Prompt.Should().Be("Custom review prompt");
         loaded.CodeReview.FixPrompt.Should().Be("Custom fix prompt");
-        loaded.CodeReview.Agents.Should().NotBeNull();
-        loaded.CodeReview.Agents!.Count.Should().Be(2);
-        loaded.CodeReview.Agents[0].Name.Should().Be("Correctness");
-        loaded.CodeReview.Agents[0].Prompt.Should().Be("Check correctness");
-        loaded.CodeReview.Agents[1].Name.Should().Be("Security");
-        loaded.CodeReview.Agents[1].Prompt.Should().Be("Check security");
     }
 
     [Fact]
@@ -114,8 +103,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
             CodeReview = new CodeReviewConfiguration
             {
                 Enabled = false,
-                FixPrompt = null,
-                Agents = null
+                FixPrompt = null
             },
             LastUsedProviderIds = new Dictionary<string, string>()
         };
@@ -124,7 +112,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
         var loaded = await new JsonConfigurationStore(ConfigDir).LoadPipelineConfigAsync(CancellationToken.None);
 
         loaded.CodeReview.FixPrompt.Should().BeNull();
-        loaded.CodeReview.Agents.Should().BeNull();
         loaded.LastUsedProviderIds.Should().BeEmpty();
     }
 
@@ -293,10 +280,13 @@ public class PipelineIntegrationTests : IntegrationTestBase
             {
                 Enabled = true,
                 MaxIterations = 1,
-                FixPrompt = PipelineConfiguration.DefaultFixPrompt,
-                Agents = null
+                FixPrompt = PipelineConfiguration.DefaultFixPrompt
             }
         };
+
+        await ConfigStore.SaveReviewerConfigAsync(
+            new ReviewerConfiguration { Id = "test-reviewer", DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Review", Prompt = "Review the changes." } } },
+            CancellationToken.None);
 
         // Mock agent: analysis + code gen succeed, review writes findings file
         var callCount = 0;

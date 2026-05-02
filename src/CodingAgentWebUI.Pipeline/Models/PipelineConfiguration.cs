@@ -33,15 +33,6 @@ public sealed record CodeReviewConfiguration
     /// When null/empty, falls back to single-pass behavior (review prompt does both find and fix).
     /// </summary>
     public string? FixPrompt { get; init; }
-
-    /// <summary>
-    /// When populated, the review step runs each agent sequentially instead of using the
-    /// single <see cref="Prompt"/>. The second agent onwards sees previous findings via
-    /// <c>--resume</c>. When null or empty, falls back to the single <see cref="Prompt"/>.
-    /// Superseded by ReviewerConfiguration entities for label-based routing (see spec 014),
-    /// but still used as an inline fallback when no ReviewerConfigurations match.
-    /// </summary>
-    public IReadOnlyList<ReviewAgentConfig>? Agents { get; init; } = PipelineConfiguration.DefaultReviewAgents;
 }
 
 public sealed record PipelineConfiguration

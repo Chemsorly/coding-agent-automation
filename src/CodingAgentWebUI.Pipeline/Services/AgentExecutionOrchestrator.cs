@@ -551,22 +551,17 @@ internal class AgentExecutionOrchestrator
             _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
                 run.RunId, i + 1, config.CodeReview.MaxIterations);
 
-            // Determine which agents to run using the fallback chain:
-            // 1. resolvedReviewerConfigs (new entity-based routing)
-            // 2. config.CodeReview.Agents (legacy inline config)
-            // 3. Single-pass using config.CodeReview.Prompt
+            // Determine which agents to run:
+            // 1. resolvedReviewerConfigs (entity-based routing)
+            // 2. DefaultReviewAgents fallback
             IReadOnlyList<ReviewAgentConfig> agents;
             if (resolvedReviewerConfigs is { Count: > 0 })
             {
                 agents = ReviewerResolver.FlattenAgents(resolvedReviewerConfigs);
             }
-            else if (config.CodeReview.Agents is { Count: > 0 } configuredAgents)
-            {
-                agents = configuredAgents;
-            }
             else
             {
-                agents = new[] { new ReviewAgentConfig { Name = "Review", Prompt = config.CodeReview.Prompt } };
+                agents = PipelineConfiguration.DefaultReviewAgents;
             }
 
             onOutputLine($"🔍 Starting code review iteration {i + 1}/{config.CodeReview.MaxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
