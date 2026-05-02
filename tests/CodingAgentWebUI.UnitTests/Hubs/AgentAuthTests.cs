@@ -273,4 +273,12 @@ public class AgentAuthTests
     {
         AgentApiKeyDefaults.AuthenticationScheme.Should().Be("AgentApiKey");
     }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_NotOnReportModelListResult()
+    {
+        var method = typeof(AgentHub).GetMethod("ReportModelListResult");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().BeNull();
+    }
 }

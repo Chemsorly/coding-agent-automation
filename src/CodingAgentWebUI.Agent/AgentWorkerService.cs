@@ -74,6 +74,7 @@ public sealed class AgentWorkerService : BackgroundService
         _hubManager.OnCancelJob += HandleCancelJobAsync;
         _hubManager.OnAssignChatPrompt += HandleChatPromptAsync;
         _hubManager.OnCancelChat += HandleCancelChatAsync;
+        _hubManager.OnRequestModelList += HandleRequestModelListAsync;
 
         try
         {
@@ -400,6 +401,79 @@ public sealed class AgentWorkerService : BackgroundService
         {
             _logger.Warning(ex, "Failed to send AgentReady signal after chat cancellation");
         }
+    }
+
+    private async Task HandleRequestModelListAsync(ModelListRequest request)
+    {
+        ModelListResponse response;
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "/home/ubuntu/.local/bin/kiro-cli",
+                Arguments = "chat --list-models --format json",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(psi);
+            if (process is null)
+            {
+                response = new ModelListResponse { RequestId = request.RequestId, Error = "Failed to start kiro-cli process" };
+            }
+            else
+            {
+                using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                var output = await process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+                await process.WaitForExitAsync(timeoutCts.Token);
+
+                if (process.ExitCode != 0)
+                {
+                    var stderr = await process.StandardError.ReadToEndAsync(timeoutCts.Token);
+                    response = new ModelListResponse { RequestId = request.RequestId, Error = $"kiro-cli exited with code {process.ExitCode}: {stderr}" };
+                }
+                else
+                {
+                    var models = ParseModelListOutput(output);
+                    response = new ModelListResponse { RequestId = request.RequestId, Models = models };
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to fetch models for request {RequestId}", request.RequestId);
+            response = new ModelListResponse { RequestId = request.RequestId, Error = ex.Message };
+        }
+
+        try
+        {
+            await _hubManager.Connection.InvokeAsync("ReportModelListResult", response);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to report model list result for request {RequestId}", request.RequestId);
+        }
+    }
+
+    private static IReadOnlyList<ModelInfo> ParseModelListOutput(string output)
+    {
+        using var doc = JsonDocument.Parse(output);
+        var models = new List<ModelInfo>();
+        if (doc.RootElement.TryGetProperty("models", out var modelsArray))
+        {
+            foreach (var m in modelsArray.EnumerateArray())
+            {
+                models.Add(new ModelInfo
+                {
+                    ModelId = m.GetProperty("model_id").GetString() ?? "",
+                    Description = m.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "",
+                    RateMultiplier = m.TryGetProperty("rate_multiplier", out var r) ? r.GetDouble() : 1.0
+                });
+            }
+        }
+        return models;
     }
 
     /// <summary>

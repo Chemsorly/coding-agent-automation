@@ -25,6 +25,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly IConfigurationStore _configStore;
     private readonly PipelineOrchestrationService _orchestration;
     private readonly JobQueueDrainService _drainService;
+    private readonly ModelFetchService _modelFetchService;
     private readonly ILogger _logger;
 
     public AgentHub(
@@ -37,6 +38,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         IConfigurationStore configStore,
         PipelineOrchestrationService orchestration,
         JobQueueDrainService drainService,
+        ModelFetchService modelFetchService,
         ILogger logger)
     {
         _registry = registry;
@@ -48,6 +50,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         _configStore = configStore;
         _orchestration = orchestration;
         _drainService = drainService;
+        _modelFetchService = modelFetchService;
         _logger = logger;
     }
 
@@ -475,6 +478,18 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         }
 
         _orchestration.NotifyChatCompleted(message.SessionId, message.ExitCode, message.Error);
+        return Task.CompletedTask;
+    }
+
+    // ── Model listing ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Receives model list results from an agent and completes the pending request.
+    /// </summary>
+    public Task ReportModelListResult(ModelListResponse response)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        _modelFetchService.CompleteRequest(response);
         return Task.CompletedTask;
     }
 

@@ -424,4 +424,54 @@ public class AgentHubTests
 
         run.ChatHistory.Count.Should().Be(50);
     }
+
+    // ── ModelListRequest / ModelListResponse ─────────────────────────────
+
+    [Fact]
+    public void ModelListRequest_Properties_RoundTrip()
+    {
+        var request = new ModelListRequest { RequestId = "req-123" };
+        request.RequestId.Should().Be("req-123");
+    }
+
+    [Fact]
+    public void ModelListResponse_Properties_RoundTrip()
+    {
+        var response = new ModelListResponse
+        {
+            RequestId = "req-123",
+            Models = new[]
+            {
+                new ModelInfo { ModelId = "claude-sonnet-4", Description = "Sonnet", RateMultiplier = 1.0 },
+                new ModelInfo { ModelId = "claude-opus-4", Description = "Opus", RateMultiplier = 5.0 }
+            }
+        };
+
+        response.RequestId.Should().Be("req-123");
+        response.Models.Should().HaveCount(2);
+        response.Models[0].ModelId.Should().Be("claude-sonnet-4");
+        response.Models[1].RateMultiplier.Should().Be(5.0);
+        response.Error.Should().BeNull();
+    }
+
+    [Fact]
+    public void ModelListResponse_WithError_RoundTrip()
+    {
+        var response = new ModelListResponse
+        {
+            RequestId = "req-456",
+            Error = "CLI not found"
+        };
+
+        response.Error.Should().Be("CLI not found");
+        response.Models.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ModelInfo_Defaults()
+    {
+        var info = new ModelInfo { ModelId = "test" };
+        info.Description.Should().Be("");
+        info.RateMultiplier.Should().Be(1.0);
+    }
 }

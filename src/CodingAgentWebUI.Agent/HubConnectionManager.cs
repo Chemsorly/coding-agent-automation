@@ -34,6 +34,11 @@ public sealed class HubConnectionManager : IAsyncDisposable
     public event Func<string, Task>? OnCancelChat;
 
     /// <summary>
+    /// Fired when the orchestrator requests a model list from this agent.
+    /// </summary>
+    public event Func<ModelListRequest, Task>? OnRequestModelList;
+
+    /// <summary>
     /// The underlying SignalR hub connection for invoking server methods.
     /// </summary>
     public HubConnection Connection => _connection;
@@ -108,6 +113,13 @@ public sealed class HubConnectionManager : IAsyncDisposable
             _logger.Information("Received chat cancellation for session {SessionId}", sessionId);
             if (OnCancelChat is not null)
                 await OnCancelChat(sessionId);
+        });
+
+        _connection.On<ModelListRequest>("RequestModelList", async request =>
+        {
+            _logger.Information("Received model list request {RequestId}", request.RequestId);
+            if (OnRequestModelList is not null)
+                await OnRequestModelList(request);
         });
     }
 

@@ -271,3 +271,45 @@ public sealed record ChatCompletedMessage
     [Key(2)]
     public string? Error { get; init; }
 }
+
+/// <summary>
+/// Orchestrator → Agent: Request to list available models via the CLI.
+/// </summary>
+[MessagePackObject]
+public sealed record ModelListRequest
+{
+    [Key(0)]
+    public required string RequestId { get; init; }
+}
+
+/// <summary>
+/// Agent → Orchestrator: Response containing available models or an error.
+/// </summary>
+[MessagePackObject]
+public sealed record ModelListResponse
+{
+    [Key(0)]
+    public required string RequestId { get; init; }
+
+    [Key(1)]
+    public IReadOnlyList<ModelInfo> Models { get; init; } = [];
+
+    [Key(2)]
+    public string? Error { get; init; }
+}
+
+/// <summary>
+/// A single model entry returned by the CLI's model listing.
+/// </summary>
+[MessagePackObject]
+public sealed record ModelInfo
+{
+    [Key(0)]
+    public required string ModelId { get; init; }
+
+    [Key(1)]
+    public string Description { get; init; } = "";
+
+    [Key(2)]
+    public double RateMultiplier { get; init; } = 1.0;
+}

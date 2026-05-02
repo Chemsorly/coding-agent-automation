@@ -92,6 +92,10 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<JobQueueDrainServi
 builder.Services.AddSingleton<ProfileResolver>();
 builder.Services.AddSingleton<QualityGateResolver>();
 builder.Services.AddSingleton<ReviewerResolver>();
+builder.Services.AddSingleton(sp => new ModelFetchService(
+    sp.GetRequiredService<AgentRegistryService>(),
+    sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
+    Serilog.Log.Logger));
 builder.Services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
     sp.GetRequiredService<JobDispatcherService>(),
     sp.GetRequiredService<AgentRegistryService>(),
