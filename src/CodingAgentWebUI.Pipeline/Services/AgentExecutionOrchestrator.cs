@@ -113,7 +113,7 @@ internal class AgentExecutionOrchestrator
                     var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, issue, parsed, brainContextWrittenForAnalysis);
                     _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
 
-                    await AgentStallMonitor.ExecuteWithMonitoringAsync(
+                    var analysisResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
                         agentProvider,
                         new AgentRequest
                         {
@@ -129,9 +129,19 @@ internal class AgentExecutionOrchestrator
                             onOutputLine?.Invoke(line);
                         });
 
+                    _logger.Information("Pipeline {RunId} analysis agent completed with exit code {ExitCode}, output lines: {LineCount}",
+                        run.RunId, analysisResult.ExitCode, analysisResult.OutputLines.Count);
+
                     // Hard gate: analysis.md must exist and be non-trivial
                     if (!File.Exists(analysisFilePath))
+                    {
+                        var tailOutput = analysisResult.OutputLines.Count > 0
+                            ? string.Join(Environment.NewLine, analysisResult.OutputLines.TakeLast(10))
+                            : "(no output)";
+                        _logger.Warning("Pipeline {RunId} analysis.md not found. Exit code: {ExitCode}, last output:\n{Output}",
+                            run.RunId, analysisResult.ExitCode, tailOutput);
                         throw new AnalysisIncompleteException("analysis.md not found after agent execution");
+                    }
 
                     var analysisLength = new FileInfo(analysisFilePath).Length;
                     if (analysisLength < MinAnalysisLength)
@@ -141,6 +151,14 @@ internal class AgentExecutionOrchestrator
                     _logger.Information("Pipeline {RunId} read analysis from {AnalysisFilePath}", run.RunId, analysisFilePath);
 
                     // Hard gate: assessment.json must exist and be valid
+                    if (!File.Exists(assessmentFilePath))
+                    {
+                        var tailOutput = analysisResult.OutputLines.Count > 0
+                            ? string.Join(Environment.NewLine, analysisResult.OutputLines.TakeLast(10))
+                            : "(no output)";
+                        _logger.Warning("Pipeline {RunId} analysis-assessment.json not found. Exit code: {ExitCode}, last output:\n{Output}",
+                            run.RunId, analysisResult.ExitCode, tailOutput);
+                    }
                     assessment = await ReadAssessmentAsync(run, ct);
 
                     // Success — exit retry loop
