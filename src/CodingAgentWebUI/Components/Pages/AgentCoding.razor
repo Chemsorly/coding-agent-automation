@@ -228,7 +228,22 @@
                                                                         }
                                                                     </div>
                                                                 }
-                                                                @if (previewLabels.QualityGates.Count == 0 && previewLabels.Reviewers.Count == 0 && previewLabels.Profiles.Count == 0)
+                                                                <div class="label-preview-section">
+                                                                    <span class="label-preview-heading">🖥️ Agents:</span>
+                                                                    @if (previewLabels.Agents.Count > 0)
+                                                                    {
+                                                                        @foreach (var ag in previewLabels.Agents)
+                                                                        {
+                                                                            <span class="label-preview-item label-preview-ag">@ag</span>
+                                                                        }
+                                                                        <span class="monitoring-muted">(@previewLabels.OnlineAgentCount online)</span>
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        <span class="monitoring-muted">No agents available</span>
+                                                                    }
+                                                                </div>
+                                                                @if (previewLabels.QualityGates.Count == 0 && previewLabels.Reviewers.Count == 0 && previewLabels.Profiles.Count == 0 && previewLabels.Agents.Count == 0)
                                                                 {
                                                                     <div class="label-preview-section">
                                                                         <span class="monitoring-muted">No label-mapped resources match these labels</span>
@@ -322,7 +337,22 @@
                                                         }
                                                     </div>
                                                 }
-                                                @if (formPreview.QualityGates.Count == 0 && formPreview.Reviewers.Count == 0 && formPreview.Profiles.Count == 0)
+                                                <div class="label-preview-section">
+                                                    <span class="label-preview-heading">🖥️ Agents:</span>
+                                                    @if (formPreview.Agents.Count > 0)
+                                                    {
+                                                        @foreach (var ag in formPreview.Agents)
+                                                        {
+                                                            <span class="label-preview-item label-preview-ag">@ag</span>
+                                                        }
+                                                        <span class="monitoring-muted">(@formPreview.OnlineAgentCount online)</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="monitoring-muted">No agents available</span>
+                                                    }
+                                                </div>
+                                                @if (formPreview.QualityGates.Count == 0 && formPreview.Reviewers.Count == 0 && formPreview.Profiles.Count == 0 && formPreview.Agents.Count == 0)
                                                 {
                                                     <div class="label-preview-section">
                                                         <span class="monitoring-muted">No label-mapped resources match these labels</span>
@@ -1118,12 +1148,20 @@
             .ThenByDescending(p => p.Priority)
             .ToList();
 
+        var allAgents = Registry.GetAllAgents()
+            .Where(a => !a.Disabled)
+            .Where(a => labels.Count == 0 || labels.All(l => a.Labels.Contains(l, StringComparer.OrdinalIgnoreCase)))
+            .ToList();
+        var onlineCount = allAgents.Count(a => a.Status != AgentStatus.Disconnected);
+
         return new LabelPreviewResult
         {
             Labels = labels,
             QualityGates = matchedQgs.Select(q => q.DisplayName).ToList(),
             Reviewers = matchedRvs.Select(r => $"{r.DisplayName} ({r.Agents.Count} agent{(r.Agents.Count != 1 ? "s" : "")})").ToList(),
-            Profiles = matchedProfiles.Select(p => p.DisplayName).ToList()
+            Profiles = matchedProfiles.Select(p => p.DisplayName).ToList(),
+            Agents = allAgents.Select(a => a.AgentId).ToList(),
+            OnlineAgentCount = onlineCount
         };
     }
 
@@ -1133,6 +1171,8 @@
         public List<string> QualityGates { get; init; } = new();
         public List<string> Reviewers { get; init; } = new();
         public List<string> Profiles { get; init; } = new();
+        public List<string> Agents { get; init; } = new();
+        public int OnlineAgentCount { get; init; }
     }
 
     private class TemplateFormModel

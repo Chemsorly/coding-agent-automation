@@ -218,6 +218,7 @@ select option { background: var(--surface); color: var(--text); }
 .label-preview-qg { background: #10b98120; border: 1px solid #10b98150; color: #6ee7b7; }
 .label-preview-rv { background: #a78bfa20; border: 1px solid #a78bfa50; color: #c4b5fd; }
 .label-preview-pr { background: #f59e0b20; border: 1px solid #f59e0b50; color: #fcd34d; }
+.label-preview-ag { background: #38bdf820; border: 1px solid #38bdf850; color: #7dd3fc; }
 
 /* Label Preview Inline (in add template form) */
 .label-preview-inline {
