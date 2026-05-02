@@ -12,7 +12,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// </summary>
 public static partial class PipelineFormatting
 {
-    private const int MaxBranchNameLength = 100;
+    private const int MaxBranchNameLength = PipelineConstants.MaxBranchNameLength;
 
     /// <summary>
     /// Generates a branch name from issue number, title, and run ID.
@@ -50,7 +50,7 @@ public static partial class PipelineFormatting
     }
 
     /// <summary>Maximum character length for a comment body in the PR description before truncation.</summary>
-    private const int MaxCommentLength = 200;
+    private const int MaxCommentLength = PipelineConstants.MaxCommentLength;
 
     /// <summary>
     /// Generates a PR body with all required sections including file changes and issue context.

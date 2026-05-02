@@ -101,13 +101,13 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
         {
             _logger.Information(ex, "Kiro CLI execution was cancelled");
             _callbackHandler.Invoke(KiroState.Error, new CallbackContext { State = KiroState.Error, Message = "Execution was cancelled" });
-            return 130;
+            return KiroCliExitCodes.Cancelled;
         }
         catch (Exception ex)
         {
             _logger.Error(ex, "Kiro CLI execution failed");
             _callbackHandler.Invoke(KiroState.Error, new CallbackContext { State = KiroState.Error, Message = $"Execution failed: {ex.Message}" });
-            return 1;
+            return KiroCliExitCodes.GeneralFailure;
         }
         finally
         {

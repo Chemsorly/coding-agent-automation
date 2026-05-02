@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using Serilog;
@@ -41,7 +42,7 @@ public sealed class ResettableJobDispatcherService : JobDispatcherService
 /// </summary>
 public sealed class ResettableOrchestratorRunService : OrchestratorRunService
 {
-    public ResettableOrchestratorRunService(ILogger logger, int defaultBufferCapacity = 10_000)
+    public ResettableOrchestratorRunService(ILogger logger, int defaultBufferCapacity = PipelineConstants.DefaultOutputBufferCapacity)
         : base(logger, defaultBufferCapacity) { }
 
     public void Reset()

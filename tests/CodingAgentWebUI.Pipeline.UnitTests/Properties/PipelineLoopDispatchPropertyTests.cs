@@ -52,7 +52,7 @@ public class PipelineLoopDispatchPropertyTests
                         {
                             new() { Identifier = $"issue-from-{cfg.Id}", Title = "Test", Labels = new[] { "agent:next" }, CreatedAt = DateTime.UtcNow }
                         },
-                        Page = 1, PageSize = 100, HasMore = false
+                        Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
                     });
                 return mock.Object;
             });
@@ -139,7 +139,7 @@ public class PipelineLoopDispatchPropertyTests
                 }).ToList();
                 mock.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
                         It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-                    .ReturnsAsync(new PagedResult<IssueSummary> { Items = issues, Page = 1, PageSize = 100, HasMore = false });
+                    .ReturnsAsync(new PagedResult<IssueSummary> { Items = issues, Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false });
                 return mock.Object;
             });
 
@@ -349,7 +349,7 @@ public class PipelineLoopDispatchPropertyTests
                             if (c == 1)
                                 throw new HttpRequestException("Unauthorized", null, System.Net.HttpStatusCode.Unauthorized);
                             return Task.FromResult(new PagedResult<IssueSummary>
-                            { Items = new List<IssueSummary>(), Page = 1, PageSize = 100, HasMore = false });
+                            { Items = new List<IssueSummary>(), Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false });
                         });
                 }
                 else
@@ -357,7 +357,7 @@ public class PipelineLoopDispatchPropertyTests
                     mock.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
                             It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
                         .ReturnsAsync(new PagedResult<IssueSummary>
-                        { Items = new List<IssueSummary>(), Page = 1, PageSize = 100, HasMore = false });
+                        { Items = new List<IssueSummary>(), Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false });
                 }
                 return mock.Object;
             });
@@ -411,7 +411,7 @@ public class PipelineLoopDispatchPropertyTests
                 var mock = new Mock<IIssueProvider>();
                 mock.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
                         It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-                    .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary>(), Page = 1, PageSize = 100, HasMore = false });
+                    .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary>(), Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false });
                 mock.Setup(p => p.DisposeAsync())
                     .Returns(() => { lock (disposedProviders) { disposedProviders.Add(cfg.Id); } return ValueTask.CompletedTask; });
                 return mock.Object;
@@ -475,7 +475,7 @@ public class PipelineLoopDispatchPropertyTests
                         {
                             new() { Identifier = "1", Title = "Test", Labels = new[] { "agent:next" }, CreatedAt = DateTime.UtcNow }
                         },
-                        Page = 1, PageSize = 100, HasMore = false
+                        Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
                     });
                 return mock.Object;
             });

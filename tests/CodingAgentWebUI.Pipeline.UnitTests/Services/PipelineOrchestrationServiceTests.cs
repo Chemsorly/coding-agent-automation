@@ -2335,7 +2335,7 @@ public class PipelineOrchestrationServiceTests
         };
 
         // Override agent: analysis prompt succeeds (writes files, returns 0),
-        // implementation prompt returns ExitCode 124 (timeout)
+        // implementation prompt returns ExitCode timeout
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
@@ -2345,8 +2345,8 @@ public class PipelineOrchestrationServiceTests
                     WriteAssessmentFile(req.WorkspacePath, "ready");
                     return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
                 }
-                // Implementation prompt: return ExitCode 124 (agent timeout)
-                return Task.FromResult(new AgentResult { ExitCode = 124, OutputLines = Array.Empty<string>() });
+                // Implementation prompt: return ExitCode timeout
+                return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = Array.Empty<string>() });
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -2380,7 +2380,7 @@ public class PipelineOrchestrationServiceTests
         };
 
         // Override agent: analysis prompt succeeds (writes files, returns 0),
-        // implementation prompt returns ExitCode 1 (non-zero but not 124)
+        // implementation prompt returns ExitCode 1 (non-zero but not timeout)
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
@@ -2391,7 +2391,7 @@ public class PipelineOrchestrationServiceTests
                     return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
                 }
                 // Implementation prompt: return ExitCode 1 (non-zero, not timeout)
-                return Task.FromResult(new AgentResult { ExitCode = 1, OutputLines = Array.Empty<string>() });
+                return Task.FromResult(new AgentResult { ExitCode = ExitCodes.GeneralFailure, OutputLines = Array.Empty<string>() });
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);

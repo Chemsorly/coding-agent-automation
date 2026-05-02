@@ -1,3 +1,4 @@
+// TODO: Consider extracting TimeSpan default values (AgentTimeout, ExternalCiTimeout, etc.) into named constants per issue #238.
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>

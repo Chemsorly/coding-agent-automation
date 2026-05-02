@@ -157,7 +157,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     new() { Identifier = "2", Title = "Newer", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 2) },
                     new() { Identifier = "1", Title = "Older", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 1) }
                 },
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
             });
 
         // Track which issues are started (will fail since we don't have full provider setup, but we can check order)
@@ -207,7 +207,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     new() { Identifier = "1", Title = "Errored", Labels = new[] { "agent:next", "agent:error" }, CreatedAt = new DateTime(2026, 1, 1) },
                     new() { Identifier = "2", Title = "Also Errored", Labels = new[] { "agent:next", "agent:error" }, CreatedAt = new DateTime(2026, 1, 2) }
                 },
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
             });
 
         var svc = CreateService();
@@ -242,7 +242,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     new() { Identifier = "1", Title = "Errored", Labels = new[] { "agent:next", "agent:error" }, CreatedAt = new DateTime(2026, 1, 1) },
                     new() { Identifier = "2", Title = "Needs Refinement", Labels = new[] { "agent:next", "agent:needs-refinement" }, CreatedAt = new DateTime(2026, 1, 2) }
                 },
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
             });
 
         var svc = CreateService();
@@ -276,7 +276,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     new() { Identifier = "1", Title = "Needs Refinement 1", Labels = new[] { "agent:next", "agent:needs-refinement" }, CreatedAt = new DateTime(2026, 1, 1) },
                     new() { Identifier = "2", Title = "Needs Refinement 2", Labels = new[] { "agent:next", "agent:needs-refinement" }, CreatedAt = new DateTime(2026, 1, 2) }
                 },
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
             });
 
         var svc = CreateService();
@@ -310,7 +310,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     new() { Identifier = "1", Title = "Errored", Labels = new[] { "agent:next", "agent:error" }, CreatedAt = new DateTime(2026, 1, 1) },
                     new() { Identifier = "2", Title = "Needs Refinement", Labels = new[] { "agent:next", "agent:needs-refinement" }, CreatedAt = new DateTime(2026, 1, 2) }
                 },
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
             });
 
         var svc = CreateService();
@@ -347,7 +347,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     {
                         new() { Identifier = $"p{page}", Title = $"Issue page {page}", Labels = new[] { "agent:next" }, CreatedAt = DateTime.UtcNow }
                     },
-                    Page = page, PageSize = 100, HasMore = true // Always more pages
+                    Page = page, PageSize = PipelineConstants.DefaultPageSize, HasMore = true // Always more pages
                 });
             });
 
@@ -390,7 +390,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = new List<IssueSummary>(),
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
             });
 
         var svc = CreateService();
@@ -462,7 +462,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
-                    Page = 1, PageSize = 100, HasMore = false
+                    Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
                 });
             });
 
@@ -510,7 +510,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = new List<IssueSummary>(),
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
             });
 
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -576,7 +576,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     new() { Identifier = "1", Title = "First", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 1) },
                     new() { Identifier = "2", Title = "Second", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 2) }
                 },
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
             });
 
         var mockDispatcher = new Mock<IJobDispatcher>();
@@ -775,7 +775,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
-                    Page = 1, PageSize = 100, HasMore = false
+                    Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
                 });
             });
 
@@ -866,7 +866,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
-                    Page = 1, PageSize = 100, HasMore = false
+                    Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
                 });
             });
 
@@ -968,7 +968,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
-                    Page = 1, PageSize = 100, HasMore = false
+                    Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
                 });
             });
 
@@ -1020,7 +1020,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
-                    Page = 1, PageSize = 100, HasMore = false
+                    Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
                 });
             });
 

@@ -197,11 +197,11 @@ public class AgentHubTests
         var message = new ChatCompletedMessage
         {
             SessionId = "session-456",
-            ExitCode = 1,
+            ExitCode = ExitCodes.GeneralFailure,
             Error = "Process timed out"
         };
 
-        message.ExitCode.Should().Be(1);
+        message.ExitCode.Should().Be(ExitCodes.GeneralFailure);
         message.Error.Should().Be("Process timed out");
     }
 

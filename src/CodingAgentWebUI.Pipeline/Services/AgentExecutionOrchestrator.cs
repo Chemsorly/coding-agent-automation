@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 internal class AgentExecutionOrchestrator
 {
     /// <summary>Minimum length in bytes for analysis.md to be considered valid.</summary>
-    internal const int MinAnalysisLength = 100;
+    internal const int MinAnalysisLength = PipelineConstants.MinAnalysisLength;
 
     private static readonly JsonSerializerOptions s_camelCaseOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -480,7 +480,7 @@ internal class AgentExecutionOrchestrator
                               $"The process may have stopped unexpectedly."
                 });
 
-                if (agentResult.ExitCode == 124)
+                if (agentResult.ExitCode == ExitCodes.Timeout)
                 {
                     run.FailureReason = $"Agent timed out after {config.AgentTimeout}. Implementation is incomplete.";
                     run.CompletedAt = DateTime.UtcNow;

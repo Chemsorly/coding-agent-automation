@@ -20,7 +20,7 @@ public class OrchestratorRunService : IOrchestratorRunService
     private readonly int _defaultBufferCapacity;
     private readonly ILogger _logger;
 
-    public OrchestratorRunService(ILogger logger, int defaultBufferCapacity = 10_000)
+    public OrchestratorRunService(ILogger logger, int defaultBufferCapacity = PipelineConstants.DefaultOutputBufferCapacity)
     {
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(defaultBufferCapacity, 0);
