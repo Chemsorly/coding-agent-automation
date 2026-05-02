@@ -16,7 +16,7 @@
                     <tr>
                         <th>Display Name</th>
                         <th>Match Labels <span class="th-hint" title="ANY match — applies if at least one label overlaps with the job's labels">?</span></th>
-                        <th>Commands</th>
+                        <th style="min-width: 250px;">Commands</th>
                         <th>Coverage</th>
                         <th>Enabled</th>
                         <th>Order</th>
@@ -47,7 +47,7 @@
                                     <span class="monitoring-muted">(all jobs)</span>
                                 }
                             </td>
-                            <td class="monitoring-mono" style="font-size: 0.75rem;">
+                            <td class="monitoring-mono" style="font-size: 0.75rem;" title="@FormatCommandsFull(qgc)">
                                 @FormatCommands(qgc)
                             </td>
                             <td>@(qgc.CoverageThreshold.HasValue ? $"{qgc.CoverageThreshold.Value}%" : "—")</td>
@@ -83,7 +83,10 @@
                 <input type="text" @bind="_form.MatchLabels" placeholder="e.g. dotnet, csharp" />
             </div>
             <div class="form-group">
-                <label>Compilation Command</label>
+                <div class="label-with-hint">
+                    <label>Compilation Command</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Commands are executed directly via process start (not through a shell). The Command field is the executable, Arguments are space-separated parameters. Examples: Simple: Command=dotnet, Arguments=build --no-restore · Python: Command=python, Arguments=-m pytest --cov=. · Piped: Command=/bin/sh, Arguments=-c &quot;npm run build &amp;&amp; npm test&quot;">?</span>
+                </div>
                 <input type="text" @bind="_form.CompilationCommand" placeholder="e.g. dotnet" />
             </div>
             <div class="form-group">
@@ -91,7 +94,10 @@
                 <input type="text" @bind="_form.CompilationArguments" placeholder="e.g. build --no-restore" />
             </div>
             <div class="form-group">
-                <label>Test Command</label>
+                <div class="label-with-hint">
+                    <label>Test Command</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Commands are executed directly via process start (not through a shell). The Command field is the executable, Arguments are space-separated parameters. Examples: Simple: Command=dotnet, Arguments=test --no-restore · Python: Command=python, Arguments=-m pytest --cov=. · Piped: Command=/bin/sh, Arguments=-c &quot;npm run build &amp;&amp; npm test&quot;">?</span>
+                </div>
                 <input type="text" @bind="_form.TestCommand" placeholder="e.g. dotnet" />
             </div>
             <div class="form-group">
@@ -281,13 +287,18 @@
 
     private static string FormatCommands(QualityGateConfiguration qgc)
     {
+        var result = FormatCommandsFull(qgc);
+        return result.Length > 80 ? result[..77] + "..." : result;
+    }
+
+    private static string FormatCommandsFull(QualityGateConfiguration qgc)
+    {
         var parts = new List<string>();
         if (!string.IsNullOrEmpty(qgc.CompilationCommand))
             parts.Add($"{qgc.CompilationCommand} {string.Join(" ", qgc.CompilationArguments ?? [])}".Trim());
         if (!string.IsNullOrEmpty(qgc.TestCommand))
             parts.Add($"{qgc.TestCommand} {string.Join(" ", qgc.TestArguments ?? [])}".Trim());
-        var result = string.Join(" | ", parts);
-        return result.Length > 40 ? result[..37] + "..." : result;
+        return string.Join(" | ", parts);
     }
 
     private static IReadOnlyList<string> ParseLabels(string? input)
