@@ -24,18 +24,18 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     private readonly IOrchestratorRunService? _runService;
     private readonly Serilog.ILogger _logger;
 
-    private CancellationTokenSource? _cancellationTokenSource;
+    protected CancellationTokenSource? _cancellationTokenSource;
     private readonly SemaphoreSlim _startLock = new(1, 1);
-    private IAgentProvider? _activeAgentProvider;
-    private IRepositoryProvider? _activeRepoProvider;
-    private IRepositoryProvider? _activeBrainProvider;
-    private IIssueProvider? _activeIssueProvider;
-    private IPipelineProvider? _activePipelineProvider;
-    private PipelineConfiguration? _activeConfig;
+    protected IAgentProvider? _activeAgentProvider;
+    protected IRepositoryProvider? _activeRepoProvider;
+    protected IRepositoryProvider? _activeBrainProvider;
+    protected IIssueProvider? _activeIssueProvider;
+    protected IPipelineProvider? _activePipelineProvider;
+    protected PipelineConfiguration? _activeConfig;
 
-    private IssueDetail? _activeIssue;
-    private ParsedIssue? _activeParsedIssue;
-    private IReadOnlyList<IssueComment>? _activeIssueComments;
+    protected IssueDetail? _activeIssue;
+    protected ParsedIssue? _activeParsedIssue;
+    protected IReadOnlyList<IssueComment>? _activeIssueComments;
 
     /// <summary>Fired after each state transition for UI binding.</summary>
     public event Action? OnChange;
@@ -43,8 +43,15 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     /// <summary>Fired for each agent output line for real-time display.</summary>
     public event Action<string>? OnOutputLine;
 
+    /// <summary>Clears all event subscribers. Used by subclasses for state reset.</summary>
+    protected void ClearEventSubscribers()
+    {
+        OnChange = null;
+        OnOutputLine = null;
+    }
+
     /// <summary>The currently active local pipeline run, or null if idle. For agent runs, use <see cref="GetAllActiveRuns"/>.</summary>
-    public PipelineRun? ActiveRun { get; private set; }
+    public PipelineRun? ActiveRun { get; protected set; }
 
     /// <summary>Whether a local pipeline run is currently in progress.</summary>
     public bool IsRunning => ActiveRun != null

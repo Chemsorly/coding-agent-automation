@@ -1,5 +1,3 @@
-#pragma warning disable CS0618 // Obsolete — test helper sets legacy CodeReviewConfiguration.Agents field
-
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.IntegrationTests.Helpers;

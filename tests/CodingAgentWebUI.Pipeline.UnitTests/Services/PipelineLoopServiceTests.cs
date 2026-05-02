@@ -85,45 +85,45 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     }
 
     [Fact]
-    public void StartLoop_ActivatesLoop()
+    public async Task StartLoop_ActivatesLoop()
     {
         var svc = CreateService();
-        var result = svc.StartLoop();
+        var result = await svc.StartLoopAsync();
         Assert.True(result);
         Assert.True(svc.IsLoopActive);
     }
 
     [Fact]
-    public void StartLoop_RejectsWhenAlreadyActive()
+    public async Task StartLoop_RejectsWhenAlreadyActive()
     {
         var svc = CreateService();
-        svc.StartLoop();
-        var second = svc.StartLoop();
+        await svc.StartLoopAsync();
+        var second = await svc.StartLoopAsync();
         Assert.False(second);
     }
 
     [Fact]
-    public void StopLoop_SetsStopRequested()
+    public async Task StopLoop_SetsStopRequested()
     {
         var svc = CreateService();
-        svc.StartLoop();
+        await svc.StartLoopAsync();
         svc.StopLoop();
         Assert.Contains("stopping", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void StartLoop_WithNoTemplates_ReturnsFalse()
+    public async Task StartLoop_WithNoTemplates_ReturnsFalse()
     {
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestPipelineConfig.Default() with { PipelineJobTemplates = new List<PipelineJobTemplate>() });
         var svc = CreateService();
-        var result = svc.StartLoop();
+        var result = await svc.StartLoopAsync();
         Assert.False(result);
         Assert.False(svc.IsLoopActive);
     }
 
     [Fact]
-    public void StartLoop_WithAllDisabled_ReturnsFalse()
+    public async Task StartLoop_WithAllDisabled_ReturnsFalse()
     {
         var disabledTemplates = new List<PipelineJobTemplate>
         {
@@ -132,7 +132,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestPipelineConfig.Default() with { PipelineJobTemplates = disabledTemplates });
         var svc = CreateService();
-        var result = svc.StartLoop();
+        var result = await svc.StartLoopAsync();
         Assert.False(result);
         Assert.False(svc.IsLoopActive);
     }
@@ -175,7 +175,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         // Start the background service
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // Poll until at least one issue is started
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -214,7 +214,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // In multi-template mode, errored issues are skipped during dispatch.
         // The cycle completes and shows "Cycle complete" status.
@@ -249,7 +249,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // In multi-template mode, errored/needs-refinement issues are skipped during dispatch.
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -283,7 +283,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // In multi-template mode, all issues are skipped during dispatch (needs-refinement).
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -317,7 +317,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // In multi-template mode, all issues are skipped during dispatch.
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -364,7 +364,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // Wait for at least one poll cycle to complete
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -397,7 +397,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // In multi-template mode, status shows "Cycle complete" when no issues found
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -422,7 +422,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
         svc.StopLoop();
 
         // Poll for loop to become inactive
@@ -437,14 +437,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     }
 
     [Fact]
-    public void StartLoop_RejectsWhenManualRunInProgress()
+    public async Task StartLoop_RejectsWhenManualRunInProgress()
     {
         // Simulate a running pipeline by checking IsRunning
         // We can't easily start a real run, but we can verify the guard logic
         var svc = CreateService();
 
         // When orchestration is not running, start should succeed
-        var result = svc.StartLoop();
+        var result = await svc.StartLoopAsync();
         Assert.True(result);
     }
 
@@ -481,7 +481,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // Wait for at least 2 poll cycles (first fails with backoff, second succeeds)
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -525,7 +525,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // Wait for the loop to actually start processing (status message changes from initial)
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -544,13 +544,13 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     }
 
     [Fact]
-    public void OnChange_FiresOnStartLoop()
+    public async Task OnChange_FiresOnStartLoop()
     {
         var svc = CreateService();
         var fired = false;
         svc.OnChange += () => fired = true;
 
-        svc.StartLoop();
+        await svc.StartLoopAsync();
         Assert.True(fired);
     }
 
@@ -592,7 +592,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // Poll until at least one issue is processed
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -699,7 +699,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // Wait for multiple cycles to accumulate failures
         await Task.Delay(500);
@@ -744,7 +744,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // 100ms + 200ms + 300ms(capped) + 300ms(capped) = ~900ms for 4 calls; wait 5s for CI headroom
         await Task.Delay(5000);
@@ -793,7 +793,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // Wait for failures + recovery
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -833,7 +833,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // In multi-template mode, circuit breaker trips when ALL templates have failures >= threshold
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -884,7 +884,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // Wait for circuit breaker to trip
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -934,7 +934,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // Wait for circuit breaker to trip
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -986,7 +986,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // Poll until at least 2 calls have been made
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -1038,7 +1038,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // Poll until at least 2 calls (first fails, second succeeds and resets)
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -1079,7 +1079,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // Wait for circuit breaker to trip
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -1120,7 +1120,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
-        svc.StartLoop();
+        await svc.StartLoopAsync();
 
         // Wait for circuit breaker to trip (all templates failing >= 2)
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -1138,10 +1138,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     }
 
     [Fact]
-    public void ResumeLoop_WhenNotBroken_IsNoop()
+    public async Task ResumeLoop_WhenNotBroken_IsNoop()
     {
         var svc = CreateService();
-        svc.StartLoop();
+        await svc.StartLoopAsync();
         svc.ResumeLoop(); // Should not throw
         Assert.False(svc.IsCircuitBroken);
     }

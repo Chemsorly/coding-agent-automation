@@ -444,7 +444,7 @@
                         <section class="settings-section" style="margin: 0 20px 16px;">
                             <h2>Manual Dispatch</h2>
                             <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                                <select @bind="_manualDispatchTemplateId" class="dispatch-template-select">
+                                <select value="@_manualDispatchTemplateId" @onchange="OnTemplateChanged" class="dispatch-template-select" data-testid="template-select">
                                     <option value="">-- Select Template --</option>
                                     @foreach (var t in _templates.Where(t => t.Enabled))
                                     {
@@ -452,7 +452,8 @@
                                     }
                                 </select>
                                 <button class="btn-save" @onclick="OpenDrawer"
-                                        disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))">
+                                        disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))"
+                                        data-testid="browse-issues-btn">
                                     Browse Issues
                                 </button>
                             </div>
@@ -483,10 +484,10 @@
                             List<string> outputSnapshot;
                             lock (_outputLock) { outputSnapshot = _outputLines.TakeLast(200).ToList(); }
                         }
-                        <div class="output-panel" id="outputPanel">
+                        <div class="output-panel" id="outputPanel" data-testid="output-panel">
                             @foreach (var line in outputSnapshot)
                             {
-                                <div class="output-line">@line</div>
+                                <div class="output-line" data-testid="output-line">@line</div>
                             }
                         </div>
                     </div>
@@ -540,6 +541,7 @@
                         var isProcessing = JobDispatcher.IsIssueBeingProcessedOrQueued(issue.Identifier);
                         <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(_selectedDrawerIssue?.Identifier == issue.Identifier ? "drawer-issue-selected" : "")"
                              @onclick="() => SelectDrawerIssue(issue)"
+                             data-testid="issue-row-@issue.Identifier"
                              style="@(isProcessing ? "opacity: 0.6; pointer-events: none;" : "")">
                             <div class="drawer-issue-header">
                                 <span class="drawer-issue-number">#@issue.Identifier</span>
@@ -587,7 +589,8 @@
                             Created: @_selectedDrawerIssue.CreatedAt.Value.ToString("g")
                         </p>
                     }
-                    <button class="btn-save" @onclick="DispatchFromDrawer" disabled="@_drawerDispatching">
+                    <button class="btn-save" @onclick="DispatchFromDrawer" disabled="@_drawerDispatching"
+                            data-testid="dispatch-issue-btn">
                         @(_drawerDispatching ? "Dispatching..." : $"Start Pipeline on #{_selectedDrawerIssue.Identifier}")
                     </button>
                 </div>
@@ -640,6 +643,11 @@
     private bool _drawerHasMore;
     private IssueSummary? _selectedDrawerIssue;
     private bool _drawerDispatching;
+
+    private void OnTemplateChanged(ChangeEventArgs e)
+    {
+        _manualDispatchTemplateId = e.Value?.ToString() ?? "";
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -805,10 +813,10 @@
 
     // ── Loop Controls ──
 
-    private void StartLoop()
+    private async Task StartLoop()
     {
         _errorMessage = null;
-        var started = LoopService.StartLoop();
+        var started = await LoopService.StartLoopAsync();
         if (!started)
         {
             if (LoopService.ValidationErrors.Count > 0)

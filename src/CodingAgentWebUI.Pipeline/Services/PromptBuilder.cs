@@ -291,7 +291,7 @@ public static class PromptBuilder
         sb.AppendLine("The implementation is complete and quality gates have passed. Before creating the pull request, clean up the working directory.");
         sb.AppendLine();
         sb.AppendLine("Do the following:");
-        sb.AppendLine("- Remove any debug/temporary code added during development (e.g., Console.WriteLine, debug logging, TODO-REMOVE comments)");
+        sb.AppendLine("- Remove any debug/temporary code added during development (e.g., debug print statements, TODO-REMOVE comments)");
         sb.AppendLine("- Clean up unused imports and dead code");
         sb.AppendLine("- Ensure consistent formatting");
         sb.AppendLine("- Remove any test scaffolding that isn't part of the deliverable");

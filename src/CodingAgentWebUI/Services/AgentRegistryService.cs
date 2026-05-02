@@ -9,9 +9,9 @@ namespace CodingAgentWebUI.Services;
 /// In-memory registry of connected agents. Tracks agent status, heartbeats,
 /// and active job assignments. Registered as a singleton in DI.
 /// </summary>
-public sealed class AgentRegistryService
+public class AgentRegistryService
 {
-    private readonly ConcurrentDictionary<string, AgentEntry> _agents = new();
+    protected readonly ConcurrentDictionary<string, AgentEntry> _agents = new();
     private readonly ILogger _logger;
 
     public AgentRegistryService(ILogger logger)

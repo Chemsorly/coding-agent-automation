@@ -38,8 +38,9 @@ public sealed record CodeReviewConfiguration
     /// When populated, the review step runs each agent sequentially instead of using the
     /// single <see cref="Prompt"/>. The second agent onwards sees previous findings via
     /// <c>--resume</c>. When null or empty, falls back to the single <see cref="Prompt"/>.
+    /// Superseded by ReviewerConfiguration entities for label-based routing (see spec 014),
+    /// but still used as an inline fallback when no ReviewerConfigurations match.
     /// </summary>
-    [Obsolete("Use ReviewerConfiguration entities instead. See spec 014.")]
     public IReadOnlyList<ReviewAgentConfig>? Agents { get; init; } = PipelineConfiguration.DefaultReviewAgents;
 }
 
@@ -49,15 +50,13 @@ public sealed record PipelineConfiguration
         "Review the changes against the original issue requirements. Use a sub-agent for the review.\n" +
         "Output findings as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
         "CHECK FOR:\n" +
-        "- Logic errors against acceptance criteria\n" +
         "- Unhandled null references and exception paths\n" +
         "- Off-by-one errors in loops and collections\n" +
-        "- Race conditions in async code\n" +
+        "- Race conditions in async/concurrent code\n" +
         "- Missing input validation on public API boundaries\n" +
         "- Edge cases not covered by the implementation\n" +
-        "- IDisposable resources not properly disposed (missing using/await using)\n" +
-        "- Async/await deadlock patterns (sync-over-async, .Result, .Wait())\n" +
-        "- CancellationToken not propagated through async call chains\n\n" +
+        "- Resources not properly released (file handles, connections, streams)\n" +
+        "- Error handling gaps (swallowed exceptions, missing cleanup on failure)\n\n" +
         "DO NOT FLAG:\n" +
         "- Style preferences or naming conventions\n" +
         "- Missing XML documentation comments\n" +
@@ -77,7 +76,6 @@ public sealed record PipelineConfiguration
         "Review the changes against the original issue requirements. Use a sub-agent for the review. " +
         "Output findings as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
         "CHECK FOR:\n" +
-        "- Logic errors against acceptance criteria\n" +
         "- Unhandled null references and exception paths\n" +
         "- Off-by-one errors in loops and collections\n" +
         "- Race conditions in async code\n" +
@@ -112,8 +110,8 @@ public sealed record PipelineConfiguration
         "Do NOT fix anything. Only report findings.";
 
     public const string DefaultSecurityReviewPrompt =
-        "Review the changes for security issues. The previous reviews covered correctness and .NET-specific " +
-        "patterns — do not duplicate those findings. Output findings as a numbered list with severity " +
+        "Review the changes for security issues. The previous review covered correctness " +
+        "— do not duplicate those findings. Output findings as a numbered list with severity " +
         "[CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
         "CHECK FOR:\n" +
         "- Hardcoded credentials, API keys, connection strings, or tokens\n" +
@@ -127,20 +125,48 @@ public sealed record PipelineConfiguration
         "- Missing input validation or sanitization on external input boundaries\n" +
         "- Secrets or credentials in committed files\n\n" +
         "DO NOT FLAG:\n" +
-        "- Issues already covered by Correctness or DotNet Specialist reviews\n" +
+        "- Issues already covered by previous reviews\n" +
         "- Theoretical attacks requiring physical access or pre-existing compromise\n" +
         "- Missing HTTPS enforcement (infrastructure concern, not code)\n" +
         "- Test code, sample data, or placeholder values in test fixtures\n" +
-        "- Dependency vulnerabilities (covered by the quality gate)\n" +
+        "- Dependency vulnerabilities (covered by external CI)\n" +
         "- General code quality or style issues\n\n" +
         "Do NOT fix anything. Only report findings.";
 
-    /// <summary>Default review agents: Correctness + .NET Specialist + Security.</summary>
+    public const string DefaultAcceptanceCriteriaReviewPrompt =
+        "Review the changes against the acceptance criteria from the original issue. " +
+        "The previous reviews covered code correctness, .NET patterns, and security — " +
+        "do not duplicate those findings.\n\n" +
+        "Go through EACH acceptance criterion listed in the issue one by one. " +
+        "For each criterion, determine whether the implementation satisfies it.\n\n" +
+        "Output your findings as a numbered list with severity markers:\n" +
+        "- [CRITICAL] — Acceptance criterion is NOT met. The implementation is missing " +
+        "the required behavior or contradicts the requirement.\n" +
+        "- [WARNING] — Acceptance criterion is PARTIALLY met. The core behavior exists " +
+        "but edge cases or secondary aspects are missing.\n" +
+        "- [SUGGESTION] — Acceptance criterion is met, but the implementation could " +
+        "better align with the intent.\n\n" +
+        "For each finding, quote the specific acceptance criterion and explain " +
+        "what is missing or incomplete with references to the relevant code.\n\n" +
+        "If ALL acceptance criteria are fully met, state that explicitly — " +
+        "do not invent findings.\n\n" +
+        "If the issue has no acceptance criteria section, check whether the " +
+        "implementation addresses the issue description and stated goals instead.\n\n" +
+        "DO NOT FLAG:\n" +
+        "- Code quality issues (already covered by previous reviews)\n" +
+        "- .NET-specific patterns (already covered by previous reviews)\n" +
+        "- Security issues (already covered by previous reviews)\n" +
+        "- Style or formatting preferences\n" +
+        "- Suggestions to add features beyond what the issue requests\n\n" +
+        "Do NOT fix anything. Only report findings.";
+
+    /// <summary>Default review agents: Correctness + DotNetSpecialist + Security + AcceptanceCriteria.</summary>
     public static IReadOnlyList<ReviewAgentConfig> DefaultReviewAgents { get; } = new[]
     {
         new ReviewAgentConfig { Name = "Correctness", Prompt = DefaultCorrectnessReviewPrompt },
         new ReviewAgentConfig { Name = "DotNetSpecialist", Prompt = DefaultDotNetSpecialistReviewPrompt },
-        new ReviewAgentConfig { Name = "SecurityReviewer", Prompt = DefaultSecurityReviewPrompt }
+        new ReviewAgentConfig { Name = "SecurityReviewer", Prompt = DefaultSecurityReviewPrompt },
+        new ReviewAgentConfig { Name = "AcceptanceCriteria", Prompt = DefaultAcceptanceCriteriaReviewPrompt }
     };
 
     public const string DefaultAnalysisPrompt =

@@ -143,8 +143,14 @@ public sealed class PipelineLoopService : BackgroundService
     /// Activates the multi-template round-robin loop using PipelineJobTemplates from config.
     /// Returns false if no enabled templates exist or validation fails.
     /// </summary>
-    public bool StartLoop()
+    public async Task<bool> StartLoopAsync()
     {
+        // Load config outside the lock to avoid sync-over-async deadlocks
+        // (Blazor Server's RendererSynchronizationContext would deadlock on .GetAwaiter().GetResult())
+        var config = await _configStore.LoadPipelineConfigAsync(CancellationToken.None).ConfigureAwait(false);
+        var issueProviders = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None).ConfigureAwait(false);
+        var repoProviders = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None).ConfigureAwait(false);
+
         lock (_lock)
         {
             if (IsLoopActive)
@@ -152,8 +158,6 @@ public sealed class PipelineLoopService : BackgroundService
             if (_orchestration.IsRunning)
                 return false;
 
-            // Load config synchronously for validation (we're in a lock)
-            var config = _configStore.LoadPipelineConfigAsync(CancellationToken.None).GetAwaiter().GetResult();
             var templates = config.PipelineJobTemplates;
             var enabledTemplates = templates.Where(t => t.Enabled).ToList();
 
@@ -166,8 +170,6 @@ public sealed class PipelineLoopService : BackgroundService
             }
 
             // Validate all enabled templates reference existing provider IDs
-            var issueProviders = _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None).GetAwaiter().GetResult();
-            var repoProviders = _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None).GetAwaiter().GetResult();
             var issueProviderIds = issueProviders.Select(p => p.Id).ToHashSet();
             var repoProviderIds = repoProviders.Select(p => p.Id).ToHashSet();
 
@@ -204,6 +206,8 @@ public sealed class PipelineLoopService : BackgroundService
             return true;
         }
     }
+
+
 
     /// <summary>
     /// Reconciles the provider cache with the needed set of IssueProviderIds.

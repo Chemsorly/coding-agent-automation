@@ -80,16 +80,6 @@ builder.Services.AddHostedService(sp => new HeartbeatMonitorService(
     sp.GetRequiredService<IConfigurationStore>(),
     Serilog.Log.Logger));
 
-// Quality gate migration — ensures at least one QGC exists before first dispatch
-builder.Services.AddHostedService(sp => new QualityGateMigrationService(
-    sp.GetRequiredService<IConfigurationStore>(),
-    Serilog.Log.Logger));
-
-// Reviewer migration — ensures at least one ReviewerConfiguration exists before first dispatch
-builder.Services.AddHostedService(sp => new ReviewerMigrationService(
-    sp.GetRequiredService<IConfigurationStore>(),
-    Serilog.Log.Logger));
-
 // Job queue drain service — periodically matches queued jobs to idle agents
 builder.Services.AddSingleton(sp => new JobQueueDrainService(
     sp.GetRequiredService<JobDispatcherService>(),
@@ -176,6 +166,7 @@ app.MapGet("/", () => Results.Redirect("/agent-coding"))
     .AllowAnonymous();
 
 app.UseStaticFiles();
+app.MapStaticAssets();
 
 app.UseAuthentication();
 app.UseAuthorization();

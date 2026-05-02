@@ -110,7 +110,7 @@ public class PipelineLoopPropertyTests
         using var cts = new CancellationTokenSource();
         await svc.StartAsync(cts.Token);
 
-        var started = svc.StartLoop();
+        var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         await Task.Delay(400);
@@ -160,7 +160,7 @@ public class PipelineLoopPropertyTests
         using var cts = new CancellationTokenSource();
         await svc.StartAsync(cts.Token);
 
-        var started = svc.StartLoop();
+        var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         // Let multiple cycles run
@@ -228,7 +228,7 @@ public class PipelineLoopPropertyTests
         using var cts = new CancellationTokenSource();
         await svc.StartAsync(cts.Token);
 
-        var started = svc.StartLoop();
+        var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         await Task.Delay(300);
@@ -298,7 +298,7 @@ public class PipelineLoopPropertyTests
         using var cts = new CancellationTokenSource();
         await svc.StartAsync(cts.Token);
 
-        var started = svc.StartLoop();
+        var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         // Wait for rate limit to expire and recovery
@@ -353,7 +353,7 @@ public class PipelineLoopPropertyTests
         using var cts = new CancellationTokenSource();
         await svc.StartAsync(cts.Token);
 
-        var started = svc.StartLoop();
+        var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         await Task.Delay(300);

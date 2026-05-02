@@ -28,6 +28,8 @@
 
             <div class="step-card step-card-@state.ToString().ToLowerInvariant()"
                  id="step-@step.ToString()"
+                 data-testid="pipeline-step-@step"
+                 data-step-state="@state.ToString().ToLowerInvariant()"
                  @onclick="() => ToggleStep(step, state)">
                 <div class="step-card-header">
                     <span class="step-card-icon">@GetStepIcon(state)</span>
@@ -261,7 +263,7 @@
     @if (IsRunning)
     {
         <div class="sidebar-footer">
-            <button class="btn-sidebar-cancel" @onclick="OnCancel">Cancel Pipeline</button>
+            <button class="btn-sidebar-cancel" @onclick="OnCancel" data-testid="cancel-pipeline-btn">Cancel Pipeline</button>
         </div>
     }
 </aside>

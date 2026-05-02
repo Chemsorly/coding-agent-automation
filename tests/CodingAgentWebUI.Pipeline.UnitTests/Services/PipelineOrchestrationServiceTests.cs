@@ -1,5 +1,3 @@
-#pragma warning disable CS0618 // Obsolete — tests exercise legacy CodeReviewConfiguration.Agents field
-
 using AwesomeAssertions;
 using Moq;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -543,10 +541,11 @@ public class PipelineOrchestrationServiceTests
         config.CodeReview.Prompt.Should().Contain("[CRITICAL]");
         config.CodeReview.FixPrompt.Should().BeNull();
         config.CodeReview.Agents.Should().NotBeNull();
-        config.CodeReview.Agents!.Count.Should().Be(3);
+        config.CodeReview.Agents!.Count.Should().Be(4);
         config.CodeReview.Agents[0].Name.Should().Be("Correctness");
         config.CodeReview.Agents[1].Name.Should().Be("DotNetSpecialist");
         config.CodeReview.Agents[2].Name.Should().Be("SecurityReviewer");
+        config.CodeReview.Agents[3].Name.Should().Be("AcceptanceCriteria");
     }
 
     // --- Fix prompt tests ---
@@ -1217,10 +1216,11 @@ public class PipelineOrchestrationServiceTests
     public void CodeReviewDefaults_IncludeDefaultAgents()
     {
         var agents = PipelineConfiguration.DefaultReviewAgents;
-        agents.Should().HaveCount(3);
+        agents.Should().HaveCount(4);
         agents[0].Name.Should().Be("Correctness");
         agents[1].Name.Should().Be("DotNetSpecialist");
         agents[2].Name.Should().Be("SecurityReviewer");
+        agents[3].Name.Should().Be("AcceptanceCriteria");
     }
 
     [Fact]

@@ -26,13 +26,13 @@ public sealed record PendingJob
 /// <see cref="ConcurrentDictionary{TKey,TValue}"/> for duplicate issue detection.
 /// Registered as a singleton in DI.
 /// </summary>
-public sealed class JobDispatcherService
+public class JobDispatcherService
 {
     private readonly AgentRegistryService _registry;
-    private readonly ConcurrentQueue<PendingJob> _jobQueue = new();
-    private readonly ConcurrentDictionary<string, bool> _processingIssues = new();
+    protected readonly ConcurrentQueue<PendingJob> _jobQueue = new();
+    protected readonly ConcurrentDictionary<string, bool> _processingIssues = new();
     private readonly ILogger _logger;
-    private readonly object _queueLock = new();
+    protected readonly object _queueLock = new();
 
     public JobDispatcherService(AgentRegistryService registry, ILogger logger)
     {

@@ -63,7 +63,6 @@ public class QualityGateValidator : IQualityGateValidator
             var compilationResult = await RunQgcCompilationAsync(workspacePath, qgc, ct);
             GateResult? testsResult = null;
             GateResult? coverageResult = null;
-            GateResult? securityResult = null;
 
             if (compilationResult is { Passed: false })
             {
@@ -98,8 +97,7 @@ public class QualityGateValidator : IQualityGateValidator
             // Coverage threshold check
             if (qgc.CoverageThreshold is > 0)
             {
-                var resultsDir = Path.GetFullPath(Path.Combine(workspacePath, "TestResults"));
-                coverageResult = ParseCoverageFromReports(resultsDir, qgc.CoverageThreshold.Value);
+                coverageResult = ParseCoverageFromReports(workspacePath, qgc);
 
                 if (coverageResult is { Passed: false })
                 {
@@ -116,28 +114,6 @@ public class QualityGateValidator : IQualityGateValidator
                 }
             }
 
-            // Security scan
-            if (qgc.SecurityScanEnabled)
-            {
-                securityResult = await RunSecurityScanGateAsync(workspacePath, ct);
-                WriteGateOutput(workspacePath, $"{qgc.DisplayName}-security-scan",
-                    securityResult.Details, string.Empty);
-
-                if (securityResult is { Passed: false })
-                {
-                    qgcResults.Add(new QgcExecutionResult
-                    {
-                        QgcId = qgc.Id,
-                        DisplayName = qgc.DisplayName,
-                        Compilation = compilationResult,
-                        Tests = testsResult,
-                        Coverage = coverageResult,
-                        SecurityScan = securityResult
-                    });
-                    break; // Stop on first failure
-                }
-            }
-
             qgcResults.Add(new QgcExecutionResult
             {
                 QgcId = qgc.Id,
@@ -145,7 +121,7 @@ public class QualityGateValidator : IQualityGateValidator
                 Compilation = compilationResult,
                 Tests = testsResult,
                 Coverage = coverageResult,
-                SecurityScan = securityResult
+                SecurityScan = null
             });
         }
 
@@ -177,17 +153,12 @@ public class QualityGateValidator : IQualityGateValidator
             .Select(r => r.Coverage)
             .FirstOrDefault(c => c != null);
 
-        // Aggregate security: take the first non-null security result
-        var aggregateSecurity = qgcResults
-            .Select(r => r.SecurityScan)
-            .FirstOrDefault(s => s != null);
-
         return new QualityGateReport
         {
             Compilation = aggregateCompilation,
             Tests = aggregateTests,
             Coverage = aggregateCoverage,
-            SecurityScan = aggregateSecurity,
+            SecurityScan = null,
             QgcResults = qgcResults
         };
     }
@@ -231,6 +202,9 @@ public class QualityGateValidator : IQualityGateValidator
 
     /// <summary>
     /// Runs the test command for a single QGC. Returns null if no test command is defined.
+    /// Only appends .NET-specific flags (--logger trx, --results-directory, --collect) when
+    /// the test command is "dotnet". For other languages (python, mvn, etc.), the test arguments
+    /// are used as-is and test counts are parsed from stdout.
     /// </summary>
     private async Task<GateResult?> RunQgcTestsAsync(
         string workspacePath, QualityGateConfiguration qgc, CancellationToken ct)
@@ -242,28 +216,50 @@ public class QualityGateValidator : IQualityGateValidator
             ? string.Join(" ", qgc.TestArguments)
             : string.Empty;
 
-        // Add TRX logger and results directory for test result parsing
-        var resultsDir = Path.GetFullPath(Path.Combine(workspacePath, "TestResults", $"qg-{Guid.NewGuid():N}"));
-        Directory.CreateDirectory(resultsDir);
-
+        var isDotnet = string.Equals(qgc.TestCommand, "dotnet", StringComparison.OrdinalIgnoreCase);
         var collectCoverage = qgc.CoverageThreshold is > 0;
-        var fullArgs = $"{arguments} --logger trx --results-directory \"{resultsDir}\"";
-        if (collectCoverage)
-            fullArgs += " --collect:\"XPlat Code Coverage\"";
+        string? resultsDir = null;
+        string fullArgs;
+
+        if (isDotnet)
+        {
+            // .NET: Add TRX logger and results directory for test result parsing
+            resultsDir = Path.GetFullPath(Path.Combine(workspacePath, "TestResults", $"qg-{Guid.NewGuid():N}"));
+            Directory.CreateDirectory(resultsDir);
+
+            fullArgs = $"{arguments} --logger trx --results-directory \"{resultsDir}\"";
+            if (collectCoverage && string.Equals(qgc.CoverageReportFormat, "cobertura", StringComparison.OrdinalIgnoreCase))
+                fullArgs += " --collect:\"XPlat Code Coverage\"";
+        }
+        else
+        {
+            // Non-.NET: Use test arguments as-is (coverage flags should be in TestArguments)
+            fullArgs = arguments;
+        }
 
         var (exitCode, stdout, stderr) = await RunProcessAsync(
             qgc.TestCommand, fullArgs, workspacePath, ct);
 
         WriteGateOutput(workspacePath, $"{qgc.DisplayName}-tests", stdout, stderr);
 
-        // Parse TRX files for accurate test counts
-        var (passed, failed, skipped) = ParseTestCountsFromTrx(resultsDir);
-
-        // If TRX parsing found nothing, fall back to stdout parsing
-        if (passed == 0 && failed == 0 && skipped == 0)
+        // Parse test counts
+        int passed, failed, skipped;
+        if (isDotnet && resultsDir != null)
         {
-            _logger.Warning("No TRX results found in {ResultsDir} for QGC {QgcName}, falling back to stdout parsing",
-                resultsDir, qgc.DisplayName);
+            // Parse TRX files for accurate test counts
+            (passed, failed, skipped) = ParseTestCountsFromTrx(resultsDir);
+
+            // If TRX parsing found nothing, fall back to stdout parsing
+            if (passed == 0 && failed == 0 && skipped == 0)
+            {
+                _logger.Warning("No TRX results found in {ResultsDir} for QGC {QgcName}, falling back to stdout parsing",
+                    resultsDir, qgc.DisplayName);
+                (passed, failed, skipped) = ParseTestCountsFromStdout(stdout);
+            }
+        }
+        else
+        {
+            // Non-.NET: parse test counts from stdout
             (passed, failed, skipped) = ParseTestCountsFromStdout(stdout);
         }
 
@@ -272,7 +268,7 @@ public class QualityGateValidator : IQualityGateValidator
 
         // Clean up results directory (non-fatal) — skip if coverage was collected,
         // because ParseCoverageFromReports needs the Cobertura XML files afterward.
-        if (!collectCoverage)
+        if (isDotnet && resultsDir != null && !collectCoverage)
         {
             try
             {
@@ -310,55 +306,6 @@ public class QualityGateValidator : IQualityGateValidator
             ? string.Join(", ", failedJobs.Select(j => $"'{j.Name}'"))
             : "unknown";
         return $"CI {status.State}. {failedJobs.Count} job(s) failed: {jobNames}.";
-    }
-
-    private async Task<GateResult> RunSecurityScanGateAsync(string workspacePath, CancellationToken ct)
-    {
-        var (exitCode, stdout, stderr) = await RunProcessAsync(
-            "dotnet", "list package --vulnerable --include-transitive", workspacePath, ct);
-
-        WriteGateOutput(workspacePath, "security-scan", stdout, stderr);
-
-        if (exitCode != 0)
-        {
-            _logger.Warning("dotnet list package --vulnerable exited with code {ExitCode}", exitCode);
-            return new GateResult
-            {
-                GateName = "Security Scan",
-                Passed = true,
-                Details = $"Security scan skipped (exit code {exitCode}) — check security-scan-stderr.txt"
-            };
-        }
-
-        if (!string.IsNullOrWhiteSpace(stderr) && stderr.Contains("error", StringComparison.OrdinalIgnoreCase))
-        {
-            _logger.Warning("Security scan stderr contains errors: {Stderr}", stderr);
-        }
-
-        var (hasVulnerabilities, projectCount) = ParseSecurityScanOutput(stdout);
-
-        return new GateResult
-        {
-            GateName = "Security Scan",
-            Passed = !hasVulnerabilities,
-            Details = hasVulnerabilities
-                ? $"{projectCount} project(s) with vulnerable packages"
-                : "No vulnerable packages found"
-        };
-    }
-
-    /// <summary>
-    /// Parses stdout from <c>dotnet list package --vulnerable</c> to detect vulnerable packages.
-    /// The command always returns exit code 0 regardless of findings (dotnet/sdk#16852),
-    /// so detection relies on the text "has the following vulnerable packages".
-    /// </summary>
-    internal static (bool HasVulnerabilities, int ProjectCount) ParseSecurityScanOutput(string? output)
-    {
-        if (string.IsNullOrWhiteSpace(output))
-            return (false, 0);
-
-        var matches = Regex.Matches(output, @"has the following vulnerable packages", RegexOptions.IgnoreCase);
-        return matches.Count > 0 ? (true, matches.Count) : (false, 0);
     }
 
     /// <summary>
@@ -401,40 +348,38 @@ public class QualityGateValidator : IQualityGateValidator
     }
 
     /// <summary>
-    /// Parses Cobertura XML coverage reports from the results directory.
-    /// Returns a GateResult with the aggregate line coverage percentage.
+    /// Locates and parses coverage reports based on the QGC configuration.
+    /// Supports Cobertura XML (default) and JaCoCo XML formats.
+    /// Uses CoverageReportPaths if specified, otherwise falls back to convention-based discovery.
     /// </summary>
-    private GateResult ParseCoverageFromReports(string resultsDir, double threshold)
+    private GateResult ParseCoverageFromReports(string workspacePath, QualityGateConfiguration qgc)
     {
-        if (!Directory.Exists(resultsDir))
+        var threshold = qgc.CoverageThreshold!.Value;
+        var format = qgc.CoverageReportFormat ?? "cobertura";
+        var isDotnet = string.Equals(qgc.TestCommand, "dotnet", StringComparison.OrdinalIgnoreCase);
+
+        // Discover coverage report files
+        var reportFiles = DiscoverCoverageReportFiles(workspacePath, qgc.CoverageReportPaths, format, isDotnet);
+
+        if (reportFiles.Length == 0)
         {
-            _logger.Warning("Results directory {ResultsDir} not found for coverage parsing", resultsDir);
+            _logger.Warning("No {Format} coverage files found in {WorkspacePath}", format, workspacePath);
             return new GateResult
             {
                 GateName = "Coverage",
                 Passed = false,
-                Details = "No coverage data — results directory not found",
+                Details = $"No coverage data — {format} XML not found",
                 CoveragePercent = null
             };
         }
 
-        var coberturaFiles = Directory.GetFiles(resultsDir, "coverage.cobertura.xml", SearchOption.AllDirectories);
-        if (coberturaFiles.Length == 0)
-        {
-            _logger.Warning("No Cobertura coverage files found in {ResultsDir}", resultsDir);
-            return new GateResult
-            {
-                GateName = "Coverage",
-                Passed = false,
-                Details = "No coverage data — Cobertura XML not found",
-                CoveragePercent = null
-            };
-        }
+        // Parse based on format
+        var coveragePercent = string.Equals(format, "jacoco", StringComparison.OrdinalIgnoreCase)
+            ? ParseCoverageFromJacoco(reportFiles)
+            : ParseCoverageFromCobertura(reportFiles);
 
-        var coveragePercent = ParseCoverageFromCobertura(coberturaFiles);
-
-        _logger.Information("Coverage: {CoveragePercent:F1}% (threshold: {Threshold:F1}%)",
-            coveragePercent, threshold);
+        _logger.Information("Coverage ({Format}): {CoveragePercent:F1}% (threshold: {Threshold:F1}%)",
+            format, coveragePercent, threshold);
 
         var passed = coveragePercent >= threshold;
         return new GateResult
@@ -446,6 +391,60 @@ public class QualityGateValidator : IQualityGateValidator
                 : $"Coverage {coveragePercent.ToString("F1", CultureInfo.InvariantCulture)}% below threshold {threshold.ToString("F1", CultureInfo.InvariantCulture)}%",
             CoveragePercent = coveragePercent
         };
+    }
+
+    /// <summary>
+    /// Discovers coverage report files based on explicit paths or convention-based defaults.
+    /// </summary>
+    private string[] DiscoverCoverageReportFiles(
+        string workspacePath, IReadOnlyList<string>? explicitPaths, string format, bool isDotnet)
+    {
+        if (explicitPaths is { Count: > 0 })
+        {
+            // Use explicit paths (relative to workspace root)
+            var files = new List<string>();
+            foreach (var pattern in explicitPaths)
+            {
+                var fullPattern = Path.Combine(workspacePath, pattern);
+                var dir = Path.GetDirectoryName(fullPattern) ?? workspacePath;
+                var filePattern = Path.GetFileName(fullPattern);
+
+                if (Directory.Exists(dir))
+                {
+                    files.AddRange(Directory.GetFiles(dir, filePattern, SearchOption.TopDirectoryOnly));
+                }
+                else
+                {
+                    // Try recursive search from workspace root with the pattern as filename
+                    files.AddRange(Directory.GetFiles(workspacePath, filePattern, SearchOption.AllDirectories)
+                        .Where(f => f.Replace('\\', '/').Contains(pattern.Replace('\\', '/'))));
+                }
+            }
+            return files.ToArray();
+        }
+
+        // Convention-based discovery
+        if (isDotnet)
+        {
+            // .NET: coverlet outputs to TestResults/**/coverage.cobertura.xml
+            var resultsDir = Path.GetFullPath(Path.Combine(workspacePath, "TestResults"));
+            return Directory.Exists(resultsDir)
+                ? Directory.GetFiles(resultsDir, "coverage.cobertura.xml", SearchOption.AllDirectories)
+                : [];
+        }
+
+        if (string.Equals(format, "jacoco", StringComparison.OrdinalIgnoreCase))
+        {
+            // Java/Maven: JaCoCo outputs to target/site/jacoco/jacoco.xml
+            var files = Directory.GetFiles(workspacePath, "jacoco.xml", SearchOption.AllDirectories);
+            return files;
+        }
+
+        // Non-.NET Cobertura (e.g., Python pytest-cov): search for coverage.xml or *.cobertura.xml
+        var coberturaFiles = new List<string>();
+        coberturaFiles.AddRange(Directory.GetFiles(workspacePath, "coverage.xml", SearchOption.AllDirectories));
+        coberturaFiles.AddRange(Directory.GetFiles(workspacePath, "*.cobertura.xml", SearchOption.AllDirectories));
+        return coberturaFiles.Distinct().ToArray();
     }
 
     /// <summary>
@@ -514,8 +513,56 @@ public class QualityGateValidator : IQualityGateValidator
     }
 
     /// <summary>
+    /// Parses JaCoCo XML files and returns the aggregate line coverage percentage.
+    /// JaCoCo uses counter elements with type="LINE" at the class level:
+    /// <![CDATA[<counter type="LINE" missed="6" covered="10"/>]]>
+    /// When multiple reports cover the same source file, counters are summed.
+    /// </summary>
+    internal static double ParseCoverageFromJacoco(string[] jacocoFiles)
+    {
+        var totalMissed = 0L;
+        var totalCovered = 0L;
+
+        foreach (var file in jacocoFiles)
+        {
+            try
+            {
+                var doc = XDocument.Load(file);
+                if (doc.Root == null) continue;
+
+                // Sum LINE counters from all class elements
+                foreach (var counter in doc.Descendants("counter"))
+                {
+                    var type = counter.Attribute("type")?.Value;
+                    if (!string.Equals(type, "LINE", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var missed = (long?)counter.Attribute("missed") ?? 0;
+                    var covered = (long?)counter.Attribute("covered") ?? 0;
+
+                    // Only count class-level counters (direct children of <class> elements)
+                    // to avoid double-counting from package/report-level summaries
+                    var parent = counter.Parent;
+                    if (parent?.Name.LocalName == "class")
+                    {
+                        totalMissed += missed;
+                        totalCovered += covered;
+                    }
+                }
+            }
+            catch
+            {
+                // Skip malformed files
+            }
+        }
+
+        var totalLines = totalMissed + totalCovered;
+        return totalLines > 0 ? (double)totalCovered / totalLines * 100.0 : 0.0;
+    }
+
+    /// <summary>
     /// Fallback: parses test counts from stdout when TRX files are not available.
-    /// Handles both the per-assembly format and the .NET 10 summary line.
+    /// Handles .NET per-assembly format, .NET 10 summary line, pytest output, and Maven/JUnit output.
     /// </summary>
     internal static (int Passed, int Failed, int Skipped) ParseTestCountsFromStdout(string output)
     {
@@ -533,6 +580,59 @@ public class QualityGateValidator : IQualityGateValidator
             int.TryParse(summaryMatch.Groups[3].Value, out var summarySkipped);
             return (succeeded, summaryFailed, summarySkipped);
         }
+
+        // Try pytest format: "5 passed, 2 failed, 1 skipped in 3.45s" or "5 passed in 1.23s"
+        var pytestMatch = Regex.Match(output,
+            @"=+\s*(.*?)\s*in\s+[\d.]+s\s*=+",
+            RegexOptions.IgnoreCase);
+        if (pytestMatch.Success)
+        {
+            var pytestSummary = pytestMatch.Groups[1].Value;
+            var pytestPassed = 0;
+            var pytestFailed = 0;
+            var pytestSkipped = 0;
+
+            var passedMatch = Regex.Match(pytestSummary, @"(\d+)\s+passed", RegexOptions.IgnoreCase);
+            if (passedMatch.Success) int.TryParse(passedMatch.Groups[1].Value, out pytestPassed);
+
+            var failedMatch = Regex.Match(pytestSummary, @"(\d+)\s+failed", RegexOptions.IgnoreCase);
+            if (failedMatch.Success) int.TryParse(failedMatch.Groups[1].Value, out pytestFailed);
+
+            var skippedMatch = Regex.Match(pytestSummary, @"(\d+)\s+skipped", RegexOptions.IgnoreCase);
+            if (skippedMatch.Success) int.TryParse(skippedMatch.Groups[1].Value, out pytestSkipped);
+
+            var errorMatch = Regex.Match(pytestSummary, @"(\d+)\s+error", RegexOptions.IgnoreCase);
+            if (errorMatch.Success && int.TryParse(errorMatch.Groups[1].Value, out var pytestErrors))
+                pytestFailed += pytestErrors;
+
+            if (pytestPassed > 0 || pytestFailed > 0 || pytestSkipped > 0)
+                return (pytestPassed, pytestFailed, pytestSkipped);
+        }
+
+        // Try Maven/JUnit format: "Tests run: 10, Failures: 2, Errors: 1, Skipped: 3"
+        var mavenPassed = 0;
+        var mavenFailed = 0;
+        var mavenSkipped = 0;
+        var mavenMatched = false;
+
+        foreach (var match in Regex.Matches(output,
+            @"Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+)",
+            RegexOptions.IgnoreCase)
+            .Cast<Match>())
+        {
+            mavenMatched = true;
+            int.TryParse(match.Groups[1].Value, out var run);
+            int.TryParse(match.Groups[2].Value, out var failures);
+            int.TryParse(match.Groups[3].Value, out var errors);
+            int.TryParse(match.Groups[4].Value, out var skip);
+
+            mavenPassed += run - failures - errors - skip;
+            mavenFailed += failures + errors;
+            mavenSkipped += skip;
+        }
+
+        if (mavenMatched)
+            return (mavenPassed, mavenFailed, mavenSkipped);
 
         // Fall back to summing per-assembly lines: "Passed:  10, Failed:   2, Skipped:   1"
         var passed = 0;
