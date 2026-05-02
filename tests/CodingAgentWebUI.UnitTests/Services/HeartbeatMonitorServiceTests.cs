@@ -43,6 +43,7 @@ public class HeartbeatMonitorServiceTests
             dispatcher,
             _mockProviderFactory.Object,
             _mockConfigStore.Object,
+            _mockConfigStore.Object,
             _mockLogger.Object);
     }
 

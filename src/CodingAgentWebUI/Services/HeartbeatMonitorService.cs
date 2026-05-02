@@ -17,7 +17,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
     private readonly IPipelineRunHistoryService _historyService;
     private readonly JobDispatcherService _dispatcher;
     private readonly IProviderFactory _providerFactory;
-    private readonly IConfigurationStore _configStore;
+    private readonly IPipelineConfigStore _pipelineConfigStore;
+    private readonly IProviderConfigStore _providerConfigStore;
     private readonly ILogger _logger;
 
     private static readonly TimeSpan SweepInterval = TimeSpan.FromSeconds(60);
@@ -29,7 +30,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
         IPipelineRunHistoryService historyService,
         JobDispatcherService dispatcher,
         IProviderFactory providerFactory,
-        IConfigurationStore configStore,
+        IPipelineConfigStore pipelineConfigStore,
+        IProviderConfigStore providerConfigStore,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(registry);
@@ -37,7 +39,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
         ArgumentNullException.ThrowIfNull(historyService);
         ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(providerFactory);
-        ArgumentNullException.ThrowIfNull(configStore);
+        ArgumentNullException.ThrowIfNull(pipelineConfigStore);
+        ArgumentNullException.ThrowIfNull(providerConfigStore);
         ArgumentNullException.ThrowIfNull(logger);
 
         _registry = registry;
@@ -45,7 +48,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
         _historyService = historyService;
         _dispatcher = dispatcher;
         _providerFactory = providerFactory;
-        _configStore = configStore;
+        _pipelineConfigStore = pipelineConfigStore;
+        _providerConfigStore = providerConfigStore;
         _logger = logger;
     }
 
@@ -82,7 +86,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
     {
         var now = DateTimeOffset.UtcNow;
         var agents = _registry.GetAllAgents();
-        var pipelineConfig = await _configStore.LoadPipelineConfigAsync(ct);
+        var pipelineConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
         var gracePeriod = pipelineConfig.AgentDisconnectGracePeriod;
 
         foreach (var agent in agents)
@@ -159,7 +163,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
     {
         try
         {
-            var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
+            var issueConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
             var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
             if (issueConfig is null)
             {

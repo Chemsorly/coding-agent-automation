@@ -526,11 +526,11 @@ public class PipelineLoopDispatchPropertyTests
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockValidator = new Mock<IQualityGateValidator>();
         var orchestration = new PipelineOrchestrationService(
-            mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
+            mockStore.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
             mockValidator.Object, new CiLogWriter(mockLogger.Object), mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
-        return new PipelineLoopService(orchestration, mockFactory.Object, mockStore.Object, mockLogger.Object, dispatcher);
+        return new PipelineLoopService(orchestration, mockFactory.Object, mockStore.Object, mockStore.Object, mockLogger.Object, dispatcher);
     }
 }

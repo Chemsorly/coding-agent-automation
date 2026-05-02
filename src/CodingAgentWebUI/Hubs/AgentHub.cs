@@ -22,7 +22,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly TokenVendingService _tokenVending;
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IProviderFactory _providerFactory;
-    private readonly IConfigurationStore _configStore;
+    private readonly IProviderConfigStore _providerConfigStore;
     private readonly PipelineOrchestrationService _orchestration;
     private readonly JobQueueDrainService _drainService;
     private readonly ModelFetchService _modelFetchService;
@@ -35,19 +35,20 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         TokenVendingService tokenVending,
         IPipelineRunHistoryService historyService,
         IProviderFactory providerFactory,
-        IConfigurationStore configStore,
+        IProviderConfigStore providerConfigStore,
         PipelineOrchestrationService orchestration,
         JobQueueDrainService drainService,
         ModelFetchService modelFetchService,
         ILogger logger)
     {
+        // TODO: [MAINT-06] Add ArgumentNullException.ThrowIfNull for all constructor parameters (pre-existing gap)
         _registry = registry;
         _runService = runService;
         _dispatcher = dispatcher;
         _tokenVending = tokenVending;
         _historyService = historyService;
         _providerFactory = providerFactory;
-        _configStore = configStore;
+        _providerConfigStore = providerConfigStore;
         _orchestration = orchestration;
         _drainService = drainService;
         _modelFetchService = modelFetchService;
@@ -432,7 +433,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         // All GitHub App-authenticated providers (repo, brain, pipeline) share the same installation,
         // so the token works for all of them. If providers use different installations in the future,
         // this should be updated to look up the correct config by providerKind.
-        var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
+        var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
         var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == run.RepoProviderConfigId);
         if (repoConfig is null)
             throw new HubException($"Repository provider config '{run.RepoProviderConfigId}' not found");
@@ -539,7 +540,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     {
         try
         {
-            var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+            var issueConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
             var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
             if (issueConfig is null)
             {
@@ -563,7 +564,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     {
         try
         {
-            var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+            var issueConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
             var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
             if (issueConfig is null)
             {

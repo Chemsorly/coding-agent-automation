@@ -18,7 +18,13 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         builder.ConfigureServices(services =>
         {
             // Replace IConfigurationStore with a mock returning defaults
-            ReplaceService<IConfigurationStore>(services, CreateConfigurationStoreMock());
+            var configStore = CreateConfigurationStoreMock();
+            ReplaceService<IConfigurationStore>(services, configStore);
+            ReplaceService<IPipelineConfigStore>(services, configStore);
+            ReplaceService<IProviderConfigStore>(services, configStore);
+            ReplaceService<IAgentProfileStore>(services, configStore);
+            ReplaceService<IQualityGateConfigStore>(services, configStore);
+            ReplaceService<IReviewerConfigStore>(services, configStore);
 
             // Replace IProviderFactory with a mock
             ReplaceService<IProviderFactory>(services, new Mock<IProviderFactory>().Object);

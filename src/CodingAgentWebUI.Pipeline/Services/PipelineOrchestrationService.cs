@@ -13,7 +13,10 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// </summary>
 public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 {
-    private readonly IConfigurationStore _configStore;
+    private readonly IPipelineConfigStore _pipelineConfigStore;
+    private readonly IProviderConfigStore _providerConfigStore;
+    private readonly IQualityGateConfigStore _qualityGateConfigStore;
+    private readonly IReviewerConfigStore _reviewerConfigStore;
     private readonly IProviderFactory _providerFactory;
     private readonly IssueDescriptionParser _issueParser;
     private readonly BrainSyncOrchestrator _brainSync;
@@ -97,7 +100,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     public bool HasAnyActiveRuns => IsRunning || (_runService?.HasActiveRuns == true);
 
     public PipelineOrchestrationService(
-        IConfigurationStore configStore,
+        IPipelineConfigStore pipelineConfigStore,
+        IProviderConfigStore providerConfigStore,
+        IQualityGateConfigStore qualityGateConfigStore,
+        IReviewerConfigStore reviewerConfigStore,
         IProviderFactory providerFactory,
         IssueDescriptionParser issueParser,
         IQualityGateValidator qualityGateValidator,
@@ -107,14 +113,20 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         IPipelineRunHistoryService? historyService = null,
         IOrchestratorRunService? runService = null)
     {
-        ArgumentNullException.ThrowIfNull(configStore);
+        ArgumentNullException.ThrowIfNull(pipelineConfigStore);
+        ArgumentNullException.ThrowIfNull(providerConfigStore);
+        ArgumentNullException.ThrowIfNull(qualityGateConfigStore);
+        ArgumentNullException.ThrowIfNull(reviewerConfigStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
         ArgumentNullException.ThrowIfNull(issueParser);
         ArgumentNullException.ThrowIfNull(qualityGateValidator);
         ArgumentNullException.ThrowIfNull(ciLogWriter);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _configStore = configStore;
+        _pipelineConfigStore = pipelineConfigStore;
+        _providerConfigStore = providerConfigStore;
+        _qualityGateConfigStore = qualityGateConfigStore;
+        _reviewerConfigStore = reviewerConfigStore;
         _providerFactory = providerFactory;
         _issueParser = issueParser;
         _logger = logger;
@@ -159,7 +171,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 
         try
         {
-            _activeConfig = await _configStore.LoadPipelineConfigAsync(linkedCt);
+            _activeConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(linkedCt);
             _historyService.CleanupExpiredWorkspaces(_activeConfig, ActiveRun?.RunId);
 
             var issueProviderConfig = await ResolveProviderConfigAsync(issueProviderId, ProviderKind.Issue, linkedCt);
@@ -217,7 +229,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                     pipelineProviderConfig = await ResolveProviderConfigAsync(pipelineProviderId, ProviderKind.Pipeline, linkedCt);
                 else
                 {
-                    var pipelineConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, linkedCt);
+                    var pipelineConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, linkedCt);
                     if (pipelineConfigs.Count > 0) pipelineProviderConfig = pipelineConfigs[0];
                 }
                 if (pipelineProviderConfig is not null)
@@ -287,7 +299,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             return null;
         }
 
-        var config = await _configStore.LoadPipelineConfigAsync(ct);
+        var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
 
         // Resolve repo provider config to get repository name
         var repoProviderConfig = await ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, ct);
@@ -520,9 +532,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 { _logger.Warning(ex, "Pipeline {RunId} brain repo pull-before-write failed, continuing", run.RunId); }
             }
             // Code review phase
-            var allReviewerConfigs = await _configStore.LoadReviewerConfigsAsync(ct);
+            var allReviewerConfigs = await _reviewerConfigStore.LoadReviewerConfigsAsync(ct);
             var reviewerResolver = new ReviewerResolver();
-            var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+            var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
             var repoConfigForLabels = repoConfigs.FirstOrDefault(c => c.Id == run.RepoProviderConfigId);
             var requiredLabelsForReview = LabelResolver.ResolveRequiredLabels(repoConfigForLabels, _activeConfig!);
             var resolvedReviewers = reviewerResolver.Resolve(allReviewerConfigs, requiredLabelsForReview);
@@ -535,7 +547,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 line => OnOutputLine?.Invoke(line), () => NotifyChange(), ct,
                 resolvedReviewers);
             // Quality gates
-            var allQgcs = await _configStore.LoadQualityGateConfigsAsync(ct);
+            var allQgcs = await _qualityGateConfigStore.LoadQualityGateConfigsAsync(ct);
             var qualityGateContext = new QualityGateContext
             {
                 Run = run,
@@ -599,7 +611,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         {
             try
             {
-                var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+                var issueConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
                 var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
                 if (issueConfig is null) continue;
 
@@ -753,7 +765,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             lastUsed["agent"] = agentId;
             if (!string.IsNullOrEmpty(brainId)) lastUsed["brain"] = brainId;
             if (!string.IsNullOrEmpty(pipelineId)) lastUsed["pipeline"] = pipelineId;
-            await _configStore.UpdatePipelineConfigAsync(
+            await _pipelineConfigStore.UpdatePipelineConfigAsync(
                 current => current with { LastUsedProviderIds = lastUsed }, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -821,7 +833,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     }
     private async Task<ProviderConfig> ResolveProviderConfigAsync(string providerId, ProviderKind kind, CancellationToken ct)
     {
-        var configs = await _configStore.LoadProviderConfigsAsync(kind, ct);
+        var configs = await _providerConfigStore.LoadProviderConfigsAsync(kind, ct);
         return configs.FirstOrDefault(c => c.Id == providerId)
             ?? throw new InvalidOperationException($"Provider config '{providerId}' of kind '{kind}' not found.");
     }

@@ -31,7 +31,7 @@ public class AboutPageComponentTests : BunitContext
             .Returns(history ?? Array.Empty<PipelineRunSummary>());
 
         return new PipelineOrchestrationService(
-            store.Object, factory.Object, new IssueDescriptionParser(),
+            store.Object, store.Object, store.Object, store.Object, factory.Object, new IssueDescriptionParser(),
             validator.Object, new CiLogWriter(Log.Logger), Log.Logger,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: mockHistory.Object);

@@ -39,6 +39,9 @@ public class AgentCodingPageTests
 
         _service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
             _mockValidator.Object,

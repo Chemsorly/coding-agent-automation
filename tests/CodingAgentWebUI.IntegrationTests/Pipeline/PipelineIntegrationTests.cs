@@ -218,6 +218,9 @@ public class PipelineIntegrationTests : IntegrationTestBase
         // Simulate restart: create a brand new service pointing at the same runs directory
         await using var service2 = new PipelineOrchestrationService(
             ConfigStore,
+            ConfigStore,
+            ConfigStore,
+            ConfigStore,
             MockFactory.Object,
             new IssueDescriptionParser(),
             MockValidator.Object,

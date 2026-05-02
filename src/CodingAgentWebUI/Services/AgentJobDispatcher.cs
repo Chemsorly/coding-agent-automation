@@ -29,7 +29,11 @@ public sealed class AgentJobDispatcher : IJobDispatcher
     private readonly OrchestratorRunService _runService;
     private readonly Pipeline.Services.PipelineOrchestrationService _orchestration;
     private readonly TokenVendingService _tokenVending;
-    private readonly IConfigurationStore _configStore;
+    private readonly IPipelineConfigStore _pipelineConfigStore;
+    private readonly IProviderConfigStore _providerConfigStore;
+    private readonly IAgentProfileStore _agentProfileStore;
+    private readonly IQualityGateConfigStore _qualityGateConfigStore;
+    private readonly IReviewerConfigStore _reviewerConfigStore;
     private readonly IProviderFactory _providerFactory;
     private readonly ProfileResolver _profileResolver;
     private readonly QualityGateResolver _qualityGateResolver;
@@ -43,7 +47,11 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         OrchestratorRunService runService,
         Pipeline.Services.PipelineOrchestrationService orchestration,
         TokenVendingService tokenVending,
-        IConfigurationStore configStore,
+        IPipelineConfigStore pipelineConfigStore,
+        IProviderConfigStore providerConfigStore,
+        IAgentProfileStore agentProfileStore,
+        IQualityGateConfigStore qualityGateConfigStore,
+        IReviewerConfigStore reviewerConfigStore,
         IProviderFactory providerFactory,
         ProfileResolver profileResolver,
         QualityGateResolver qualityGateResolver,
@@ -56,7 +64,11 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         ArgumentNullException.ThrowIfNull(runService);
         ArgumentNullException.ThrowIfNull(orchestration);
         ArgumentNullException.ThrowIfNull(tokenVending);
-        ArgumentNullException.ThrowIfNull(configStore);
+        ArgumentNullException.ThrowIfNull(pipelineConfigStore);
+        ArgumentNullException.ThrowIfNull(providerConfigStore);
+        ArgumentNullException.ThrowIfNull(agentProfileStore);
+        ArgumentNullException.ThrowIfNull(qualityGateConfigStore);
+        ArgumentNullException.ThrowIfNull(reviewerConfigStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
         ArgumentNullException.ThrowIfNull(profileResolver);
         ArgumentNullException.ThrowIfNull(qualityGateResolver);
@@ -69,7 +81,11 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         _runService = runService;
         _orchestration = orchestration;
         _tokenVending = tokenVending;
-        _configStore = configStore;
+        _pipelineConfigStore = pipelineConfigStore;
+        _providerConfigStore = providerConfigStore;
+        _agentProfileStore = agentProfileStore;
+        _qualityGateConfigStore = qualityGateConfigStore;
+        _reviewerConfigStore = reviewerConfigStore;
         _providerFactory = providerFactory;
         _profileResolver = profileResolver;
         _qualityGateResolver = qualityGateResolver;
@@ -112,8 +128,8 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         }
 
         // Resolve required labels for agent matching
-        var config = await _configStore.LoadPipelineConfigAsync(ct);
-        var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+        var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
+        var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
         var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == repoProviderId);
         var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
 
@@ -166,7 +182,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         try
         {
             // Resolve profile for this agent
-            var profiles = await _configStore.LoadAgentProfilesAsync(ct);
+            var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
             var profile = _profileResolver.Resolve(profiles, agent.Labels);
             if (profile is null)
             {
@@ -178,11 +194,11 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             var agentProviderId = profile.AgentProviderConfigId;
 
             // Resolve quality gate configurations for this job
-            var allQgcs = await _configStore.LoadQualityGateConfigsAsync(ct);
+            var allQgcs = await _qualityGateConfigStore.LoadQualityGateConfigsAsync(ct);
             var resolvedQgcs = _qualityGateResolver.Resolve(allQgcs, requiredLabels);
 
             // Resolve reviewer configurations for this job
-            var allReviewerConfigs = await _configStore.LoadReviewerConfigsAsync(ct);
+            var allReviewerConfigs = await _reviewerConfigStore.LoadReviewerConfigsAsync(ct);
             var resolvedReviewerConfigs = _reviewerResolver.Resolve(allReviewerConfigs, requiredLabels);
 
             // Create the dispatched run via PipelineOrchestrationService
@@ -218,7 +234,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             var providerConfigs = await PrepareProviderConfigsAsync(
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct);
 
-            var config = await _configStore.LoadPipelineConfigAsync(ct);
+            var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
 
             var message = new JobAssignmentMessage
             {
@@ -274,7 +290,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             // Revert label on dispatch failure (REQ-7.7)
             try
             {
-                var issueConfigs2 = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+                var issueConfigs2 = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
                 var issueConfig2 = issueConfigs2.FirstOrDefault(c => c.Id == issueProviderId);
                 if (issueConfig2 != null)
                 {
@@ -299,7 +315,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         string issueProviderId,
         CancellationToken ct)
     {
-        var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
+        var issueConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
         var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == issueProviderId);
         if (issueConfig == null)
             return null;
@@ -373,12 +389,12 @@ public sealed class AgentJobDispatcher : IJobDispatcher
     {
         var configs = new List<ProviderConfig>();
 
-        var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+        var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
         var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == repoProviderId);
         if (repoConfig != null)
             configs.Add(repoConfig);
 
-        var agentConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
+        var agentConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
         var agentConfig = agentConfigs.FirstOrDefault(c => c.Id == agentProviderId);
         if (agentConfig != null)
             configs.Add(agentConfig);
@@ -392,7 +408,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
 
         if (!string.IsNullOrEmpty(pipelineProviderId))
         {
-            var pipelineConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
+            var pipelineConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
             var pipelineConfig = pipelineConfigs.FirstOrDefault(c => c.Id == pipelineProviderId);
             if (pipelineConfig != null)
                 configs.Add(pipelineConfig);

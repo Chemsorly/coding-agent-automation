@@ -47,6 +47,9 @@ public class PipelineOrchestrationServiceTests
 
         _service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
             _mockValidator.Object,
@@ -1553,6 +1556,9 @@ public class PipelineOrchestrationServiceTests
             });
 
         var service = new PipelineOrchestrationService(
+            mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
             mockConfigStore.Object,
             mockFactory.Object,
             new IssueDescriptionParser(),

@@ -38,7 +38,7 @@ public class AgentMonitoringPageComponentTests : BunitContext
         var mockValidator = new Mock<IQualityGateValidator>();
 
         var pipelineService = new PipelineOrchestrationService(
-            _mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
+            _mockStore.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
             mockValidator.Object, new CiLogWriter(mockLogger.Object), mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: _mockHistoryService.Object);

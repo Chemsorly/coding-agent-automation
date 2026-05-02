@@ -116,6 +116,9 @@ public class IntegrationTestBase : IDisposable
 
         return new PipelineOrchestrationService(
             ConfigStore,
+            ConfigStore,
+            ConfigStore,
+            ConfigStore,
             MockFactory.Object,
             new IssueDescriptionParser(),
             MockValidator.Object,

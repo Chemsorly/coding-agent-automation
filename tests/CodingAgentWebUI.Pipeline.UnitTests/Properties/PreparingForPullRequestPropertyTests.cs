@@ -273,6 +273,9 @@ public class PreparingForPullRequestPropertyTests
 
         return new PipelineOrchestrationService(
             configStore.Object,
+            configStore.Object,
+            configStore.Object,
+            configStore.Object,
             factory.Object,
             new IssueDescriptionParser(),
             mockValidator.Object,
@@ -309,6 +312,9 @@ public class PreparingForPullRequestPropertyTests
             });
 
         return new PipelineOrchestrationService(
+            configStore.Object,
+            configStore.Object,
+            configStore.Object,
             configStore.Object,
             factory.Object,
             new IssueDescriptionParser(),

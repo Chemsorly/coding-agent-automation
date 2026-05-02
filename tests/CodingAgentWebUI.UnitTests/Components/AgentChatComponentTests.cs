@@ -39,7 +39,7 @@ public class AgentChatComponentTests : BunitContext
             .ReturnsAsync(new List<ProviderConfig>());
 
         _pipelineService = new PipelineOrchestrationService(
-            _mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
+            _mockStore.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
             mockValidator.Object, new CiLogWriter(mockLogger.Object), mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: mockHistory.Object);

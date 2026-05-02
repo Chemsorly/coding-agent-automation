@@ -24,7 +24,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         var mockValidator = new Mock<IQualityGateValidator>();
         _orchestration = new PipelineOrchestrationService(
-            _mockStore.Object, _mockFactory.Object, new IssueDescriptionParser(),
+            _mockStore.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, _mockFactory.Object, new IssueDescriptionParser(),
             mockValidator.Object, new CiLogWriter(_mockLogger.Object), _mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
@@ -72,7 +72,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
     private PipelineLoopService CreateService(IJobDispatcher? jobDispatcher = null)
     {
-        _loopService = new PipelineLoopService(_orchestration, _mockFactory.Object, _mockStore.Object, _mockLogger.Object, jobDispatcher);
+        _loopService = new PipelineLoopService(_orchestration, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockLogger.Object, jobDispatcher);
         return _loopService;
     }
 

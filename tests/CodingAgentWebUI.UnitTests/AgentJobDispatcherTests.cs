@@ -46,6 +46,9 @@ public class AgentJobDispatcherTests
 
         var orchestration = new PipelineOrchestrationService(
             _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
             _mockProviderFactory.Object,
             issueParser,
             mockQualityGateValidator.Object,
@@ -61,6 +64,10 @@ public class AgentJobDispatcherTests
             _runService,
             orchestration,
             _tokenVending,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
             _mockConfigStore.Object,
             _mockProviderFactory.Object,
             new ProfileResolver(),

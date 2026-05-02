@@ -21,6 +21,11 @@ builder.Services.AddSingleton(BuildInfo.Load());
 // Pipeline — Configuration Store
 var configStore = new JsonConfigurationStore("config/pipeline");
 builder.Services.AddSingleton<IConfigurationStore>(configStore);
+builder.Services.AddSingleton<IPipelineConfigStore>(configStore);
+builder.Services.AddSingleton<IProviderConfigStore>(configStore);
+builder.Services.AddSingleton<IAgentProfileStore>(configStore);
+builder.Services.AddSingleton<IQualityGateConfigStore>(configStore);
+builder.Services.AddSingleton<IReviewerConfigStore>(configStore);
 
 // Load pipeline config eagerly (before DI container is built) to avoid sync-over-async deadlocks
 var pipelineConfig = await configStore.LoadPipelineConfigAsync(CancellationToken.None);
@@ -35,7 +40,10 @@ builder.Services.AddSingleton<IProviderFactory>(sp =>
 builder.Services.AddSingleton<IBrainUpdateService>(sp => new BrainUpdateService(Serilog.Log.Logger));
 builder.Services.AddSingleton<IPipelineRunHistoryService>(sp => new PipelineRunHistoryService(Serilog.Log.Logger));
 builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
-    sp.GetRequiredService<IConfigurationStore>(),
+    sp.GetRequiredService<IPipelineConfigStore>(),
+    sp.GetRequiredService<IProviderConfigStore>(),
+    sp.GetRequiredService<IQualityGateConfigStore>(),
+    sp.GetRequiredService<IReviewerConfigStore>(),
     sp.GetRequiredService<IProviderFactory>(),
     sp.GetRequiredService<IssueDescriptionParser>(),
     sp.GetRequiredService<IQualityGateValidator>(),
@@ -49,7 +57,8 @@ builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
 builder.Services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(
     sp.GetRequiredService<PipelineOrchestrationService>(),
     sp.GetRequiredService<IProviderFactory>(),
-    sp.GetRequiredService<IConfigurationStore>(),
+    sp.GetRequiredService<IPipelineConfigStore>(),
+    sp.GetRequiredService<IProviderConfigStore>(),
     Serilog.Log.Logger,
     sp.GetRequiredService<IJobDispatcher>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
@@ -77,7 +86,8 @@ builder.Services.AddHostedService(sp => new HeartbeatMonitorService(
     sp.GetRequiredService<IPipelineRunHistoryService>(),
     sp.GetRequiredService<JobDispatcherService>(),
     sp.GetRequiredService<IProviderFactory>(),
-    sp.GetRequiredService<IConfigurationStore>(),
+    sp.GetRequiredService<IPipelineConfigStore>(),
+    sp.GetRequiredService<IProviderConfigStore>(),
     Serilog.Log.Logger));
 
 // Job queue drain service — periodically matches queued jobs to idle agents
@@ -102,7 +112,11 @@ builder.Services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
     sp.GetRequiredService<OrchestratorRunService>(),
     sp.GetRequiredService<PipelineOrchestrationService>(),
     sp.GetRequiredService<TokenVendingService>(),
-    sp.GetRequiredService<IConfigurationStore>(),
+    sp.GetRequiredService<IPipelineConfigStore>(),
+    sp.GetRequiredService<IProviderConfigStore>(),
+    sp.GetRequiredService<IAgentProfileStore>(),
+    sp.GetRequiredService<IQualityGateConfigStore>(),
+    sp.GetRequiredService<IReviewerConfigStore>(),
     sp.GetRequiredService<IProviderFactory>(),
     sp.GetRequiredService<ProfileResolver>(),
     sp.GetRequiredService<QualityGateResolver>(),

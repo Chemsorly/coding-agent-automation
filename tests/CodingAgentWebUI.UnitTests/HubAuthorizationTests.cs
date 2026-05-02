@@ -34,6 +34,7 @@ public class HubAuthorizationTests
             new JobDispatcherService(registry, new Mock<ILogger>().Object),
             new Mock<IProviderFactory>().Object,
             mockConfigStore.Object,
+            mockConfigStore.Object,
             new Mock<ILogger>().Object);
 
     private static AgentEntry RegisterAgent(

@@ -34,7 +34,7 @@ public class AgentMonitoringComponentTests : BunitContext
         mockHistory.Setup(h => h.GetRunHistory()).Returns(Array.Empty<PipelineRunSummary>());
 
         _pipelineService = new PipelineOrchestrationService(
-            mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
+            mockStore.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
             mockValidator.Object, new CiLogWriter(mockLogger.Object), mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: mockHistory.Object);

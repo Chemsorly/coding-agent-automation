@@ -15,7 +15,8 @@ public sealed class PipelineLoopService : BackgroundService
 {
     private readonly PipelineOrchestrationService _orchestration;
     private readonly IProviderFactory _providerFactory;
-    private readonly IConfigurationStore _configStore;
+    private readonly IPipelineConfigStore _pipelineConfigStore;
+    private readonly IProviderConfigStore _providerConfigStore;
     private readonly IJobDispatcher? _jobDispatcher;
     private readonly Serilog.ILogger _logger;
 
@@ -85,18 +86,21 @@ public sealed class PipelineLoopService : BackgroundService
     public PipelineLoopService(
         PipelineOrchestrationService orchestration,
         IProviderFactory providerFactory,
-        IConfigurationStore configStore,
+        IPipelineConfigStore pipelineConfigStore,
+        IProviderConfigStore providerConfigStore,
         Serilog.ILogger logger,
         IJobDispatcher? jobDispatcher = null)
     {
         ArgumentNullException.ThrowIfNull(orchestration);
         ArgumentNullException.ThrowIfNull(providerFactory);
-        ArgumentNullException.ThrowIfNull(configStore);
+        ArgumentNullException.ThrowIfNull(pipelineConfigStore);
+        ArgumentNullException.ThrowIfNull(providerConfigStore);
         ArgumentNullException.ThrowIfNull(logger);
 
         _orchestration = orchestration;
         _providerFactory = providerFactory;
-        _configStore = configStore;
+        _pipelineConfigStore = pipelineConfigStore;
+        _providerConfigStore = providerConfigStore;
         _logger = logger;
         _jobDispatcher = jobDispatcher;
     }
@@ -147,9 +151,9 @@ public sealed class PipelineLoopService : BackgroundService
     {
         // Load config outside the lock to avoid sync-over-async deadlocks
         // (Blazor Server's RendererSynchronizationContext would deadlock on .GetAwaiter().GetResult())
-        var config = await _configStore.LoadPipelineConfigAsync(CancellationToken.None).ConfigureAwait(false);
-        var issueProviders = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None).ConfigureAwait(false);
-        var repoProviders = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None).ConfigureAwait(false);
+        var config = await _pipelineConfigStore.LoadPipelineConfigAsync(CancellationToken.None).ConfigureAwait(false);
+        var issueProviders = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None).ConfigureAwait(false);
+        var repoProviders = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None).ConfigureAwait(false);
 
         lock (_lock)
         {
@@ -296,7 +300,7 @@ public sealed class PipelineLoopService : BackgroundService
         while (!_stopRequested && !ct.IsCancellationRequested)
         {
             // Step 1: Snapshot — read config at cycle start (immutable for cycle duration)
-            var config = await _configStore.LoadPipelineConfigAsync(ct);
+            var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
             var pollInterval = config.ClosedLoopPollInterval;
             var maxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
             var maxConsecutiveFailures = config.ClosedLoopMaxConsecutivePollFailures;
@@ -317,7 +321,7 @@ public sealed class PipelineLoopService : BackgroundService
 
             // Step 2: Provider cache reconciliation
             var neededIds = enabledTemplates.Select(t => t.IssueProviderId).ToHashSet();
-            var issueProviderConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
+            var issueProviderConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
             await ReconcileProviderCacheAsync(neededIds, issueProviderConfigs, ct);
 
             // Step 3: Poll once per pollable template

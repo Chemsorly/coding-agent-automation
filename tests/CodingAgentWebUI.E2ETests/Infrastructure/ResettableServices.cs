@@ -67,7 +67,8 @@ public sealed class ResettablePipelineOrchestrationService : PipelineOrchestrati
         IBrainUpdateService? brainUpdateService = null,
         IPipelineRunHistoryService? historyService = null,
         IOrchestratorRunService? runService = null)
-        : base(configStore, providerFactory, issueParser, qualityGateValidator,
+        : base(configStore, configStore, configStore, configStore,
+               providerFactory, issueParser, qualityGateValidator,
                ciLogWriter, logger, brainUpdateService, historyService, runService) { }
 
     public void Reset()

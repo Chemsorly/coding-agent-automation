@@ -99,13 +99,13 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             .ReturnsAsync(true);
 
         var orchestration = new PipelineOrchestrationService(
-            ConfigStore, MockFactory.Object, new IssueDescriptionParser(),
+            ConfigStore, ConfigStore, ConfigStore, ConfigStore, MockFactory.Object, new IssueDescriptionParser(),
             MockValidator.Object, new CiLogWriter(MockLogger.Object), MockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
         var loopService = new PipelineLoopService(
-            orchestration, MockFactory.Object, ConfigStore, MockLogger.Object, mockDispatcher.Object);
+            orchestration, MockFactory.Object, ConfigStore, ConfigStore, MockLogger.Object, mockDispatcher.Object);
 
         using var cts = new CancellationTokenSource();
         await loopService.StartAsync(cts.Token);
@@ -227,13 +227,13 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             CancellationToken.None);
 
         var orchestration = new PipelineOrchestrationService(
-            ConfigStore, MockFactory.Object, new IssueDescriptionParser(),
+            ConfigStore, ConfigStore, ConfigStore, ConfigStore, MockFactory.Object, new IssueDescriptionParser(),
             MockValidator.Object, new CiLogWriter(MockLogger.Object), MockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
         var loopService = new PipelineLoopService(
-            orchestration, MockFactory.Object, ConfigStore, MockLogger.Object);
+            orchestration, MockFactory.Object, ConfigStore, ConfigStore, MockLogger.Object);
 
         // Act
         var started = await loopService.StartLoopAsync();

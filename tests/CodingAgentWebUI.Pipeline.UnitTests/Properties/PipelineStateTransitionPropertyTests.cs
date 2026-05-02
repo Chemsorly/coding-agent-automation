@@ -228,6 +228,9 @@ public class PipelineStateTransitionPropertyTests
 
         return new PipelineOrchestrationService(
             mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
             mockFactory.Object,
             new IssueDescriptionParser(),
             mockValidator.Object,
@@ -253,6 +256,9 @@ public class PipelineStateTransitionPropertyTests
             });
 
         return new PipelineOrchestrationService(
+            mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
             mockConfigStore.Object,
             mockFactory.Object,
             new IssueDescriptionParser(),
