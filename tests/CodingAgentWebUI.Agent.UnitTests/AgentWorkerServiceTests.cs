@@ -195,11 +195,12 @@ public class AgentWorkerServiceTests
 
     private static LocalPipelineExecutor CreateMockExecutor()
     {
-        var mockProviderFactory = new Mock<Pipeline.Interfaces.IProviderFactory>();
+        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var mockQualityGateValidator = new Mock<Pipeline.Interfaces.IQualityGateValidator>();
         var mockLogger = new Mock<Serilog.ILogger>();
         return new LocalPipelineExecutor(
-            mockProviderFactory.Object,
+            mockOrchestrator.Object,
+            new Pipeline.Models.PipelineConfiguration(),
             mockQualityGateValidator.Object,
             mockLogger.Object);
     }

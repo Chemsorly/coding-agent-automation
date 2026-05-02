@@ -3,6 +3,7 @@ using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
+using Microsoft.AspNetCore.SignalR.Client;
 using Moq;
 
 namespace CodingAgentWebUI.Agent.UnitTests;
@@ -14,11 +15,24 @@ public class AgentProviderFactoryTests
 {
     private static AgentProviderFactory CreateFactory(
         IKiroCliOrchestrator? orchestrator = null,
-        PipelineConfiguration? config = null)
+        PipelineConfiguration? config = null,
+        OrchestratorProxy? orchestratorProxy = null)
     {
         return new AgentProviderFactory(
             orchestrator ?? new Mock<IKiroCliOrchestrator>().Object,
-            config ?? new PipelineConfiguration());
+            config ?? new PipelineConfiguration(),
+            orchestratorProxy);
+    }
+
+    private static OrchestratorProxy CreateTestProxy()
+    {
+        var connection = new HubConnectionBuilder()
+            .WithUrl("http://localhost/hubs/agent", options =>
+            {
+                options.HttpMessageHandlerFactory = _ => new NoOpHandler();
+            })
+            .Build();
+        return new OrchestratorProxy(connection, "test-job");
     }
 
     [Fact]
@@ -33,6 +47,16 @@ public class AgentProviderFactoryTests
     {
         var act = () => new AgentProviderFactory(new Mock<IKiroCliOrchestrator>().Object, null!);
         act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Constructor_NullOrchestratorProxy_DoesNotThrow()
+    {
+        var act = () => new AgentProviderFactory(
+            new Mock<IKiroCliOrchestrator>().Object,
+            new PipelineConfiguration(),
+            orchestratorProxy: null);
+        act.Should().NotThrow();
     }
 
     [Fact]
@@ -221,6 +245,80 @@ public class AgentProviderFactoryTests
         provider.Should().NotBeNull();
     }
 
+    [Fact]
+    public void CreateRepositoryProvider_WithOrchestratorProxy_DoesNotRequireToken()
+    {
+        var proxy = CreateTestProxy();
+        var factory = CreateFactory(orchestratorProxy: proxy);
+        var config = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test",
+            Settings = new Dictionary<string, string>
+            {
+                // No "token" — proxy provides token refresh
+                ["apiUrl"] = "https://api.github.com",
+                ["owner"] = "test-owner",
+                ["repo"] = "test-repo",
+                ["baseBranch"] = "main"
+            }
+        };
+
+        var provider = factory.CreateRepositoryProvider(config);
+        provider.Should().NotBeNull();
+        provider.Should().BeAssignableTo<IRepositoryProvider>();
+    }
+
+    [Fact]
+    public void CreatePipelineProvider_WithOrchestratorProxy_DoesNotRequireToken()
+    {
+        var proxy = CreateTestProxy();
+        var factory = CreateFactory(orchestratorProxy: proxy);
+        var config = new ProviderConfig
+        {
+            Id = "pipeline-1",
+            Kind = ProviderKind.Pipeline,
+            ProviderType = "GitHub",
+            DisplayName = "Test Pipeline",
+            Settings = new Dictionary<string, string>
+            {
+                // No "token" — proxy provides token refresh
+                ["apiUrl"] = "https://api.github.com",
+                ["owner"] = "test-owner",
+                ["repo"] = "test-repo"
+            }
+        };
+
+        var provider = factory.CreatePipelineProvider(config);
+        provider.Should().NotBeNull();
+        provider.Should().BeAssignableTo<IPipelineProvider>();
+    }
+
+    [Fact]
+    public void CreateRepositoryProvider_WithoutOrchestratorProxy_RequiresToken()
+    {
+        var factory = CreateFactory(orchestratorProxy: null);
+        var config = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test",
+            Settings = new Dictionary<string, string>
+            {
+                ["apiUrl"] = "https://api.github.com",
+                ["owner"] = "test",
+                ["repo"] = "test",
+                ["baseBranch"] = "main"
+            }
+        };
+
+        var act = () => factory.CreateRepositoryProvider(config);
+        act.Should().Throw<ArgumentException>().WithMessage("*token*");
+    }
+
     private static ProviderConfig CreateProviderConfig(ProviderKind kind, string providerType) => new()
     {
         Id = "test-id",
@@ -229,4 +327,11 @@ public class AgentProviderFactoryTests
         DisplayName = "Test",
         Settings = new Dictionary<string, string>()
     };
+
+    private sealed class NoOpHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
+    }
 }
