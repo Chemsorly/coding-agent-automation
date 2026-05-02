@@ -57,7 +57,7 @@ public class HealthEndpointsTests : IAsyncDisposable
             mockQualityGateValidator.Object,
             mockLogger.Object);
 
-        var workerService = new AgentWorkerService(hubManager, executor, new Mock<KiroCliLib.Core.IKiroCliOrchestrator>().Object, mockLogger.Object);
+        var workerService = new AgentWorkerService(hubManager, executor, new Mock<KiroCliLib.Core.IKiroCliOrchestrator>().Object, new KiroCliLib.Configuration.Configuration { KiroCliPath = "/home/ubuntu/.local/bin/kiro-cli" }, mockLogger.Object);
 
         _host = await new HostBuilder()
             .ConfigureWebHost(webBuilder =>

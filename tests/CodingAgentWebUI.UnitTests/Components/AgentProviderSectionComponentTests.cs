@@ -2,9 +2,12 @@ using Bunit;
 using Moq;
 using AwesomeAssertions;
 using CodingAgentWebUI.Components.Pages;
+using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.SignalR;
 
 namespace CodingAgentWebUI.UnitTests.Components;
 
@@ -15,10 +18,15 @@ namespace CodingAgentWebUI.UnitTests.Components;
 public class AgentProviderSectionComponentTests : BunitContext
 {
     private readonly Mock<IConfigurationStore> _mockConfigStore;
+    private readonly ModelFetchService _modelFetchService;
 
     public AgentProviderSectionComponentTests()
     {
         _mockConfigStore = new Mock<IConfigurationStore>();
+        _modelFetchService = new ModelFetchService(
+            new AgentRegistryService(Serilog.Log.Logger),
+            Mock.Of<IHubContext<AgentHub, IAgentHubClient>>(),
+            Serilog.Log.Logger);
     }
 
     [Fact]
@@ -180,6 +188,7 @@ public class AgentProviderSectionComponentTests : BunitContext
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, new List<ProviderConfig>())
             .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ModelFetch, _modelFetchService)
             .Add(p => p.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
 
         var addButton = component.Find(".btn-add");
@@ -207,7 +216,8 @@ public class AgentProviderSectionComponentTests : BunitContext
 
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, new List<ProviderConfig>())
-            .Add(p => p.ConfigStore, _mockConfigStore.Object));
+            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ModelFetch, _modelFetchService));
 
         var addButton = component.Find(".btn-add");
         addButton.Click();
@@ -235,6 +245,7 @@ public class AgentProviderSectionComponentTests : BunitContext
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, new List<ProviderConfig>())
             .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ModelFetch, _modelFetchService)
             .Add(p => p.OnSaved, EventCallback.Factory.Create(this, () => onSavedCalled = true)));
 
         var addButton = component.Find(".btn-add");
@@ -266,6 +277,7 @@ public class AgentProviderSectionComponentTests : BunitContext
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, new List<ProviderConfig>())
             .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ModelFetch, _modelFetchService)
             .Add(p => p.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
 
         var addButton = component.Find(".btn-add");
@@ -308,6 +320,7 @@ public class AgentProviderSectionComponentTests : BunitContext
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, providers)
             .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ModelFetch, _modelFetchService)
             .Add(p => p.OnDelete, EventCallback.Factory.Create<string>(this, id => deletedId = id)));
 
         var deleteButton = component.Find(".btn-delete");
@@ -353,6 +366,7 @@ public class AgentProviderSectionComponentTests : BunitContext
     {
         return Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, providers ?? new List<ProviderConfig>())
-            .Add(p => p.ConfigStore, _mockConfigStore.Object));
+            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ModelFetch, _modelFetchService));
     }
 }

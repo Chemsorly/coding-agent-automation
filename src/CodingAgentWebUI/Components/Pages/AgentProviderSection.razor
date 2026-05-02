@@ -1,6 +1,7 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Services
 
 <section class="settings-section">
     <h2>Agent Provider Configs (referenced by Agent Profiles)</h2>
@@ -102,6 +103,7 @@
 @code {
     [Parameter, EditorRequired] public List<ProviderConfig> Providers { get; set; } = new();
     [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter, EditorRequired] public ModelFetchService ModelFetch { get; set; } = default!;
     [Parameter] public EventCallback<string> OnDelete { get; set; }
     [Parameter] public EventCallback OnSaved { get; set; }
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
@@ -180,6 +182,7 @@
     }
 
     // TODO: [ARC-10] CTS not tied to component lifecycle — process continues after navigation
+    // TODO: [AGT-14] Add authorization check (admin role) before triggering agent command execution
     private async Task FetchModels()
     {
         if (string.IsNullOrWhiteSpace(_form.ExecutablePath))
@@ -193,52 +196,15 @@
 
         try
         {
-            var psi = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = _form.ExecutablePath,
-                Arguments = "chat --list-models --format json",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
+            var (models, error) = await ModelFetch.FetchModelsAsync(_form.ExecutablePath, CancellationToken.None);
 
-            using var process = System.Diagnostics.Process.Start(psi);
-            if (process == null)
+            if (error is not null)
             {
-                await OnShowStatus.InvokeAsync(("Failed to start kiro-cli process.", true));
+                await OnShowStatus.InvokeAsync((error, true));
                 return;
             }
 
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
-            var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
-            var output = await stdoutTask;
-            await process.WaitForExitAsync(timeoutCts.Token);
-            var stderr = await stderrTask;
-
-            if (process.ExitCode != 0)
-            {
-                await OnShowStatus.InvokeAsync(($"kiro-cli exited with code {process.ExitCode}: {stderr}", true));
-                return;
-            }
-
-            using var doc = System.Text.Json.JsonDocument.Parse(output);
-            var models = new List<AgentModelInfo>();
-            if (doc.RootElement.TryGetProperty("models", out var modelsArray))
-            {
-                foreach (var m in modelsArray.EnumerateArray())
-                {
-                    models.Add(new AgentModelInfo
-                    {
-                        ModelId = m.GetProperty("model_id").GetString() ?? "",
-                        Description = m.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "",
-                        RateMultiplier = m.TryGetProperty("rate_multiplier", out var r) ? r.GetDouble() : 1.0
-                    });
-                }
-            }
-
-            _availableModels = models;
+            _availableModels = models.ToList();
             if (_form.Model != "auto" && models.Count > 0 && !models.Any(m => m.ModelId == _form.Model))
                 _form.Model = "auto";
 
@@ -262,12 +228,5 @@
         public int TimeoutMinutes { get; set; } = 30;
         public string AgentName { get; set; } = "default";
         public string Model { get; set; } = "auto";
-    }
-
-    private class AgentModelInfo
-    {
-        public string ModelId { get; set; } = "";
-        public string Description { get; set; } = "";
-        public double RateMultiplier { get; set; } = 1.0;
     }
 }

@@ -26,7 +26,7 @@ public class AgentWorkerServiceTests
         var mockExecutor = CreateMockExecutor();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
-        var act = () => new AgentWorkerService(null!, mockExecutor, mockOrchestrator.Object, mockLogger.Object);
+        var act = () => new AgentWorkerService(null!, mockExecutor, mockOrchestrator.Object, CreateTestConfig(), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("hubManager");
     }
 
@@ -37,7 +37,7 @@ public class AgentWorkerServiceTests
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
         var act = () => new AgentWorkerService(
-            CreateTestHubManager(), null!, mockOrchestrator.Object, mockLogger.Object);
+            CreateTestHubManager(), null!, mockOrchestrator.Object, CreateTestConfig(), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("executor");
     }
 
@@ -46,7 +46,7 @@ public class AgentWorkerServiceTests
     {
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var act = () => new AgentWorkerService(
-            CreateTestHubManager(), CreateMockExecutor(), mockOrchestrator.Object, null!);
+            CreateTestHubManager(), CreateMockExecutor(), mockOrchestrator.Object, CreateTestConfig(), null!);
         act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
     }
 
@@ -93,7 +93,7 @@ public class AgentWorkerServiceTests
             var mockLogger = new Mock<Serilog.ILogger>();
             var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
             var act = () => new AgentWorkerService(
-                CreateTestHubManager(), CreateMockExecutor(), mockOrchestrator.Object, mockLogger.Object);
+                CreateTestHubManager(), CreateMockExecutor(), mockOrchestrator.Object, CreateTestConfig(), mockLogger.Object);
             act.Should().Throw<InvalidOperationException>()
                 .WithMessage("*AGENT_TYPE*");
         }
@@ -216,6 +216,15 @@ public class AgentWorkerServiceTests
             CreateTestHubManager(),
             CreateMockExecutor(),
             mockOrchestrator.Object,
+            CreateTestConfig(),
             mockLogger.Object);
+    }
+
+    private static KiroCliLib.Configuration.Configuration CreateTestConfig()
+    {
+        return new KiroCliLib.Configuration.Configuration
+        {
+            KiroCliPath = "/home/ubuntu/.local/bin/kiro-cli"
+        };
     }
 }

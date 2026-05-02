@@ -89,6 +89,7 @@ try
         sp.GetRequiredService<HubConnectionManager>(),
         sp.GetRequiredService<LocalPipelineExecutor>(),
         sp.GetRequiredService<IKiroCliOrchestrator>(),
+        sp.GetRequiredService<Configuration>(),
         Log.Logger));
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
 

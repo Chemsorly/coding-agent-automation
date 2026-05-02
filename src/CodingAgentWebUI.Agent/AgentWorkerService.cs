@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
+using KiroCliLib.Configuration;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Hosting;
 namespace CodingAgentWebUI.Agent;
@@ -15,6 +16,7 @@ public sealed class AgentWorkerService : BackgroundService
     private readonly HubConnectionManager _hubManager;
     private readonly LocalPipelineExecutor _executor;
     private readonly IKiroCliOrchestrator _orchestrator;
+    private readonly Configuration _cliConfig;
     private readonly Serilog.ILogger _logger;
 
     private readonly string _agentId;
@@ -34,16 +36,19 @@ public sealed class AgentWorkerService : BackgroundService
         HubConnectionManager hubManager,
         LocalPipelineExecutor executor,
         IKiroCliOrchestrator orchestrator,
+        Configuration cliConfig,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(hubManager);
         ArgumentNullException.ThrowIfNull(executor);
         ArgumentNullException.ThrowIfNull(orchestrator);
+        ArgumentNullException.ThrowIfNull(cliConfig);
         ArgumentNullException.ThrowIfNull(logger);
 
         _hubManager = hubManager;
         _executor = executor;
         _orchestrator = orchestrator;
+        _cliConfig = cliConfig;
         _logger = logger;
 
         _agentId = Environment.GetEnvironmentVariable("AGENT_ID")
@@ -74,6 +79,7 @@ public sealed class AgentWorkerService : BackgroundService
         _hubManager.OnCancelJob += HandleCancelJobAsync;
         _hubManager.OnAssignChatPrompt += HandleChatPromptAsync;
         _hubManager.OnCancelChat += HandleCancelChatAsync;
+        _hubManager.OnFetchModels += HandleFetchModelsAsync;
 
         try
         {
@@ -268,10 +274,12 @@ public sealed class AgentWorkerService : BackgroundService
         }
 
         _logger.Information("Accepted chat prompt for session {SessionId}", message.SessionId);
+        // TODO: [SEC] _chatCts leaks if Task.Run fails to schedule — wrap in try/catch to clean up _chatCts and _activeChatSessionId
         _chatCts = new CancellationTokenSource();
 
         _ = Task.Run(async () =>
         {
+            // TODO: [SEC] Use 'await using var outputBatcher = new OutputBatcher()' to ensure disposal on all paths
             var outputBatcher = new OutputBatcher();
             outputBatcher.OnFlush += async lines =>
             {
@@ -300,6 +308,7 @@ public sealed class AgentWorkerService : BackgroundService
 
                 if (!message.UseResume && message.McpServers is { Count: > 0 })
                 {
+                    // TODO: [SEC] Validate McpConfigPath against an allowlist to prevent arbitrary file write (path traversal)
                     WriteMcpConfig(message.McpConfigPath, message.McpServers);
                     await outputBatcher.AddLineAsync(
                         $"🔌 Wrote MCP config with {message.McpServers.Count} server(s) to {message.McpConfigPath}");
@@ -458,6 +467,85 @@ public sealed class AgentWorkerService : BackgroundService
         };
 
         await _hubManager.Connection.InvokeAsync("Heartbeat", heartbeat, ct);
+    }
+
+    // TODO: [AGT-14] Link timeoutCts to host stoppingToken so process is cancelled promptly on shutdown
+    private async Task HandleFetchModelsAsync(FetchModelsRequest request)
+    {
+        _logger.Information("Handling fetch models request {RequestId}", request.RequestId);
+
+        FetchModelsResponse response;
+        try
+        {
+            // Security: use the agent's own configured CLI path, not the orchestrator-supplied value
+            var psi = new ProcessStartInfo
+            {
+                FileName = _cliConfig.KiroCliPath,
+                Arguments = "chat --list-models --format json",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(psi);
+            if (process == null)
+            {
+                response = new FetchModelsResponse { RequestId = request.RequestId, Error = "Failed to start kiro-cli process." };
+            }
+            else
+            {
+                using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                var outputTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+                var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
+                await process.WaitForExitAsync(timeoutCts.Token);
+                var output = await outputTask;
+                var stderr = await stderrTask;
+
+                if (process.ExitCode != 0)
+                {
+                    response = new FetchModelsResponse { RequestId = request.RequestId, Error = $"kiro-cli exited with code {process.ExitCode}: {stderr}" };
+                }
+                else
+                {
+                    var models = ParseModelsJson(output);
+                    response = new FetchModelsResponse { RequestId = request.RequestId, Models = models };
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            response = new FetchModelsResponse { RequestId = request.RequestId, Error = $"Failed to fetch models: {ex.Message}" };
+        }
+
+        try
+        {
+            await _hubManager.Connection.InvokeAsync("ReportFetchModelsResult", response);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to report fetch models result for request {RequestId}", request.RequestId);
+        }
+    }
+
+    // TODO: [AGT-14] Wrap JsonDocument.Parse in try-catch for user-friendly error on malformed CLI output
+    private static IReadOnlyList<AgentModelInfo> ParseModelsJson(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var models = new List<AgentModelInfo>();
+        if (doc.RootElement.TryGetProperty("models", out var modelsArray))
+        {
+            foreach (var m in modelsArray.EnumerateArray())
+            {
+                models.Add(new AgentModelInfo
+                {
+                    ModelId = m.GetProperty("model_id").GetString() ?? "",
+                    Description = m.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "",
+                    RateMultiplier = m.TryGetProperty("rate_multiplier", out var r) ? r.GetDouble() : 1.0
+                });
+            }
+        }
+        return models.AsReadOnly();
     }
 
     private async Task ShutdownAsync()

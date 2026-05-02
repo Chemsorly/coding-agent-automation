@@ -88,6 +88,12 @@ builder.Services.AddSingleton(sp => new JobQueueDrainService(
     Serilog.Log.Logger));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<JobQueueDrainService>());
 
+// Model fetch service — delegates "Fetch Models" to connected agents via SignalR
+builder.Services.AddSingleton(sp => new ModelFetchService(
+    sp.GetRequiredService<AgentRegistryService>(),
+    sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
+    Serilog.Log.Logger));
+
 // Multi-agent job dispatcher (bridges loop service to agent dispatch)
 builder.Services.AddSingleton<ProfileResolver>();
 builder.Services.AddSingleton<QualityGateResolver>();
