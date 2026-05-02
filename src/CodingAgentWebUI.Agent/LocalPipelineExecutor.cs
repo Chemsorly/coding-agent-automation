@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Services.Steps;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
 namespace CodingAgentWebUI.Agent;
@@ -200,203 +201,55 @@ public sealed class LocalPipelineExecutor
             localCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             var linkedCt = localCts.Token;
 
-            // ── Clone ──
-            var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, run.RunId);
-            Directory.CreateDirectory(workspacePath);
-            run.WorkspacePath = workspacePath;
-
-            TransitionTo(PipelineStep.CloningRepository);
-            EmitOutputLine($"📋 Cloning repository {run.RepositoryName}...");
-
-            try { await repoProvider.CloneAsync(workspacePath, linkedCt); }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                return BuildFailurePayload(run, $"Repository clone failed: {ex.Message}");
-            }
-
-            // ── Write MCP server config to workspace ──
-            if (job.McpServers.Count > 0)
-            {
-                try
-                {
-                    // MCP config path is agent-provider-specific (e.g., .kiro/settings/mcp.json for Kiro CLI)
-                    var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.AgentProviderConfigId);
-                    var mcpConfigPath = agentConfig?.Settings.GetValueOrDefault("mcpConfigPath", ".kiro/settings/mcp.json")
-                        ?? ".kiro/settings/mcp.json";
-                    WriteMcpConfig(workspacePath, job.McpServers, mcpConfigPath);
-                    EmitOutputLine($"🔌 Wrote MCP config with {job.McpServers.Count} server(s) to {mcpConfigPath}");
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Failed to write MCP config to workspace, continuing without it");
-                }
-            }
-
-            // ── Brain sync pre-run ──
-            if (brainProvider is not null && brainSync is not null)
-            {
-                TransitionTo(PipelineStep.SyncingBrainRepoPreRun);
-                try { await brainSync.SyncPreRunAsync(run, brainProvider, workspacePath, linkedCt, EmitOutputLine); }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Brain sync pre-run failed, continuing without brain context");
-                    run.BrainContextLoaded = false;
-                }
-
-                // Report brain sync result to orchestrator for UI display
-                try { await connection.InvokeAsync("ReportBrainSyncResult", job.JobId, run.BrainContextLoaded, run.BrainKnowledgeFileCount, linkedCt); }
-                catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
-            }
-
-            // ── Rework detection ──
-            if (run.LinkedPullRequest is null)
-            {
-                try
-                {
-                    var agentPrs = await repoProvider.GetAgentPullRequestsAsync(run.IssueIdentifier, linkedCt);
-                    if (agentPrs.Count > 0)
-                    {
-                        var selectedPr = agentPrs.OrderByDescending(pr => pr.Number).First();
-                        run.LinkedPullRequest = selectedPr;
-                        EmitOutputLine($"🔄 Rework mode: updating existing PR #{selectedPr.Number}");
-                    }
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Failed to detect agent PRs, falling back to new-issue flow");
-                }
-            }
-
-            // ── Branch ──
-            TransitionTo(PipelineStep.CreatingBranch);
-            if (run.LinkedPullRequest is not null)
-            {
-                try
-                {
-                    await repoProvider.CheckoutRemoteBranchAsync(workspacePath, run.LinkedPullRequest.BranchName, linkedCt);
-                    run.BranchName = run.LinkedPullRequest.BranchName;
-                    EmitOutputLine($"🌿 Checked out existing branch {run.BranchName}");
-
-                    var mergeResult = await repoProvider.MergeFromBaseAsync(workspacePath, linkedCt);
-                    run.MergeConflictFiles = mergeResult.ConflictFiles;
-                    EmitOutputLine(mergeResult.HasConflicts
-                        ? $"⚠️ Merged from {repoProvider.BaseBranch} with {mergeResult.ConflictFiles.Count} conflict(s)"
-                        : $"🔀 Merged from {repoProvider.BaseBranch} (no conflicts)");
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    return BuildFailurePayload(run, $"Branch checkout/merge failed: {ex.Message}");
-                }
-            }
-            else
-            {
-                EmitOutputLine("🌿 Creating branch...");
-                try
-                {
-                    var branchName = PipelineFormatting.GenerateBranchName(run.IssueIdentifier, job.IssueDetail.Title, run.RunId);
-                    run.BranchName = await repoProvider.CreateBranchAsync(workspacePath, branchName, linkedCt);
-                    EmitOutputLine($"🌿 Created branch {run.BranchName}");
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    return BuildFailurePayload(run, $"Branch creation failed: {ex.Message}");
-                }
-            }
-
-            // ── Analysis ──
-            // NOTE: job.ExistingAnalysis and job.ForceRefreshAnalysis are available on the job
-            // but the shared AgentExecutionOrchestrator re-derives them from job.IssueComments
-            // for consistency with the local execution path.
-            EmitOutputLine("🔍 Starting analysis...");
-            var analysisShouldContinue = await agentExecution.ExecuteAnalysisPhaseAsync(
-                run, config, agentProvider, issueOps,
-                job.IssueDetail, job.ParsedIssue, job.IssueComments,
-                step => TransitionTo(step),
-                _ => { }, // addRunToHistory — agent doesn't persist locally
-                EmitOutputLine, () => { }, linkedCt);
-
-            if (!analysisShouldContinue)
-                return BuildCompletionPayload(run);
-
-            // ── Code generation ──
-            string? reworkPromptOverride = null;
-            if (run.LinkedPullRequest is not null)
-            {
-                reworkPromptOverride = PromptBuilder.BuildReworkPrompt(
-                    run.MergeConflictFiles,
-                    run.LinkedPullRequest.ReviewComments,
-                    isDraft: run.LinkedPullRequest.IsDraft);
-
-                if (reworkPromptOverride is null)
-                    EmitOutputLine("⏭️ No conflicts, review comments, or draft status — skipping code generation");
-                else
-                    EmitOutputLine("⚙️ Starting rework code generation...");
-            }
-            else
-            {
-                EmitOutputLine("⚙️ Starting code generation...");
-            }
-
-            if (reworkPromptOverride is not null || run.LinkedPullRequest is null)
-            {
-                var shouldContinue = await agentExecution.ExecuteCodeGenerationAsync(
-                    run, config, agentProvider,
-                    job.IssueDetail, job.ParsedIssue,
-                    localCts,
-                    step => TransitionTo(step),
-                    EmitOutputLine, () => { },
-                    r => prOrchestrator.UpdateFileChangeStatsAsync(r, repoProvider),
-                    issueOps,
-                    _ => { }, // addRunToHistory
-                    linkedCt,
-                    promptOverride: reworkPromptOverride);
-
-                if (!shouldContinue)
-                    return BuildCompletionPayload(run);
-            }
-
-            // ── Brain pull before write ──
-            if (brainProvider is not null && brainSync is not null && !config.BrainReadOnly && run.BrainContextLoaded)
-            {
-                try { await brainSync.PullBeforeWriteAsync(run, brainProvider, linkedCt); }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                { _logger.Warning(ex, "Brain repo pull-before-write failed, continuing"); }
-            }
-
-            // ── Code review ──
-            await agentExecution.ExecuteCodeReviewAsync(
-                run, config, agentProvider,
-                job.IssueDetail, job.ParsedIssue,
-                localCts,
-                step => TransitionTo(step),
-                EmitOutputLine, () => { }, linkedCt,
-                job.ReviewerConfigs);
-
-            // ── Quality gates ──
-            var qualityGateContext = new QualityGateContext
+            // Build step context
+            var context = new PipelineStepContext
             {
                 Run = run,
                 Config = config,
-                AgentProvider = agentProvider,
                 RepoProvider = repoProvider,
+                AgentProvider = agentProvider,
+                BrainProvider = brainProvider,
                 PipelineProvider = pipelineProvider,
-                OrchestratorCts = localCts,
+                Cts = localCts,
+                ConfigStore = new NullConfigurationStore(),
                 TransitionTo = step => TransitionTo(step),
-                IssueOps = issueOps,
-                RemoveAllAgentLabels = (id, token) => issueOps.SwapLabelAsync(id, string.Empty, token),
+                EmitOutputLine = EmitOutputLine,
+                NotifyChange = () => { },
                 AddRunToHistory = _ => { },
-                OnOutputLine = EmitOutputLine,
-                OnChange = () => { },
+                UpdateFileChangeStats = r => prOrchestrator.UpdateFileChangeStatsAsync(r, repoProvider),
+                SwapAgentLabel = (id, label, token) => issueOps.SwapLabelAsync(id, label, token),
+                RemoveAllAgentLabels = (id, token) => issueOps.SwapLabelAsync(id, string.Empty, token),
                 CreatePullRequest = async (r, report, isDraft, token) =>
                 {
                     ReportQualityGateResult(report);
                     await CreatePullRequestAsync(r, report, isDraft, repoProvider, agentProvider,
                         brainProvider, brainSync, config, issueOps, connection, job, EmitOutputLine, token);
                 },
-                QualityGateConfigs = job.QualityGateConfigs,
-                QgcsConfiguredAtDispatch = job.QualityGateConfigs.Count > 0
+                IssueOps = issueOps,
+                AgentExecution = agentExecution,
+                QualityGates = qualityGates,
+                BrainSync = brainSync,
+                PrOrchestrator = prOrchestrator,
+                PreResolvedReviewerConfigs = job.ReviewerConfigs,
+                PreResolvedQualityGateConfigs = job.QualityGateConfigs,
+                Logger = _logger,
+                // Pre-populate issue data from job (no IssueProvider on agent side)
+                Issue = job.IssueDetail,
+                ParsedIssue = job.ParsedIssue,
+                IssueComments = job.IssueComments
             };
-            await qualityGates.ProceedToQualityGatesAsync(qualityGateContext, linkedCt);
+
+            // Build step pipeline (agent-specific: includes MCP config, skips FetchIssueStep)
+            var steps = BuildAgentStepPipeline(job, connection);
+
+            await PipelineStepRunner.ExecuteAsync(steps, context, linkedCt);
+
+            // Report brain sync result after brain step
+            if (brainProvider is not null && brainSync is not null)
+            {
+                try { await connection.InvokeAsync("ReportBrainSyncResult", job.JobId, run.BrainContextLoaded, run.BrainKnowledgeFileCount, linkedCt); }
+                catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
+            }
 
             return BuildCompletionPayload(run);
         }
@@ -443,6 +296,29 @@ public sealed class LocalPipelineExecutor
                 _logger.Warning(ex, "Failed to clean up workspace {WorkspacePath}", run.WorkspacePath);
             }
         }
+    }
+
+    /// <summary>
+    /// Builds the ordered step pipeline for agent-side execution.
+    /// Skips FetchIssueStep (issue data comes from job assignment) and adds MCP config step.
+    /// </summary>
+    private static IReadOnlyList<IPipelineStep> BuildAgentStepPipeline(
+        JobAssignmentMessage job, HubConnection connection)
+    {
+        var steps = new List<IPipelineStep>
+        {
+            new CloneRepositoryStep(),
+            new WriteMcpConfigStep(job),
+            new SyncBrainPreRunStep(),
+            new DetectReworkStep(),
+            new CreateBranchStep(),
+            new AnalyzeCodeStep(),
+            new GenerateCodeStep(),
+            new BrainPullBeforeWriteStep(),
+            new ReviewCodeStep(),
+            new RunQualityGatesStep()
+        };
+        return steps;
     }
 
     private async Task CreatePullRequestAsync(
@@ -596,7 +472,7 @@ public sealed class LocalPipelineExecutor
     /// the agent provider's mcpConfigPath setting (defaults to .kiro/settings/mcp.json for Kiro CLI).
     /// Supports both stdio (command-based) and HTTP (URL-based) MCP servers.
     /// </summary>
-    private static void WriteMcpConfig(string workspacePath, IReadOnlyList<McpServerConfig> mcpServers, string mcpConfigRelativePath)
+    internal static void WriteMcpConfigToWorkspace(string workspacePath, IReadOnlyList<McpServerConfig> mcpServers, string mcpConfigRelativePath)
     {
         var fullPath = Path.Combine(workspacePath, mcpConfigRelativePath);
         var directory = Path.GetDirectoryName(fullPath);
