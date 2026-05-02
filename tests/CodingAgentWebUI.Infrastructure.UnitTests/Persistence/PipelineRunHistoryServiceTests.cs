@@ -166,7 +166,7 @@ public class PipelineRunHistoryServiceTests
     [InlineData(2, 67)]
     public void JobHistoryStatistics_SuccessRate_ComputesCorrectly(int completedCount, int expectedRate)
     {
-        // This tests the statistics computation logic used in AgentDetailPanel
+        // This tests the statistics computation logic used in the run detail modal agent section
         var runs = new List<PipelineRunSummary>();
         for (var i = 0; i < completedCount; i++)
             runs.Add(new PipelineRunSummary { RunId = Guid.NewGuid().ToString(), IssueIdentifier = $"{i}", IssueTitle = "OK", FinalStep = PipelineStep.Completed, StartedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow.AddMinutes(5) });

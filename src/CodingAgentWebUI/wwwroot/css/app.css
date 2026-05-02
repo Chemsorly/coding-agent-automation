@@ -606,6 +606,28 @@ select option { background: var(--surface); color: var(--text); }
 .badge-disabled-table { background: var(--error-bg); color: var(--error); font-size: 0.65rem; padding: 1px 5px; border-radius: 3px; margin-left: 6px; font-weight: 600; }
 .monitoring-row-disabled td { opacity: 0.6; }
 
+/* Agent detail in run modal */
+.modal-agent-section { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }
+.agent-detail-grid { display: grid; grid-template-columns: 100px 1fr; gap: 4px 8px; font-size: 0.85rem; }
+.detail-label { color: var(--text-muted); }
+.detail-value { color: var(--text); word-break: break-all; }
+.detail-mono { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.8rem; }
+.agent-detail-stats { display: flex; gap: 12px; font-size: 0.8rem; color: var(--text-muted); margin: 8px 0; }
+.agent-history-list { display: flex; flex-direction: column; gap: 4px; }
+.agent-history-item { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; padding: 4px 6px; background: var(--surface-alt); border-radius: 4px; }
+.agent-history-item .history-issue { flex: 1; color: var(--text); }
+.agent-history-item .history-duration { color: var(--text-muted); font-family: monospace; font-size: 0.75rem; }
+.btn-enable { background: rgba(34, 197, 94, 0.15); color: var(--success); border: 1px solid var(--success); padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+.btn-enable:hover { background: rgba(34, 197, 94, 0.3); }
+.btn-disable { background: rgba(239, 68, 68, 0.1); color: var(--error); border: 1px solid var(--error); padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+.btn-disable:hover { background: rgba(239, 68, 68, 0.25); }
+.btn-force-disconnect { background: rgba(239, 68, 68, 0.1); color: var(--error); border: 1px solid var(--error); padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+.btn-force-disconnect:hover { background: rgba(239, 68, 68, 0.3); }
+.agent-detail-confirm { margin-top: 12px; padding: 12px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; }
+.agent-detail-confirm p { margin: 0 0 8px; font-size: 0.85rem; color: var(--text); }
+.confirm-warning { color: var(--warning); font-size: 0.8rem; }
+.confirm-buttons { display: flex; gap: 8px; margin-top: 8px; }
+
 /* Pipeline warning banner */
 .pipeline-warning-banner { background: var(--warning-bg); border: 1px solid rgba(245, 158, 11, 0.3); color: var(--warning); padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; margin: 8px 0; }
 
