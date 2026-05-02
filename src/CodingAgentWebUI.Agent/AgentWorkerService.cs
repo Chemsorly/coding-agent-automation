@@ -409,9 +409,7 @@ public sealed class AgentWorkerService : BackgroundService
         {
             var psi = new ProcessStartInfo
             {
-                FileName = _orchestrator is KiroCliOrchestrator
-                    ? Environment.GetEnvironmentVariable("KIRO_CLI_PATH") ?? "/home/ubuntu/.local/bin/kiro-cli"
-                    : "/home/ubuntu/.local/bin/kiro-cli",
+                FileName = Environment.GetEnvironmentVariable("KIRO_CLI_PATH") ?? "/home/ubuntu/.local/bin/kiro-cli",
                 Arguments = "chat --list-models --format json",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
