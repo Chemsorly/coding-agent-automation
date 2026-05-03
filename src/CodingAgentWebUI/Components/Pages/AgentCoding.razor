@@ -946,6 +946,13 @@
             return;
         }
 
+        // Check if any agents are connected before attempting dispatch
+        if (!JobDispatcher.HasRegisteredAgents)
+        {
+            _errorMessage = "Could not dispatch — no agents are currently connected.";
+            return;
+        }
+
         _drawerDispatching = true;
         StateHasChanged();
 

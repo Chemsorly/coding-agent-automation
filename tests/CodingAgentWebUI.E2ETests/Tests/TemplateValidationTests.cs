@@ -204,7 +204,7 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
         await Page.WaitForTimeoutAsync(1000);
 
         // Assert: template is removed from the table
-        var tableTextAfter = await Page.TextContentAsync("body");
+        var tableTextAfter = await Page.TextContentAsync(".monitoring-table");
         Assert.DoesNotContain("Template To Remove", tableTextAfter);
 
         // Assert: success message appears
