@@ -196,8 +196,11 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
 
         // Double-click the dispatch button rapidly
         var dispatchBtn = Page.Locator("[data-testid='dispatch-issue-btn']");
-        await dispatchBtn.ClickAsync();
-        await dispatchBtn.ClickAsync(new() { Force = true }); // Force second click even if disabled
+        // Wait for the button to be stable in the DOM before clicking (avoids flaky detachment during Blazor re-renders)
+        await dispatchBtn.WaitForAsync(new() { State = WaitForSelectorState.Attached });
+        await dispatchBtn.ClickAsync(new() { Force = true });
+        // Second click: re-query the locator in case Blazor re-rendered the component
+        await Page.Locator("[data-testid='dispatch-issue-btn']").ClickAsync(new() { Force = true, Timeout = 5000 });
 
         // Wait for processing
         await Task.Delay(1000);
