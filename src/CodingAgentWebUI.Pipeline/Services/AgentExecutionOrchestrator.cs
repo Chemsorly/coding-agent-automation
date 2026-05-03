@@ -24,6 +24,136 @@ internal partial class AgentExecutionOrchestrator : IAgentPhaseExecutor
         _logger = logger;
     }
 
+    /// <summary>
+    /// Builds the brain context section and writes it to the workspace if non-empty.
+    /// Always ensures the .kiro directory exists before writing (fixing inconsistency
+    /// where Analysis previously skipped directory creation).
+    /// </summary>
+    /// <returns>True if brain context was written, false otherwise.</returns>
+    private async Task<bool> WriteBrainContextIfNeededAsync(PipelineRun run, CancellationToken ct)
+    {
+        if (run.WorkspacePath is null) return false;
+
+        var brainContext = PromptBuilder.BuildBrainContextSection(
+            run.BrainContextLoaded,
+            run.RepositoryName?.Split('/').LastOrDefault());
+
+        if (string.IsNullOrEmpty(brainContext)) return false;
+
+        var kiroDir = Path.Combine(run.WorkspacePath, ".kiro");
+        Directory.CreateDirectory(kiroDir);
+
+        var contextPath = Path.Combine(run.WorkspacePath, PromptBuilder.BrainContextFilePath);
+        await File.WriteAllTextAsync(contextPath, brainContext, ct);
+        _logger.Debug("Pipeline {RunId} wrote brain context to {FilePath}", run.RunId, PromptBuilder.BrainContextFilePath);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Unified agent execution helper that encapsulates the standard pattern:
+    /// build AgentRequest → execute with stall monitoring → enqueue output → record to ChatHistory → handle exceptions.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This helper consolidates the repeated agent execution pattern found across QualityGateOrchestrator retry loops,
+    /// CodeReview fix agent calls, and similar sites. It handles:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>Building an <see cref="AgentRequest"/> with UseResume=true, WorkspacePath, and Timeout from config</item>
+    /// <item>Executing via <see cref="AgentStallMonitor.ExecuteWithMonitoringAsync"/> with output line callback</item>
+    /// <item>Enqueuing output lines to <c>run.OutputLines</c> and emitting via <c>callbacks.EmitOutputLine</c></item>
+    /// <item>Recording the output summary (last 10 lines) to <c>run.ChatHistory</c></item>
+    /// <item>Exception handling: rethrows <see cref="OperationCanceledException"/>, logs and records other exceptions</item>
+    /// </list>
+    /// <para>
+    /// <b>Sites NOT consolidated into this helper:</b>
+    /// </para>
+    /// <list type="bullet">
+    /// <item><c>AgentExecutionOrchestrator.CodeGeneration</c> — has unique post-execution logic: exit code inspection,
+    /// timeout detection via plain OperationCanceledException (distinct from orchestrator cancellation), and fail-phase
+    /// transitions that cannot be cleanly parameterized without making the helper overly complex.</item>
+    /// <item><c>AgentExecutionOrchestrator.Analysis</c> — has its own retry loop with AnalysisIncompleteException handling
+    /// and post-execution file validation that is fundamentally different from the simple execute-and-record pattern.</item>
+    /// </list>
+    /// </remarks>
+    /// <returns>The <see cref="AgentResult"/> on success, or <c>null</c> if a non-cancellation exception was caught and absorbed.</returns>
+    internal static async Task<AgentResult?> ExecuteAgentAndRecordAsync(
+        IAgentProvider agentProvider,
+        string prompt,
+        PipelineRun run,
+        PipelineConfiguration config,
+        string description,
+        IPipelineCallbacks callbacks,
+        Serilog.ILogger logger,
+        CancellationToken ct,
+        bool recordOutputToHistory = true)
+    {
+        try
+        {
+            var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+                agentProvider,
+                new AgentRequest
+                {
+                    Prompt = prompt,
+                    WorkspacePath = run.WorkspacePath!,
+                    Timeout = config.AgentTimeout,
+                    UseResume = true
+                },
+                run, config, description, callbacks.NotifyChange, logger, ct,
+                line =>
+                {
+                    run.OutputLines.Enqueue(line);
+                    callbacks.EmitOutputLine(line);
+                });
+
+            if (recordOutputToHistory)
+            {
+                var outputSummary = agentResult.OutputLines.Count > 0
+                    ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
+                    : "(no output)";
+                run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = outputSummary });
+            }
+
+            return agentResult;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.Warning(ex, "Pipeline {RunId} {Description} failed", run.RunId, description);
+            run.ChatHistory.Enqueue(new ChatEntry
+            {
+                Role = ChatRole.System,
+                Content = $"Agent error during {description}: {ex.Message}"
+            });
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Unified failure helper that encapsulates the standard fail-phase pattern:
+    /// set FailureReason → set CompletedAt → swap label → transition step → add to history → return false.
+    /// </summary>
+    private async Task<bool> FailPhaseAsync(
+        PipelineRun run,
+        string failureReason,
+        string label,
+        PipelineStep step,
+        IAgentIssueOperations issueOps,
+        IPipelineCallbacks callbacks,
+        CancellationToken ct)
+    {
+        run.FailureReason = failureReason;
+        run.CompletedAt = DateTime.UtcNow;
+        await issueOps.SwapLabelAsync(run.IssueIdentifier, label, ct);
+        callbacks.TransitionTo(step);
+        callbacks.AddRunToHistory(run);
+        return false;
+    }
+
     private static void DeleteIfExists(string path)
     {
         if (File.Exists(path))

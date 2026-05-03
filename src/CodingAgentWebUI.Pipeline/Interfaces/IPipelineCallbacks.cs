@@ -7,6 +7,22 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 /// Implemented by the hosting layer (orchestrator service or agent worker).
 /// Consolidates the 7+ callback delegates previously scattered across context objects.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>Callback Delegation Pattern:</b> Pipeline steps invoke methods on this interface to
+/// communicate side effects (state transitions, output, label changes, PR creation) back to
+/// the hosting layer without depending on its concrete type. The orchestrator provides the
+/// implementation via <c>OrchestratorCallbacks</c> (in <c>PipelineOrchestrationService</c>),
+/// while the agent worker provides its own implementation via <c>AgentCallbacks</c>
+/// (in <c>LocalPipelineExecutor</c>).
+/// </para>
+/// <para>
+/// This decouples pipeline step logic from the execution environment — the same steps run
+/// identically whether orchestrated server-side or executed locally by an agent process.
+/// Each implementation delegates to its host's internal services (e.g., lifecycle service,
+/// SignalR hub, or issue provider) without exposing those dependencies to the steps.
+/// </para>
+/// </remarks>
 public interface IPipelineCallbacks
 {
     /// <summary>Transitions the pipeline run to a new step.</summary>

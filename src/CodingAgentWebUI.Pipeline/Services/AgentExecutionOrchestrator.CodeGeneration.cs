@@ -17,42 +17,21 @@ internal partial class AgentExecutionOrchestrator
         ArgumentNullException.ThrowIfNull(context);
         var run = context.Run;
         var config = context.Config;
-        var agentProvider = context.AgentProvider;
-        var issue = context.Issue;
-        var parsed = context.ParsedIssue;
-        var orchestratorCts = context.OrchestratorCts;
-        Action<PipelineStep> transitionTo = context.Callbacks.TransitionTo;
-        Action<string> onOutputLine = context.Callbacks.EmitOutputLine;
-        Action onChange = context.Callbacks.NotifyChange;
-        Func<PipelineRun, Task> updateFileChangeStats = context.Callbacks.UpdateFileChangeStats;
-        var issueOps = context.IssueOps;
-        Action<PipelineRun> addRunToHistory = context.Callbacks.AddRunToHistory;
-        transitionTo(PipelineStep.GeneratingCode);
+        context.Callbacks.TransitionTo(PipelineStep.GeneratingCode);
         try
         {
-            var brainContextSection = PromptBuilder.BuildBrainContextSection(
-                run.BrainContextLoaded,
-                run.RepositoryName?.Split('/').LastOrDefault());
-
-            var brainContextWritten = !string.IsNullOrEmpty(brainContextSection);
-            if (brainContextWritten)
-            {
-                var kiroDir = Path.Combine(run.WorkspacePath!, ".kiro");
-                Directory.CreateDirectory(kiroDir);
-                await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, PromptBuilder.BrainContextFilePath), brainContextSection, ct);
-                _logger.Debug("Pipeline {RunId} wrote brain context to {FilePath}", run.RunId, PromptBuilder.BrainContextFilePath);
-            }
+            var brainContextWritten = await WriteBrainContextIfNeededAsync(run, ct);
 
             var brainWriteInstructions = PromptBuilder.BuildBrainWriteInstructions(
                 run.BrainContextLoaded, run.RunId, run.IssueIdentifier, config.BrainReadOnly);
 
             var prompt = promptOverride
-                ?? PromptBuilder.BuildPrompt(config.ImplementationPrompt, issue, parsed, brainWriteInstructions, brainContextWritten);
+                ?? PromptBuilder.BuildPrompt(config.ImplementationPrompt, context.Issue, context.ParsedIssue, brainWriteInstructions, brainContextWritten);
             _logger.Debug("Pipeline {RunId} implementation prompt:\n{Prompt}", run.RunId, prompt);
 
             AgentResult agentResult;
             agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                agentProvider,
+                context.AgentProvider,
                 new AgentRequest
                 {
                     Prompt = prompt,
@@ -60,11 +39,11 @@ internal partial class AgentExecutionOrchestrator
                     Timeout = config.AgentTimeout,
                     UseResume = true
                 },
-                run, config, "Code generation agent", onChange, _logger, ct,
+                run, config, "Code generation agent", context.Callbacks.NotifyChange, _logger, ct,
                 line =>
                 {
                     run.OutputLines.Enqueue(line);
-                    onOutputLine(line);
+                    context.Callbacks.EmitOutputLine(line);
                 });
 
             var outputSummary = agentResult.OutputLines.Count > 0
@@ -76,7 +55,7 @@ internal partial class AgentExecutionOrchestrator
             _logger.Information("Pipeline {RunId} initial code generation completed with exit code {ExitCode} after {Elapsed}",
                 run.RunId, agentResult.ExitCode, DateTime.UtcNow - run.StartedAt);
 
-            await updateFileChangeStats(run);
+            await context.Callbacks.UpdateFileChangeStats(run);
 
             if (agentResult.ExitCode != ExitCodes.Success)
             {
@@ -92,16 +71,13 @@ internal partial class AgentExecutionOrchestrator
 
                 if (agentResult.ExitCode == ExitCodes.Timeout)
                 {
-                    run.FailureReason = $"Agent timed out after {config.AgentTimeout}. Implementation is incomplete.";
-                    run.CompletedAt = DateTime.UtcNow;
-                    await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
-                    transitionTo(PipelineStep.Failed);
-                    addRunToHistory(run);
-                    return false;
+                    return await FailPhaseAsync(run,
+                        $"Agent timed out after {config.AgentTimeout}. Implementation is incomplete.",
+                        AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct);
                 }
             }
         }
-        catch (OperationCanceledException) when (orchestratorCts?.IsCancellationRequested == true)
+        catch (OperationCanceledException) when (context.OrchestratorCts?.IsCancellationRequested == true)
         {
             throw;
         }
@@ -113,12 +89,9 @@ internal partial class AgentExecutionOrchestrator
                 Role = ChatRole.System,
                 Content = $"Agent timed out after {config.AgentTimeout}"
             });
-            run.FailureReason = $"Agent timed out after {config.AgentTimeout}. Implementation is incomplete.";
-            run.CompletedAt = DateTime.UtcNow;
-            await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
-            transitionTo(PipelineStep.Failed);
-            addRunToHistory(run);
-            return false;
+            return await FailPhaseAsync(run,
+                $"Agent timed out after {config.AgentTimeout}. Implementation is incomplete.",
+                AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct);
         }
         catch (Exception ex)
         {

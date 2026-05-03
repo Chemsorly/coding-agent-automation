@@ -23,26 +23,14 @@ public sealed class QualityGateResolver
         ArgumentNullException.ThrowIfNull(allConfigs);
         ArgumentNullException.ThrowIfNull(jobRequiredLabels);
 
-        var jobLabelSet = new HashSet<string>(jobRequiredLabels, StringComparer.OrdinalIgnoreCase);
-
-        return allConfigs
-            .Where(qgc => qgc.Enabled)
-            .Where(qgc => IsMatch(qgc.MatchLabels, jobLabelSet))
-            .OrderBy(qgc => qgc.ExecutionOrder)
-            .ThenBy(qgc => qgc.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToList()
-            .AsReadOnly();
-    }
-
-    /// <summary>
-    /// A QGC matches if its MatchLabels is empty (global fallback) or has at least one label
-    /// in common with the job's required labels.
-    /// </summary>
-    private static bool IsMatch(IReadOnlyList<string> qgcMatchLabels, HashSet<string> jobLabelSet)
-    {
-        if (qgcMatchLabels.Count == 0)
-            return true;
-
-        return qgcMatchLabels.Any(label => jobLabelSet.Contains(label));
+        return LabelMatchResolver.Resolve(
+            allConfigs,
+            jobRequiredLabels,
+            enabledPredicate: qgc => qgc.Enabled,
+            labelSelector: qgc => qgc.MatchLabels,
+            matchStrategy: LabelMatchStrategies.Intersection,
+            orderBy: items => items
+                .OrderBy(qgc => qgc.ExecutionOrder)
+                .ThenBy(qgc => qgc.DisplayName, StringComparer.OrdinalIgnoreCase));
     }
 }

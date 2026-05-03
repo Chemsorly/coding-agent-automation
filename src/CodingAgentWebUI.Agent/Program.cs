@@ -1,8 +1,7 @@
 using CodingAgentWebUI.Agent;
-using CodingAgentWebUI.Infrastructure.Git;
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using KiroCliLib.Configuration;
 using KiroCliLib.Core;
 using KiroCliLib.Models;
@@ -78,11 +77,8 @@ try
         return new AgentProviderFactory(orchestrator, pipelineConfig);
     });
 
-    // ── Quality gate validator ──
-    builder.Services.AddSingleton<IQualityGateValidator>(sp => new QualityGateValidator(Log.Logger));
-
-    // ── Brain update service ──
-    builder.Services.AddSingleton<IBrainUpdateService>(sp => new BrainUpdateService(Log.Logger));
+    // ── Shared pipeline services (IQualityGateValidator, IBrainUpdateService, IAgentPhaseExecutor, IQualityGateExecutor) ──
+    builder.Services.AddPipelineServices(Log.Logger);
 
     // ── Hub connection manager ──
     builder.Services.AddSingleton(sp =>

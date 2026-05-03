@@ -11,6 +11,27 @@ namespace CodingAgentWebUI.Agent;
 /// <see cref="PipelineOrchestrationService.ExecutePipelineStepsAsync"/>.
 /// Reports all progress back to the orchestrator via SignalR hub methods.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>Hub-to-Pipeline Bridge:</b> This class bridges the event-driven SignalR hub layer
+/// with the sequential pipeline execution model. When <see cref="AgentWorkerService"/>
+/// receives a <c>JobAssignmentMessage</c> via the hub, it delegates to this executor which:
+/// </para>
+/// <list type="number">
+///   <item>Constructs provider instances (repository, agent, issue, pipeline, brain) from
+///     the job's provider configurations using <see cref="AgentProviderFactory"/>.</item>
+///   <item>Builds a <see cref="Pipeline.Services.Steps.PipelineStepContext"/> with all resolved
+///     providers, callbacks, and configuration.</item>
+///   <item>Runs the pipeline steps sequentially via <see cref="Pipeline.Services.Steps.PipelineStepRunner"/>.</item>
+///   <item>Reports progress back to the orchestrator by invoking hub methods (e.g.,
+///     <c>ReportStepTransition</c>, <c>ReportOutput</c>) through an <c>AgentCallbacks</c>
+///     implementation of <see cref="Pipeline.Interfaces.IPipelineCallbacks"/>.</item>
+/// </list>
+/// <para>
+/// This design allows the agent to execute the same pipeline logic as the orchestrator's
+/// server-side execution path, ensuring behavioral parity between local and remote execution.
+/// </para>
+/// </remarks>
 public sealed class LocalPipelineExecutor
 {
     private readonly IKiroCliOrchestrator _orchestrator;
@@ -467,50 +488,12 @@ public sealed class LocalPipelineExecutor
     /// <summary>
     /// Writes the MCP server configuration to the workspace at the path specified by
     /// the agent provider's mcpConfigPath setting (defaults to .kiro/settings/mcp.json for Kiro CLI).
-    /// Supports both stdio (command-based) and HTTP (URL-based) MCP servers.
+    /// Delegates to <see cref="McpConfigWriter.WriteConfig"/> for the shared implementation.
     /// </summary>
     internal static void WriteMcpConfigToWorkspace(string workspacePath, IReadOnlyList<McpServerConfig> mcpServers, string mcpConfigRelativePath)
     {
         var fullPath = Path.Combine(workspacePath, mcpConfigRelativePath);
-        var directory = Path.GetDirectoryName(fullPath);
-        if (directory is not null)
-            Directory.CreateDirectory(directory);
-
-        var serversDict = new Dictionary<string, object>();
-        foreach (var server in mcpServers)
-        {
-            if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase))
-            {
-                serversDict[server.Name] = new
-                {
-                    type = "http",
-                    url = server.Url,
-                    disabled = server.Disabled,
-                    autoApprove = server.AutoApprove
-                };
-            }
-            else
-            {
-                // stdio (default)
-                serversDict[server.Name] = new
-                {
-                    command = server.Command,
-                    args = server.Args,
-                    env = server.Env,
-                    disabled = server.Disabled,
-                    autoApprove = server.AutoApprove
-                };
-            }
-        }
-
-        var mcpConfig = new { mcpServers = serversDict };
-        var json = System.Text.Json.JsonSerializer.Serialize(mcpConfig, new System.Text.Json.JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-        });
-
-        File.WriteAllText(fullPath, json);
+        McpConfigWriter.WriteConfig(fullPath, mcpServers);
     }
 
     /// <summary>

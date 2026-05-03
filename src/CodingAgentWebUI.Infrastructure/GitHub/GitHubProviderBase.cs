@@ -1,4 +1,5 @@
 using Octokit;
+using PipelineRateLimitExceededException = CodingAgentWebUI.Pipeline.Models.RateLimitExceededException;
 
 namespace CodingAgentWebUI.Infrastructure.GitHub;
 
@@ -74,7 +75,73 @@ public abstract class GitHubProviderBase : IAsyncDisposable
     public virtual async Task ValidateAsync(CancellationToken ct)
     {
         var client = await GetClientAsync(ct);
-        await client.Repository.Get(Owner, Repo);
+        await ExecuteWithRateLimitHandlingAsync(
+            () => client.Repository.Get(Owner, Repo));
+    }
+
+    /// <summary>
+    /// Parses a string issue identifier into a numeric issue number.
+    /// </summary>
+    /// <param name="identifier">The string identifier to parse.</param>
+    /// <returns>The parsed integer issue number.</returns>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="identifier"/> is not a valid integer.</exception>
+    protected static int ParseIssueIdentifier(string identifier)
+    {
+        if (!int.TryParse(identifier, out var issueNumber))
+            throw new ArgumentException(
+                $"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.",
+                nameof(identifier));
+        return issueNumber;
+    }
+
+    private static readonly TimeSpan DefaultRateLimitWait = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Executes an Octokit API call with consistent rate limit exception handling.
+    /// Catches <see cref="Octokit.RateLimitExceededException"/> and <see cref="AbuseException"/>,
+    /// wrapping them in <see cref="PipelineRateLimitExceededException"/>.
+    /// </summary>
+    protected async Task<T> ExecuteWithRateLimitHandlingAsync<T>(Func<Task<T>> apiCall)
+    {
+        try
+        {
+            return await apiCall();
+        }
+        catch (Octokit.RateLimitExceededException ex)
+        {
+            throw new PipelineRateLimitExceededException(ex.Reset, ex);
+        }
+        catch (AbuseException ex)
+        {
+            var resetAt = ex.RetryAfterSeconds.HasValue
+                ? DateTimeOffset.UtcNow.AddSeconds(ex.RetryAfterSeconds.Value)
+                : DateTimeOffset.UtcNow.Add(DefaultRateLimitWait);
+            throw new PipelineRateLimitExceededException(resetAt, ex);
+        }
+    }
+
+    /// <summary>
+    /// Executes a void-returning Octokit API call with consistent rate limit exception handling.
+    /// Catches <see cref="Octokit.RateLimitExceededException"/> and <see cref="AbuseException"/>,
+    /// wrapping them in <see cref="PipelineRateLimitExceededException"/>.
+    /// </summary>
+    protected async Task ExecuteWithRateLimitHandlingAsync(Func<Task> apiCall)
+    {
+        try
+        {
+            await apiCall();
+        }
+        catch (Octokit.RateLimitExceededException ex)
+        {
+            throw new PipelineRateLimitExceededException(ex.Reset, ex);
+        }
+        catch (AbuseException ex)
+        {
+            var resetAt = ex.RetryAfterSeconds.HasValue
+                ? DateTimeOffset.UtcNow.AddSeconds(ex.RetryAfterSeconds.Value)
+                : DateTimeOffset.UtcNow.Add(DefaultRateLimitWait);
+            throw new PipelineRateLimitExceededException(resetAt, ex);
+        }
     }
 
     /// <inheritdoc />

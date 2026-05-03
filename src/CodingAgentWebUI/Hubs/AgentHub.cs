@@ -1,5 +1,8 @@
 using System.Text.Json;
 using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Health;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -17,40 +20,22 @@ namespace CodingAgentWebUI.Hubs;
 /// </summary>
 public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
 {
-    private readonly AgentRegistryService _registry;
-    private readonly OrchestratorRunService _runService;
-    private readonly JobDispatcherService _dispatcher;
-    private readonly TokenVendingService _tokenVending;
-    private readonly IPipelineRunHistoryService _historyService;
-    private readonly IProviderFactory _providerFactory;
-    private readonly IConfigurationStore _configStore;
+    private readonly IAgentHubFacade _facade;
+    private readonly ITokenVendingService _tokenVending;
     private readonly PipelineOrchestrationService _orchestration;
-    private readonly JobQueueDrainService _drainService;
     private readonly ModelFetchService _modelFetchService;
     private readonly ILogger _logger;
 
     public AgentHub(
-        AgentRegistryService registry,
-        OrchestratorRunService runService,
-        JobDispatcherService dispatcher,
-        TokenVendingService tokenVending,
-        IPipelineRunHistoryService historyService,
-        IProviderFactory providerFactory,
-        IConfigurationStore configStore,
+        IAgentHubFacade facade,
+        ITokenVendingService tokenVending,
         PipelineOrchestrationService orchestration,
-        JobQueueDrainService drainService,
         ModelFetchService modelFetchService,
         ILogger logger)
     {
-        _registry = registry;
-        _runService = runService;
-        _dispatcher = dispatcher;
+        _facade = facade;
         _tokenVending = tokenVending;
-        _historyService = historyService;
-        _providerFactory = providerFactory;
-        _configStore = configStore;
         _orchestration = orchestration;
-        _drainService = drainService;
         _modelFetchService = modelFetchService;
         _logger = logger;
     }
@@ -78,10 +63,10 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// </summary>
     public override Task OnDisconnectedAsync(Exception? exception)
     {
-        var agent = _registry.GetByConnectionId(Context.ConnectionId);
+        var agent = _facade.GetByConnectionId(Context.ConnectionId);
         if (agent is not null)
         {
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Disconnected);
+            _facade.TransitionStatus(agent.AgentId, AgentStatus.Disconnected);
             _logger.Information(
                 "Agent {AgentId} disconnected (connectionId={ConnectionId}, exception={Exception})",
                 agent.AgentId, Context.ConnectionId, exception?.Message ?? "none");
@@ -109,7 +94,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
             throw new HubException($"AgentId mismatch: message has '{message.AgentId}' but connection has '{queryAgentId}'");
         }
 
-        _registry.Register(message, Context.ConnectionId);
+        _facade.Register(message, Context.ConnectionId);
         return Task.CompletedTask;
     }
 
@@ -119,7 +104,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     public Task DeregisterAgent(string agentId)
     {
         ArgumentNullException.ThrowIfNull(agentId);
-        _registry.Deregister(agentId);
+        _facade.Deregister(agentId);
         return Task.CompletedTask;
     }
 
@@ -131,10 +116,10 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     [RequiresActiveJob]
     public Task JobAccepted(string jobId)
     {
-        var agent = _registry.GetByConnectionId(Context.ConnectionId);
+        var agent = _facade.GetByConnectionId(Context.ConnectionId);
         if (agent is not null)
         {
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
+            _facade.TransitionStatus(agent.AgentId, AgentStatus.Busy);
             _logger.Information("Agent {AgentId} accepted job {JobId}", agent.AgentId, jobId);
         }
 
@@ -146,17 +131,17 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// </summary>
     public Task JobRejected(string jobId, string reason)
     {
-        var agent = _registry.GetByConnectionId(Context.ConnectionId);
+        var agent = _facade.GetByConnectionId(Context.ConnectionId);
         _logger.Warning("Agent {AgentId} rejected job {JobId}: {Reason}", agent?.AgentId, jobId, reason);
 
         // Transition agent back to Idle
         if (agent is not null)
         {
             agent.ActiveJobId = null;
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
             // Signal drain service — agent is idle and may pick up a different job
-            _drainService.Signal();
+            _facade.Signal();
         }
 
         return Task.CompletedTask;
@@ -171,8 +156,8 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     {
         ArgumentNullException.ThrowIfNull(payload);
 
-        var agent = _registry.GetByConnectionId(Context.ConnectionId);
-        var run = _runService.GetRun(jobId);
+        var agent = _facade.GetByConnectionId(Context.ConnectionId);
+        var run = _facade.GetRun(jobId);
 
         if (run is not null)
         {
@@ -198,8 +183,8 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
             Interlocked.Exchange(ref run.CodeReviewSuggestionCount, payload.CodeReviewSuggestionCount);
 
             // Persist to history and remove from active runs
-            _historyService.AddRunToHistory(run);
-            _runService.RemoveRun(jobId);
+            _facade.AddRunToHistory(run);
+            _facade.RemoveRun(jobId);
 
             _logger.Information(
                 "Job {JobId} completed: step={FinalStep}, PR={PullRequestUrl}",
@@ -213,14 +198,14 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         {
             agent.ActiveJobId = null;
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
             // Mark issue as no longer processing in the dispatcher
             if (run is not null)
-                _dispatcher.MarkIssueComplete(run.IssueIdentifier);
+                _facade.MarkIssueComplete(run.IssueIdentifier);
 
             // Signal the drain service to attempt dispatch for this now-idle agent
-            _drainService.Signal();
+            _facade.Signal();
         }
 
         return Task.CompletedTask;
@@ -233,7 +218,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     {
         ArgumentNullException.ThrowIfNull(agentId);
 
-        var agent = _registry.GetByAgentId(agentId);
+        var agent = _facade.GetByAgentId(agentId);
         if (agent is null)
         {
             _logger.Warning("AgentReady received for unknown agent {AgentId}", agentId);
@@ -241,7 +226,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         }
 
         _logger.Information("Agent {AgentId} signaled ready", agentId);
-        _drainService.Signal();
+        _facade.Signal();
         return Task.CompletedTask;
     }
 
@@ -253,7 +238,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     [RequiresActiveJob]
     public Task ReportStepTransition(string jobId, PipelineStep step, DateTimeOffset timestamp)
     {
-        var run = _runService.GetRun(jobId);
+        var run = _facade.GetRun(jobId);
         if (run is not null)
         {
             run.CurrentStep = step;
@@ -276,7 +261,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     [RequiresActiveJob]
     public Task ReportBrainSyncResult(string jobId, bool contextLoaded, int knowledgeFileCount)
     {
-        var run = _runService.GetRun(jobId);
+        var run = _facade.GetRun(jobId);
         if (run is not null)
         {
             run.BrainContextLoaded = contextLoaded;
@@ -297,11 +282,11 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     {
         ArgumentNullException.ThrowIfNull(lines);
 
-        var buffer = _runService.GetOutputBuffer(jobId);
+        var buffer = _facade.GetOutputBuffer(jobId);
         buffer.AddRange(lines);
 
         // Also add to the run's OutputLines for UI streaming
-        var run = _runService.GetRun(jobId);
+        var run = _facade.GetRun(jobId);
         if (run is not null)
         {
             foreach (var line in lines)
@@ -321,7 +306,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     {
         ArgumentNullException.ThrowIfNull(content);
 
-        var run = _runService.GetRun(jobId);
+        var run = _facade.GetRun(jobId);
         run?.ChatHistory.Enqueue(new ChatEntry { Role = role, Content = content, Timestamp = DateTime.UtcNow });
 
         return Task.CompletedTask;
@@ -335,7 +320,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     {
         ArgumentNullException.ThrowIfNull(report);
 
-        var run = _runService.GetRun(jobId);
+        var run = _facade.GetRun(jobId);
         if (run is not null)
         {
             run.LatestQualityReport = report;
@@ -354,7 +339,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     public Task Heartbeat(HeartbeatMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
-        _registry.UpdateHeartbeat(message.AgentId, message.Timestamp);
+        _facade.UpdateHeartbeat(message.AgentId, message.Timestamp);
         return Task.CompletedTask;
     }
 
@@ -369,7 +354,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     {
         ArgumentNullException.ThrowIfNull(payload);
 
-        var run = _runService.GetRun(jobId);
+        var run = _facade.GetRun(jobId);
         if (run is null)
         {
             _logger.Warning("RequestPostComment for unknown run {JobId}", jobId);
@@ -407,7 +392,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     {
         ArgumentNullException.ThrowIfNull(newLabel);
 
-        var run = _runService.GetRun(jobId);
+        var run = _facade.GetRun(jobId);
         if (run is null)
         {
             _logger.Warning("RequestLabelChange for unknown run {JobId}", jobId);
@@ -420,12 +405,12 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     // ── Token refresh ───────────────────────────────────────────────────
 
     /// <summary>
-    /// Generates a fresh short-lived token via <see cref="TokenVendingService"/>.
+    /// Generates a fresh short-lived token via <see cref="ITokenVendingService"/>.
     /// </summary>
     [RequiresActiveJob]
     public async Task<TokenRefreshResponse> RequestTokenRefresh(string jobId, ProviderKind providerKind)
     {
-        var run = _runService.GetRun(jobId);
+        var run = _facade.GetRun(jobId);
         if (run is null)
             throw new HubException($"No active run found for job {jobId}");
 
@@ -433,7 +418,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         // All GitHub App-authenticated providers (repo, brain, pipeline) share the same installation,
         // so the token works for all of them. If providers use different installations in the future,
         // this should be updated to look up the correct config by providerKind.
-        var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
+        var repoConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
         var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == run.RepoProviderConfigId);
         if (repoConfig is null)
             throw new HubException($"Repository provider config '{run.RepoProviderConfigId}' not found");
@@ -471,7 +456,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        var agent = _registry.GetByConnectionId(Context.ConnectionId);
+        var agent = _facade.GetByConnectionId(Context.ConnectionId);
         if (agent is not null)
         {
             _logger.Information("Chat prompt completed for session {SessionId} on agent {AgentId} (exit={ExitCode})",
@@ -540,7 +525,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     {
         try
         {
-            var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+            var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
             var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
             if (issueConfig is null)
             {
@@ -548,7 +533,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
                 return;
             }
 
-            await using var issueProvider = _providerFactory.CreateIssueProvider(issueConfig);
+            await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
             await issueProvider.PostCommentAsync(run.IssueIdentifier, body, CancellationToken.None);
         }
         catch (Exception ex)
@@ -564,7 +549,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     {
         try
         {
-            var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+            var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
             var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
             if (issueConfig is null)
             {
@@ -572,7 +557,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
                 return;
             }
 
-            await using var issueProvider = _providerFactory.CreateIssueProvider(issueConfig);
+            await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
 
             // Remove all existing agent labels, then add the new one
             foreach (var label in AgentLabels.All)

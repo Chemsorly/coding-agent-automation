@@ -5,6 +5,11 @@ namespace CodingAgentWebUI.Agent;
 /// Flushes every 250ms or every 50 lines, whichever comes first.
 /// Thread-safe via <see cref="SemaphoreSlim"/>.
 /// </summary>
+// TODO: Extraction candidate for shared library. OutputBatcher is a general-purpose
+// async batching utility (configurable interval + max batch size) with no dependency on
+// SignalR or agent-specific types. If other consumers emerge (e.g., KiroCliLib output
+// buffering), extract to a shared library with zero external dependencies. The core
+// algorithm (timer-based flush + size-based flush + thread-safe buffer) is reusable as-is.
 public sealed class OutputBatcher : IAsyncDisposable
 {
     private readonly List<string> _buffer = new();

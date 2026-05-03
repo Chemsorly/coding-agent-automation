@@ -17,7 +17,7 @@ namespace CodingAgentWebUI.Orchestration;
 /// Agents receive these tokens instead of the GitHub App private key.
 /// Registered as a singleton in DI.
 /// </summary>
-public sealed partial class TokenVendingService
+public sealed partial class TokenVendingService : ITokenVendingService
 {
     private readonly ILogger _logger;
     private readonly HttpClient _httpClient;

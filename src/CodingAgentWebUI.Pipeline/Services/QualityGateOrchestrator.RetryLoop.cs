@@ -14,18 +14,13 @@ internal partial class QualityGateOrchestrator
 
         var run = context.Run;
         var config = context.Config;
-        var agentProvider = context.AgentProvider;
-        var repoProvider = context.RepoProvider;
-        var pipelineProvider = context.PipelineProvider;
-        var orchestratorCts = context.OrchestratorCts;
-        var issueOps = context.IssueOps;
         var callbacks = context.Callbacks;
         callbacks.TransitionTo(PipelineStep.RunningQualityGates);
 
         try
         {
-            using var linkedCts = orchestratorCts != null
-                ? CancellationTokenSource.CreateLinkedTokenSource(ct, orchestratorCts.Token)
+            using var linkedCts = context.OrchestratorCts != null
+                ? CancellationTokenSource.CreateLinkedTokenSource(ct, context.OrchestratorCts.Token)
                 : null;
             var linkedCt = linkedCts?.Token ?? ct;
 
@@ -35,88 +30,11 @@ internal partial class QualityGateOrchestrator
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: false, linkedCt);
             if (run.CurrentStep == PipelineStep.Failed) return;
 
-            run.LatestQualityReport = report;
-            run.QualityGateHistory.Enqueue(report);
-            callbacks.EmitOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
+            LogAndRecordReport(context, report, "quality gates");
 
-            _logger.Information("Pipeline {RunId} quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, Coverage={CoverageResult}, SecurityScan={SecurityResult}, ExternalCi={ExternalCiResult}",
-                run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed,
-                FormatCoverageLogValue(report.Coverage), FormatGateLogValue(report.SecurityScan), FormatGateLogValue(report.ExternalCi));
-
-            while (!report.AllPassed && run.RetryCount < config.MaxRetries)
-            {
-                run.RetryCount++;
-                var errorSummary = BuildQualityGateErrorSummary(report);
-                run.RetryErrors.Add(errorSummary);
-
-                _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}",
-                    run.RunId, run.RetryCount, config.MaxRetries);
-                callbacks.EmitOutputLine($"🔄 Quality gates failed, retrying (attempt {run.RetryCount}/{config.MaxRetries})");
-
-                var retryPromptSummary = BuildQualityGateRetryPrompt(report, run.RetryCount, config.MaxRetries);
-
-                run.ChatHistory.Enqueue(new ChatEntry
-                {
-                    Role = ChatRole.System,
-                    Content = retryPromptSummary
-                });
-
-                callbacks.TransitionTo(PipelineStep.GeneratingCode);
-
-                var fixPrompt = $"{retryPromptSummary}\n\nDo NOT run git write commands (git add, git commit, git push, etc.). The pipeline handles version control automatically.";
-                run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = fixPrompt });
-                callbacks.NotifyChange();
-
-                try
-                {
-                    var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                        agentProvider,
-                        new AgentRequest
-                        {
-                            Prompt = fixPrompt,
-                            WorkspacePath = run.WorkspacePath!,
-                            Timeout = config.AgentTimeout,
-                            UseResume = true
-                        },
-                        run, config, $"Quality gate retry agent (attempt {run.RetryCount})", callbacks.NotifyChange, _logger, linkedCt,
-                        line =>
-                        {
-                            run.OutputLines.Enqueue(line);
-                            callbacks.EmitOutputLine(line);
-                        });
-
-                    var outputSummary = agentResult.OutputLines.Count > 0
-                        ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
-                        : "(no output)";
-                    run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = outputSummary });
-
-                    await _prOrchestrator.UpdateFileChangeStatsAsync(run, repoProvider);
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Pipeline {RunId} retry fix agent call failed", run.RunId);
-                    run.ChatHistory.Enqueue(new ChatEntry
-                    {
-                        Role = ChatRole.System,
-                        Content = $"Agent error during retry fix: {ex.Message}"
-                    });
-                }
-
-                callbacks.TransitionTo(PipelineStep.RunningQualityGates);
-                report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
-
-                report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt);
-                if (run.CurrentStep == PipelineStep.Failed) return;
-
-                run.LatestQualityReport = report;
-                run.QualityGateHistory.Enqueue(report);
-                callbacks.EmitOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
-
-                _logger.Information("Pipeline {RunId} retry quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, Coverage={CoverageResult}, SecurityScan={SecurityResult}, ExternalCi={ExternalCiResult}",
-                    run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed,
-                    FormatCoverageLogValue(report.Coverage), FormatGateLogValue(report.SecurityScan), FormatGateLogValue(report.ExternalCi));
-            }
+            // Initial retry loop
+            report = await RunRetryLoopAsync(context, report, "Quality gate retry agent", linkedCt);
+            if (run.CurrentStep == PipelineStep.Failed) return;
 
             if (report.AllPassed)
             {
@@ -131,28 +49,13 @@ internal partial class QualityGateOrchestrator
 
                 try
                 {
-                    var cleanupResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                        agentProvider,
-                        new AgentRequest
-                        {
-                            Prompt = cleanupPrompt,
-                            WorkspacePath = run.WorkspacePath!,
-                            Timeout = config.AgentTimeout,
-                            UseResume = true
-                        },
-                        run, config, "Pre-PR cleanup agent", callbacks.NotifyChange, _logger, linkedCt,
-                        line =>
-                        {
-                            run.OutputLines.Enqueue(line);
-                            callbacks.EmitOutputLine(line);
-                        });
+                    var cleanupResult = await AgentExecutionOrchestrator.ExecuteAgentAndRecordAsync(
+                        context.AgentProvider, cleanupPrompt, run, config,
+                        "Pre-PR cleanup agent",
+                        callbacks, _logger, linkedCt);
 
-                    var outputSummary = cleanupResult.OutputLines.Count > 0
-                        ? string.Join(Environment.NewLine, cleanupResult.OutputLines.TakeLast(10))
-                        : "(no output)";
-                    run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = outputSummary });
-
-                    await _prOrchestrator.UpdateFileChangeStatsAsync(run, repoProvider);
+                    if (cleanupResult != null)
+                        await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -175,89 +78,11 @@ internal partial class QualityGateOrchestrator
                     skipCiIfNoChanges: true);
                 if (run.CurrentStep == PipelineStep.Failed) return;
 
-                run.LatestQualityReport = report;
-                run.QualityGateHistory.Enqueue(report);
-                callbacks.EmitOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
-
-                _logger.Information("Pipeline {RunId} final quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, Coverage={CoverageResult}, SecurityScan={SecurityResult}, ExternalCi={ExternalCiResult}",
-                    run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed,
-                    FormatCoverageLogValue(report.Coverage), FormatGateLogValue(report.SecurityScan), FormatGateLogValue(report.ExternalCi));
+                LogAndRecordReport(context, report, "final quality gates");
 
                 // If final gates fail, re-enter the retry loop using the existing retry budget
-                while (!report.AllPassed && run.RetryCount < config.MaxRetries)
-                {
-                    run.RetryCount++;
-                    var errorSummary = BuildQualityGateErrorSummary(report);
-                    run.RetryErrors.Add(errorSummary);
-
-                    _logger.Information("Pipeline {RunId} final quality gates failed, auto-retry {RetryCount}/{MaxRetries}",
-                        run.RunId, run.RetryCount, config.MaxRetries);
-                    callbacks.EmitOutputLine($"🔄 Final quality gates failed, retrying (attempt {run.RetryCount}/{config.MaxRetries})");
-
-                    var retryPromptSummary = BuildQualityGateRetryPrompt(report, run.RetryCount, config.MaxRetries);
-
-                    run.ChatHistory.Enqueue(new ChatEntry
-                    {
-                        Role = ChatRole.System,
-                        Content = retryPromptSummary
-                    });
-
-                    callbacks.TransitionTo(PipelineStep.GeneratingCode);
-
-                    var fixPrompt = $"{retryPromptSummary}\n\nDo NOT run git write commands (git add, git commit, git push, etc.). The pipeline handles version control automatically.";
-                    run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = fixPrompt });
-                    callbacks.NotifyChange();
-
-                    try
-                    {
-                        var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                            agentProvider,
-                            new AgentRequest
-                            {
-                                Prompt = fixPrompt,
-                                WorkspacePath = run.WorkspacePath!,
-                                Timeout = config.AgentTimeout,
-                                UseResume = true
-                            },
-                            run, config, $"Final QG retry agent (attempt {run.RetryCount})", callbacks.NotifyChange, _logger, linkedCt,
-                            line =>
-                            {
-                                run.OutputLines.Enqueue(line);
-                                callbacks.EmitOutputLine(line);
-                            });
-
-                        var outputSummary = agentResult.OutputLines.Count > 0
-                            ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
-                            : "(no output)";
-                        run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = outputSummary });
-
-                        await _prOrchestrator.UpdateFileChangeStatsAsync(run, repoProvider);
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex)
-                    {
-                        _logger.Warning(ex, "Pipeline {RunId} final QG retry fix agent call failed", run.RunId);
-                        run.ChatHistory.Enqueue(new ChatEntry
-                        {
-                            Role = ChatRole.System,
-                            Content = $"Agent error during retry fix: {ex.Message}"
-                        });
-                    }
-
-                    callbacks.TransitionTo(PipelineStep.RunningQualityGates);
-                    report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
-
-                    report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt);
-                    if (run.CurrentStep == PipelineStep.Failed) return;
-
-                    run.LatestQualityReport = report;
-                    run.QualityGateHistory.Enqueue(report);
-                    callbacks.EmitOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
-
-                    _logger.Information("Pipeline {RunId} final QG retry quality gates: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, Coverage={CoverageResult}, SecurityScan={SecurityResult}, ExternalCi={ExternalCiResult}",
-                        run.RunId, report.AllPassed, report.Compilation.Passed, report.Tests.Passed,
-                        FormatCoverageLogValue(report.Coverage), FormatGateLogValue(report.SecurityScan), FormatGateLogValue(report.ExternalCi));
-                }
+                report = await RunRetryLoopAsync(context, report, "Final QG retry agent", linkedCt);
+                if (run.CurrentStep == PipelineStep.Failed) return;
 
                 if (report.AllPassed)
                 {
@@ -303,10 +128,104 @@ internal partial class QualityGateOrchestrator
         {
             _logger.Error(ex, "Pipeline {RunId} quality gate validation failed", run.RunId);
             run.FailureReason = $"Quality gate validation error: {ex.Message}";
-            await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
+            await context.IssueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
             callbacks.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
             callbacks.TransitionTo(PipelineStep.Failed);
             callbacks.AddRunToHistory(run);
         }
+    }
+
+    /// <summary>
+    /// Encapsulates the shared retry pattern: execute agent → run QG validation → append external CI → check results.
+    /// Returns the final <see cref="QualityGateReport"/> after all retries are exhausted or the report passes.
+    /// </summary>
+    /// <param name="context">The quality gate context containing run, config, callbacks, and providers.</param>
+    /// <param name="initialReport">The report from the preceding QG validation run.</param>
+    /// <param name="retryAgentDescription">Description prefix for the retry agent (used in logging and chat history).</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The final quality gate report after retries.</returns>
+    private async Task<QualityGateReport> RunRetryLoopAsync(
+        QualityGateContext context,
+        QualityGateReport initialReport,
+        string retryAgentDescription,
+        CancellationToken ct)
+    {
+        var run = context.Run;
+        var config = context.Config;
+        var callbacks = context.Callbacks;
+        var report = initialReport;
+
+        while (!report.AllPassed && run.RetryCount < config.MaxRetries)
+        {
+            run.RetryCount++;
+            var errorSummary = BuildQualityGateErrorSummary(report);
+            run.RetryErrors.Add(errorSummary);
+
+            _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}",
+                run.RunId, run.RetryCount, config.MaxRetries);
+            callbacks.EmitOutputLine($"🔄 Quality gates failed, retrying (attempt {run.RetryCount}/{config.MaxRetries})");
+
+            var retryPromptSummary = BuildQualityGateRetryPrompt(report, run.RetryCount, config.MaxRetries);
+
+            run.ChatHistory.Enqueue(new ChatEntry
+            {
+                Role = ChatRole.System,
+                Content = retryPromptSummary
+            });
+
+            callbacks.TransitionTo(PipelineStep.GeneratingCode);
+
+            var fixPrompt = $"{retryPromptSummary}\n\nDo NOT run git write commands (git add, git commit, git push, etc.). The pipeline handles version control automatically.";
+            run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = fixPrompt });
+            callbacks.NotifyChange();
+
+            try
+            {
+                var agentResult = await AgentExecutionOrchestrator.ExecuteAgentAndRecordAsync(
+                    context.AgentProvider, fixPrompt, run, config,
+                    $"{retryAgentDescription} (attempt {run.RetryCount})",
+                    callbacks, _logger, ct);
+
+                if (agentResult != null)
+                    await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Pipeline {RunId} retry fix agent call failed", run.RunId);
+                run.ChatHistory.Enqueue(new ChatEntry
+                {
+                    Role = ChatRole.System,
+                    Content = $"Agent error during retry fix: {ex.Message}"
+                });
+            }
+
+            callbacks.TransitionTo(PipelineStep.RunningQualityGates);
+            report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, ct);
+
+            report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, ct);
+            if (run.CurrentStep == PipelineStep.Failed) return report;
+
+            LogAndRecordReport(context, report, "retry quality gates");
+        }
+
+        return report;
+    }
+
+    /// <summary>
+    /// Logs quality gate results and records the report in the run's history.
+    /// </summary>
+    private void LogAndRecordReport(QualityGateContext context, QualityGateReport report, string phase)
+    {
+        var run = context.Run;
+        var callbacks = context.Callbacks;
+
+        run.LatestQualityReport = report;
+        run.QualityGateHistory.Enqueue(report);
+        callbacks.EmitOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
+
+        _logger.Information("Pipeline {RunId} {Phase}: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, Coverage={CoverageResult}, SecurityScan={SecurityResult}, ExternalCi={ExternalCiResult}",
+            run.RunId, phase, report.AllPassed, report.Compilation.Passed, report.Tests.Passed,
+            FormatCoverageLogValue(report.Coverage), FormatGateLogValue(report.SecurityScan), FormatGateLogValue(report.ExternalCi));
     }
 }

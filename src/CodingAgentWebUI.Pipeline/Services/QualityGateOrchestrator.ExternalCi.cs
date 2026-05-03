@@ -49,14 +49,11 @@ internal partial class QualityGateOrchestrator
 
         var run = context.Run;
         var config = context.Config;
-        var repoProvider = context.RepoProvider;
-        var pipelineProvider = context.PipelineProvider;
-        var issueOps = context.IssueOps;
         var callbacks = context.Callbacks;
 
         if (!report.Compilation.Passed || !report.Tests.Passed
             || !(report.Coverage?.Passed ?? true) || !(report.SecurityScan?.Passed ?? true)
-            || !config.ExternalCiEnabled || pipelineProvider == null)
+            || !config.ExternalCiEnabled || context.PipelineProvider == null)
             return report;
 
         GateResult? ciGate = null;
@@ -65,9 +62,9 @@ internal partial class QualityGateOrchestrator
             try
             {
                 var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, run.IssueIdentifier);
-                var blacklisted = await repoProvider.CommitAllAsync(
+                var blacklisted = await context.RepoProvider.CommitAllAsync(
                     run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct);
-                if (await RecordBlacklistedFiles(run, blacklisted, config, callbacks, issueOps, ct))
+                if (await RecordBlacklistedFiles(run, blacklisted, config, callbacks, context.IssueOps, ct))
                     return report;
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
@@ -81,12 +78,12 @@ internal partial class QualityGateOrchestrator
                 else if (allowEmptyCommit)
                 {
                     _logger.Information("Pipeline {RunId} no changes after retry fix, creating empty commit to trigger CI", run.RunId);
-                    await repoProvider.CommitAllAsync(
+                    await context.RepoProvider.CommitAllAsync(
                         run.WorkspacePath!,
                         $"chore: trigger CI re-run for {run.IssueIdentifier} (retry {run.RetryCount})",
                         config.BlacklistedPaths, allowEmpty: true, ct);
                 }
-                else if (!await repoProvider.HasCommitsAheadAsync(run.WorkspacePath!, ct))
+                else if (!await context.RepoProvider.HasCommitsAheadAsync(run.WorkspacePath!, ct))
                 {
                     _logger.Warning("Pipeline {RunId} no changes to commit and no commits ahead of base", run.RunId);
                     throw;
@@ -97,17 +94,17 @@ internal partial class QualityGateOrchestrator
                 }
             }
 
-            await repoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, ct);
+            await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, ct);
             _logger.Information("Pipeline {RunId} pushed branch {BranchName} for CI validation", run.RunId, run.BranchName);
             callbacks.EmitOutputLine($"📦 Committed changes for CI validation");
             callbacks.EmitOutputLine($"🔀 Pushed to origin/{run.BranchName}");
 
             string? commitSha = null;
-            try { commitSha = await repoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
+            try { commitSha = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
             catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA", run.RunId); }
 
             callbacks.EmitOutputLine("⏳ Waiting for external CI...");
-            var ciStatus = await pipelineProvider.WaitForCompletionAsync(
+            var ciStatus = await context.PipelineProvider.WaitForCompletionAsync(
                 run.BranchName!, commitSha, config.ExternalCiTimeout, ct);
 
             var ciPassed = ciStatus.State == PipelineRunState.Passed;

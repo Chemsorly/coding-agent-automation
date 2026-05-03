@@ -1,9 +1,9 @@
 using System.Collections.Concurrent;
-using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Orchestration;
+namespace CodingAgentWebUI.Orchestration.Health;
 
 /// <summary>
 /// Manages "Fetch Models" requests by delegating to a connected agent via <see cref="IAgentCommunication"/>.

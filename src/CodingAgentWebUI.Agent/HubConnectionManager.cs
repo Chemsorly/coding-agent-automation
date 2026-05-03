@@ -8,6 +8,29 @@ namespace CodingAgentWebUI.Agent;
 /// MessagePack protocol, automatic reconnection with exponential backoff, and
 /// client-side handler registration.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>Reconnection Strategy &amp; State Machine:</b> Uses SignalR's built-in
+/// <c>WithAutomaticReconnect</c> with a fixed retry delay sequence:
+/// 1s → 2s → 5s → 10s → 30s. After exhausting all retries, the connection enters
+/// the <c>Closed</c> state and the agent process should terminate (handled by
+/// <see cref="AgentWorkerService"/>).
+/// </para>
+/// <para>
+/// <b>Connection States:</b>
+/// <list type="bullet">
+///   <item><b>Disconnected</b> — Initial state before <c>StartAsync</c> is called.</item>
+///   <item><b>Connecting</b> — Attempting initial connection or reconnection.</item>
+///   <item><b>Connected</b> — Active connection; hub methods can be invoked.</item>
+///   <item><b>Reconnecting</b> — Connection lost; automatic retry in progress with backoff delays.</item>
+///   <item><b>Closed</b> — All retry attempts exhausted or explicit disconnect; terminal state.</item>
+/// </list>
+/// </para>
+/// <para>
+/// Authentication is handled via an API key passed as a bearer token in the query string.
+/// The orchestrator validates this via <c>AgentApiKeyAuthHandler</c>.
+/// </para>
+/// </remarks>
 public sealed class HubConnectionManager : IAsyncDisposable
 {
     private readonly HubConnection _connection;

@@ -5,7 +5,7 @@ namespace KiroCliLib.Core;
 /// <summary>
 /// Monitors file system changes via before/after snapshot comparison.
 /// </summary>
-public class FileSystemMonitor
+public class FileSystemMonitor : IFileSystemMonitor
 {
     public IReadOnlyList<FileSnapshot> ScanWorkspace(string workspaceDirectory)
     {

@@ -11,6 +11,17 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// Supports both local execution (single <see cref="ActiveRun"/>) and multi-agent
 /// dispatch (concurrent runs tracked via <see cref="IOrchestratorRunService"/>).
 /// </summary>
+// TODO: Target ~400 lines post-lifecycle extraction (spec 017). Currently ~678 lines.
+// If this service exceeds 500 lines after lifecycle extraction is complete, evaluate
+// extracting provider lifecycle management (resolution, disposal, active provider tracking)
+// into a dedicated PipelineProviderManager service. See spec 017 for the extraction pattern.
+//
+// TODO: Evaluate IProviderOperationsFacade — a facade grouping SwapAgentLabel,
+// RemoveAllAgentLabels, and PostComment could reduce parameter passing in pipeline steps.
+// However, IPipelineCallbacks already partially serves this role (it exposes SwapAgentLabel,
+// RemoveAllAgentLabels, and CreatePullRequest). A separate facade may introduce unnecessary
+// indirection without meaningful simplification. Revisit if pipeline steps accumulate more
+// provider-operation parameters beyond what IPipelineCallbacks covers.
 public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 {
     private readonly PipelineRunLifecycleService _lifecycle;
@@ -624,6 +635,22 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     /// Delegates lifecycle operations (TransitionTo, EmitOutputLine, NotifyChange, AddRunToHistory) to the lifecycle service.
     /// Retains provider-dependent operations (SwapAgentLabel, RemoveAllAgentLabels, UpdateFileChangeStats, CreatePullRequest).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Closure Pattern:</b> This class captures a <c>Func&lt;PipelineStepContext?&gt;</c> (<paramref name="ctxAccessor"/>)
+    /// rather than a direct reference to the <see cref="Steps.PipelineStepContext"/>. This is necessary because the
+    /// step context is constructed <em>after</em> the callbacks instance (the callbacks are a constructor argument
+    /// to the context itself). The <c>Func</c> closure resolves the chicken-and-egg problem: callbacks are created
+    /// first, then the context is created referencing the callbacks, and the <c>Func</c> captures the local variable
+    /// that is assigned after construction.
+    /// </para>
+    /// <para>
+    /// Additionally, mutable properties on the step context (e.g., <c>Issue</c>, <c>ParsedIssue</c>,
+    /// <c>IssueComments</c>) change during pipeline execution as steps populate them. A direct reference
+    /// captured at construction time would be stale for operations like <see cref="CreatePullRequest"/>
+    /// that need the latest state. The <c>Func</c> ensures the current context snapshot is always accessed.
+    /// </para>
+    /// </remarks>
     private sealed class OrchestratorCallbacks(
         PipelineOrchestrationService svc,
         PipelineRun run,

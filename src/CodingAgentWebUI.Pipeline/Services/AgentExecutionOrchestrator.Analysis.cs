@@ -20,14 +20,6 @@ internal partial class AgentExecutionOrchestrator
         ArgumentNullException.ThrowIfNull(issueComments);
         var run = context.Run;
         var config = context.Config;
-        var agentProvider = context.AgentProvider;
-        var issueOps = context.IssueOps;
-        var issue = context.Issue;
-        var parsed = context.ParsedIssue;
-        Action<PipelineStep> transitionTo = context.Callbacks.TransitionTo;
-        Action<PipelineRun> addRunToHistory = context.Callbacks.AddRunToHistory;
-        Action<string>? onOutputLine = context.Callbacks.EmitOutputLine;
-        Action? onChange = context.Callbacks.NotifyChange;
         string? existingAnalysis = null;
         var analysisComment = issueComments.FirstOrDefault(c => c.Body.Contains("## 🤖 Agent Analysis"));
         var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains("<!-- agent:gate-rejection -->"));
@@ -54,7 +46,7 @@ internal partial class AgentExecutionOrchestrator
             var kiroDir = Path.Combine(run.WorkspacePath!, ".kiro");
             Directory.CreateDirectory(kiroDir);
 
-            var issueContextContent = PromptBuilder.BuildIssueContextFileContent(issue, parsed, issueComments);
+            var issueContextContent = PromptBuilder.BuildIssueContextFileContent(context.Issue, context.ParsedIssue, issueComments);
             await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, PromptBuilder.IssueContextFilePath), issueContextContent, ct);
             _logger.Debug("Pipeline {RunId} wrote issue context to {FilePath}", run.RunId, PromptBuilder.IssueContextFilePath);
         }
@@ -67,15 +59,15 @@ internal partial class AgentExecutionOrchestrator
         {
             run.AnalysisContent = existingAnalysis;
             run.AnalysisSkipped = true;
-            transitionTo(PipelineStep.AnalyzingCode);
-            await AgentStallMonitor.MonitorAsync(agentProvider,
-                () => agentProvider.EnsureSessionAsync(run.WorkspacePath!, ct),
-                run, config, "Session warm-up", onChange, _logger, ct);
-            transitionTo(PipelineStep.PostingAnalysis);
+            context.Callbacks.TransitionTo(PipelineStep.AnalyzingCode);
+            await AgentStallMonitor.MonitorAsync(context.AgentProvider,
+                () => context.AgentProvider.EnsureSessionAsync(run.WorkspacePath!, ct),
+                run, config, "Session warm-up", context.Callbacks.NotifyChange, _logger, ct);
+            context.Callbacks.TransitionTo(PipelineStep.PostingAnalysis);
         }
         else
         {
-            transitionTo(PipelineStep.AnalyzingCode);
+            context.Callbacks.TransitionTo(PipelineStep.AnalyzingCode);
 
             var analysisFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisFilePath);
             var assessmentFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisAssessmentFilePath);
@@ -90,26 +82,17 @@ internal partial class AgentExecutionOrchestrator
 
                 try
                 {
-                    await AgentStallMonitor.MonitorAsync(agentProvider,
-                        () => agentProvider.EnsureSessionAsync(run.WorkspacePath!, ct),
-                        run, config, "Session warm-up", onChange, _logger, ct);
+                    await AgentStallMonitor.MonitorAsync(context.AgentProvider,
+                        () => context.AgentProvider.EnsureSessionAsync(run.WorkspacePath!, ct),
+                        run, config, "Session warm-up", context.Callbacks.NotifyChange, _logger, ct);
 
-                    var brainContextForAnalysis = PromptBuilder.BuildBrainContextSection(
-                        run.BrainContextLoaded,
-                        run.RepositoryName?.Split('/').LastOrDefault());
+                    var brainContextWrittenForAnalysis = await WriteBrainContextIfNeededAsync(run, ct);
 
-                    var brainContextWrittenForAnalysis = !string.IsNullOrEmpty(brainContextForAnalysis);
-                    if (brainContextWrittenForAnalysis)
-                    {
-                        await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, PromptBuilder.BrainContextFilePath), brainContextForAnalysis, ct);
-                        _logger.Debug("Pipeline {RunId} wrote brain context to {FilePath}", run.RunId, PromptBuilder.BrainContextFilePath);
-                    }
-
-                    var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, issue, parsed, brainContextWrittenForAnalysis);
+                    var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, context.Issue, context.ParsedIssue, brainContextWrittenForAnalysis);
                     _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
 
                     var analysisResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                        agentProvider,
+                        context.AgentProvider,
                         new AgentRequest
                         {
                             Prompt = analysisPrompt,
@@ -117,11 +100,11 @@ internal partial class AgentExecutionOrchestrator
                             Timeout = config.AgentTimeout,
                             UseResume = true
                         },
-                        run, config, "Analysis agent", onChange, _logger, ct,
+                        run, config, "Analysis agent", context.Callbacks.NotifyChange, _logger, ct,
                         line =>
                         {
                             run.OutputLines.Enqueue(line);
-                            onOutputLine?.Invoke(line);
+                            context.Callbacks.EmitOutputLine(line);
                         });
 
                     _logger.Information("Pipeline {RunId} analysis agent completed with exit code {ExitCode}, output lines: {LineCount}",
@@ -168,7 +151,7 @@ internal partial class AgentExecutionOrchestrator
                         Role = ChatRole.System,
                         Content = $"Analysis attempt {attempt + 1} failed: {ex.Message}. Retrying..."
                     });
-                    onChange?.Invoke();
+                    context.Callbacks.NotifyChange();
                     run.AnalysisContent = null;
                     continue;
                 }
@@ -177,13 +160,10 @@ internal partial class AgentExecutionOrchestrator
                     // Budget exhausted — terminal failure
                     _logger.Error(ex, "Pipeline {RunId} analysis failed after {Attempts} attempt(s)",
                         run.RunId, attempt + 1);
-                    run.FailureReason = $"Analysis failed after {attempt + 1} attempt(s): {ex.Message}";
-                    run.CompletedAt = DateTime.UtcNow;
                     // NOTE: [RES-06] Consider using CancellationToken.None here — ct may already be cancelled
-                    await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
-                    transitionTo(PipelineStep.Failed);
-                    addRunToHistory(run);
-                    return false;
+                    return await FailPhaseAsync(run,
+                        $"Analysis failed after {attempt + 1} attempt(s): {ex.Message}",
+                        AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -198,20 +178,17 @@ internal partial class AgentExecutionOrchestrator
                             Role = ChatRole.System,
                             Content = $"Analysis attempt {attempt + 1} failed: {wrapped.Message}. Retrying..."
                         });
-                        onChange?.Invoke();
+                        context.Callbacks.NotifyChange();
                         run.AnalysisContent = null;
                         continue;
                     }
 
                     _logger.Error(ex, "Pipeline {RunId} analysis failed after {Attempts} attempt(s)",
                         run.RunId, attempt + 1);
-                    run.FailureReason = $"Analysis failed after {attempt + 1} attempt(s): {wrapped.Message}";
-                    run.CompletedAt = DateTime.UtcNow;
                     // NOTE: [RES-06] Consider using CancellationToken.None here — ct may already be cancelled
-                    await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
-                    transitionTo(PipelineStep.Failed);
-                    addRunToHistory(run);
-                    return false;
+                    return await FailPhaseAsync(run,
+                        $"Analysis failed after {attempt + 1} attempt(s): {wrapped.Message}",
+                        AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct);
                 }
             }
 
@@ -230,43 +207,37 @@ internal partial class AgentExecutionOrchestrator
 
             if (isNotReady)
             {
-                transitionTo(PipelineStep.PostingAnalysis);
-                await PostAnalysisCommentAsync(run, issue, issueOps, assessment, ct);
+                context.Callbacks.TransitionTo(PipelineStep.PostingAnalysis);
+                await PostAnalysisCommentAsync(run, context.Issue, context.IssueOps, assessment, ct);
 
                 var abortComment = BuildNotReadyComment(assessment!);
-                try { await issueOps.PostCommentAsync(run.IssueIdentifier, abortComment, ct); }
+                try { await context.IssueOps.PostCommentAsync(run.IssueIdentifier, abortComment, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 { _logger.Warning(ex, "Pipeline {RunId} failed to post not-ready comment", run.RunId); }
 
-                run.FailureReason = $"Analysis gate: needs refinement — {assessment?.Reason ?? "issue not ready"}";
-                run.CompletedAt = DateTime.UtcNow;
-                await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.NeedsRefinement, ct);
-                transitionTo(PipelineStep.Failed);
-                addRunToHistory(run);
-                return false;
+                return await FailPhaseAsync(run,
+                    $"Analysis gate: needs refinement — {assessment?.Reason ?? "issue not ready"}",
+                    AgentLabels.NeedsRefinement, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct);
             }
 
             if (isWontDo)
             {
-                transitionTo(PipelineStep.PostingAnalysis);
-                await PostAnalysisCommentAsync(run, issue, issueOps, assessment, ct);
+                context.Callbacks.TransitionTo(PipelineStep.PostingAnalysis);
+                await PostAnalysisCommentAsync(run, context.Issue, context.IssueOps, assessment, ct);
 
                 var wontDoComment = BuildWontDoComment(assessment!);
-                try { await issueOps.PostCommentAsync(run.IssueIdentifier, wontDoComment, ct); }
+                try { await context.IssueOps.PostCommentAsync(run.IssueIdentifier, wontDoComment, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 { _logger.Warning(ex, "Pipeline {RunId} failed to post won't-do comment", run.RunId); }
 
-                run.FailureReason = $"Analysis gate: won't do — {assessment?.Reason ?? "no code changes needed"}";
-                run.CompletedAt = DateTime.UtcNow;
-                await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.WontDo, ct);
-                transitionTo(PipelineStep.Completed);
-                addRunToHistory(run);
-                return false;
+                return await FailPhaseAsync(run,
+                    $"Analysis gate: won't do — {assessment?.Reason ?? "no code changes needed"}",
+                    AgentLabels.WontDo, PipelineStep.Completed, context.IssueOps, context.Callbacks, ct);
             }
 
             // Ready path — post analysis and continue
-            transitionTo(PipelineStep.PostingAnalysis);
-            await PostAnalysisCommentAsync(run, issue, issueOps, assessment, ct);
+            context.Callbacks.TransitionTo(PipelineStep.PostingAnalysis);
+            await PostAnalysisCommentAsync(run, context.Issue, context.IssueOps, assessment, ct);
         }
 
         return true;

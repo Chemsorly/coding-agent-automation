@@ -2,10 +2,12 @@ using CodingAgentWebUI.Components;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.GitHub;
-using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Models;
 using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Health;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -32,14 +34,9 @@ builder.Services.AddSingleton<IProviderFactory>(sp =>
     return new ProviderFactory(pipelineConfig);
 });
 
-// Pipeline — Services
-builder.Services.AddSingleton<IBrainUpdateService>(sp => new BrainUpdateService(Serilog.Log.Logger));
+// Pipeline — Services (shared registrations: IQualityGateValidator, IBrainUpdateService, IAgentPhaseExecutor, IQualityGateExecutor)
+builder.Services.AddPipelineServices(Serilog.Log.Logger);
 builder.Services.AddSingleton<IPipelineRunHistoryService>(sp => new PipelineRunHistoryService(Serilog.Log.Logger));
-builder.Services.AddSingleton<IAgentPhaseExecutor>(sp => new AgentExecutionOrchestrator(Serilog.Log.Logger));
-builder.Services.AddSingleton<IQualityGateExecutor>(sp => new QualityGateOrchestrator(
-    sp.GetRequiredService<IQualityGateValidator>(),
-    new PullRequestOrchestrator(Serilog.Log.Logger),
-    Serilog.Log.Logger));
 // Pipeline — Lifecycle Service (owns run state, events, transitions, cancellation)
 builder.Services.AddSingleton(sp => new PipelineRunLifecycleService(
     sp.GetRequiredService<IPipelineRunHistoryService>(),
@@ -67,8 +64,6 @@ builder.Services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService
     sp.GetRequiredService<IJobDispatcher>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
 
-// IQualityGateValidator is consumed by IQualityGateExecutor (singleton). Register as singleton to avoid captive dependency.
-builder.Services.AddSingleton<IQualityGateValidator>(sp => new QualityGateValidator(Serilog.Log.Logger));
 builder.Services.AddTransient<IssueDescriptionParser>();
 builder.Services.AddTransient<GitHubValidationService>(sp =>
     new GitHubValidationService(sp.GetRequiredService<IProviderFactory>()));
@@ -78,7 +73,7 @@ builder.Services.AddSingleton(sp => new AgentRegistryService(Serilog.Log.Logger)
 builder.Services.AddSingleton(sp => new JobDispatcherService(
     sp.GetRequiredService<AgentRegistryService>(),
     Serilog.Log.Logger));
-builder.Services.AddSingleton(sp => new TokenVendingService(Serilog.Log.Logger));
+builder.Services.AddSingleton<ITokenVendingService>(sp => new TokenVendingService(Serilog.Log.Logger));
 builder.Services.AddSingleton(sp => new OrchestratorRunService(
     Serilog.Log.Logger,
     pipelineConfig.OutputBufferCapacity));
@@ -118,7 +113,7 @@ builder.Services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
     sp.GetRequiredService<AgentRegistryService>(),
     sp.GetRequiredService<OrchestratorRunService>(),
     sp.GetRequiredService<PipelineOrchestrationService>(),
-    sp.GetRequiredService<TokenVendingService>(),
+    sp.GetRequiredService<ITokenVendingService>(),
     sp.GetRequiredService<IConfigurationStore>(),
     sp.GetRequiredService<IProviderFactory>(),
     sp.GetRequiredService<ProfileResolver>(),
@@ -126,6 +121,16 @@ builder.Services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
     sp.GetRequiredService<ReviewerResolver>(),
     sp.GetRequiredService<IAgentCommunication>(),
     Serilog.Log.Logger));
+
+// AgentHub facade — groups registry, run state, dispatch, history, and issue provider operations
+builder.Services.AddSingleton<IAgentHubFacade>(sp => new AgentHubFacade(
+    sp.GetRequiredService<AgentRegistryService>(),
+    sp.GetRequiredService<OrchestratorRunService>(),
+    sp.GetRequiredService<JobDispatcherService>(),
+    sp.GetRequiredService<JobQueueDrainService>(),
+    sp.GetRequiredService<IPipelineRunHistoryService>(),
+    sp.GetRequiredService<IConfigurationStore>(),
+    sp.GetRequiredService<IProviderFactory>()));
 
 // SignalR — hub services with MessagePack protocol
 builder.Services.AddSignalR()

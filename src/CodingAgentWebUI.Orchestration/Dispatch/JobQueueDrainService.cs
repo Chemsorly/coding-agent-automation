@@ -1,9 +1,10 @@
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Orchestration;
+namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// Background service that periodically drains the job queue by matching

@@ -10,22 +10,9 @@ internal sealed class AnalyzeCodeStep : IPipelineStep
 {
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
-        if (context.Issue is null || context.ParsedIssue is null)
-            throw new InvalidOperationException("Issue must be fetched before analysis. Ensure FetchIssueStep runs before AnalyzeCodeStep.");
-
         context.Callbacks.EmitOutputLine("🔍 Starting analysis...");
 
-        var phaseContext = new AgentPhaseContext
-        {
-            Run = context.Run,
-            Config = context.Config,
-            AgentProvider = context.AgentProvider,
-            Issue = context.Issue,
-            ParsedIssue = context.ParsedIssue,
-            IssueOps = context.IssueOps,
-            Callbacks = context.Callbacks,
-            OrchestratorCts = context.Cts
-        };
+        var phaseContext = context.BuildAgentPhaseContext();
 
         var shouldContinue = await context.AgentExecution.ExecuteAnalysisPhaseAsync(
             phaseContext, context.IssueComments ?? Array.Empty<IssueComment>(), ct);

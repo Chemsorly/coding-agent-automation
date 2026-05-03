@@ -198,8 +198,8 @@ public class GitHubAppAuthServicePropertyTests
         var installationId = 12345L;
         var apiUrl = "https://api.github.com";
 
-        // Act & Assert: Constructor must throw InvalidOperationException
-        var ex = Assert.Throws<InvalidOperationException>(() =>
+        // Act & Assert: Constructor must throw GitHubAuthException with PrivateKeyDecodeFailure kind
+        var ex = Assert.Throws<GitHubAuthException>(() =>
             new GitHubAppAuthService(
                 clientId,
                 installationId,
@@ -207,6 +207,7 @@ public class GitHubAppAuthServicePropertyTests
                 apiUrl,
                 MockLogger.Object));
 
+        Assert.Equal(GitHubAuthErrorKind.PrivateKeyDecodeFailure, ex.ErrorKind);
         Assert.Contains("Failed to decode private key", ex.Message);
     }
 

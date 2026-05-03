@@ -7,7 +7,7 @@ namespace KiroCliLib.Core;
 /// <summary>
 /// Manages the Kiro CLI process lifecycle with WSL integration support.
 /// </summary>
-public class ProcessWrapper : IDisposable
+public class ProcessWrapper : IProcessWrapper
 {
     private readonly Configuration.Configuration _config;
     private readonly ILogger _logger;
@@ -105,6 +105,15 @@ public class ProcessWrapper : IDisposable
         }
     }
 
+    /// <summary>
+    /// Forcefully terminates the running process and its process tree.
+    /// </summary>
+    /// <remarks>
+    /// This method is intentionally synchronous because process termination is immediate
+    /// (not a graceful cancel-and-wait pattern). <see cref="GracefulShutdownHelper"/> is not
+    /// applicable here since there is no CancellationTokenSource or awaitable Task to cancel —
+    /// the process is killed directly via OS signals.
+    /// </remarks>
     public void Kill()
     {
         if (_process == null || _process.HasExited) return;

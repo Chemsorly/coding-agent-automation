@@ -16,13 +16,6 @@ internal partial class AgentExecutionOrchestrator
         ArgumentNullException.ThrowIfNull(context);
         var run = context.Run;
         var config = context.Config;
-        var agentProvider = context.AgentProvider;
-        var issue = context.Issue;
-        var parsed = context.ParsedIssue;
-        var orchestratorCts = context.OrchestratorCts;
-        Action<PipelineStep> transitionTo = context.Callbacks.TransitionTo;
-        Action<string> onOutputLine = context.Callbacks.EmitOutputLine;
-        Action onChange = context.Callbacks.NotifyChange;
         if (!config.CodeReview.Enabled || config.CodeReview.MaxIterations <= 0)
             return;
 
@@ -30,7 +23,7 @@ internal partial class AgentExecutionOrchestrator
         for (var i = 0; i < config.CodeReview.MaxIterations; i++)
         {
             run.CodeReviewIterationInProgress = i + 1;
-            transitionTo(PipelineStep.ReviewingCode);
+            context.Callbacks.TransitionTo(PipelineStep.ReviewingCode);
             _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
                 run.RunId, i + 1, config.CodeReview.MaxIterations);
 
@@ -47,14 +40,14 @@ internal partial class AgentExecutionOrchestrator
                 agents = PipelineConfiguration.DefaultReviewAgents;
             }
 
-            onOutputLine($"🔍 Starting code review iteration {i + 1}/{config.CodeReview.MaxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
+            context.Callbacks.EmitOutputLine($"🔍 Starting code review iteration {i + 1}/{config.CodeReview.MaxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
 
             run.ChatHistory.Enqueue(new ChatEntry
             {
                 Role = ChatRole.System,
                 Content = $"Code review iteration {i + 1}/{config.CodeReview.MaxIterations} starting..."
             });
-            onChange();
+            context.Callbacks.NotifyChange();
 
             var iterationFindings = new System.Text.StringBuilder();
             var iterationCriticalCount = 0;
@@ -73,17 +66,17 @@ internal partial class AgentExecutionOrchestrator
                         Role = ChatRole.System,
                         Content = $"Review agent '{agent.Name}' ({a + 1}/{agents.Count}) starting..."
                     });
-                    onChange();
+                    context.Callbacks.NotifyChange();
 
                     var findingsFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.ReviewFindingsFilePath);
                     if (File.Exists(findingsFilePath))
                         File.Delete(findingsFilePath);
 
-                    var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, issue, parsed);
+                    var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue);
                     _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, i + 1, agent.Name, reviewPrompt);
 
                     var reviewResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                        agentProvider,
+                        context.AgentProvider,
                         new AgentRequest
                         {
                             Prompt = reviewPrompt,
@@ -91,11 +84,11 @@ internal partial class AgentExecutionOrchestrator
                             Timeout = config.AgentTimeout,
                             UseResume = true
                         },
-                        run, config, $"Code review agent '{agent.Name}'", onChange, _logger, ct,
+                        run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,
                         line =>
                         {
                             run.OutputLines.Enqueue(line);
-                            onOutputLine(line);
+                            context.Callbacks.EmitOutputLine(line);
                         });
 
                     agentsRun.Add(agent.Name);
@@ -145,7 +138,7 @@ internal partial class AgentExecutionOrchestrator
                                       ? string.Join(Environment.NewLine, reviewResult.OutputLines.TakeLast(10))
                                       : "(no output)")
                     });
-                    onChange();
+                    context.Callbacks.NotifyChange();
                 }
 
                 run.CodeReviewAgentsRun = agentsRun;
@@ -153,13 +146,13 @@ internal partial class AgentExecutionOrchestrator
                 run.CodeReviewIterationsCompleted++;
 
                 // NOTE: [UX-16] CodeReview*Count fields are cumulative across iterations — per-iteration counters deferred to separate issue
-                onOutputLine($"📝 Code review: {run.CodeReviewCriticalCount} critical, {run.CodeReviewWarningCount} warning, {run.CodeReviewSuggestionCount} suggestion");
+                context.Callbacks.EmitOutputLine($"📝 Code review: {run.CodeReviewCriticalCount} critical, {run.CodeReviewWarningCount} warning, {run.CodeReviewSuggestionCount} suggestion");
 
                 if (!string.IsNullOrEmpty(config.CodeReview.FixPrompt) && iterationCriticalCount > 0)
                 {
                     _logger.Information("Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected across {AgentCount} agent(s), sending fix prompt",
                         run.RunId, i + 1, iterationCriticalCount, agents.Count);
-                    onOutputLine($"📝 Code review: {iterationCriticalCount} critical findings — sending fix prompt");
+                    context.Callbacks.EmitOutputLine($"📝 Code review: {iterationCriticalCount} critical findings — sending fix prompt");
 
                     // Write concatenated findings from all agents to the file so the fix agent can read it
                     var findingsFileForFix = Path.Combine(run.WorkspacePath!, PromptBuilder.ReviewFindingsFilePath);
@@ -168,28 +161,18 @@ internal partial class AgentExecutionOrchestrator
                     var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt);
                     _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
 
-                    await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                        agentProvider,
-                        new AgentRequest
-                        {
-                            Prompt = fixPrompt,
-                            WorkspacePath = run.WorkspacePath!,
-                            Timeout = config.AgentTimeout,
-                            UseResume = true
-                        },
-                        run, config, $"Code review fix agent (iteration {i + 1})", onChange, _logger, ct,
-                        line =>
-                        {
-                            run.OutputLines.Enqueue(line);
-                            onOutputLine(line);
-                        });
+                    await AgentExecutionOrchestrator.ExecuteAgentAndRecordAsync(
+                        context.AgentProvider, fixPrompt, run, config,
+                        $"Code review fix agent (iteration {i + 1})",
+                        context.Callbacks, _logger, ct,
+                        recordOutputToHistory: false);
 
                     run.ChatHistory.Enqueue(new ChatEntry
                     {
                         Role = ChatRole.Agent,
                         Content = $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes"
                     });
-                    onChange();
+                    context.Callbacks.NotifyChange();
                 }
                 else if (!string.IsNullOrEmpty(config.CodeReview.FixPrompt))
                 {
@@ -197,7 +180,7 @@ internal partial class AgentExecutionOrchestrator
                         run.RunId, i + 1);
                 }
             }
-            catch (OperationCanceledException) when (orchestratorCts?.IsCancellationRequested == true)
+            catch (OperationCanceledException) when (context.OrchestratorCts?.IsCancellationRequested == true)
             {
                 run.CodeReviewAgentsRun = agentsRun;
                 throw;
@@ -212,7 +195,7 @@ internal partial class AgentExecutionOrchestrator
                     Role = ChatRole.System,
                     Content = $"Code review iteration {i + 1} failed: {ex.Message}"
                 });
-                onChange();
+                context.Callbacks.NotifyChange();
                 break;
             }
         }

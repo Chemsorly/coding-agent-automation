@@ -6,18 +6,10 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// Groups all parameters needed by <see cref="Services.QualityGateOrchestrator.ProceedToQualityGatesAsync"/>
 /// into a single context object.
 /// </summary>
-public sealed record QualityGateContext
+public sealed record QualityGateContext : PipelineContextBase
 {
-    public required PipelineRun Run { get; init; }
-    public required PipelineConfiguration Config { get; init; }
-    public required IAgentProvider AgentProvider { get; init; }
     public required IRepositoryProvider RepoProvider { get; init; }
     public IPipelineProvider? PipelineProvider { get; init; }
-    public CancellationTokenSource? OrchestratorCts { get; init; }
-    public required IAgentIssueOperations IssueOps { get; init; }
-
-    /// <summary>Pipeline lifecycle callbacks (transitions, output, history, labels, PR creation).</summary>
-    public required IPipelineCallbacks Callbacks { get; init; }
 
     /// <summary>
     /// The resolved Quality Gate Configurations for this job.

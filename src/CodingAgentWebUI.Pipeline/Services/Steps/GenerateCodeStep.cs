@@ -34,17 +34,7 @@ internal sealed class GenerateCodeStep : IPipelineStep
             context.Callbacks.EmitOutputLine("⚙️ Starting code generation...");
         }
 
-        var phaseContext = new AgentPhaseContext
-        {
-            Run = context.Run,
-            Config = context.Config,
-            AgentProvider = context.AgentProvider,
-            Issue = context.Issue ?? throw new InvalidOperationException("Issue must be fetched before code generation."),
-            ParsedIssue = context.ParsedIssue ?? throw new InvalidOperationException("ParsedIssue must be set before code generation."),
-            IssueOps = context.IssueOps,
-            Callbacks = context.Callbacks,
-            OrchestratorCts = context.Cts
-        };
+        var phaseContext = context.BuildAgentPhaseContext();
 
         var shouldContinue = await context.AgentExecution.ExecuteCodeGenerationAsync(
             phaseContext, ct, promptOverride: reworkPromptOverride);
