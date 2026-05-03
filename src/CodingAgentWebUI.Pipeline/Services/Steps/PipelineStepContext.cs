@@ -24,23 +24,16 @@ internal sealed class PipelineStepContext
     /// </summary>
     public IIssueProvider? IssueProvider { get; init; }
 
-    // Callbacks
-    public required Action<PipelineStep> TransitionTo { get; init; }
-    public required Action<string> EmitOutputLine { get; init; }
-    public required Action NotifyChange { get; init; }
-    public required Action<PipelineRun> AddRunToHistory { get; init; }
-    public required Func<PipelineRun, Task> UpdateFileChangeStats { get; init; }
-    public required Func<string, string, CancellationToken, Task> SwapAgentLabel { get; init; }
-    public required Func<string, CancellationToken, Task> RemoveAllAgentLabels { get; init; }
-    public required Func<PipelineRun, QualityGateReport, bool, CancellationToken, Task> CreatePullRequest { get; init; }
+    /// <summary>Pipeline lifecycle callbacks (transitions, output, history, labels, PR creation).</summary>
+    public required IPipelineCallbacks Callbacks { get; init; }
 
     // Issue operations (narrow interface for label swaps and comments)
     public required IAgentIssueOperations IssueOps { get; init; }
 
-    // Orchestrators (steps delegate to these)
-    public required AgentExecutionOrchestrator AgentExecution { get; init; }
-    public required QualityGateOrchestrator QualityGates { get; init; }
-    public required BrainSyncOrchestrator? BrainSync { get; init; }
+    // Orchestrators (steps delegate to these via interfaces)
+    public required IAgentPhaseExecutor AgentExecution { get; init; }
+    public required IQualityGateExecutor QualityGates { get; init; }
+    public required IBrainSyncService? BrainSync { get; init; }
     public required PullRequestOrchestrator PrOrchestrator { get; init; }
 
     /// <summary>
@@ -70,9 +63,9 @@ internal sealed class PipelineStepContext
     {
         Run.FailureReason = reason;
         Run.CompletedAt = DateTime.UtcNow;
-        await SwapAgentLabel(Run.IssueIdentifier, AgentLabels.Error, ct);
-        EmitOutputLine($"❌ Pipeline failed: {reason}");
-        TransitionTo(PipelineStep.Failed);
-        AddRunToHistory(Run);
+        await Callbacks.SwapAgentLabel(Run.IssueIdentifier, AgentLabels.Error, ct);
+        Callbacks.EmitOutputLine($"❌ Pipeline failed: {reason}");
+        Callbacks.TransitionTo(PipelineStep.Failed);
+        Callbacks.AddRunToHistory(Run);
     }
 }

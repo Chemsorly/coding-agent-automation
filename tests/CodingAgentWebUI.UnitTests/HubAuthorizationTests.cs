@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;

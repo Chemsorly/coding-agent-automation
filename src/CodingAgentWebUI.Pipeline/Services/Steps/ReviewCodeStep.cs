@@ -26,13 +26,20 @@ internal sealed class ReviewCodeStep : IPipelineStep
             resolvedReviewers = reviewerResolver.Resolve(allReviewerConfigs, requiredLabelsForReview);
         }
 
+        var phaseContext = new AgentPhaseContext
+        {
+            Run = context.Run,
+            Config = context.Config,
+            AgentProvider = context.AgentProvider,
+            Issue = context.Issue ?? throw new InvalidOperationException("Issue must be fetched before code review."),
+            ParsedIssue = context.ParsedIssue ?? throw new InvalidOperationException("ParsedIssue must be set before code review."),
+            IssueOps = context.IssueOps,
+            Callbacks = context.Callbacks,
+            OrchestratorCts = context.Cts
+        };
+
         await context.AgentExecution.ExecuteCodeReviewAsync(
-            context.Run, context.Config, context.AgentProvider,
-            context.Issue!, context.ParsedIssue!,
-            context.Cts,
-            context.TransitionTo,
-            context.EmitOutputLine, context.NotifyChange, ct,
-            resolvedReviewers);
+            phaseContext, ct, resolvedReviewers);
 
         return StepResult.Continue;
     }

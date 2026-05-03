@@ -1,10 +1,9 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
-using Microsoft.AspNetCore.SignalR;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -21,7 +20,7 @@ public class AgentJobDispatcherTests
     private readonly OrchestratorRunService _runService;
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
-    private readonly Mock<IHubContext<AgentHub, IAgentHubClient>> _mockHubContext;
+    private readonly Mock<IAgentCommunication> _mockAgentComm;
     private readonly TokenVendingService _tokenVending;
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
 
@@ -32,7 +31,7 @@ public class AgentJobDispatcherTests
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _mockConfigStore = new Mock<IConfigurationStore>();
         _mockProviderFactory = new Mock<IProviderFactory>();
-        _mockHubContext = new Mock<IHubContext<AgentHub, IAgentHubClient>>();
+        _mockAgentComm = new Mock<IAgentCommunication>();
         _tokenVending = new TokenVendingService(_mockLogger.Object);
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
     }
@@ -41,15 +40,14 @@ public class AgentJobDispatcherTests
     {
         var mockQualityGateValidator = new Mock<IQualityGateValidator>();
         var mockBrainUpdateService = new Mock<IBrainUpdateService>();
-        var ciLogWriter = new CiLogWriter(_mockLogger.Object);
         var issueParser = new IssueDescriptionParser();
 
         var orchestration = new PipelineOrchestrationService(
             _mockConfigStore.Object,
             _mockProviderFactory.Object,
             issueParser,
-            mockQualityGateValidator.Object,
-            ciLogWriter,
+            new AgentExecutionOrchestrator(_mockLogger.Object),
+            new QualityGateOrchestrator(mockQualityGateValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
             _mockLogger.Object,
             mockBrainUpdateService.Object,
             _mockHistoryService.Object,
@@ -66,7 +64,7 @@ public class AgentJobDispatcherTests
             new ProfileResolver(),
             new QualityGateResolver(),
             new ReviewerResolver(),
-            _mockHubContext.Object,
+            _mockAgentComm.Object,
             _mockLogger.Object);
     }
 

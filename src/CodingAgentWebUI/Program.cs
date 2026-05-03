@@ -5,6 +5,7 @@ using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Models;
+using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -34,12 +35,17 @@ builder.Services.AddSingleton<IProviderFactory>(sp =>
 // Pipeline — Services
 builder.Services.AddSingleton<IBrainUpdateService>(sp => new BrainUpdateService(Serilog.Log.Logger));
 builder.Services.AddSingleton<IPipelineRunHistoryService>(sp => new PipelineRunHistoryService(Serilog.Log.Logger));
+builder.Services.AddSingleton<IAgentPhaseExecutor>(sp => new AgentExecutionOrchestrator(Serilog.Log.Logger));
+builder.Services.AddSingleton<IQualityGateExecutor>(sp => new QualityGateOrchestrator(
+    sp.GetRequiredService<IQualityGateValidator>(),
+    new PullRequestOrchestrator(Serilog.Log.Logger),
+    Serilog.Log.Logger));
 builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
     sp.GetRequiredService<IConfigurationStore>(),
     sp.GetRequiredService<IProviderFactory>(),
     sp.GetRequiredService<IssueDescriptionParser>(),
-    sp.GetRequiredService<IQualityGateValidator>(),
-    sp.GetRequiredService<CiLogWriter>(),
+    sp.GetRequiredService<IAgentPhaseExecutor>(),
+    sp.GetRequiredService<IQualityGateExecutor>(),
     Serilog.Log.Logger,
     sp.GetRequiredService<IBrainUpdateService>(),
     sp.GetRequiredService<IPipelineRunHistoryService>(),
@@ -54,10 +60,9 @@ builder.Services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService
     sp.GetRequiredService<IJobDispatcher>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
 
-// NOTE: [ARC-12] Captive dependency — IQualityGateValidator and IssueDescriptionParser are transient but captured by singleton PipelineOrchestrationService. Register as singleton or use factories.
-builder.Services.AddTransient<IQualityGateValidator>(sp => new QualityGateValidator(Serilog.Log.Logger));
+// IQualityGateValidator is consumed by IQualityGateExecutor (singleton). Register as singleton to avoid captive dependency.
+builder.Services.AddSingleton<IQualityGateValidator>(sp => new QualityGateValidator(Serilog.Log.Logger));
 builder.Services.AddTransient<IssueDescriptionParser>();
-builder.Services.AddSingleton(sp => new CiLogWriter(Serilog.Log.Logger));
 builder.Services.AddTransient<GitHubValidationService>(sp =>
     new GitHubValidationService(sp.GetRequiredService<IProviderFactory>()));
 
@@ -92,9 +97,14 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<JobQueueDrainServi
 builder.Services.AddSingleton<ProfileResolver>();
 builder.Services.AddSingleton<QualityGateResolver>();
 builder.Services.AddSingleton<ReviewerResolver>();
+
+// Agent communication abstraction (wraps SignalR IHubContext)
+builder.Services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
+    sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));
+
 builder.Services.AddSingleton<ModelFetchService>(sp => new ModelFetchService(
     sp.GetRequiredService<AgentRegistryService>(),
-    sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
+    sp.GetRequiredService<IAgentCommunication>(),
     Serilog.Log.Logger));
 builder.Services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
     sp.GetRequiredService<JobDispatcherService>(),
@@ -107,7 +117,7 @@ builder.Services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
     sp.GetRequiredService<ProfileResolver>(),
     sp.GetRequiredService<QualityGateResolver>(),
     sp.GetRequiredService<ReviewerResolver>(),
-    sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
+    sp.GetRequiredService<IAgentCommunication>(),
     Serilog.Log.Logger));
 
 // SignalR — hub services with MessagePack protocol

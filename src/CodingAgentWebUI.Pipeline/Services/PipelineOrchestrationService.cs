@@ -19,8 +19,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     private readonly BrainSyncOrchestrator _brainSync;
     private readonly PullRequestOrchestrator _prOrchestrator;
     private readonly IPipelineRunHistoryService _historyService;
-    private readonly AgentExecutionOrchestrator _agentExecution;
-    private readonly QualityGateOrchestrator _qualityGates;
+    private readonly IAgentPhaseExecutor _agentExecution;
+    private readonly IQualityGateExecutor _qualityGates;
     private readonly IOrchestratorRunService? _runService;
     private readonly Serilog.ILogger _logger;
 
@@ -100,8 +100,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         IConfigurationStore configStore,
         IProviderFactory providerFactory,
         IssueDescriptionParser issueParser,
-        IQualityGateValidator qualityGateValidator,
-        CiLogWriter ciLogWriter,
+        IAgentPhaseExecutor agentExecution,
+        IQualityGateExecutor qualityGates,
         Serilog.ILogger logger,
         IBrainUpdateService? brainUpdateService = null,
         IPipelineRunHistoryService? historyService = null,
@@ -110,8 +110,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
         ArgumentNullException.ThrowIfNull(issueParser);
-        ArgumentNullException.ThrowIfNull(qualityGateValidator);
-        ArgumentNullException.ThrowIfNull(ciLogWriter);
+        ArgumentNullException.ThrowIfNull(agentExecution);
+        ArgumentNullException.ThrowIfNull(qualityGates);
         ArgumentNullException.ThrowIfNull(logger);
 
         _configStore = configStore;
@@ -119,13 +119,13 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         _issueParser = issueParser;
         _logger = logger;
         _runService = runService;
+        _agentExecution = agentExecution;
+        _qualityGates = qualityGates;
 
         ArgumentNullException.ThrowIfNull(brainUpdateService);
         _brainSync = new BrainSyncOrchestrator(brainUpdateService, logger);
         _prOrchestrator = new PullRequestOrchestrator(logger);
         _historyService = historyService ?? throw new ArgumentNullException(nameof(historyService));
-        _agentExecution = new AgentExecutionOrchestrator(logger);
-        _qualityGates = new QualityGateOrchestrator(qualityGateValidator, ciLogWriter, _prOrchestrator, logger);
     }
 
     /// <summary>
@@ -329,26 +329,15 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
         IAgentIssueOperations issueOps = new IssueProviderIssueOperations(issueProvider, _logger);
         Steps.PipelineStepContext? ctx = null;
+
+        var callbacks = new OrchestratorCallbacks(this, run, () => ctx);
         ctx = new Steps.PipelineStepContext
         {
             Run = run, Config = _activeConfig!, RepoProvider = _activeRepoProvider!,
             AgentProvider = _activeAgentProvider!, BrainProvider = _activeBrainProvider,
             PipelineProvider = _activePipelineProvider, Cts = _cancellationTokenSource,
             ConfigStore = _configStore, IssueProvider = issueProvider,
-            TransitionTo = step => TransitionTo(run, step),
-            EmitOutputLine = line => EmitOutputLine(line),
-            NotifyChange = () => NotifyChange(),
-            AddRunToHistory = r => AddRunToHistory(r),
-            UpdateFileChangeStats = r => UpdateFileChangeStatsAsync(r),
-            SwapAgentLabel = (id, label, token) => SwapAgentLabelAsync(id, label, token),
-            RemoveAllAgentLabels = (id, token) => RemoveAllAgentLabelsAsync(id, token),
-            CreatePullRequest = (r, report, isDraft, token) =>
-            {
-                _activeIssue = ctx!.Issue;
-                _activeParsedIssue = ctx.ParsedIssue;
-                _activeIssueComments = ctx.IssueComments;
-                return CreatePullRequestAsync(r, report, isDraft, token);
-            },
+            Callbacks = callbacks,
             IssueOps = issueOps, AgentExecution = _agentExecution,
             QualityGates = _qualityGates, BrainSync = _brainSync,
             PrOrchestrator = _prOrchestrator, Logger = _logger
@@ -680,36 +669,29 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// Adapts <see cref="IIssueProvider"/> to <see cref="IAgentIssueOperations"/> for use
-    /// by <see cref="AgentExecutionOrchestrator"/> and <see cref="QualityGateOrchestrator"/>.
-    /// Implements the label swap logic (remove all agent labels, add new label) inline.
+    /// Adapts the orchestration service's private helper methods to <see cref="IPipelineCallbacks"/>.
     /// </summary>
-    private sealed class IssueProviderIssueOperations : IAgentIssueOperations
+    private sealed class OrchestratorCallbacks(
+        PipelineOrchestrationService svc,
+        PipelineRun run,
+        Func<Steps.PipelineStepContext?> ctxAccessor) : IPipelineCallbacks
     {
-        private readonly IIssueProvider _issueProvider;
-        private readonly Serilog.ILogger _logger;
-
-        public IssueProviderIssueOperations(IIssueProvider issueProvider, Serilog.ILogger logger)
+        public void TransitionTo(PipelineStep step) => svc.TransitionTo(run, step);
+        public void EmitOutputLine(string line) => svc.EmitOutputLine(line);
+        public void NotifyChange() => svc.NotifyChange();
+        public void AddRunToHistory(PipelineRun r) => svc.AddRunToHistory(r);
+        public Task UpdateFileChangeStats(PipelineRun r) => svc.UpdateFileChangeStatsAsync(r);
+        public Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
+            => svc.SwapAgentLabelAsync(issueIdentifier, label, ct);
+        public Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
+            => svc.RemoveAllAgentLabelsAsync(issueIdentifier, ct);
+        public Task CreatePullRequest(PipelineRun r, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
-            _issueProvider = issueProvider;
-            _logger = logger;
-        }
-
-        public Task PostCommentAsync(string issueIdentifier, string body, CancellationToken ct)
-            => _issueProvider.PostCommentAsync(issueIdentifier, body, ct);
-
-        public async Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct)
-        {
-            try
-            {
-                foreach (var label in AgentLabels.All)
-                    await _issueProvider.RemoveLabelAsync(issueIdentifier, label, ct);
-                await _issueProvider.AddLabelAsync(issueIdentifier, newLabel, ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to swap agent label to {Label} on issue {Issue}", newLabel, issueIdentifier);
-            }
+            var ctx = ctxAccessor();
+            svc._activeIssue = ctx?.Issue;
+            svc._activeParsedIssue = ctx?.ParsedIssue;
+            svc._activeIssueComments = ctx?.IssueComments;
+            return svc.CreatePullRequestAsync(r, report, isDraft, ct);
         }
     }
 }

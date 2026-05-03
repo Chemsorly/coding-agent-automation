@@ -5,7 +5,7 @@ using CodingAgentWebUI.Pipeline.Services;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Services;
+namespace CodingAgentWebUI.Orchestration;
 
 /// <summary>
 /// Tracks all active pipeline runs across agents. Replaces the single <c>ActiveRun</c>

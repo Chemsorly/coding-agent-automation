@@ -2,6 +2,7 @@ using Bunit;
 using Moq;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -40,7 +41,9 @@ public class AgentChatComponentTests : BunitContext
 
         _pipelineService = new PipelineOrchestrationService(
             _mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
-            mockValidator.Object, new CiLogWriter(mockLogger.Object), mockLogger.Object,
+            new AgentExecutionOrchestrator(mockLogger.Object),
+            new QualityGateOrchestrator(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
+            mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: mockHistory.Object);
 

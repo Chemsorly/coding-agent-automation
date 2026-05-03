@@ -13,9 +13,9 @@ internal sealed class CloneRepositoryStep : IPipelineStep
         Directory.CreateDirectory(workspacePath);
         context.Run.WorkspacePath = workspacePath;
 
-        context.TransitionTo(PipelineStep.CloningRepository);
-        context.EmitOutputLine($"📋 Cloning repository {context.Run.RepositoryName}...");
-        await context.SwapAgentLabel(context.Run.IssueIdentifier, AgentLabels.InProgress, ct);
+        context.Callbacks.TransitionTo(PipelineStep.CloningRepository);
+        context.Callbacks.EmitOutputLine($"📋 Cloning repository {context.Run.RepositoryName}...");
+        await context.Callbacks.SwapAgentLabel(context.Run.IssueIdentifier, AgentLabels.InProgress, ct);
 
         try { await context.RepoProvider.CloneAsync(workspacePath, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException)

@@ -12,6 +12,9 @@ internal static class PipelineStepRunner
     public static async Task ExecuteAsync(
         IReadOnlyList<IPipelineStep> steps, PipelineStepContext context, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(steps);
+        ArgumentNullException.ThrowIfNull(context);
+
         foreach (var step in steps)
         {
             var result = await step.ExecuteAsync(context, ct);

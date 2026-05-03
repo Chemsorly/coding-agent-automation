@@ -1,9 +1,10 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using Microsoft.Extensions.Hosting;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Services;
+namespace CodingAgentWebUI.Orchestration;
 
 /// <summary>
 /// Background service that periodically sweeps the agent registry to detect

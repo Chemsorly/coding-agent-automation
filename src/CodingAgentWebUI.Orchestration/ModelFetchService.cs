@@ -1,20 +1,18 @@
 using System.Collections.Concurrent;
-using CodingAgentWebUI.Hubs;
-using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Models;
-using Microsoft.AspNetCore.SignalR;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Services;
+namespace CodingAgentWebUI.Orchestration;
 
 /// <summary>
-/// Manages "Fetch Models" requests by delegating to a connected agent via SignalR.
+/// Manages "Fetch Models" requests by delegating to a connected agent via <see cref="IAgentCommunication"/>.
 /// Caches results after the first successful fetch.
 /// </summary>
 public sealed class ModelFetchService
 {
     private readonly AgentRegistryService _registry;
-    private readonly IHubContext<AgentHub, IAgentHubClient> _hubContext;
+    private readonly IAgentCommunication _agentComm;
     private readonly ILogger _logger;
 
     private readonly ConcurrentDictionary<string, TaskCompletionSource<FetchModelsResponse>> _pending = new();
@@ -22,15 +20,15 @@ public sealed class ModelFetchService
 
     public ModelFetchService(
         AgentRegistryService registry,
-        IHubContext<AgentHub, IAgentHubClient> hubContext,
+        IAgentCommunication agentComm,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(registry);
-        ArgumentNullException.ThrowIfNull(hubContext);
+        ArgumentNullException.ThrowIfNull(agentComm);
         ArgumentNullException.ThrowIfNull(logger);
 
         _registry = registry;
-        _hubContext = hubContext;
+        _agentComm = agentComm;
         _logger = logger;
     }
 
@@ -56,8 +54,8 @@ public sealed class ModelFetchService
 
         try
         {
-            await _hubContext.Clients.Client(agent.ConnectionId)
-                .RequestFetchModels(new FetchModelsRequest { RequestId = requestId });
+            await _agentComm.RequestFetchModelsAsync(
+                agent.ConnectionId, new FetchModelsRequest { RequestId = requestId }, ct);
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));

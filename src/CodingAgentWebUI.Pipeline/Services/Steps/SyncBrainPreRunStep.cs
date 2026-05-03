@@ -12,11 +12,11 @@ internal sealed class SyncBrainPreRunStep : IPipelineStep
         if (context.BrainProvider is null || context.BrainSync is null)
             return StepResult.Continue;
 
-        context.TransitionTo(PipelineStep.SyncingBrainRepoPreRun);
+        context.Callbacks.TransitionTo(PipelineStep.SyncingBrainRepoPreRun);
         try
         {
             await context.BrainSync.SyncPreRunAsync(
-                context.Run, context.BrainProvider, context.Run.WorkspacePath!, ct, context.EmitOutputLine);
+                context.Run, context.BrainProvider, context.Run.WorkspacePath!, ct, context.Callbacks.EmitOutputLine);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

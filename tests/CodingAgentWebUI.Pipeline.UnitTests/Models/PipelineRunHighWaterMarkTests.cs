@@ -36,8 +36,8 @@ public class PipelineRunHighWaterMarkTests
             _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
-            _mockValidator.Object,
-            new CiLogWriter(mockLogger.Object),
+            new AgentExecutionOrchestrator(mockLogger.Object),
+            new QualityGateOrchestrator(_mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
             mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);

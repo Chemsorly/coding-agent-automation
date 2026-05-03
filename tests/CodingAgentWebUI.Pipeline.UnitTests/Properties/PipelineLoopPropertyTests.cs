@@ -394,7 +394,9 @@ public class PipelineLoopPropertyTests
         var mockValidator = new Mock<IQualityGateValidator>();
         var orchestration = new PipelineOrchestrationService(
             mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
-            mockValidator.Object, new CiLogWriter(mockLogger.Object), mockLogger.Object,
+            new AgentExecutionOrchestrator(mockLogger.Object),
+            new QualityGateOrchestrator(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
+            mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 

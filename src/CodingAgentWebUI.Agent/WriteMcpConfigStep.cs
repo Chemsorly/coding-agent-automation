@@ -26,7 +26,7 @@ internal sealed class WriteMcpConfigStep : IPipelineStep
             var mcpConfigPath = agentConfig?.Settings.GetValueOrDefault("mcpConfigPath", ".kiro/settings/mcp.json")
                 ?? ".kiro/settings/mcp.json";
             LocalPipelineExecutor.WriteMcpConfigToWorkspace(context.Run.WorkspacePath!, _job.McpServers, mcpConfigPath);
-            context.EmitOutputLine($"🔌 Wrote MCP config with {_job.McpServers.Count} server(s) to {mcpConfigPath}");
+            context.Callbacks.EmitOutputLine($"🔌 Wrote MCP config with {_job.McpServers.Count} server(s) to {mcpConfigPath}");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

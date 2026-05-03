@@ -230,8 +230,8 @@ public class PipelineStateTransitionPropertyTests
             mockConfigStore.Object,
             mockFactory.Object,
             new IssueDescriptionParser(),
-            mockValidator.Object,
-            new CiLogWriter(mockLogger.Object),
+            new AgentExecutionOrchestrator(mockLogger.Object),
+            new QualityGateOrchestrator(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
             mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
@@ -256,8 +256,8 @@ public class PipelineStateTransitionPropertyTests
             mockConfigStore.Object,
             mockFactory.Object,
             new IssueDescriptionParser(),
-            mockValidator.Object,
-            new CiLogWriter(mockLogger.Object),
+            new AgentExecutionOrchestrator(mockLogger.Object),
+            new QualityGateOrchestrator(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
             mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);

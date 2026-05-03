@@ -1,5 +1,6 @@
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.Infrastructure.Git;
+using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
@@ -94,8 +95,8 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
             ConfigStore,
             FakeProviders,
             new IssueDescriptionParser(),
-            QualityGateValidator,
-            new CiLogWriter(Serilog.Log.Logger),
+            new AgentExecutionOrchestrator(Serilog.Log.Logger),
+            new QualityGateOrchestrator(QualityGateValidator, new PullRequestOrchestrator(Serilog.Log.Logger), Serilog.Log.Logger),
             Serilog.Log.Logger,
             new BrainUpdateService(Serilog.Log.Logger),
             HistoryService,

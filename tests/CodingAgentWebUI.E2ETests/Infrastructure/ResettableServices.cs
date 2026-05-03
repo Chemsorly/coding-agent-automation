@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -62,14 +63,14 @@ public sealed class ResettablePipelineOrchestrationService : PipelineOrchestrati
         IConfigurationStore configStore,
         IProviderFactory providerFactory,
         IssueDescriptionParser issueParser,
-        IQualityGateValidator qualityGateValidator,
-        CiLogWriter ciLogWriter,
+        IAgentPhaseExecutor agentExecution,
+        IQualityGateExecutor qualityGates,
         ILogger logger,
         IBrainUpdateService? brainUpdateService = null,
         IPipelineRunHistoryService? historyService = null,
         IOrchestratorRunService? runService = null)
-        : base(configStore, providerFactory, issueParser, qualityGateValidator,
-               ciLogWriter, logger, brainUpdateService, historyService, runService) { }
+        : base(configStore, providerFactory, issueParser, agentExecution,
+               qualityGates, logger, brainUpdateService, historyService, runService) { }
 
     public void Reset()
     {

@@ -9,7 +9,7 @@ using Microsoft.IdentityModel.Tokens;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Services;
+namespace CodingAgentWebUI.Orchestration;
 
 /// <summary>
 /// Generates short-lived GitHub installation access tokens scoped to specific repositories

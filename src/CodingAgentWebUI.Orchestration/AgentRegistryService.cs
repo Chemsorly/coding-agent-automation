@@ -3,7 +3,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Services;
+namespace CodingAgentWebUI.Orchestration;
 
 /// <summary>
 /// In-memory registry of connected agents. Tracks agent status, heartbeats,

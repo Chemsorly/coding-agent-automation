@@ -21,8 +21,16 @@ if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AGENT_TYPE")))
     throw new InvalidOperationException("AGENT_TYPE environment variable is required");
 
 // ── Configure Serilog ──
+var logLevel = Environment.GetEnvironmentVariable("LOG_LEVEL")?.ToLowerInvariant() switch
+{
+    "debug" or "dbg" => Serilog.Events.LogEventLevel.Debug,
+    "verbose" or "trace" => Serilog.Events.LogEventLevel.Verbose,
+    "warning" or "warn" => Serilog.Events.LogEventLevel.Warning,
+    "error" or "err" => Serilog.Events.LogEventLevel.Error,
+    _ => Serilog.Events.LogEventLevel.Information
+};
 Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
+    .MinimumLevel.Is(logLevel)
     // Suppress noisy ASP.NET Core request logging (health checks every 10s)
     .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()

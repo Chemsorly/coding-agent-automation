@@ -1,11 +1,9 @@
-using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using Microsoft.AspNetCore.SignalR;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Services;
+namespace CodingAgentWebUI.Orchestration;
 
 /// <summary>
 /// Implements <see cref="IJobDispatcher"/> by coordinating between
@@ -34,7 +32,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
     private readonly ProfileResolver _profileResolver;
     private readonly QualityGateResolver _qualityGateResolver;
     private readonly ReviewerResolver _reviewerResolver;
-    private readonly IHubContext<AgentHub, IAgentHubClient> _hubContext;
+    private readonly IAgentCommunication _agentComm;
     private readonly ILogger _logger;
 
     public AgentJobDispatcher(
@@ -48,7 +46,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         ProfileResolver profileResolver,
         QualityGateResolver qualityGateResolver,
         ReviewerResolver reviewerResolver,
-        IHubContext<AgentHub, IAgentHubClient> hubContext,
+        IAgentCommunication agentComm,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
@@ -61,7 +59,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         ArgumentNullException.ThrowIfNull(profileResolver);
         ArgumentNullException.ThrowIfNull(qualityGateResolver);
         ArgumentNullException.ThrowIfNull(reviewerResolver);
-        ArgumentNullException.ThrowIfNull(hubContext);
+        ArgumentNullException.ThrowIfNull(agentComm);
         ArgumentNullException.ThrowIfNull(logger);
 
         _dispatcher = dispatcher;
@@ -74,7 +72,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         _profileResolver = profileResolver;
         _qualityGateResolver = qualityGateResolver;
         _reviewerResolver = reviewerResolver;
-        _hubContext = hubContext;
+        _agentComm = agentComm;
         _logger = logger;
     }
 
@@ -246,8 +244,8 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             agent.ActiveJobId = run.RunId;
             _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
 
-            // Send the assignment via SignalR
-            await _hubContext.Clients.Client(agent.ConnectionId).AssignJob(message);
+            // Send the assignment via IAgentCommunication
+            await _agentComm.AssignJobAsync(agent.ConnectionId, message, ct);
 
             _logger.Information(
                 "Job {JobId} dispatched to agent {AgentId} for issue {IssueIdentifier} (profile={ProfileId}, qgcs={QgcCount}, reviewerConfigs={ReviewerConfigCount})",

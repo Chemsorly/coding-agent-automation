@@ -20,30 +20,34 @@ internal sealed class GenerateCodeStep : IPipelineStep
 
             if (reworkPromptOverride is null)
             {
-                context.EmitOutputLine("⏭️ No conflicts, review comments, or draft status — skipping code generation");
+                context.Callbacks.EmitOutputLine("⏭️ No conflicts, review comments, or draft status — skipping code generation");
                 context.Logger.Information(
                     "Pipeline {RunId} rework prompt is null (no conflicts, no comments, not draft), skipping code generation",
                     context.Run.RunId);
                 return StepResult.Continue;
             }
 
-            context.EmitOutputLine("⚙️ Starting rework code generation...");
+            context.Callbacks.EmitOutputLine("⚙️ Starting rework code generation...");
         }
         else
         {
-            context.EmitOutputLine("⚙️ Starting code generation...");
+            context.Callbacks.EmitOutputLine("⚙️ Starting code generation...");
         }
 
+        var phaseContext = new AgentPhaseContext
+        {
+            Run = context.Run,
+            Config = context.Config,
+            AgentProvider = context.AgentProvider,
+            Issue = context.Issue ?? throw new InvalidOperationException("Issue must be fetched before code generation."),
+            ParsedIssue = context.ParsedIssue ?? throw new InvalidOperationException("ParsedIssue must be set before code generation."),
+            IssueOps = context.IssueOps,
+            Callbacks = context.Callbacks,
+            OrchestratorCts = context.Cts
+        };
+
         var shouldContinue = await context.AgentExecution.ExecuteCodeGenerationAsync(
-            context.Run, context.Config, context.AgentProvider,
-            context.Issue!, context.ParsedIssue!,
-            context.Cts,
-            context.TransitionTo,
-            context.EmitOutputLine, context.NotifyChange,
-            context.UpdateFileChangeStats,
-            context.IssueOps,
-            context.AddRunToHistory, ct,
-            promptOverride: reworkPromptOverride);
+            phaseContext, ct, promptOverride: reworkPromptOverride);
 
         return shouldContinue ? StepResult.Continue : StepResult.Stop;
     }

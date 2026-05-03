@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Moq;

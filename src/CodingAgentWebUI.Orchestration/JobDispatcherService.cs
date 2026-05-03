@@ -3,7 +3,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Services;
+namespace CodingAgentWebUI.Orchestration;
 
 /// <summary>
 /// Pending job awaiting dispatch to an available agent.
