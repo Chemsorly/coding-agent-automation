@@ -40,6 +40,12 @@ builder.Services.AddSingleton<IQualityGateExecutor>(sp => new QualityGateOrchest
     sp.GetRequiredService<IQualityGateValidator>(),
     new PullRequestOrchestrator(Serilog.Log.Logger),
     Serilog.Log.Logger));
+// Pipeline — Lifecycle Service (owns run state, events, transitions, cancellation)
+builder.Services.AddSingleton(sp => new PipelineRunLifecycleService(
+    sp.GetRequiredService<IPipelineRunHistoryService>(),
+    sp.GetRequiredService<OrchestratorRunService>(),
+    Serilog.Log.Logger));
+
 builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
     sp.GetRequiredService<IConfigurationStore>(),
     sp.GetRequiredService<IProviderFactory>(),
@@ -49,7 +55,8 @@ builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
     Serilog.Log.Logger,
     sp.GetRequiredService<IBrainUpdateService>(),
     sp.GetRequiredService<IPipelineRunHistoryService>(),
-    sp.GetRequiredService<OrchestratorRunService>()));
+    sp.GetRequiredService<OrchestratorRunService>(),
+    sp.GetRequiredService<PipelineRunLifecycleService>()));
 
 // Pipeline — Loop Service (background service, starts dormant)
 builder.Services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(
@@ -162,12 +169,13 @@ var app = builder.Build();
 var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
 lifetime.ApplicationStopping.Register(() =>
 {
+    var lifecycle = app.Services.GetRequiredService<PipelineRunLifecycleService>();
     var pipeline = app.Services.GetRequiredService<PipelineOrchestrationService>();
-    if (pipeline.IsRunning)
-    {
-        pipeline.CancelPipelineAsync().GetAwaiter().GetResult();
-    }
 
+    if (lifecycle.IsRunning)
+        lifecycle.CancelPipelineAsync().GetAwaiter().GetResult();
+
+    // Label swaps require providers → stays on orchestration
     pipeline.CancelActiveAgentRunsAsync().GetAwaiter().GetResult();
 });
 

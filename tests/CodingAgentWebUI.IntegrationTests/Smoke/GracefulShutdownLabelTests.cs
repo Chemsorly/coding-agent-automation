@@ -87,7 +87,8 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             IssueProviderConfigId = "issue-provider-1",
             RepoProviderConfigId = "repo-1",
             StartedAt = DateTime.UtcNow,
-            CurrentStep = PipelineStep.GeneratingCode
+            CurrentStep = PipelineStep.GeneratingCode,
+            AgentId = "test-agent-1"
         };
         runService.AddRun(run);
 

@@ -322,15 +322,25 @@ public class AgentCodingPageComponentTests : BunitContext
 
     private void SetActiveRun(PipelineRun run)
     {
-        var prop = typeof(PipelineOrchestrationService).GetProperty("ActiveRun")!;
-        prop.SetValue(_pipelineService, run);
+        // ActiveRun delegates to lifecycle service — set via lifecycle's public setter
+        var lifecycleField = typeof(PipelineOrchestrationService)
+            .GetField("_lifecycle", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var lifecycle = lifecycleField?.GetValue(_pipelineService) as PipelineRunLifecycleService;
+        if (lifecycle != null)
+            lifecycle.ActiveRun = run;
     }
 
-    private static void RaiseEvent(object target, string eventName, params object[] args)
+    private void RaiseEvent(object target, string eventName, params object[] args)
     {
-        var field = typeof(PipelineOrchestrationService)
+        // Events now live on the lifecycle service (accessed via _lifecycle field on orchestration)
+        var lifecycleField = typeof(PipelineOrchestrationService)
+            .GetField("_lifecycle", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var lifecycle = lifecycleField?.GetValue(target);
+        if (lifecycle == null) return;
+
+        var field = lifecycle.GetType()
             .GetField(eventName, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        var del = field?.GetValue(target) as Delegate;
+        var del = field?.GetValue(lifecycle) as Delegate;
         del?.DynamicInvoke(args.Length > 0 ? args : []);
     }
 }

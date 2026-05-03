@@ -3343,4 +3343,110 @@ public class PipelineOrchestrationServiceTests
         // Code generation agent should NOT be called — only the cleanup agent
         capturedPrompts.Should().AllSatisfy(p => p.Should().Contain("Pre-Pull Request Cleanup"));
     }
+
+    // ── Integration tests: OrchestratorCallbacks routing to lifecycle service ──
+
+    [Fact]
+    public async Task OrchestratorCallbacks_TransitionTo_RoutesToLifecycleService()
+    {
+        // TransitionTo is routed through lifecycle — verify by observing OnChange fires
+        var transitions = new List<PipelineStep>();
+        _service.OnChange += () =>
+        {
+            if (_service.ActiveRun != null)
+                transitions.Add(_service.ActiveRun.CurrentStep);
+        };
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // TransitionTo was called multiple times during pipeline execution
+        transitions.Should().NotBeEmpty();
+        transitions.Should().Contain(PipelineStep.CloningRepository);
+    }
+
+    [Fact]
+    public async Task OrchestratorCallbacks_EmitOutputLine_RoutesToLifecycleService()
+    {
+        var outputLines = new List<string>();
+        _service.OnOutputLine += line => outputLines.Add(line);
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // EmitOutputLine is called during pipeline execution
+        outputLines.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task OrchestratorCallbacks_NotifyChange_RoutesToLifecycleService()
+    {
+        var changeCount = 0;
+        _service.OnChange += () => changeCount++;
+
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // NotifyChange fires on every TransitionTo call
+        changeCount.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task OrchestratorCallbacks_AddRunToHistory_RoutesToLifecycleService()
+    {
+        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // AddRunToHistory is called when pipeline completes
+        _service.GetRunHistory().Should().HaveCount(1);
+        _service.GetRunHistory()[0].FinalStep.Should().Be(PipelineStep.Completed);
+    }
+
+    [Fact]
+    public async Task CancelActiveAgentRunsAsync_CallsMarkAgentRunsCancelled_ThenPerformsLabelSwaps()
+    {
+        // Set up a service with a run service that has active agent runs
+        var mockRunService = new Mock<IOrchestratorRunService>();
+        var agentRun = new PipelineRun
+        {
+            RunId = "agent-run-1",
+            IssueIdentifier = "99",
+            IssueTitle = "Agent Issue",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-1",
+            CurrentStep = PipelineStep.GeneratingCode,
+            HighWaterMark = PipelineStep.GeneratingCode,
+            StartedAt = DateTime.UtcNow,
+            AgentId = "agent-worker-1"
+        };
+        mockRunService.Setup(r => r.GetActiveRuns()).Returns(new List<PipelineRun> { agentRun }.AsReadOnly());
+        mockRunService.Setup(r => r.HasActiveRuns).Returns(true);
+
+        var mockHistoryService = new Mock<IPipelineRunHistoryService>();
+        var lifecycle = new PipelineRunLifecycleService(
+            mockHistoryService.Object, mockRunService.Object, _mockLogger.Object);
+
+        var service = new PipelineOrchestrationService(
+            _mockConfigStore.Object,
+            _mockFactory.Object,
+            new IssueDescriptionParser(),
+            new AgentExecutionOrchestrator(_mockLogger.Object),
+            new QualityGateOrchestrator(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
+            _mockLogger.Object,
+            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+            historyService: mockHistoryService.Object,
+            runService: mockRunService.Object,
+            lifecycle: lifecycle);
+
+        await service.CancelActiveAgentRunsAsync();
+
+        // Verify state changes happened via lifecycle
+        agentRun.CurrentStep.Should().Be(PipelineStep.Cancelled);
+        agentRun.CompletedAt.Should().NotBeNull();
+        mockHistoryService.Verify(h => h.AddRunToHistory(agentRun), Times.Once);
+
+        // Verify label swap was attempted (RemoveLabelAsync + AddLabelAsync)
+        _mockIssueProvider.Verify(
+            p => p.RemoveLabelAsync("99", It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.AtLeastOnce);
+        _mockIssueProvider.Verify(
+            p => p.AddLabelAsync("99", "agent:cancelled", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
 }

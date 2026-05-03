@@ -59,6 +59,8 @@ public sealed class ResettableOrchestratorRunService : OrchestratorRunService
 /// </summary>
 public sealed class ResettablePipelineOrchestrationService : PipelineOrchestrationService
 {
+    private readonly PipelineRunLifecycleService? _lifecycleForReset;
+
     public ResettablePipelineOrchestrationService(
         IConfigurationStore configStore,
         IProviderFactory providerFactory,
@@ -68,16 +70,25 @@ public sealed class ResettablePipelineOrchestrationService : PipelineOrchestrati
         ILogger logger,
         IBrainUpdateService? brainUpdateService = null,
         IPipelineRunHistoryService? historyService = null,
-        IOrchestratorRunService? runService = null)
+        IOrchestratorRunService? runService = null,
+        PipelineRunLifecycleService? lifecycle = null)
         : base(configStore, providerFactory, issueParser, agentExecution,
-               qualityGates, logger, brainUpdateService, historyService, runService) { }
+               qualityGates, logger, brainUpdateService, historyService, runService, lifecycle)
+    {
+        _lifecycleForReset = lifecycle;
+    }
 
     public void Reset()
     {
-        _cancellationTokenSource?.Cancel();
-        _cancellationTokenSource?.Dispose();
-        _cancellationTokenSource = null;
-        ActiveRun = null;
+        // Lifecycle state reset (CTS, ActiveRun, events) is now on the lifecycle service
+        if (_lifecycleForReset != null)
+        {
+            _lifecycleForReset.CancellationTokenSource?.Cancel();
+            _lifecycleForReset.CancellationTokenSource?.Dispose();
+            _lifecycleForReset.ActiveRun = null;
+        }
+
+        // Provider field resets remain on orchestration
         _activeAgentProvider = null;
         _activeRepoProvider = null;
         _activeBrainProvider = null;
@@ -87,6 +98,5 @@ public sealed class ResettablePipelineOrchestrationService : PipelineOrchestrati
         _activeIssue = null;
         _activeParsedIssue = null;
         _activeIssueComments = null;
-        ClearEventSubscribers();
     }
 }
