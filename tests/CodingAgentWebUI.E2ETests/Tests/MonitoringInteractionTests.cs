@@ -220,7 +220,9 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await Page.ClickAsync("tr.monitoring-row-clickable");
         await Page.WaitForSelectorAsync(".modal-overlay", new() { Timeout = 5_000 });
 
-        // Act: press Escape
+        // Act: focus the modal overlay (tabindex="-1" makes it focusable) then press Escape
+        await Page.FocusAsync(".modal-overlay");
+        await Page.WaitForTimeoutAsync(200);
         await Page.Keyboard.PressAsync("Escape");
         await Page.WaitForTimeoutAsync(500);
 

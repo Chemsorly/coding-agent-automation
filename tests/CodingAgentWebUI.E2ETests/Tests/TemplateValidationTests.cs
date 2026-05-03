@@ -203,9 +203,14 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
         await Page.ClickAsync(".confirm-buttons button.btn-delete:has-text('Remove')");
         await Page.WaitForTimeoutAsync(1000);
 
-        // Assert: template is removed from the table
-        var tableTextAfter = await Page.TextContentAsync(".monitoring-table");
-        Assert.DoesNotContain("Template To Remove", tableTextAfter);
+        // Assert: template is removed — either the table no longer contains it, or the table is gone entirely (0 templates)
+        var tableExists = await Page.Locator(".monitoring-table").CountAsync();
+        if (tableExists > 0)
+        {
+            var tableTextAfter = await Page.TextContentAsync(".monitoring-table");
+            Assert.DoesNotContain("Template To Remove", tableTextAfter);
+        }
+        // If table doesn't exist, the template was the only one and removal succeeded
 
         // Assert: success message appears
         var successMsg = await Page.QuerySelectorAsync(".settings-status.status-success");
