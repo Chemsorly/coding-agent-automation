@@ -571,10 +571,12 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
             await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
 
-            // Remove all existing agent labels, then add the new one
+            // Remove all existing agent labels, then add the new one (if non-empty)
             foreach (var label in AgentLabels.All)
                 await issueProvider.RemoveLabelAsync(run.IssueIdentifier, label, CancellationToken.None);
-            await issueProvider.AddLabelAsync(run.IssueIdentifier, newLabel, CancellationToken.None);
+
+            if (!string.IsNullOrEmpty(newLabel))
+                await issueProvider.AddLabelAsync(run.IssueIdentifier, newLabel, CancellationToken.None);
         }
         catch (Exception ex)
         {
