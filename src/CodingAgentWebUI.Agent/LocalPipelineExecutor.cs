@@ -517,7 +517,7 @@ public sealed class LocalPipelineExecutor
         public Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
             => issueOps.SwapLabelAsync(issueIdentifier, label, ct);
         public Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
-            => issueOps.SwapLabelAsync(issueIdentifier, string.Empty, ct);
+            => issueOps.SwapLabelAsync(issueIdentifier, string.Empty, ct);  // Hub handles empty label as remove-only
         public Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
             reportQualityGateResult(report);
