@@ -83,7 +83,7 @@ public class PipelineRunHighWaterMarkTests
     {
         // QG fails → retry → QG fails again → draft PR
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), MaxRetries = 1 });
+            .ReturnsAsync(new PipelineConfiguration { Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }, Retry = new RetryConfiguration { MaxRetries = 1 } });
 
         _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport

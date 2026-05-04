@@ -309,8 +309,11 @@ public class SettingsPageTests
         // Arrange
         var config = new PipelineConfiguration
         {
-            MaxRetries = 5,
-            AgentTimeout = TimeSpan.FromMinutes(60),
+            Retry = new RetryConfiguration
+            {
+                MaxRetries = 5,
+                AgentTimeout = TimeSpan.FromMinutes(60),
+            }
         };
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(config);
@@ -319,8 +322,8 @@ public class SettingsPageTests
         var loaded = await _mockStore.Object.LoadPipelineConfigAsync(CancellationToken.None);
 
         // Assert — verify the page would display these values
-        loaded.MaxRetries.Should().Be(5);
-        loaded.AgentTimeout.TotalMinutes.Should().Be(60);
+        loaded.Retry.MaxRetries.Should().Be(5);
+        loaded.Retry.AgentTimeout.TotalMinutes.Should().Be(60);
     }
 
     [Fact]
@@ -336,15 +339,18 @@ public class SettingsPageTests
         int agentTimeoutMinutes = 45;
         var config = new PipelineConfiguration
         {
-            MaxRetries = 7,
-            AgentTimeout = TimeSpan.FromMinutes(agentTimeoutMinutes),
+            Retry = new RetryConfiguration
+            {
+                MaxRetries = 7,
+                AgentTimeout = TimeSpan.FromMinutes(agentTimeoutMinutes),
+            }
         };
         await _mockStore.Object.SavePipelineConfigAsync(config, CancellationToken.None);
 
         // Assert
         savedConfig.Should().NotBeNull();
-        savedConfig!.MaxRetries.Should().Be(7);
-        savedConfig.AgentTimeout.Should().Be(TimeSpan.FromMinutes(45));
+        savedConfig!.Retry.MaxRetries.Should().Be(7);
+        savedConfig.Retry.AgentTimeout.Should().Be(TimeSpan.FromMinutes(45));
     }
 
     [Fact]
@@ -362,10 +368,10 @@ public class SettingsPageTests
 
         // Assert — verify defaults match design doc
         savedConfig.Should().NotBeNull();
-        savedConfig!.MaxRetries.Should().Be(3);
-        savedConfig.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30));
-        savedConfig.BlacklistedPaths.Should().BeEquivalentTo(new[] { ".kiro", ".github", ".brain" });
-        savedConfig.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
+        savedConfig!.Retry.MaxRetries.Should().Be(3);
+        savedConfig.Retry.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30));
+        savedConfig.Commit.BlacklistedPaths.Should().BeEquivalentTo(new[] { ".kiro", ".github", ".brain" });
+        savedConfig.Commit.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
         savedConfig.CodeReview.Enabled.Should().BeTrue();
         savedConfig.CodeReview.FixPrompt.Should().BeNull();
         savedConfig.AnalysisPrompt.Should().Be(PipelineConfiguration.DefaultAnalysisPrompt);
@@ -386,8 +392,11 @@ public class SettingsPageTests
         // Act — save
         var original = new PipelineConfiguration
         {
-            MaxRetries = 10,
-            AgentTimeout = TimeSpan.FromMinutes(120),
+            Retry = new RetryConfiguration
+            {
+                MaxRetries = 10,
+                AgentTimeout = TimeSpan.FromMinutes(120),
+            },
             AnalysisPrompt = "Custom analysis",
             ImplementationPrompt = "Custom implementation"
         };
@@ -397,8 +406,8 @@ public class SettingsPageTests
         var loaded = await _mockStore.Object.LoadPipelineConfigAsync(CancellationToken.None);
 
         // Assert
-        loaded.MaxRetries.Should().Be(10);
-        loaded.AgentTimeout.Should().Be(TimeSpan.FromMinutes(120));
+        loaded.Retry.MaxRetries.Should().Be(10);
+        loaded.Retry.AgentTimeout.Should().Be(TimeSpan.FromMinutes(120));
         loaded.AnalysisPrompt.Should().Be("Custom analysis");
         loaded.ImplementationPrompt.Should().Be("Custom implementation");
     }
@@ -636,19 +645,19 @@ public class SettingsPageTests
 
             // Save General section (MaxRetries=7, AgentTimeout=45min)
             await store.UpdatePipelineConfigAsync(
-                c => c with { MaxRetries = 7, AgentTimeout = TimeSpan.FromMinutes(45) },
+                c => c with { Retry = c.Retry with { MaxRetries = 7, AgentTimeout = TimeSpan.FromMinutes(45) } },
                 CancellationToken.None);
 
             // Save Security section (BrainReadOnly=true)
             await store.UpdatePipelineConfigAsync(
-                c => c with { BrainReadOnly = true },
+                c => c with { Agent = c.Agent with { BrainReadOnly = true } },
                 CancellationToken.None);
 
             // Verify General values are preserved
             var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
-            loaded.MaxRetries.Should().Be(7);
-            loaded.AgentTimeout.Should().Be(TimeSpan.FromMinutes(45));
-            loaded.BrainReadOnly.Should().BeTrue();
+            loaded.Retry.MaxRetries.Should().Be(7);
+            loaded.Retry.AgentTimeout.Should().Be(TimeSpan.FromMinutes(45));
+            loaded.Agent.BrainReadOnly.Should().BeTrue();
         }
         finally
         {
@@ -669,28 +678,31 @@ public class SettingsPageTests
             await store.SavePipelineConfigAsync(new PipelineConfiguration
             {
                 IssuePageSize = 50,
-                WorkspaceBaseDirectory = "/custom/workspaces",
-                StallWarningInterval = TimeSpan.FromMinutes(5),
-                StallPollInterval = TimeSpan.FromSeconds(10),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = "/custom/workspaces" },
+                Retry = new RetryConfiguration
+                {
+                    StallWarningInterval = TimeSpan.FromMinutes(5),
+                    StallPollInterval = TimeSpan.FromSeconds(10),
+                },
                 LastUsedProviderIds = new Dictionary<string, string> { ["issue"] = "test-id" },
-                ClosedLoopMaxPagesToFetch = 20
+                ClosedLoop = new ClosedLoopConfiguration { MaxPagesToFetch = 20 }
             }, CancellationToken.None);
 
             // Save any sub-section (General)
             await store.UpdatePipelineConfigAsync(
-                c => c with { MaxRetries = 5 },
+                c => c with { Retry = c.Retry with { MaxRetries = 5 } },
                 CancellationToken.None);
 
             // Verify all non-UI fields survive
             var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
             loaded.IssuePageSize.Should().Be(50);
-            loaded.WorkspaceBaseDirectory.Should().Be("/custom/workspaces");
-            loaded.StallWarningInterval.Should().Be(TimeSpan.FromMinutes(5));
-            loaded.StallPollInterval.Should().Be(TimeSpan.FromSeconds(10));
+            loaded.Workspace.WorkspaceBaseDirectory.Should().Be("/custom/workspaces");
+            loaded.Retry.StallWarningInterval.Should().Be(TimeSpan.FromMinutes(5));
+            loaded.Retry.StallPollInterval.Should().Be(TimeSpan.FromSeconds(10));
             loaded.LastUsedProviderIds.Should().ContainKey("issue");
-            loaded.ClosedLoopMaxPagesToFetch.Should().Be(20);
+            loaded.ClosedLoop.MaxPagesToFetch.Should().Be(20);
             // Also verify the saved field
-            loaded.MaxRetries.Should().Be(5);
+            loaded.Retry.MaxRetries.Should().Be(5);
         }
         finally
         {
@@ -713,7 +725,7 @@ public class SettingsPageTests
 
             // UpdatePipelineConfigAsync should throw instead of silently overwriting
             var act = () => store.UpdatePipelineConfigAsync(
-                c => c with { MaxRetries = 5 },
+                c => c with { Retry = c.Retry with { MaxRetries = 5 } },
                 CancellationToken.None);
 
             await act.Should().ThrowAsync<InvalidOperationException>()

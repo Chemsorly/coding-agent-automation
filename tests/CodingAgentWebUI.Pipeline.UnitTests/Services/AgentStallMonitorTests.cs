@@ -34,8 +34,7 @@ public class AgentStallMonitorTests
     {
         var config = new PipelineConfiguration
         {
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1)
+            Retry = new RetryConfiguration { StallPollInterval = TimeSpan.FromMilliseconds(50), StallWarningInterval = TimeSpan.FromHours(1) }
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
@@ -70,9 +69,7 @@ public class AgentStallMonitorTests
     {
         var config = new PipelineConfiguration
         {
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromMilliseconds(50),
-            AgentTimeout = TimeSpan.FromMinutes(30)
+            Retry = new RetryConfiguration { StallPollInterval = TimeSpan.FromMilliseconds(50), StallWarningInterval = TimeSpan.FromMilliseconds(50), AgentTimeout = TimeSpan.FromMinutes(30) }
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
@@ -110,9 +107,7 @@ public class AgentStallMonitorTests
     {
         var config = new PipelineConfiguration
         {
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1),
-            AgentTimeout = TimeSpan.FromMilliseconds(100)
+            Retry = new RetryConfiguration { StallPollInterval = TimeSpan.FromMilliseconds(50), StallWarningInterval = TimeSpan.FromHours(1), AgentTimeout = TimeSpan.FromMilliseconds(100) }
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
@@ -151,8 +146,7 @@ public class AgentStallMonitorTests
     {
         var config = new PipelineConfiguration
         {
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1)
+            Retry = new RetryConfiguration { StallPollInterval = TimeSpan.FromMilliseconds(50), StallWarningInterval = TimeSpan.FromHours(1) }
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
@@ -175,8 +169,7 @@ public class AgentStallMonitorTests
     {
         var config = new PipelineConfiguration
         {
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1)
+            Retry = new RetryConfiguration { StallPollInterval = TimeSpan.FromMilliseconds(50), StallWarningInterval = TimeSpan.FromHours(1) }
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())

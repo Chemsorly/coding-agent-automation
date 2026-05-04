@@ -109,7 +109,7 @@ public class IntegrationTestBase : IDisposable
     protected async Task<PipelineOrchestrationService> CreateServiceWithPersistedConfigAsync(
         PipelineConfiguration? config = null)
     {
-        var pipelineConfig = config ?? new PipelineConfiguration { WorkspaceBaseDirectory = WorkspaceBase };
+        var pipelineConfig = config ?? new PipelineConfiguration { Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = WorkspaceBase } };
         await ConfigStore.SavePipelineConfigAsync(pipelineConfig, CancellationToken.None);
 
         await SaveProviderConfigsAsync();

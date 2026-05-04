@@ -72,7 +72,7 @@ internal partial class AgentExecutionOrchestrator
             var analysisFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisFilePath);
             var assessmentFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisAssessmentFilePath);
             AnalysisAssessment? assessment = null;
-            var maxRetries = Math.Max(0, config.MaxAnalysisRetries);
+            var maxRetries = Math.Max(0, config.Retry.MaxAnalysisRetries);
 
             for (int attempt = 0; attempt <= maxRetries; attempt++)
             {
@@ -97,7 +97,7 @@ internal partial class AgentExecutionOrchestrator
                         {
                             Prompt = analysisPrompt,
                             WorkspacePath = run.WorkspacePath!,
-                            Timeout = config.AgentTimeout,
+                            Timeout = config.Retry.AgentTimeout,
                             UseResume = true
                         },
                         run, config, "Analysis agent", context.Callbacks.NotifyChange, _logger, ct,

@@ -88,7 +88,7 @@ public class AgentCodingPageComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = new List<PipelineJobTemplate>
                 {
                     new() { Id = "t-1", Name = "DotNet Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true }
@@ -167,7 +167,7 @@ public class AgentCodingPageComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = new List<PipelineJobTemplate>()
             });
 
@@ -182,7 +182,7 @@ public class AgentCodingPageComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = new List<PipelineJobTemplate>()
             });
 
@@ -244,7 +244,7 @@ public class AgentCodingPageComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = new List<PipelineJobTemplate>
                 {
                     new() { Id = "t-1", Name = "Bad Template", IssueProviderId = "nonexistent", RepoProviderId = "rp-1", Enabled = true }

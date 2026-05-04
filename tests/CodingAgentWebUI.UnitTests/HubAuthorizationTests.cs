@@ -135,7 +135,7 @@ public class HubAuthorizationTests
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                AgentDisconnectGracePeriod = TimeSpan.Zero // Immediate expiry for testing
+                Agent = new AgentConfiguration { AgentDisconnectGracePeriod = TimeSpan.Zero } // Immediate expiry for testing
             });
 
         var monitor = CreateMonitor(registry, runService, mockConfigStore);
@@ -164,7 +164,7 @@ public class HubAuthorizationTests
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                AgentDisconnectGracePeriod = TimeSpan.FromMinutes(5)
+                Agent = new AgentConfiguration { AgentDisconnectGracePeriod = TimeSpan.FromMinutes(5) }
             });
 
         var monitor = CreateMonitor(registry, runService, mockConfigStore);

@@ -220,7 +220,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             _lifecycle.ActiveRun = run;
             _logger.Information("Pipeline {RunId} using model {Model}", run.RunId, configuredModel);
             _activePipelineProvider = null;
-            if (_activeConfig.ExternalCiEnabled)
+            if (_activeConfig.ExternalCi.Enabled)
             {
                 ProviderConfig? pipelineProviderConfig = null;
                 if (!string.IsNullOrEmpty(pipelineProviderId))
@@ -457,7 +457,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 _activeIssueComments, _activeConfig!, ct, line => _lifecycle.EmitOutputLine(line),
                 isRework: run.LinkedPullRequest != null);
 
-            if (prUrl == null && _activeConfig?.BlacklistMode == BlacklistMode.Fail
+            if (prUrl == null && _activeConfig?.Commit.BlacklistMode == BlacklistMode.Fail
                 && run.BlacklistedFilesDetected.Count > 0)
             { await FailRunAsync(run, $"Blacklisted files detected: {string.Join(", ", run.BlacklistedFilesDetected)}. The agent modified protected paths."); return; }
 
@@ -473,7 +473,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             else
                 await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Done, ct);
 
-            if (!isDraft && _activeBrainProvider != null && !_activeConfig!.BrainReadOnly)
+            if (!isDraft && _activeBrainProvider != null && !_activeConfig!.Agent.BrainReadOnly)
             {
                 // Reflection step: ask the agent to review the entire run and enrich .brain/ knowledge
                 _lifecycle.TransitionTo(run, PipelineStep.ReflectingOnRun);
@@ -489,7 +489,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                         {
                             Prompt = reflectionPrompt,
                             WorkspacePath = run.WorkspacePath!,
-                            Timeout = _activeConfig.AgentTimeout,
+                            Timeout = _activeConfig.Retry.AgentTimeout,
                             UseResume = true
                         },
                         ct,
@@ -507,7 +507,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 }
 
                 _lifecycle.TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
-                try { await _brainSync.SyncPostRunAsync(run, _activeBrainProvider, ct, line => _lifecycle.EmitOutputLine(line), _activeConfig!.BrainPushMaxRetries); }
+                try { await _brainSync.SyncPostRunAsync(run, _activeBrainProvider, ct, line => _lifecycle.EmitOutputLine(line), _activeConfig!.Agent.BrainPushMaxRetries); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 { _logger.Warning(ex, "Pipeline {RunId} brain post-run sync failed", run.RunId); run.BrainUpdatesPushed = false; }
             }
@@ -522,7 +522,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 _lifecycle.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
 
             if (finalStep == PipelineStep.Completed)
-                _historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig!.WorkspaceBaseDirectory);
+                _historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig!.Workspace.WorkspaceBaseDirectory);
             _logger.Information("Pipeline {RunId} {Outcome} in {Duration}. Retries: {RetryCount}. PR: {PullRequestUrl}",
                 run.RunId, finalStep, run.CompletedAt!.Value - run.StartedAt, run.RetryCount, prUrl);
         }

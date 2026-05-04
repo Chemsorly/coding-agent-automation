@@ -79,8 +79,8 @@ public class PipelineLoopPropertyTests
         var originalConfig = new PipelineConfiguration
         {
             PipelineJobTemplates = templates,
-            ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(50) },
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }
         };
 
         var configCallCount = 0;
@@ -137,8 +137,8 @@ public class PipelineLoopPropertyTests
         var config = new PipelineConfiguration
         {
             PipelineJobTemplates = templates,
-            ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(50) },
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -189,8 +189,8 @@ public class PipelineLoopPropertyTests
         var config = new PipelineConfiguration
         {
             PipelineJobTemplates = templates,
-            ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(50) },
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -256,8 +256,8 @@ public class PipelineLoopPropertyTests
         var config = new PipelineConfiguration
         {
             PipelineJobTemplates = templates,
-            ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(50) },
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -327,8 +327,8 @@ public class PipelineLoopPropertyTests
         var config = new PipelineConfiguration
         {
             PipelineJobTemplates = templates,
-            ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(50) },
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }
         };
 
         var mockStore = new Mock<IConfigurationStore>();

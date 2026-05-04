@@ -11,9 +11,9 @@ public class PipelineConfigurationValidationTests
     [InlineData(-100)]
     public void ClosedLoopMaxConsecutivePollFailures_RejectsValuesLessThanOne(int value)
     {
-        var act = () => new PipelineConfiguration { ClosedLoopMaxConsecutivePollFailures = value };
+        var act = () => new ClosedLoopConfiguration { MaxConsecutivePollFailures = value };
         act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithParameterName("ClosedLoopMaxConsecutivePollFailures");
+            .WithParameterName("MaxConsecutivePollFailures");
     }
 
     [Theory]
@@ -22,8 +22,8 @@ public class PipelineConfigurationValidationTests
     [InlineData(100)]
     public void ClosedLoopMaxConsecutivePollFailures_AcceptsValidValues(int value)
     {
-        var config = new PipelineConfiguration { ClosedLoopMaxConsecutivePollFailures = value };
-        config.ClosedLoopMaxConsecutivePollFailures.Should().Be(value);
+        var config = new ClosedLoopConfiguration { MaxConsecutivePollFailures = value };
+        config.MaxConsecutivePollFailures.Should().Be(value);
     }
 
     [Theory]
@@ -32,9 +32,9 @@ public class PipelineConfigurationValidationTests
     [InlineData(-100)]
     public void ClosedLoopMaxPagesToFetch_RejectsValuesLessThanOne(int value)
     {
-        var act = () => new PipelineConfiguration { ClosedLoopMaxPagesToFetch = value };
+        var act = () => new ClosedLoopConfiguration { MaxPagesToFetch = value };
         act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithParameterName("ClosedLoopMaxPagesToFetch");
+            .WithParameterName("MaxPagesToFetch");
     }
 
     [Theory]
@@ -43,8 +43,8 @@ public class PipelineConfigurationValidationTests
     [InlineData(100)]
     public void ClosedLoopMaxPagesToFetch_AcceptsValidValues(int value)
     {
-        var config = new PipelineConfiguration { ClosedLoopMaxPagesToFetch = value };
-        config.ClosedLoopMaxPagesToFetch.Should().Be(value);
+        var config = new ClosedLoopConfiguration { MaxPagesToFetch = value };
+        config.MaxPagesToFetch.Should().Be(value);
     }
 }
 

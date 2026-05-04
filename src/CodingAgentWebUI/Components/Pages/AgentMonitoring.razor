@@ -454,7 +454,7 @@
         try
         {
             var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-            _maxRetries = config.MaxRetries;
+            _maxRetries = config.Retry.MaxRetries;
         }
         catch (Exception ex)
         {

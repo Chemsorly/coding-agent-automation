@@ -139,10 +139,10 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null)
     {
         ArgumentNullException.ThrowIfNull(config);
-        if (config.FailedWorkspaceRetentionDays < 0)
+        if (config.Workspace.FailedWorkspaceRetentionDays < 0)
             return;
 
-        var cutoff = DateTime.UtcNow.AddDays(-config.FailedWorkspaceRetentionDays);
+        var cutoff = DateTime.UtcNow.AddDays(-config.Workspace.FailedWorkspaceRetentionDays);
 
         foreach (var summary in _runHistory)
         {
@@ -155,8 +155,8 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
             if (activeRunId != null && activeRunId == summary.RunId)
                 continue;
 
-            var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, summary.RunId);
-            TryDeleteWorkspace(workspacePath, summary.RunId, config.WorkspaceBaseDirectory);
+            var workspacePath = Path.Combine(config.Workspace.WorkspaceBaseDirectory, summary.RunId);
+            TryDeleteWorkspace(workspacePath, summary.RunId, config.Workspace.WorkspaceBaseDirectory);
         }
     }
 }

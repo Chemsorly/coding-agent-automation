@@ -50,10 +50,10 @@
     protected override async Task OnInitializedAsync()
     {
         var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        _closedLoopPollIntervalSeconds = (int)config.ClosedLoopPollInterval.TotalSeconds;
-        _closedLoopMaxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
-        _closedLoopMaxConsecutivePollFailures = config.ClosedLoopMaxConsecutivePollFailures;
-        _closedLoopMaxBackoffIntervalSeconds = (int)config.ClosedLoopMaxBackoffInterval.TotalSeconds;
+        _closedLoopPollIntervalSeconds = (int)config.ClosedLoop.PollInterval.TotalSeconds;
+        _closedLoopMaxRunsPerCycle = config.ClosedLoop.MaxRunsPerCycle;
+        _closedLoopMaxConsecutivePollFailures = config.ClosedLoop.MaxConsecutivePollFailures;
+        _closedLoopMaxBackoffIntervalSeconds = (int)config.ClosedLoop.MaxBackoffInterval.TotalSeconds;
     }
 
     private async Task SaveAsync()
@@ -63,10 +63,13 @@
             await ConfigStore.UpdatePipelineConfigAsync(
                 current => current with
                 {
-                    ClosedLoopPollInterval = TimeSpan.FromSeconds(_closedLoopPollIntervalSeconds),
-                    ClosedLoopMaxRunsPerCycle = _closedLoopMaxRunsPerCycle,
-                    ClosedLoopMaxConsecutivePollFailures = _closedLoopMaxConsecutivePollFailures,
-                    ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(_closedLoopMaxBackoffIntervalSeconds)
+                    ClosedLoop = current.ClosedLoop with
+                    {
+                        PollInterval = TimeSpan.FromSeconds(_closedLoopPollIntervalSeconds),
+                        MaxRunsPerCycle = _closedLoopMaxRunsPerCycle,
+                        MaxConsecutivePollFailures = _closedLoopMaxConsecutivePollFailures,
+                        MaxBackoffInterval = TimeSpan.FromSeconds(_closedLoopMaxBackoffIntervalSeconds)
+                    }
                 },
                 CancellationToken.None);
             await OnShowStatus.InvokeAsync(("Pipeline loop settings saved.", false));

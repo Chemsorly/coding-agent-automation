@@ -16,7 +16,7 @@ public static class PipelineJsonOptions
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
-        Converters = { new TimeSpanJsonConverter(), new JsonStringEnumConverter() }
+        Converters = { new PipelineConfigurationJsonConverter(), new TimeSpanJsonConverter(), new JsonStringEnumConverter() }
     };
 
     /// <summary>

@@ -78,7 +78,7 @@ internal static class AgentStallMonitor
         Serilog.ILogger logger,
         CancellationToken stallToken)
     {
-        var killTimeout = config.AgentTimeout;
+        var killTimeout = config.Retry.AgentTimeout;
 
         return Task.Run(async () =>
         {
@@ -88,7 +88,7 @@ internal static class AgentStallMonitor
 
                 while (!stallToken.IsCancellationRequested)
                 {
-                    await Task.Delay(config.StallPollInterval, stallToken);
+                    await Task.Delay(config.Retry.StallPollInterval, stallToken);
 
                     AgentHealthStatus health;
                     try { health = agentProvider.GetHealthStatus(); }
@@ -128,12 +128,12 @@ internal static class AgentStallMonitor
 
                         // Silence warning
                         var timeSinceLastWarn = DateTime.UtcNow - lastWarnTime;
-                        if (silence >= config.StallWarningInterval && timeSinceLastWarn >= config.StallWarningInterval)
+                        if (silence >= config.Retry.StallWarningInterval && timeSinceLastWarn >= config.Retry.StallWarningInterval)
                         {
                             var elapsed = DateTime.UtcNow - run.StartedAt;
                             var msg = $"{phaseDescription} — no output for {silence.TotalMinutes:F0}m. " +
                                       $"Agent call still in progress. " +
-                                      $"Total elapsed: {elapsed:hh\\:mm\\:ss}. Timeout: {config.AgentTimeout:hh\\:mm\\:ss}.";
+                                      $"Total elapsed: {elapsed:hh\\:mm\\:ss}. Timeout: {config.Retry.AgentTimeout:hh\\:mm\\:ss}.";
                             logger.Warning("Pipeline {RunId} {StallMessage}", run.RunId, msg);
                             run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = msg });
                             onChange?.Invoke();

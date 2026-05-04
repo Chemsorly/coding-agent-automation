@@ -50,10 +50,10 @@
     protected override async Task OnInitializedAsync()
     {
         var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        _blacklistedPathsText = string.Join(", ", config.BlacklistedPaths);
-        _blacklistMode = config.BlacklistMode;
-        _failedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays;
-        _brainReadOnly = config.BrainReadOnly;
+        _blacklistedPathsText = string.Join(", ", config.Commit.BlacklistedPaths);
+        _blacklistMode = config.Commit.BlacklistMode;
+        _failedWorkspaceRetentionDays = config.Workspace.FailedWorkspaceRetentionDays;
+        _brainReadOnly = config.Agent.BrainReadOnly;
     }
 
     private async Task SaveAsync()
@@ -63,13 +63,22 @@
             await ConfigStore.UpdatePipelineConfigAsync(
                 current => current with
                 {
-                    BlacklistedPaths = _blacklistedPathsText
-                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                        .Where(s => !string.IsNullOrWhiteSpace(s))
-                        .ToArray(),
-                    BlacklistMode = _blacklistMode,
-                    FailedWorkspaceRetentionDays = _failedWorkspaceRetentionDays,
-                    BrainReadOnly = _brainReadOnly
+                    Commit = current.Commit with
+                    {
+                        BlacklistedPaths = _blacklistedPathsText
+                            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                            .Where(s => !string.IsNullOrWhiteSpace(s))
+                            .ToArray(),
+                        BlacklistMode = _blacklistMode
+                    },
+                    Workspace = current.Workspace with
+                    {
+                        FailedWorkspaceRetentionDays = _failedWorkspaceRetentionDays
+                    },
+                    Agent = current.Agent with
+                    {
+                        BrainReadOnly = _brainReadOnly
+                    }
                 },
                 CancellationToken.None);
             await OnShowStatus.InvokeAsync(("Security settings saved.", false));

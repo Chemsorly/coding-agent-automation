@@ -53,7 +53,7 @@ internal partial class QualityGateOrchestrator
 
         if (!report.Compilation.Passed || !report.Tests.Passed
             || !(report.Coverage?.Passed ?? true) || !(report.SecurityScan?.Passed ?? true)
-            || !config.ExternalCiEnabled || context.PipelineProvider == null)
+            || !config.ExternalCi.Enabled || context.PipelineProvider == null)
             return report;
 
         GateResult? ciGate = null;
@@ -63,7 +63,7 @@ internal partial class QualityGateOrchestrator
             {
                 var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, run.IssueIdentifier);
                 var blacklisted = await context.RepoProvider.CommitAllAsync(
-                    run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct);
+                    run.WorkspacePath!, commitMessage, config.Commit.BlacklistedPaths, ct);
                 if (await RecordBlacklistedFiles(run, blacklisted, config, callbacks, context.IssueOps, ct))
                     return report;
             }
@@ -81,7 +81,7 @@ internal partial class QualityGateOrchestrator
                     await context.RepoProvider.CommitAllAsync(
                         run.WorkspacePath!,
                         $"chore: trigger CI re-run for {run.IssueIdentifier} (retry {run.RetryCount})",
-                        config.BlacklistedPaths, allowEmpty: true, ct);
+                        config.Commit.BlacklistedPaths, allowEmpty: true, ct);
                 }
                 else if (!await context.RepoProvider.HasCommitsAheadAsync(run.WorkspacePath!, ct))
                 {
@@ -105,7 +105,7 @@ internal partial class QualityGateOrchestrator
 
             callbacks.EmitOutputLine("⏳ Waiting for external CI...");
             var ciStatus = await context.PipelineProvider.WaitForCompletionAsync(
-                run.BranchName!, commitSha, config.ExternalCiTimeout, ct);
+                run.BranchName!, commitSha, config.ExternalCi.Timeout, ct);
 
             var ciPassed = ciStatus.State == PipelineRunState.Passed;
             IReadOnlyDictionary<long, string>? ciLogPaths = null;
@@ -130,7 +130,7 @@ internal partial class QualityGateOrchestrator
             ciGate = new GateResult
             {
                 GateName = "External CI", Passed = false,
-                Details = $"External CI timed out after {config.ExternalCiTimeout}"
+                Details = $"External CI timed out after {config.ExternalCi.Timeout}"
             };
         }
         catch (OperationCanceledException) { throw; }
@@ -168,7 +168,7 @@ internal partial class QualityGateOrchestrator
 
         _prOrchestrator.RecordBlacklistedFiles(run, blacklisted, config);
 
-        if (config.BlacklistMode == BlacklistMode.Fail)
+        if (config.Commit.BlacklistMode == BlacklistMode.Fail)
         {
             var fileList = string.Join(", ", blacklisted);
             run.FailureReason = $"Blacklisted files detected: {fileList}. The agent modified protected paths.";

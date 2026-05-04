@@ -81,9 +81,9 @@
         _codeReviewMaxIterations = config.CodeReview.MaxIterations;
         _codeReviewPrompt = config.CodeReview.Prompt;
         _codeReviewFixPrompt = config.CodeReview.FixPrompt;
-        _externalCiEnabled = config.ExternalCiEnabled;
-        _externalCiTimeoutMinutes = (int)config.ExternalCiTimeout.TotalMinutes;
-        _externalCiPollIntervalSeconds = (int)config.ExternalCiPollInterval.TotalSeconds;
+        _externalCiEnabled = config.ExternalCi.Enabled;
+        _externalCiTimeoutMinutes = (int)config.ExternalCi.Timeout.TotalMinutes;
+        _externalCiPollIntervalSeconds = (int)config.ExternalCi.PollInterval.TotalSeconds;
     }
 
     private async Task SaveAsync()
@@ -100,9 +100,12 @@
                         Prompt = _codeReviewPrompt,
                         FixPrompt = _codeReviewFixPrompt,
                     },
-                    ExternalCiEnabled = _externalCiEnabled,
-                    ExternalCiTimeout = TimeSpan.FromMinutes(_externalCiTimeoutMinutes),
-                    ExternalCiPollInterval = TimeSpan.FromSeconds(_externalCiPollIntervalSeconds)
+                    ExternalCi = current.ExternalCi with
+                    {
+                        Enabled = _externalCiEnabled,
+                        Timeout = TimeSpan.FromMinutes(_externalCiTimeoutMinutes),
+                        PollInterval = TimeSpan.FromSeconds(_externalCiPollIntervalSeconds)
+                    }
                 },
                 CancellationToken.None);
             await OnShowStatus.InvokeAsync(("Quality gate settings saved.", false));

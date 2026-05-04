@@ -33,7 +33,7 @@ public class ProviderFactoryTests
         var expectedInterval = TimeSpan.FromSeconds(45);
         var pipelineConfig = new PipelineConfiguration
         {
-            ExternalCiPollInterval = expectedInterval
+            ExternalCi = new ExternalCiConfiguration { PollInterval = expectedInterval }
         };
 
         var factory = new ProviderFactory(pipelineConfig);
@@ -64,7 +64,7 @@ public class ProviderFactoryTests
 
         var actualInterval = (TimeSpan)pollIntervalField!.GetValue(provider)!;
         actualInterval.Should().Be(expectedInterval,
-            "ProviderFactory should pass PipelineConfiguration.ExternalCiPollInterval to the pipeline provider (REQ-4.5)");
+            "ProviderFactory should pass PipelineConfiguration.ExternalCi.PollInterval to the pipeline provider (REQ-4.5)");
     }
 
     [Fact]

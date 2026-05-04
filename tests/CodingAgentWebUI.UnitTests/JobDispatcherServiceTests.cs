@@ -450,7 +450,7 @@ public class JobDispatcherServiceTests
         };
         var pipelineConfig = new PipelineConfiguration
         {
-            DefaultRequiredAgentLabels = "kiro, agent"
+            Agent = new AgentConfiguration { DefaultRequiredAgentLabels = "kiro, agent" }
         };
 
         var labels = JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
@@ -479,7 +479,7 @@ public class JobDispatcherServiceTests
     {
         var pipelineConfig = new PipelineConfiguration
         {
-            DefaultRequiredAgentLabels = "default-label"
+            Agent = new AgentConfiguration { DefaultRequiredAgentLabels = "default-label" }
         };
 
         var labels = JobDispatcherService.ResolveRequiredLabels(null, pipelineConfig);

@@ -417,7 +417,7 @@ public class LabelMappingIntegrationTests
         };
         var pipelineConfig = new PipelineConfiguration
         {
-            DefaultRequiredAgentLabels = "kiro,dotnet"
+            Agent = new AgentConfiguration { DefaultRequiredAgentLabels = "kiro,dotnet" }
         };
 
         // Act

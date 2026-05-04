@@ -11,10 +11,9 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
 {
     private PipelineConfiguration _pipelineConfig = new()
     {
-        WorkspaceBaseDirectory = Path.Combine(Path.GetTempPath(), "e2e-workspaces"),
-        MaxRetries = 3,
-        AgentTimeout = TimeSpan.FromMinutes(2),
-        ExternalCiEnabled = false,
+        Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.Combine(Path.GetTempPath(), "e2e-workspaces") },
+        Retry = new RetryConfiguration { MaxRetries = 3, AgentTimeout = TimeSpan.FromMinutes(2) },
+        ExternalCi = new ExternalCiConfiguration { Enabled = false },
         CodeReview = new CodeReviewConfiguration { Enabled = false }
     };
 
@@ -28,10 +27,9 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     {
         _pipelineConfig = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = Path.Combine(Path.GetTempPath(), "e2e-workspaces"),
-            MaxRetries = 3,
-            AgentTimeout = TimeSpan.FromMinutes(2),
-            ExternalCiEnabled = false,
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.Combine(Path.GetTempPath(), "e2e-workspaces") },
+            Retry = new RetryConfiguration { MaxRetries = 3, AgentTimeout = TimeSpan.FromMinutes(2) },
+            ExternalCi = new ExternalCiConfiguration { Enabled = false },
             CodeReview = new CodeReviewConfiguration { Enabled = false }
         };
         _providerConfigs.Clear();

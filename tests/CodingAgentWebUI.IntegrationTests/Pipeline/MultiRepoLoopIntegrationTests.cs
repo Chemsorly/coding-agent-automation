@@ -34,10 +34,13 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
 
         var config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = WorkspaceBase,
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = WorkspaceBase },
             PipelineJobTemplates = templates,
-            ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            ClosedLoopMaxConsecutivePollFailures = 5
+            ClosedLoop = new ClosedLoopConfiguration
+            {
+                PollInterval = TimeSpan.FromMilliseconds(50),
+                MaxConsecutivePollFailures = 5
+            }
         };
         await ConfigStore.SavePipelineConfigAsync(config, CancellationToken.None);
 
@@ -150,7 +153,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         // Arrange: Start with empty templates
         var config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = WorkspaceBase,
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = WorkspaceBase },
             PipelineJobTemplates = new List<PipelineJobTemplate>()
         };
         await ConfigStore.SavePipelineConfigAsync(config, CancellationToken.None);
@@ -215,7 +218,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
 
         var config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = WorkspaceBase,
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = WorkspaceBase },
             PipelineJobTemplates = templates
         };
         await ConfigStore.SavePipelineConfigAsync(config, CancellationToken.None);

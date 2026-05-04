@@ -113,12 +113,12 @@ public sealed class AgentProviderFactory : IProviderFactory
             Func<CancellationToken, Task<string>> tokenProvider =
                 ct => _orchestratorProxy.RequestTokenRefreshAsync(ProviderKind.Pipeline, ct);
             return new GitHubActionsPipelineProvider(
-                apiUrl, tokenProvider, owner, repo, _pipelineConfig.ExternalCiPollInterval);
+                apiUrl, tokenProvider, owner, repo, _pipelineConfig.ExternalCi.PollInterval);
         }
 
         var token = GetRequiredSetting(config, "token");
         return new GitHubActionsPipelineProvider(
-            apiUrl, token, owner, repo, _pipelineConfig.ExternalCiPollInterval);
+            apiUrl, token, owner, repo, _pipelineConfig.ExternalCi.PollInterval);
     }
 
     private static string GetRequiredSetting(ProviderConfig config, string key)

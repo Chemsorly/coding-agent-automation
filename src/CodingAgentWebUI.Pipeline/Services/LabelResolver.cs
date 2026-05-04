@@ -35,9 +35,9 @@ public static class LabelResolver
         }
 
         // 2. Fall back to pipeline-level default
-        if (!string.IsNullOrWhiteSpace(pipelineConfig?.DefaultRequiredAgentLabels))
+        if (!string.IsNullOrWhiteSpace(pipelineConfig?.Agent.DefaultRequiredAgentLabels))
         {
-            return pipelineConfig.DefaultRequiredAgentLabels
+            return pipelineConfig.Agent.DefaultRequiredAgentLabels
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToList()
                 .AsReadOnly();

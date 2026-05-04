@@ -103,16 +103,22 @@ public class BrainSyncPropertyTests
                 ["repository"] = "id-2",
                 ["brain"] = "id-3"
             },
-            BlacklistedPaths = new[] { ".kiro", ".github", ".brain" },
-            BrainReadOnly = true
+            Commit = new CommitConfiguration
+            {
+                BlacklistedPaths = new[] { ".kiro", ".github", ".brain" },
+            },
+            Agent = new AgentConfiguration
+            {
+                BrainReadOnly = true
+            }
         };
 
         await mockStore.Object.SavePipelineConfigAsync(original, CancellationToken.None);
         var loaded = await mockStore.Object.LoadPipelineConfigAsync(CancellationToken.None);
 
         loaded.LastUsedProviderIds.Should().BeEquivalentTo(original.LastUsedProviderIds);
-        loaded.BlacklistedPaths.Should().BeEquivalentTo(original.BlacklistedPaths);
-        loaded.BrainReadOnly.Should().Be(original.BrainReadOnly);
+        loaded.Commit.BlacklistedPaths.Should().BeEquivalentTo(original.Commit.BlacklistedPaths);
+        loaded.Agent.BrainReadOnly.Should().Be(original.Agent.BrainReadOnly);
     }
 
     /// <summary>

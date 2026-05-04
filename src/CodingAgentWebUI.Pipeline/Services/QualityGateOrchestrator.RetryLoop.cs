@@ -91,8 +91,8 @@ internal partial class QualityGateOrchestrator
                 else
                 {
                     _logger.Warning("Pipeline {RunId} max retries ({MaxRetries}) exhausted after cleanup, creating draft PR",
-                        run.RunId, config.MaxRetries);
-                    callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.MaxRetries} retries, creating draft PR");
+                        run.RunId, config.Retry.MaxRetries);
+                    callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.Retry.MaxRetries} retries, creating draft PR");
 
                     var finalErrorSummary = BuildQualityGateErrorSummary(report);
                     run.RetryErrors.Add(finalErrorSummary);
@@ -103,8 +103,8 @@ internal partial class QualityGateOrchestrator
             else
             {
                 _logger.Warning("Pipeline {RunId} max retries ({MaxRetries}) exhausted, creating draft PR",
-                    run.RunId, config.MaxRetries);
-                callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.MaxRetries} retries, creating draft PR");
+                    run.RunId, config.Retry.MaxRetries);
+                callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.Retry.MaxRetries} retries, creating draft PR");
 
                 var errorSummary = BuildQualityGateErrorSummary(report);
                 run.RetryErrors.Add(errorSummary);
@@ -155,17 +155,17 @@ internal partial class QualityGateOrchestrator
         var callbacks = context.Callbacks;
         var report = initialReport;
 
-        while (!report.AllPassed && run.RetryCount < config.MaxRetries)
+        while (!report.AllPassed && run.RetryCount < config.Retry.MaxRetries)
         {
             run.RetryCount++;
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Add(errorSummary);
 
             _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}",
-                run.RunId, run.RetryCount, config.MaxRetries);
-            callbacks.EmitOutputLine($"🔄 Quality gates failed, retrying (attempt {run.RetryCount}/{config.MaxRetries})");
+                run.RunId, run.RetryCount, config.Retry.MaxRetries);
+            callbacks.EmitOutputLine($"🔄 Quality gates failed, retrying (attempt {run.RetryCount}/{config.Retry.MaxRetries})");
 
-            var retryPromptSummary = BuildQualityGateRetryPrompt(report, run.RetryCount, config.MaxRetries);
+            var retryPromptSummary = BuildQualityGateRetryPrompt(report, run.RetryCount, config.Retry.MaxRetries);
 
             run.ChatHistory.Enqueue(new ChatEntry
             {

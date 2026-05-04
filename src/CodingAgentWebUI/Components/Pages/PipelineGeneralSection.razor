@@ -28,8 +28,8 @@
     protected override async Task OnInitializedAsync()
     {
         var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        _maxRetries = config.MaxRetries;
-        _agentTimeoutMinutes = (int)config.AgentTimeout.TotalMinutes;
+        _maxRetries = config.Retry.MaxRetries;
+        _agentTimeoutMinutes = (int)config.Retry.AgentTimeout.TotalMinutes;
     }
 
     private async Task SaveAsync()
@@ -39,8 +39,11 @@
             await ConfigStore.UpdatePipelineConfigAsync(
                 current => current with
                 {
-                    MaxRetries = _maxRetries,
-                    AgentTimeout = TimeSpan.FromMinutes(_agentTimeoutMinutes)
+                    Retry = current.Retry with
+                    {
+                        MaxRetries = _maxRetries,
+                        AgentTimeout = TimeSpan.FromMinutes(_agentTimeoutMinutes)
+                    }
                 },
                 CancellationToken.None);
             await OnShowStatus.InvokeAsync(("General settings saved.", false));

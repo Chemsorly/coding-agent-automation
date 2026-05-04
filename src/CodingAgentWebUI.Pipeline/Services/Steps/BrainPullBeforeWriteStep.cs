@@ -8,7 +8,7 @@ internal sealed class BrainPullBeforeWriteStep : IPipelineStep
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
         if (context.BrainProvider is null || context.BrainSync is null
-            || context.Config.BrainReadOnly || !context.Run.BrainContextLoaded)
+            || context.Config.Agent.BrainReadOnly || !context.Run.BrainContextLoaded)
             return StepResult.Continue;
 
         try { await context.BrainSync.PullBeforeWriteAsync(context.Run, context.BrainProvider, ct); }

@@ -91,7 +91,7 @@ public class HeartbeatMonitorServiceTests
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                AgentDisconnectGracePeriod = TimeSpan.FromMinutes(5)
+                Agent = new AgentConfiguration { AgentDisconnectGracePeriod = TimeSpan.FromMinutes(5) }
             });
 
         var entry = RegisterAgent("agent-1", "conn-1");
@@ -110,7 +110,7 @@ public class HeartbeatMonitorServiceTests
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                AgentDisconnectGracePeriod = TimeSpan.Zero // Immediate expiry
+                Agent = new AgentConfiguration { AgentDisconnectGracePeriod = TimeSpan.Zero } // Immediate expiry
             });
 
         var entry = RegisterAgent("agent-1", "conn-1");
@@ -129,7 +129,7 @@ public class HeartbeatMonitorServiceTests
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                AgentDisconnectGracePeriod = TimeSpan.Zero
+                Agent = new AgentConfiguration { AgentDisconnectGracePeriod = TimeSpan.Zero }
             });
         _mockConfigStore
             .Setup(c => c.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
@@ -198,7 +198,7 @@ public class HeartbeatMonitorServiceTests
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                AgentDisconnectGracePeriod = TimeSpan.Zero
+                Agent = new AgentConfiguration { AgentDisconnectGracePeriod = TimeSpan.Zero }
             });
 
         var entry = RegisterAgent("agent-1", "conn-1");

@@ -356,10 +356,13 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = DefaultTemplates,
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
-                ClosedLoopMaxPagesToFetch = 3
+                ClosedLoop = new ClosedLoopConfiguration
+                {
+                    PollInterval = TimeSpan.FromMilliseconds(200),
+                    MaxPagesToFetch = 3
+                }
             });
 
         var svc = CreateService();
@@ -472,11 +475,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = DefaultTemplates,
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
-                ClosedLoopMaxConsecutivePollFailures = 5,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(2)
+                ClosedLoop = new ClosedLoopConfiguration
+                {
+                    PollInterval = TimeSpan.FromMilliseconds(200),
+                    MaxConsecutivePollFailures = 5,
+                    MaxBackoffInterval = TimeSpan.FromSeconds(2)
+                }
             });
 
         var svc = CreateService();
@@ -518,9 +524,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = DefaultTemplates,
-                ClosedLoopPollInterval = TimeSpan.FromSeconds(60)
+                ClosedLoop = new ClosedLoopConfiguration
+                {
+                    PollInterval = TimeSpan.FromSeconds(60)
+                }
             });
 
         var svc = CreateService();
@@ -562,10 +571,13 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = DefaultTemplates,
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
-                ClosedLoopMaxRunsPerCycle = 1
+                ClosedLoop = new ClosedLoopConfiguration
+                {
+                    PollInterval = TimeSpan.FromMilliseconds(200),
+                    MaxRunsPerCycle = 1
+                }
             });
 
         var attemptedIssues = new List<string>();
@@ -654,11 +666,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     public void PipelineConfiguration_HasClosedLoopDefaults()
     {
         var config = new PipelineConfiguration();
-        Assert.Equal(TimeSpan.FromSeconds(60), config.ClosedLoopPollInterval);
-        Assert.Equal(0, config.ClosedLoopMaxRunsPerCycle);
-        Assert.Equal(5, config.ClosedLoopMaxConsecutivePollFailures);
-        Assert.Equal(TimeSpan.FromMinutes(15), config.ClosedLoopMaxBackoffInterval);
-        Assert.Equal(10, config.ClosedLoopMaxPagesToFetch);
+        Assert.Equal(TimeSpan.FromSeconds(60), config.ClosedLoop.PollInterval);
+        Assert.Equal(0, config.ClosedLoop.MaxRunsPerCycle);
+        Assert.Equal(5, config.ClosedLoop.MaxConsecutivePollFailures);
+        Assert.Equal(TimeSpan.FromMinutes(15), config.ClosedLoop.MaxBackoffInterval);
+        Assert.Equal(10, config.ClosedLoop.MaxPagesToFetch);
     }
 
     [Fact]
@@ -666,18 +678,21 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     {
         var config = new PipelineConfiguration
         {
-            ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
-            ClosedLoopMaxRunsPerCycle = 5,
-            ClosedLoopMaxConsecutivePollFailures = 10,
-            ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(30),
-            ClosedLoopMaxPagesToFetch = 20
+            ClosedLoop = new ClosedLoopConfiguration
+            {
+                PollInterval = TimeSpan.FromSeconds(120),
+                MaxRunsPerCycle = 5,
+                MaxConsecutivePollFailures = 10,
+                MaxBackoffInterval = TimeSpan.FromMinutes(30),
+                MaxPagesToFetch = 20
+            }
         };
         var copy = config with { LastUsedProviderIds = new Dictionary<string, string>() };
-        Assert.Equal(TimeSpan.FromSeconds(120), copy.ClosedLoopPollInterval);
-        Assert.Equal(5, copy.ClosedLoopMaxRunsPerCycle);
-        Assert.Equal(10, copy.ClosedLoopMaxConsecutivePollFailures);
-        Assert.Equal(TimeSpan.FromMinutes(30), copy.ClosedLoopMaxBackoffInterval);
-        Assert.Equal(20, copy.ClosedLoopMaxPagesToFetch);
+        Assert.Equal(TimeSpan.FromSeconds(120), copy.ClosedLoop.PollInterval);
+        Assert.Equal(5, copy.ClosedLoop.MaxRunsPerCycle);
+        Assert.Equal(10, copy.ClosedLoop.MaxConsecutivePollFailures);
+        Assert.Equal(TimeSpan.FromMinutes(30), copy.ClosedLoop.MaxBackoffInterval);
+        Assert.Equal(20, copy.ClosedLoop.MaxPagesToFetch);
     }
 
     [Fact]
@@ -690,11 +705,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = DefaultTemplates,
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-                ClosedLoopMaxConsecutivePollFailures = 10, // High threshold so circuit breaker doesn't trip
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(10)
+                ClosedLoop = new ClosedLoopConfiguration
+                {
+                    PollInterval = TimeSpan.FromMilliseconds(50),
+                    MaxConsecutivePollFailures = 10, // High threshold so circuit breaker doesn't trip
+                    MaxBackoffInterval = TimeSpan.FromSeconds(10)
+                }
             });
 
         var svc = CreateService();
@@ -735,11 +753,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = DefaultTemplates,
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
-                ClosedLoopMaxConsecutivePollFailures = 20,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(300)
+                ClosedLoop = new ClosedLoopConfiguration
+                {
+                    PollInterval = TimeSpan.FromMilliseconds(100),
+                    MaxConsecutivePollFailures = 20,
+                    MaxBackoffInterval = TimeSpan.FromMilliseconds(300)
+                }
             });
 
         var svc = CreateService();
@@ -784,11 +805,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = DefaultTemplates,
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
-                ClosedLoopMaxConsecutivePollFailures = 10,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(5)
+                ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(200), MaxConsecutivePollFailures = 10, MaxBackoffInterval = TimeSpan.FromSeconds(5) }
             });
 
         var svc = CreateService();
@@ -824,11 +843,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = DefaultTemplates,
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-                ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(50), MaxConsecutivePollFailures = 3, MaxBackoffInterval = TimeSpan.FromMilliseconds(200) }
             });
 
         var svc = CreateService();
@@ -875,11 +892,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = DefaultTemplates,
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
-                ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(100), MaxConsecutivePollFailures = 3, MaxBackoffInterval = TimeSpan.FromMilliseconds(200) }
             });
 
         var svc = CreateService();
@@ -925,11 +940,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = DefaultTemplates,
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
-                ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(100), MaxConsecutivePollFailures = 3, MaxBackoffInterval = TimeSpan.FromMilliseconds(200) }
             });
 
         var svc = CreateService();
@@ -977,11 +990,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = DefaultTemplates,
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
-                ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(5)
+                ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(200), MaxConsecutivePollFailures = 3, MaxBackoffInterval = TimeSpan.FromSeconds(5) }
             });
 
         var svc = CreateService();
@@ -1029,11 +1040,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = DefaultTemplates,
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
-                ClosedLoopMaxConsecutivePollFailures = 5,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(2)
+                ClosedLoop = new ClosedLoopConfiguration
+                {
+                    PollInterval = TimeSpan.FromMilliseconds(200),
+                    MaxConsecutivePollFailures = 5,
+                    MaxBackoffInterval = TimeSpan.FromSeconds(2)
+                }
             });
 
         var svc = CreateService();
@@ -1070,11 +1084,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = DefaultTemplates,
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
-                ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(100), MaxConsecutivePollFailures = 3, MaxBackoffInterval = TimeSpan.FromMilliseconds(200) }
             });
 
         var svc = CreateService();
@@ -1111,11 +1123,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 PipelineJobTemplates = DefaultTemplates,
-                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-                ClosedLoopMaxConsecutivePollFailures = 2,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(50), MaxConsecutivePollFailures = 2, MaxBackoffInterval = TimeSpan.FromMilliseconds(200) }
             });
 
         var svc = CreateService();

@@ -297,10 +297,10 @@ public sealed class PipelineLoopService : BackgroundService
         {
             // Step 1: Snapshot — read config at cycle start (immutable for cycle duration)
             var config = await _configStore.LoadPipelineConfigAsync(ct);
-            var pollInterval = config.ClosedLoopPollInterval;
-            var maxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
-            var maxConsecutiveFailures = config.ClosedLoopMaxConsecutivePollFailures;
-            var maxPagesToFetch = config.ClosedLoopMaxPagesToFetch;
+            var pollInterval = config.ClosedLoop.PollInterval;
+            var maxRunsPerCycle = config.ClosedLoop.MaxRunsPerCycle;
+            var maxConsecutiveFailures = config.ClosedLoop.MaxConsecutivePollFailures;
+            var maxPagesToFetch = config.ClosedLoop.MaxPagesToFetch;
 
             var enabledTemplates = config.PipelineJobTemplates.Where(t => t.Enabled).ToList();
 

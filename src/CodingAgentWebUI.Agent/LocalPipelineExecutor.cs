@@ -115,7 +115,7 @@ public sealed class LocalPipelineExecutor
                 }
             }
 
-            if (config.ExternalCiEnabled && !string.IsNullOrEmpty(job.PipelineProviderConfigId))
+            if (config.ExternalCi.Enabled && !string.IsNullOrEmpty(job.PipelineProviderConfigId))
             {
                 var pipelineConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.PipelineProviderConfigId);
                 if (pipelineConfig is not null)
@@ -366,7 +366,7 @@ public sealed class LocalPipelineExecutor
             run, report, isDraft, repoProvider, job.IssueDetail, job.IssueComments, config, ct,
             emitOutputLine, isRework: run.LinkedPullRequest is not null);
 
-        if (prUrl is null && config.BlacklistMode == BlacklistMode.Fail && run.BlacklistedFilesDetected.Count > 0)
+        if (prUrl is null && config.Commit.BlacklistMode == BlacklistMode.Fail && run.BlacklistedFilesDetected.Count > 0)
         {
             run.FailureReason = $"Blacklisted files detected: {string.Join(", ", run.BlacklistedFilesDetected)}";
             run.CompletedAt = DateTime.UtcNow;
@@ -394,7 +394,7 @@ public sealed class LocalPipelineExecutor
         }
 
         // ── Reflection + brain post-run sync ──
-        if (!isDraft && brainProvider is not null && brainSync is not null && !config.BrainReadOnly)
+        if (!isDraft && brainProvider is not null && brainSync is not null && !config.Agent.BrainReadOnly)
         {
             run.CurrentStep = PipelineStep.ReflectingOnRun;
             try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.ReflectingOnRun, DateTimeOffset.UtcNow, ct); }
@@ -411,7 +411,7 @@ public sealed class LocalPipelineExecutor
                     {
                         Prompt = reflectionPrompt,
                         WorkspacePath = run.WorkspacePath!,
-                        Timeout = config.AgentTimeout,
+                        Timeout = config.Retry.AgentTimeout,
                         UseResume = true
                     },
                     ct,
@@ -430,7 +430,7 @@ public sealed class LocalPipelineExecutor
             try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.SyncingBrainRepoPostRun, DateTimeOffset.UtcNow, ct); }
             catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", PipelineStep.SyncingBrainRepoPostRun); }
 
-            try { await brainSync.SyncPostRunAsync(run, brainProvider, ct, emitOutputLine, config.BrainPushMaxRetries); }
+            try { await brainSync.SyncPostRunAsync(run, brainProvider, ct, emitOutputLine, config.Agent.BrainPushMaxRetries); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.Warning(ex, "Brain post-run sync failed");

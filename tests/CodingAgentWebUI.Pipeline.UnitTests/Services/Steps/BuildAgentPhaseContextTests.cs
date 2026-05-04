@@ -36,7 +36,7 @@ public class BuildAgentPhaseContextTests
 
         var config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }
         };
 
         var prOrchestrator = new PullRequestOrchestrator(_logger);

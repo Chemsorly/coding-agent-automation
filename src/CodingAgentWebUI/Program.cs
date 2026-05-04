@@ -76,7 +76,7 @@ builder.Services.AddSingleton(sp => new JobDispatcherService(
 builder.Services.AddSingleton<ITokenVendingService>(sp => new TokenVendingService(Serilog.Log.Logger));
 builder.Services.AddSingleton(sp => new OrchestratorRunService(
     Serilog.Log.Logger,
-    pipelineConfig.OutputBufferCapacity));
+    pipelineConfig.Agent.OutputBufferCapacity));
 builder.Services.AddSingleton<IOrchestratorRunService>(sp => sp.GetRequiredService<OrchestratorRunService>());
 builder.Services.AddHostedService(sp => new HeartbeatMonitorService(
     sp.GetRequiredService<AgentRegistryService>(),

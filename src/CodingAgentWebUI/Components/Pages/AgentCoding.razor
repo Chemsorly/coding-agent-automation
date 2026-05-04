@@ -672,7 +672,7 @@
             _repoProviders = allRepoProviders.Where(p => p.RepositoryRole != RepositoryRole.Brain).ToList();
 
             var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-            _maxRetries = config.MaxRetries;
+            _maxRetries = config.Retry.MaxRetries;
             _templates = config.PipelineJobTemplates.ToList();
             _pipelineConfig = config;
 

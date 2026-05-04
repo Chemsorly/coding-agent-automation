@@ -40,7 +40,7 @@ public class LabelRoutingFallbackPropertyTests
 
         var pipelineConfig = new PipelineConfiguration
         {
-            DefaultRequiredAgentLabels = "fallback-label"
+            Agent = new AgentConfiguration { DefaultRequiredAgentLabels = "fallback-label" }
         };
 
         var resolved = JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
@@ -70,7 +70,7 @@ public class LabelRoutingFallbackPropertyTests
 
         var pipelineConfig = new PipelineConfiguration
         {
-            DefaultRequiredAgentLabels = label
+            Agent = new AgentConfiguration { DefaultRequiredAgentLabels = label }
         };
 
         var resolved = JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);

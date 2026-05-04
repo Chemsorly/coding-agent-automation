@@ -29,7 +29,7 @@ public class PipelineStepTests
     {
         _config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }
         };
 
         _run = new PipelineRun

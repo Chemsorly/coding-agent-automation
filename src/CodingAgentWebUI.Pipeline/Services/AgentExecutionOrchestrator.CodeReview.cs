@@ -81,7 +81,7 @@ internal partial class AgentExecutionOrchestrator
                         {
                             Prompt = reviewPrompt,
                             WorkspacePath = run.WorkspacePath!,
-                            Timeout = config.AgentTimeout,
+                            Timeout = config.Retry.AgentTimeout,
                             UseResume = true
                         },
                         run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,

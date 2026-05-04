@@ -94,7 +94,7 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
     public void WhenExternalCiEnabled_ShowsCiFields()
     {
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { ExternalCiEnabled = true });
+            .ReturnsAsync(new PipelineConfiguration { ExternalCi = new ExternalCiConfiguration { Enabled = true } });
 
         var cut = Render<PipelineQualityGatesSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object)

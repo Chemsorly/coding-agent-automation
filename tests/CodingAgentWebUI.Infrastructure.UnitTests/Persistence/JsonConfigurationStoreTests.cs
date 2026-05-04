@@ -31,9 +31,9 @@ public class JsonConfigurationStoreTests : IDisposable
     {
         var config = await _store.LoadPipelineConfigAsync(CancellationToken.None);
 
-        Assert.Equal(3, config.MaxRetries);
-        Assert.Equal(TimeSpan.FromMinutes(30), config.AgentTimeout);
-        Assert.Equal("./workspaces", config.WorkspaceBaseDirectory);
+        Assert.Equal(3, config.Retry.MaxRetries);
+        Assert.Equal(TimeSpan.FromMinutes(30), config.Retry.AgentTimeout);
+        Assert.Equal("./workspaces", config.Workspace.WorkspaceBaseDirectory);
     }
 
     [Fact]
@@ -41,10 +41,16 @@ public class JsonConfigurationStoreTests : IDisposable
     {
         var original = new PipelineConfiguration
         {
-            MaxRetries = 5,
-            AgentTimeout = TimeSpan.FromMinutes(45),
-            WorkspaceBaseDirectory = "/tmp/workspaces",
-            FailedWorkspaceRetentionDays = 14,
+            Retry = new RetryConfiguration
+            {
+                MaxRetries = 5,
+                AgentTimeout = TimeSpan.FromMinutes(45),
+            },
+            Workspace = new WorkspaceConfiguration
+            {
+                WorkspaceBaseDirectory = "/tmp/workspaces",
+                FailedWorkspaceRetentionDays = 14,
+            },
             AnalysisPrompt = "Custom analysis prompt",
             ImplementationPrompt = "Custom implementation prompt"
         };
@@ -52,10 +58,10 @@ public class JsonConfigurationStoreTests : IDisposable
         await _store.SavePipelineConfigAsync(original, CancellationToken.None);
         var loaded = await _store.LoadPipelineConfigAsync(CancellationToken.None);
 
-        Assert.Equal(original.MaxRetries, loaded.MaxRetries);
-        Assert.Equal(original.AgentTimeout, loaded.AgentTimeout);
-        Assert.Equal(original.WorkspaceBaseDirectory, loaded.WorkspaceBaseDirectory);
-        Assert.Equal(original.FailedWorkspaceRetentionDays, loaded.FailedWorkspaceRetentionDays);
+        Assert.Equal(original.Retry.MaxRetries, loaded.Retry.MaxRetries);
+        Assert.Equal(original.Retry.AgentTimeout, loaded.Retry.AgentTimeout);
+        Assert.Equal(original.Workspace.WorkspaceBaseDirectory, loaded.Workspace.WorkspaceBaseDirectory);
+        Assert.Equal(original.Workspace.FailedWorkspaceRetentionDays, loaded.Workspace.FailedWorkspaceRetentionDays);
         Assert.Equal(original.AnalysisPrompt, loaded.AnalysisPrompt);
         Assert.Equal(original.ImplementationPrompt, loaded.ImplementationPrompt);
     }
@@ -127,7 +133,7 @@ public class JsonConfigurationStoreTests : IDisposable
         var config = await _store.LoadPipelineConfigAsync(CancellationToken.None);
 
         // Should return defaults, not throw
-        Assert.Equal(3, config.MaxRetries);
+        Assert.Equal(3, config.Retry.MaxRetries);
     }
 
     [Fact]
@@ -167,9 +173,8 @@ public class JsonConfigurationStoreTests : IDisposable
         // Arrange
         var config = new PipelineConfiguration
         {
-            MaxRetries = 7,
-            AgentTimeout = TimeSpan.FromMinutes(60),
-            WorkspaceBaseDirectory = "/custom/workspaces"
+            Retry = new RetryConfiguration { MaxRetries = 7, AgentTimeout = TimeSpan.FromMinutes(60) },
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = "/custom/workspaces" }
         };
 
         // Act
@@ -196,23 +201,22 @@ public class JsonConfigurationStoreTests : IDisposable
         // Arrange — save an initial config
         var initial = new PipelineConfiguration
         {
-            MaxRetries = 2,
-            AgentTimeout = TimeSpan.FromMinutes(10),
-            WorkspaceBaseDirectory = "/initial"
+            Retry = new RetryConfiguration { MaxRetries = 2, AgentTimeout = TimeSpan.FromMinutes(10) },
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = "/initial" }
         };
         await _store.SavePipelineConfigAsync(initial, CancellationToken.None);
 
         // Act — update via transform
         await _store.UpdatePipelineConfigAsync(
-            existing => existing with { MaxRetries = 10, WorkspaceBaseDirectory = "/updated" },
+            existing => existing with { Retry = existing.Retry with { MaxRetries = 10 }, Workspace = existing.Workspace with { WorkspaceBaseDirectory = "/updated" } },
             CancellationToken.None);
 
         // Assert — reload and verify transform was applied
         var loaded = await _store.LoadPipelineConfigAsync(CancellationToken.None);
-        loaded.MaxRetries.Should().Be(10);
-        loaded.WorkspaceBaseDirectory.Should().Be("/updated");
+        loaded.Retry.MaxRetries.Should().Be(10);
+        loaded.Workspace.WorkspaceBaseDirectory.Should().Be("/updated");
         // Verify untouched fields remain from original
-        loaded.AgentTimeout.Should().Be(TimeSpan.FromMinutes(10));
+        loaded.Retry.AgentTimeout.Should().Be(TimeSpan.FromMinutes(10));
     }
 
     [Fact]
@@ -222,14 +226,14 @@ public class JsonConfigurationStoreTests : IDisposable
 
         // Act — update from default
         await _store.UpdatePipelineConfigAsync(
-            existing => existing with { MaxRetries = 99 },
+            existing => existing with { Retry = existing.Retry with { MaxRetries = 99 } },
             CancellationToken.None);
 
         // Assert — config was created with transformed default
         var loaded = await _store.LoadPipelineConfigAsync(CancellationToken.None);
-        loaded.MaxRetries.Should().Be(99);
+        loaded.Retry.MaxRetries.Should().Be(99);
         // Default values for untouched fields
-        loaded.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30));
+        loaded.Retry.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30));
     }
 
     [Fact]

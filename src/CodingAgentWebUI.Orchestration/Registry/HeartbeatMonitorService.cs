@@ -85,7 +85,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         var now = DateTimeOffset.UtcNow;
         var agents = _registry.GetAllAgents();
         var pipelineConfig = await _configStore.LoadPipelineConfigAsync(ct);
-        var gracePeriod = pipelineConfig.AgentDisconnectGracePeriod;
+        var gracePeriod = pipelineConfig.Agent.AgentDisconnectGracePeriod;
 
         foreach (var agent in agents)
         {

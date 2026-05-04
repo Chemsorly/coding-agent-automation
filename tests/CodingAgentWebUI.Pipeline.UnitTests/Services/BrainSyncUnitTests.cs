@@ -127,7 +127,7 @@ public class BrainSyncUnitTests
     {
         var config = new PipelineConfiguration();
 
-        config.BlacklistedPaths.Should().Contain(".brain");
+        config.Commit.BlacklistedPaths.Should().Contain(".brain");
     }
 
     [Fact]
@@ -135,7 +135,7 @@ public class BrainSyncUnitTests
     {
         var config = new PipelineConfiguration();
 
-        config.BrainReadOnly.Should().BeFalse();
+        config.Agent.BrainReadOnly.Should().BeFalse();
     }
 
     [Fact]

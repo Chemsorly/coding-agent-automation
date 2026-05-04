@@ -207,8 +207,8 @@ public class PipelineStateTransitionPropertyTests
         mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                MaxRetries = maxRetries,
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Retry = new RetryConfiguration { MaxRetries = maxRetries },
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = false }
             });
 

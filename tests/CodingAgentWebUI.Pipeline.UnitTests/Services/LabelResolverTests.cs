@@ -22,7 +22,7 @@ public class LabelResolverTests
         };
         var pipelineConfig = new PipelineConfiguration
         {
-            DefaultRequiredAgentLabels = "fallback"
+            Agent = new AgentConfiguration { DefaultRequiredAgentLabels = "fallback" }
         };
 
         var result = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
@@ -45,7 +45,7 @@ public class LabelResolverTests
         };
         var pipelineConfig = new PipelineConfiguration
         {
-            DefaultRequiredAgentLabels = "fallback"
+            Agent = new AgentConfiguration { DefaultRequiredAgentLabels = "fallback" }
         };
 
         var result = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
@@ -64,7 +64,7 @@ public class LabelResolverTests
         };
         var pipelineConfig = new PipelineConfiguration
         {
-            DefaultRequiredAgentLabels = "kiro, agent"
+            Agent = new AgentConfiguration { DefaultRequiredAgentLabels = "kiro, agent" }
         };
 
         var result = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
@@ -93,7 +93,7 @@ public class LabelResolverTests
     {
         var pipelineConfig = new PipelineConfiguration
         {
-            DefaultRequiredAgentLabels = "default-label"
+            Agent = new AgentConfiguration { DefaultRequiredAgentLabels = "default-label" }
         };
 
         var result = LabelResolver.ResolveRequiredLabels(null, pipelineConfig);
@@ -167,7 +167,7 @@ public class LabelResolverTests
         };
         var pipelineConfig = new PipelineConfiguration
         {
-            DefaultRequiredAgentLabels = "fallback"
+            Agent = new AgentConfiguration { DefaultRequiredAgentLabels = "fallback" }
         };
 
         var result = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);

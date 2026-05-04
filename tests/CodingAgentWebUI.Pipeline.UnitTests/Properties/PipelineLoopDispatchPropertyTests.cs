@@ -29,9 +29,8 @@ public class PipelineLoopDispatchPropertyTests
         var config = new PipelineConfiguration
         {
             PipelineJobTemplates = templates,
-            ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            ClosedLoopMaxRunsPerCycle = 100,
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(50), MaxRunsPerCycle = 100 },
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -117,9 +116,8 @@ public class PipelineLoopDispatchPropertyTests
         var config = new PipelineConfiguration
         {
             PipelineJobTemplates = templates,
-            ClosedLoopPollInterval = TimeSpan.FromSeconds(60), // Long interval so only one cycle runs
-            ClosedLoopMaxRunsPerCycle = limit,
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromSeconds(60), MaxRunsPerCycle = limit },
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -200,9 +198,8 @@ public class PipelineLoopDispatchPropertyTests
         var config = new PipelineConfiguration
         {
             PipelineJobTemplates = templates,
-            ClosedLoopPollInterval = TimeSpan.FromMilliseconds(30),
-            ClosedLoopMaxConsecutivePollFailures = 2,
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(30), MaxConsecutivePollFailures = 2 },
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -287,7 +284,7 @@ public class PipelineLoopDispatchPropertyTests
         var config = new PipelineConfiguration
         {
             PipelineJobTemplates = templates,
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -322,8 +319,8 @@ public class PipelineLoopDispatchPropertyTests
         var config = new PipelineConfiguration
         {
             PipelineJobTemplates = templates,
-            ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(50) },
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -394,8 +391,8 @@ public class PipelineLoopDispatchPropertyTests
         var config = new PipelineConfiguration
         {
             PipelineJobTemplates = templates,
-            ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(50) },
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -453,8 +450,8 @@ public class PipelineLoopDispatchPropertyTests
         var config = new PipelineConfiguration
         {
             PipelineJobTemplates = templates,
-            ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            ClosedLoop = new ClosedLoopConfiguration { PollInterval = TimeSpan.FromMilliseconds(50) },
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }
         };
 
         var mockStore = new Mock<IConfigurationStore>();

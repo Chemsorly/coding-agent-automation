@@ -57,7 +57,7 @@ public class ProviderFactory : IProviderFactory
                 authService.GetTokenAsync,
                 config.Settings["owner"],
                 config.Settings["repo"],
-                _pipelineConfig.ExternalCiPollInterval);
+                _pipelineConfig.ExternalCi.PollInterval);
         });
     }
 

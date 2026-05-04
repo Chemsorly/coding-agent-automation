@@ -97,7 +97,7 @@ internal partial class AgentExecutionOrchestrator : IAgentPhaseExecutor
                 {
                     Prompt = prompt,
                     WorkspacePath = run.WorkspacePath!,
-                    Timeout = config.AgentTimeout,
+                    Timeout = config.Retry.AgentTimeout,
                     UseResume = true
                 },
                 run, config, description, callbacks.NotifyChange, logger, ct,

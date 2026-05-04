@@ -194,24 +194,39 @@ public class PreparingForPullRequestPropertyTests
         var config = TestPipelineConfig.Default();
         config = new PipelineConfiguration
         {
-            MaxRetries = config.MaxRetries,
-            MaxAnalysisRetries = config.MaxAnalysisRetries,
+            Retry = new RetryConfiguration
+            {
+                MaxRetries = config.Retry.MaxRetries,
+                MaxAnalysisRetries = config.Retry.MaxAnalysisRetries,
+                AgentTimeout = config.Retry.AgentTimeout,
+                StallWarningInterval = config.Retry.StallWarningInterval,
+                StallPollInterval = config.Retry.StallPollInterval,
+            },
             IssuePageSize = config.IssuePageSize,
-            AgentTimeout = config.AgentTimeout,
-            WorkspaceBaseDirectory = config.WorkspaceBaseDirectory,
+            Workspace = new WorkspaceConfiguration
+            {
+                WorkspaceBaseDirectory = config.Workspace.WorkspaceBaseDirectory,
+                FailedWorkspaceRetentionDays = config.Workspace.FailedWorkspaceRetentionDays,
+            },
             CodeReview = new CodeReviewConfiguration { Enabled = false },
-            ExternalCiEnabled = externalCiEnabled,
-            ExternalCiTimeout = config.ExternalCiTimeout,
-            ExternalCiPollInterval = config.ExternalCiPollInterval,
-            StallWarningInterval = config.StallWarningInterval,
-            StallPollInterval = config.StallPollInterval,
-            BlacklistedPaths = config.BlacklistedPaths,
-            BlacklistMode = config.BlacklistMode,
-            FailedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays,
-            ClosedLoopPollInterval = config.ClosedLoopPollInterval,
-            ClosedLoopMaxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle,
-            ClosedLoopMaxConsecutivePollFailures = config.ClosedLoopMaxConsecutivePollFailures,
-            ClosedLoopMaxBackoffInterval = config.ClosedLoopMaxBackoffInterval,
+            ExternalCi = new ExternalCiConfiguration
+            {
+                Enabled = externalCiEnabled,
+                Timeout = config.ExternalCi.Timeout,
+                PollInterval = config.ExternalCi.PollInterval,
+            },
+            Commit = new CommitConfiguration
+            {
+                BlacklistedPaths = config.Commit.BlacklistedPaths,
+                BlacklistMode = config.Commit.BlacklistMode,
+            },
+            ClosedLoop = new ClosedLoopConfiguration
+            {
+                PollInterval = config.ClosedLoop.PollInterval,
+                MaxRunsPerCycle = config.ClosedLoop.MaxRunsPerCycle,
+                MaxConsecutivePollFailures = config.ClosedLoop.MaxConsecutivePollFailures,
+                MaxBackoffInterval = config.ClosedLoop.MaxBackoffInterval,
+            },
         };
 
         configStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -288,8 +303,8 @@ public class PreparingForPullRequestPropertyTests
         configStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                MaxRetries = maxRetries,
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Retry = new RetryConfiguration { MaxRetries = maxRetries },
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = false }
             });
 

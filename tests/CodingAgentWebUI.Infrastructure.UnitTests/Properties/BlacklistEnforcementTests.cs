@@ -17,17 +17,17 @@ public class BlacklistEnforcementTests
     public void PipelineConfiguration_DefaultBlacklistedPaths_ContainsKiroAndGitHub()
     {
         var config = new PipelineConfiguration();
-        config.BlacklistedPaths.Should().Contain(".kiro");
-        config.BlacklistedPaths.Should().Contain(".github");
-        config.BlacklistedPaths.Should().Contain(".brain");
-        config.BlacklistedPaths.Should().HaveCount(3);
+        config.Commit.BlacklistedPaths.Should().Contain(".kiro");
+        config.Commit.BlacklistedPaths.Should().Contain(".github");
+        config.Commit.BlacklistedPaths.Should().Contain(".brain");
+        config.Commit.BlacklistedPaths.Should().HaveCount(3);
     }
 
     [Fact]
     public void PipelineConfiguration_DefaultBlacklistMode_IsWarnAndExclude()
     {
         var config = new PipelineConfiguration();
-        config.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
+        config.Commit.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
     }
 
     // --- PipelineRun.BlacklistedFilesDetected ---

@@ -421,7 +421,7 @@ public class PipelineOrchestrationServiceTests
     public async Task StartPipeline_WhenQualityGatesFail_CreatesDraftPrAfterRetries()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), MaxRetries = 1 });
+            .ReturnsAsync(new PipelineConfiguration { Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }, Retry = new RetryConfiguration { MaxRetries = 1 } });
 
         _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
@@ -446,7 +446,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
             });
 
@@ -474,7 +474,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 3 }
             });
 
@@ -490,7 +490,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 3 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -523,7 +523,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -566,7 +566,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -592,7 +592,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -617,7 +617,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = null }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -642,7 +642,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -682,7 +682,7 @@ public class PipelineOrchestrationServiceTests
     public async Task StartPipeline_FailMode_TransitionsToFailed()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), BlacklistMode = BlacklistMode.Fail });
+            .ReturnsAsync(new PipelineConfiguration { Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }, Commit = new CommitConfiguration { BlacklistMode = BlacklistMode.Fail } });
 
         var blacklisted = new List<string> { ".github/workflows/ci.yml" };
         _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
@@ -712,7 +712,7 @@ public class PipelineOrchestrationServiceTests
     public void FailedWorkspaceRetentionDays_DefaultsToSeven()
     {
         var config = new PipelineConfiguration();
-        config.FailedWorkspaceRetentionDays.Should().Be(7);
+        config.Workspace.FailedWorkspaceRetentionDays.Should().Be(7);
     }
 
     // --- Workspace cleanup ---
@@ -725,7 +725,7 @@ public class PipelineOrchestrationServiceTests
         try
         {
             _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase });
+                .ReturnsAsync(new PipelineConfiguration { Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = workspaceBase } });
 
             var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
             run.CurrentStep.Should().Be(PipelineStep.Completed);
@@ -743,7 +743,7 @@ public class PipelineOrchestrationServiceTests
         try
         {
             _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase, MaxRetries = 0 });
+                .ReturnsAsync(new PipelineConfiguration { Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = workspaceBase }, Retry = new RetryConfiguration { MaxRetries = 0 } });
 
             _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new QualityGateReport
@@ -769,11 +769,14 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = false },
-                StallWarningInterval = TimeSpan.FromMilliseconds(100),
-                StallPollInterval = TimeSpan.FromMilliseconds(200),
-                AgentTimeout = TimeSpan.FromMinutes(5)
+                Retry = new RetryConfiguration
+                {
+                    StallWarningInterval = TimeSpan.FromMilliseconds(100),
+                    StallPollInterval = TimeSpan.FromMilliseconds(200),
+                    AgentTimeout = TimeSpan.FromMinutes(5)
+                }
             });
 
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
@@ -813,11 +816,14 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = false },
-                StallWarningInterval = TimeSpan.FromMilliseconds(100),
-                StallPollInterval = TimeSpan.FromMilliseconds(200),
-                AgentTimeout = TimeSpan.FromMinutes(5)
+                Retry = new RetryConfiguration
+                {
+                    StallWarningInterval = TimeSpan.FromMilliseconds(100),
+                    StallPollInterval = TimeSpan.FromMilliseconds(200),
+                    AgentTimeout = TimeSpan.FromMinutes(5)
+                }
             });
 
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
@@ -857,11 +863,14 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = false },
-                StallWarningInterval = TimeSpan.FromMilliseconds(100),
-                StallPollInterval = TimeSpan.FromMilliseconds(200),
-                AgentTimeout = TimeSpan.FromHours(1)
+                Retry = new RetryConfiguration
+                {
+                    StallWarningInterval = TimeSpan.FromMilliseconds(100),
+                    StallPollInterval = TimeSpan.FromMilliseconds(200),
+                    AgentTimeout = TimeSpan.FromHours(1)
+                }
             });
 
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
@@ -940,7 +949,7 @@ public class PipelineOrchestrationServiceTests
     public async Task StartPipeline_WhenExternalCiDisabled_SkipsPipelineProviderValidation()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), ExternalCiEnabled = false });
+            .ReturnsAsync(new PipelineConfiguration { Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }, ExternalCi = new ExternalCiConfiguration { Enabled = false } });
 
         var mockPipelineProvider = new Mock<IPipelineProvider>();
         _mockFactory.Setup(f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>())).Returns(mockPipelineProvider.Object);
@@ -954,7 +963,7 @@ public class PipelineOrchestrationServiceTests
     public async Task StartPipeline_WhenExternalCiEnabled_ValidatesPipelineProvider()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), ExternalCiEnabled = true });
+            .ReturnsAsync(new PipelineConfiguration { Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }, ExternalCi = new ExternalCiConfiguration { Enabled = true } });
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { new() { Id = "pipeline-1", Kind = ProviderKind.Pipeline, ProviderType = "GitHubActions", DisplayName = "CI" } });
 
@@ -973,7 +982,7 @@ public class PipelineOrchestrationServiceTests
     public async Task StartPipeline_WhenPipelineProviderValidationFails_FailsWithClearError()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), ExternalCiEnabled = true });
+            .ReturnsAsync(new PipelineConfiguration { Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }, ExternalCi = new ExternalCiConfiguration { Enabled = true } });
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { new() { Id = "pipeline-1", Kind = ProviderKind.Pipeline, ProviderType = "GitHubActions", DisplayName = "CI" } });
 
@@ -1045,7 +1054,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -1066,7 +1075,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -1099,7 +1108,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -1130,7 +1139,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -1156,7 +1165,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
             });
 
@@ -1171,7 +1180,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -1190,7 +1199,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -1222,7 +1231,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 2 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -1254,7 +1263,7 @@ public class PipelineOrchestrationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
+                Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
                 CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
             });
 
@@ -2083,7 +2092,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
 
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestPipelineConfig.Default() with { MaxAnalysisRetries = 0 });
+            .ReturnsAsync(TestPipelineConfig.Default() with { Retry = TestPipelineConfig.Default().Retry with { MaxAnalysisRetries = 0 } });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
@@ -2146,7 +2155,7 @@ public class PipelineOrchestrationServiceTests
     public async Task Analysis_MaxAnalysisRetriesZero_FailsOnFirstFailure()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestPipelineConfig.Default() with { MaxAnalysisRetries = 0 });
+            .ReturnsAsync(TestPipelineConfig.Default() with { Retry = TestPipelineConfig.Default().Retry with { MaxAnalysisRetries = 0 } });
 
         // Agent doesn't write analysis files
         _mockAgentProvider.Setup(p => p.ExecuteAsync(
@@ -2506,7 +2515,7 @@ public class PipelineOrchestrationServiceTests
 
         // Configure ExternalCiEnabled = true and MaxRetries = 0
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestPipelineConfig.Default() with { ExternalCiEnabled = true, MaxRetries = 0 });
+            .ReturnsAsync(TestPipelineConfig.Default() with { ExternalCi = new ExternalCiConfiguration { Enabled = true }, Retry = TestPipelineConfig.Default().Retry with { MaxRetries = 0 } });
 
         // Add pipeline provider config to config store
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
@@ -2849,7 +2858,7 @@ public class PipelineOrchestrationServiceTests
             });
 
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), MaxRetries = 3 });
+            .ReturnsAsync(new PipelineConfiguration { Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }, Retry = new RetryConfiguration { MaxRetries = 3 } });
 
         var transitions = new List<PipelineStep>();
         _service.OnChange += () =>
@@ -2889,7 +2898,7 @@ public class PipelineOrchestrationServiceTests
             });
 
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), MaxRetries = 1 });
+            .ReturnsAsync(new PipelineConfiguration { Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }, Retry = new RetryConfiguration { MaxRetries = 1 } });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
@@ -2938,7 +2947,7 @@ public class PipelineOrchestrationServiceTests
     {
         // Configure ExternalCiEnabled = true
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestPipelineConfig.Default() with { ExternalCiEnabled = true });
+            .ReturnsAsync(TestPipelineConfig.Default() with { ExternalCi = new ExternalCiConfiguration { Enabled = true } });
 
         // Add pipeline provider config
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))

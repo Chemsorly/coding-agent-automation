@@ -9,7 +9,7 @@ internal sealed class CloneRepositoryStep : IPipelineStep
 {
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
-        var workspacePath = Path.Combine(context.Config.WorkspaceBaseDirectory, context.Run.RunId);
+        var workspacePath = Path.Combine(context.Config.Workspace.WorkspaceBaseDirectory, context.Run.RunId);
         Directory.CreateDirectory(workspacePath);
         context.Run.WorkspacePath = workspacePath;
 

@@ -41,9 +41,7 @@ public class FailPhaseAsyncTests
 
         _config = new PipelineConfiguration
         {
-            AgentTimeout = TimeSpan.FromMinutes(10),
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1)
+            Retry = new RetryConfiguration { AgentTimeout = TimeSpan.FromMinutes(10), StallPollInterval = TimeSpan.FromMilliseconds(50), StallWarningInterval = TimeSpan.FromHours(1) }
         };
 
         _orchestrator = new AgentExecutionOrchestrator(_mockLogger.Object);

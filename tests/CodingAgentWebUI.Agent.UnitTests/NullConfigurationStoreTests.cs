@@ -477,8 +477,11 @@ public static class NullConfigStoreArbitrary
             from timeout in Gen.Choose(1, 60)
             select new PipelineConfiguration
             {
-                MaxRetries = maxRetries,
-                AgentTimeout = TimeSpan.FromMinutes(timeout)
+                Retry = new RetryConfiguration
+                {
+                    MaxRetries = maxRetries,
+                    AgentTimeout = TimeSpan.FromMinutes(timeout)
+                }
             };
 
         return gen.ToArbitrary();

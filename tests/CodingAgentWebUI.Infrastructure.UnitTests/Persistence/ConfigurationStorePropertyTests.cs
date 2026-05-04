@@ -45,11 +45,20 @@ public class ConfigurationStorePropertyTests : IDisposable
 
         var original = new PipelineConfiguration
         {
-            MaxRetries = clampedRetries,
-            AgentTimeout = TimeSpan.FromMinutes(timeoutMinutes),
-            WorkspaceBaseDirectory = workspaceDir.Get,
-            BlacklistedPaths = new[] { ".kiro", ".github", $".custom-{Math.Abs(maxRetries % 10)}" },
-            BlacklistMode = blacklistMode
+            Retry = new RetryConfiguration
+            {
+                MaxRetries = clampedRetries,
+                AgentTimeout = TimeSpan.FromMinutes(timeoutMinutes),
+            },
+            Workspace = new WorkspaceConfiguration
+            {
+                WorkspaceBaseDirectory = workspaceDir.Get,
+            },
+            Commit = new CommitConfiguration
+            {
+                BlacklistedPaths = new[] { ".kiro", ".github", $".custom-{Math.Abs(maxRetries % 10)}" },
+                BlacklistMode = blacklistMode
+            }
         };
 
         var store = new JsonConfigurationStore(_tempDir);
@@ -57,11 +66,11 @@ public class ConfigurationStorePropertyTests : IDisposable
         store.SavePipelineConfigAsync(original, CancellationToken.None).GetAwaiter().GetResult();
         var loaded = store.LoadPipelineConfigAsync(CancellationToken.None).GetAwaiter().GetResult();
 
-        Assert.Equal(original.MaxRetries, loaded.MaxRetries);
-        Assert.Equal(original.AgentTimeout, loaded.AgentTimeout);
-        Assert.Equal(original.WorkspaceBaseDirectory, loaded.WorkspaceBaseDirectory);
-        Assert.Equal(original.BlacklistedPaths, loaded.BlacklistedPaths);
-        Assert.Equal(original.BlacklistMode, loaded.BlacklistMode);
+        Assert.Equal(original.Retry.MaxRetries, loaded.Retry.MaxRetries);
+        Assert.Equal(original.Retry.AgentTimeout, loaded.Retry.AgentTimeout);
+        Assert.Equal(original.Workspace.WorkspaceBaseDirectory, loaded.Workspace.WorkspaceBaseDirectory);
+        Assert.Equal(original.Commit.BlacklistedPaths, loaded.Commit.BlacklistedPaths);
+        Assert.Equal(original.Commit.BlacklistMode, loaded.Commit.BlacklistMode);
     }
 
     /// <summary>

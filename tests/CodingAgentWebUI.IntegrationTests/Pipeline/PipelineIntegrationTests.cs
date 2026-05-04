@@ -26,10 +26,19 @@ public class PipelineIntegrationTests : IntegrationTestBase
     {
         var original = new PipelineConfiguration
         {
-            MaxRetries = 5,
+            Retry = new RetryConfiguration
+            {
+                MaxRetries = 5,
+                AgentTimeout = TimeSpan.FromMinutes(45),
+                StallWarningInterval = TimeSpan.FromMinutes(5),
+                StallPollInterval = TimeSpan.FromSeconds(15),
+            },
             IssuePageSize = 50,
-            AgentTimeout = TimeSpan.FromMinutes(45),
-            WorkspaceBaseDirectory = "/tmp/custom-workspaces",
+            Workspace = new WorkspaceConfiguration
+            {
+                WorkspaceBaseDirectory = "/tmp/custom-workspaces",
+                FailedWorkspaceRetentionDays = 14,
+            },
             CodeReview = new CodeReviewConfiguration
             {
                 Enabled = true,
@@ -39,24 +48,33 @@ public class PipelineIntegrationTests : IntegrationTestBase
             },
             AnalysisPrompt = "Custom analysis",
             ImplementationPrompt = "Custom implementation",
-            ExternalCiEnabled = true,
-            ExternalCiTimeout = TimeSpan.FromMinutes(20),
-            ExternalCiPollInterval = TimeSpan.FromSeconds(45),
-            StallWarningInterval = TimeSpan.FromMinutes(5),
-            StallPollInterval = TimeSpan.FromSeconds(15),
-            BlacklistedPaths = new[] { ".kiro", ".github", ".secret" },
-            BlacklistMode = BlacklistMode.Fail,
-            FailedWorkspaceRetentionDays = 14,
+            ExternalCi = new ExternalCiConfiguration
+            {
+                Enabled = true,
+                Timeout = TimeSpan.FromMinutes(20),
+                PollInterval = TimeSpan.FromSeconds(45),
+            },
+            Commit = new CommitConfiguration
+            {
+                BlacklistedPaths = new[] { ".kiro", ".github", ".secret" },
+                BlacklistMode = BlacklistMode.Fail,
+            },
             LastUsedProviderIds = new Dictionary<string, string>
             {
                 ["issue"] = "gh-issue-1",
                 ["repository"] = "gh-repo-1",
                 ["agent"] = "kiro-1"
             },
-            BrainReadOnly = true,
-            ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
-            ClosedLoopMaxRunsPerCycle = 5,
-            ClosedLoopMaxPagesToFetch = 20
+            Agent = new AgentConfiguration
+            {
+                BrainReadOnly = true,
+            },
+            ClosedLoop = new ClosedLoopConfiguration
+            {
+                PollInterval = TimeSpan.FromSeconds(120),
+                MaxRunsPerCycle = 5,
+                MaxPagesToFetch = 20
+            }
         };
 
         await ConfigStore.SavePipelineConfigAsync(original, CancellationToken.None);
@@ -65,25 +83,25 @@ public class PipelineIntegrationTests : IntegrationTestBase
         var freshStore = new JsonConfigurationStore(ConfigDir);
         var loaded = await freshStore.LoadPipelineConfigAsync(CancellationToken.None);
 
-        loaded.MaxRetries.Should().Be(original.MaxRetries);
+        loaded.Retry.MaxRetries.Should().Be(original.Retry.MaxRetries);
         loaded.IssuePageSize.Should().Be(original.IssuePageSize);
-        loaded.AgentTimeout.Should().Be(original.AgentTimeout);
-        loaded.WorkspaceBaseDirectory.Should().Be(original.WorkspaceBaseDirectory);
+        loaded.Retry.AgentTimeout.Should().Be(original.Retry.AgentTimeout);
+        loaded.Workspace.WorkspaceBaseDirectory.Should().Be(original.Workspace.WorkspaceBaseDirectory);
         loaded.AnalysisPrompt.Should().Be(original.AnalysisPrompt);
         loaded.ImplementationPrompt.Should().Be(original.ImplementationPrompt);
-        loaded.ExternalCiEnabled.Should().Be(original.ExternalCiEnabled);
-        loaded.ExternalCiTimeout.Should().Be(original.ExternalCiTimeout);
-        loaded.ExternalCiPollInterval.Should().Be(original.ExternalCiPollInterval);
-        loaded.StallWarningInterval.Should().Be(original.StallWarningInterval);
-        loaded.StallPollInterval.Should().Be(original.StallPollInterval);
-        loaded.BlacklistedPaths.Should().BeEquivalentTo(original.BlacklistedPaths);
-        loaded.BlacklistMode.Should().Be(original.BlacklistMode);
-        loaded.FailedWorkspaceRetentionDays.Should().Be(original.FailedWorkspaceRetentionDays);
+        loaded.ExternalCi.Enabled.Should().Be(original.ExternalCi.Enabled);
+        loaded.ExternalCi.Timeout.Should().Be(original.ExternalCi.Timeout);
+        loaded.ExternalCi.PollInterval.Should().Be(original.ExternalCi.PollInterval);
+        loaded.Retry.StallWarningInterval.Should().Be(original.Retry.StallWarningInterval);
+        loaded.Retry.StallPollInterval.Should().Be(original.Retry.StallPollInterval);
+        loaded.Commit.BlacklistedPaths.Should().BeEquivalentTo(original.Commit.BlacklistedPaths);
+        loaded.Commit.BlacklistMode.Should().Be(original.Commit.BlacklistMode);
+        loaded.Workspace.FailedWorkspaceRetentionDays.Should().Be(original.Workspace.FailedWorkspaceRetentionDays);
         loaded.LastUsedProviderIds.Should().BeEquivalentTo(original.LastUsedProviderIds);
-        loaded.BrainReadOnly.Should().Be(original.BrainReadOnly);
-        loaded.ClosedLoopPollInterval.Should().Be(original.ClosedLoopPollInterval);
-        loaded.ClosedLoopMaxRunsPerCycle.Should().Be(original.ClosedLoopMaxRunsPerCycle);
-        loaded.ClosedLoopMaxPagesToFetch.Should().Be(original.ClosedLoopMaxPagesToFetch);
+        loaded.Agent.BrainReadOnly.Should().Be(original.Agent.BrainReadOnly);
+        loaded.ClosedLoop.PollInterval.Should().Be(original.ClosedLoop.PollInterval);
+        loaded.ClosedLoop.MaxRunsPerCycle.Should().Be(original.ClosedLoop.MaxRunsPerCycle);
+        loaded.ClosedLoop.MaxPagesToFetch.Should().Be(original.ClosedLoop.MaxPagesToFetch);
 
         // Nested CodeReviewConfiguration
         loaded.CodeReview.Enabled.Should().Be(true);
@@ -97,7 +115,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
     {
         var original = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = WorkspaceBase,
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = WorkspaceBase },
             CodeReview = new CodeReviewConfiguration
             {
                 Enabled = false,
@@ -118,24 +136,33 @@ public class PipelineIntegrationTests : IntegrationTestBase
     {
         var original = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = WorkspaceBase,
-            AgentTimeout = TimeSpan.Zero,
-            ExternalCiTimeout = TimeSpan.FromMilliseconds(1),
-            ExternalCiPollInterval = TimeSpan.FromHours(2) + TimeSpan.FromMinutes(30) + TimeSpan.FromSeconds(15),
-            StallWarningInterval = TimeSpan.FromDays(1),
-            StallPollInterval = TimeSpan.FromSeconds(1),
-            ClosedLoopPollInterval = TimeSpan.FromTicks(123456789)
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = WorkspaceBase },
+            Retry = new RetryConfiguration
+            {
+                AgentTimeout = TimeSpan.Zero,
+                StallWarningInterval = TimeSpan.FromDays(1),
+                StallPollInterval = TimeSpan.FromSeconds(1),
+            },
+            ExternalCi = new ExternalCiConfiguration
+            {
+                Timeout = TimeSpan.FromMilliseconds(1),
+                PollInterval = TimeSpan.FromHours(2) + TimeSpan.FromMinutes(30) + TimeSpan.FromSeconds(15),
+            },
+            ClosedLoop = new ClosedLoopConfiguration
+            {
+                PollInterval = TimeSpan.FromTicks(123456789)
+            }
         };
 
         await ConfigStore.SavePipelineConfigAsync(original, CancellationToken.None);
         var loaded = await new JsonConfigurationStore(ConfigDir).LoadPipelineConfigAsync(CancellationToken.None);
 
-        loaded.AgentTimeout.Should().Be(TimeSpan.Zero);
-        loaded.ExternalCiTimeout.Should().Be(TimeSpan.FromMilliseconds(1));
-        loaded.ExternalCiPollInterval.Should().Be(TimeSpan.FromHours(2) + TimeSpan.FromMinutes(30) + TimeSpan.FromSeconds(15));
-        loaded.StallWarningInterval.Should().Be(TimeSpan.FromDays(1));
-        loaded.StallPollInterval.Should().Be(TimeSpan.FromSeconds(1));
-        loaded.ClosedLoopPollInterval.Should().Be(TimeSpan.FromTicks(123456789));
+        loaded.Retry.AgentTimeout.Should().Be(TimeSpan.Zero);
+        loaded.ExternalCi.Timeout.Should().Be(TimeSpan.FromMilliseconds(1));
+        loaded.ExternalCi.PollInterval.Should().Be(TimeSpan.FromHours(2) + TimeSpan.FromMinutes(30) + TimeSpan.FromSeconds(15));
+        loaded.Retry.StallWarningInterval.Should().Be(TimeSpan.FromDays(1));
+        loaded.Retry.StallPollInterval.Should().Be(TimeSpan.FromSeconds(1));
+        loaded.ClosedLoop.PollInterval.Should().Be(TimeSpan.FromTicks(123456789));
     }
 
     [Fact]
@@ -273,7 +300,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
     {
         var config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = WorkspaceBase,
+            Workspace = new WorkspaceConfiguration { WorkspaceBaseDirectory = WorkspaceBase },
             CodeReview = new CodeReviewConfiguration
             {
                 Enabled = true,
@@ -371,8 +398,11 @@ public class PipelineIntegrationTests : IntegrationTestBase
         // calls CleanupExpiredWorkspaces at the start
         var config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = WorkspaceBase,
-            FailedWorkspaceRetentionDays = 7
+            Workspace = new WorkspaceConfiguration
+            {
+                WorkspaceBaseDirectory = WorkspaceBase,
+                FailedWorkspaceRetentionDays = 7
+            }
         };
         await using var service = await CreateServiceWithPersistedConfigAsync(config);
 

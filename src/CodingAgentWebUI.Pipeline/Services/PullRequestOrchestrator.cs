@@ -45,11 +45,11 @@ internal class PullRequestOrchestrator
             var commitMessage = PipelineFormatting.GenerateCommitMessage(
                 run.IssueTitle, run.IssueIdentifier);
             var blacklisted = await repoProvider.CommitAllAsync(
-                run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct);
+                run.WorkspacePath!, commitMessage, config.Commit.BlacklistedPaths, ct);
             if (blacklisted.Count > 0)
             {
                 RecordBlacklistedFiles(run, blacklisted, config);
-                if (config.BlacklistMode == BlacklistMode.Fail)
+                if (config.Commit.BlacklistMode == BlacklistMode.Fail)
                     return null; // Caller handles failure transition
             }
             // NOTE: [UX-16] File counts may be stale — UpdateFileChangeStatsAsync runs after push, not before this line
@@ -170,7 +170,7 @@ internal class PullRequestOrchestrator
 
         _logger.Warning(
             "Pipeline {RunId} blacklisted {Count} file(s) excluded from commit (mode={BlacklistMode}, patterns={Patterns}): {Files}",
-            run.RunId, blacklisted.Count, config.BlacklistMode, config.BlacklistedPaths, blacklisted);
+            run.RunId, blacklisted.Count, config.Commit.BlacklistMode, config.Commit.BlacklistedPaths, blacklisted);
     }
 
     /// <summary>Updates file change statistics on the run.</summary>

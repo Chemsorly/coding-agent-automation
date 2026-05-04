@@ -53,7 +53,7 @@ public class PipelineSectionComponentTests : BunitContext
     public void GeneralSection_LoadsConfigValues()
     {
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { MaxRetries = 5, AgentTimeout = TimeSpan.FromMinutes(45) });
+            .ReturnsAsync(new PipelineConfiguration { Retry = new RetryConfiguration { MaxRetries = 5, AgentTimeout = TimeSpan.FromMinutes(45) } });
 
         var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
 
@@ -138,10 +138,13 @@ public class PipelineSectionComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
-                ClosedLoopMaxRunsPerCycle = 5,
-                ClosedLoopMaxConsecutivePollFailures = 10,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(1800)
+                ClosedLoop = new ClosedLoopConfiguration
+                {
+                    PollInterval = TimeSpan.FromSeconds(120),
+                    MaxRunsPerCycle = 5,
+                    MaxConsecutivePollFailures = 10,
+                    MaxBackoffInterval = TimeSpan.FromSeconds(1800)
+                }
             });
 
         var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
@@ -243,10 +246,13 @@ public class PipelineSectionComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                BlacklistedPaths = new[] { ".secret", ".env" },
-                BlacklistMode = BlacklistMode.Fail,
-                FailedWorkspaceRetentionDays = 14,
-                BrainReadOnly = true
+                Commit = new CommitConfiguration
+                {
+                    BlacklistedPaths = new[] { ".secret", ".env" },
+                    BlacklistMode = BlacklistMode.Fail,
+                },
+                Workspace = new WorkspaceConfiguration { FailedWorkspaceRetentionDays = 14 },
+                Agent = new AgentConfiguration { BrainReadOnly = true }
             });
 
         var cut = Render<PipelineSecuritySection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));

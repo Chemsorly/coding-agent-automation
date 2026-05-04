@@ -23,7 +23,7 @@ internal partial class AgentExecutionOrchestrator
             var brainContextWritten = await WriteBrainContextIfNeededAsync(run, ct);
 
             var brainWriteInstructions = PromptBuilder.BuildBrainWriteInstructions(
-                run.BrainContextLoaded, run.RunId, run.IssueIdentifier, config.BrainReadOnly);
+                run.BrainContextLoaded, run.RunId, run.IssueIdentifier, config.Agent.BrainReadOnly);
 
             var prompt = promptOverride
                 ?? PromptBuilder.BuildPrompt(config.ImplementationPrompt, context.Issue, context.ParsedIssue, brainWriteInstructions, brainContextWritten);
@@ -36,7 +36,7 @@ internal partial class AgentExecutionOrchestrator
                 {
                     Prompt = prompt,
                     WorkspacePath = run.WorkspacePath!,
-                    Timeout = config.AgentTimeout,
+                    Timeout = config.Retry.AgentTimeout,
                     UseResume = true
                 },
                 run, config, "Code generation agent", context.Callbacks.NotifyChange, _logger, ct,
@@ -72,7 +72,7 @@ internal partial class AgentExecutionOrchestrator
                 if (agentResult.ExitCode == ExitCodes.Timeout)
                 {
                     return await FailPhaseAsync(run,
-                        $"Agent timed out after {config.AgentTimeout}. Implementation is incomplete.",
+                        $"Agent timed out after {config.Retry.AgentTimeout}. Implementation is incomplete.",
                         AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct);
                 }
             }
@@ -83,14 +83,14 @@ internal partial class AgentExecutionOrchestrator
         }
         catch (OperationCanceledException)
         {
-            _logger.Warning("Pipeline {RunId} agent timed out after {Duration}", run.RunId, config.AgentTimeout);
+            _logger.Warning("Pipeline {RunId} agent timed out after {Duration}", run.RunId, config.Retry.AgentTimeout);
             run.ChatHistory.Enqueue(new ChatEntry
             {
                 Role = ChatRole.System,
-                Content = $"Agent timed out after {config.AgentTimeout}"
+                Content = $"Agent timed out after {config.Retry.AgentTimeout}"
             });
             return await FailPhaseAsync(run,
-                $"Agent timed out after {config.AgentTimeout}. Implementation is incomplete.",
+                $"Agent timed out after {config.Retry.AgentTimeout}. Implementation is incomplete.",
                 AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct);
         }
         catch (Exception ex)

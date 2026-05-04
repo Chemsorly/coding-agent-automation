@@ -14,11 +14,20 @@ public static class TestPipelineConfig
     /// </summary>
     public static PipelineConfiguration Default(string? workspaceBaseDirectory = null) => new()
     {
-        MaxRetries = 3,
-        MaxAnalysisRetries = 1,
+        Retry = new RetryConfiguration
+        {
+            MaxRetries = 3,
+            MaxAnalysisRetries = 1,
+            AgentTimeout = TimeSpan.FromMinutes(30),
+            StallWarningInterval = TimeSpan.FromMinutes(2),
+            StallPollInterval = TimeSpan.FromSeconds(30),
+        },
         IssuePageSize = 25,
-        AgentTimeout = TimeSpan.FromMinutes(30),
-        WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
+        Workspace = new WorkspaceConfiguration
+        {
+            WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
+            FailedWorkspaceRetentionDays = 7,
+        },
         CodeReview = new CodeReviewConfiguration
         {
             Enabled = false,
@@ -26,19 +35,25 @@ public static class TestPipelineConfig
             Prompt = PipelineConfiguration.DefaultCodeReviewPrompt,
             FixPrompt = null,
         },
-        ExternalCiEnabled = false,
-        ExternalCiTimeout = TimeSpan.FromMinutes(15),
-        ExternalCiPollInterval = TimeSpan.FromSeconds(30),
-        StallWarningInterval = TimeSpan.FromMinutes(2),
-        StallPollInterval = TimeSpan.FromSeconds(30),
-        BlacklistedPaths = new[] { ".kiro", ".github" },
-        BlacklistMode = BlacklistMode.WarnAndExclude,
-        FailedWorkspaceRetentionDays = 7,
-        ClosedLoopPollInterval = TimeSpan.FromSeconds(60),
-        ClosedLoopMaxRunsPerCycle = 0,
-        ClosedLoopMaxConsecutivePollFailures = 5,
-        ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15),
-        ClosedLoopMaxPagesToFetch = 10,
+        ExternalCi = new ExternalCiConfiguration
+        {
+            Enabled = false,
+            Timeout = TimeSpan.FromMinutes(15),
+            PollInterval = TimeSpan.FromSeconds(30),
+        },
+        Commit = new CommitConfiguration
+        {
+            BlacklistedPaths = new[] { ".kiro", ".github" },
+            BlacklistMode = BlacklistMode.WarnAndExclude,
+        },
+        ClosedLoop = new ClosedLoopConfiguration
+        {
+            PollInterval = TimeSpan.FromSeconds(60),
+            MaxRunsPerCycle = 0,
+            MaxConsecutivePollFailures = 5,
+            MaxBackoffInterval = TimeSpan.FromMinutes(15),
+            MaxPagesToFetch = 10,
+        },
     };
 
     /// <summary>
@@ -47,11 +62,20 @@ public static class TestPipelineConfig
     /// </summary>
     public static PipelineConfiguration WithCodeReview(string? workspaceBaseDirectory = null) => new()
     {
-        MaxRetries = 3,
-        MaxAnalysisRetries = 1,
+        Retry = new RetryConfiguration
+        {
+            MaxRetries = 3,
+            MaxAnalysisRetries = 1,
+            AgentTimeout = TimeSpan.FromMinutes(30),
+            StallWarningInterval = TimeSpan.FromMinutes(2),
+            StallPollInterval = TimeSpan.FromSeconds(30),
+        },
         IssuePageSize = 25,
-        AgentTimeout = TimeSpan.FromMinutes(30),
-        WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
+        Workspace = new WorkspaceConfiguration
+        {
+            WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
+            FailedWorkspaceRetentionDays = 7,
+        },
         CodeReview = new CodeReviewConfiguration
         {
             Enabled = true,
@@ -59,18 +83,24 @@ public static class TestPipelineConfig
             Prompt = PipelineConfiguration.DefaultCodeReviewPrompt,
             FixPrompt = null,
         },
-        ExternalCiEnabled = false,
-        ExternalCiTimeout = TimeSpan.FromMinutes(15),
-        ExternalCiPollInterval = TimeSpan.FromSeconds(30),
-        StallWarningInterval = TimeSpan.FromMinutes(2),
-        StallPollInterval = TimeSpan.FromSeconds(30),
-        BlacklistedPaths = new[] { ".kiro", ".github" },
-        BlacklistMode = BlacklistMode.WarnAndExclude,
-        FailedWorkspaceRetentionDays = 7,
-        ClosedLoopPollInterval = TimeSpan.FromSeconds(60),
-        ClosedLoopMaxRunsPerCycle = 0,
-        ClosedLoopMaxConsecutivePollFailures = 5,
-        ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15),
-        ClosedLoopMaxPagesToFetch = 10,
+        ExternalCi = new ExternalCiConfiguration
+        {
+            Enabled = false,
+            Timeout = TimeSpan.FromMinutes(15),
+            PollInterval = TimeSpan.FromSeconds(30),
+        },
+        Commit = new CommitConfiguration
+        {
+            BlacklistedPaths = new[] { ".kiro", ".github" },
+            BlacklistMode = BlacklistMode.WarnAndExclude,
+        },
+        ClosedLoop = new ClosedLoopConfiguration
+        {
+            PollInterval = TimeSpan.FromSeconds(60),
+            MaxRunsPerCycle = 0,
+            MaxConsecutivePollFailures = 5,
+            MaxBackoffInterval = TimeSpan.FromMinutes(15),
+            MaxPagesToFetch = 10,
+        },
     };
 }
