@@ -9,7 +9,7 @@ internal sealed class CreateBranchStep : IPipelineStep
 {
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
-        context.TransitionTo(PipelineStep.CreatingBranch);
+        context.Callbacks.TransitionTo(PipelineStep.CreatingBranch);
 
         if (context.Run.LinkedPullRequest is not null)
             return await CheckoutAndMergeAsync(context, ct);
@@ -24,7 +24,7 @@ internal sealed class CreateBranchStep : IPipelineStep
         {
             await context.RepoProvider.CheckoutRemoteBranchAsync(context.Run.WorkspacePath!, pr.BranchName, ct);
             context.Run.BranchName = pr.BranchName;
-            context.EmitOutputLine($"🌿 Checked out existing branch {context.Run.BranchName}");
+            context.Callbacks.EmitOutputLine($"🌿 Checked out existing branch {context.Run.BranchName}");
             context.Logger.Information("Pipeline {RunId} checked out existing branch {BranchName}",
                 context.Run.RunId, context.Run.BranchName);
         }
@@ -42,13 +42,13 @@ internal sealed class CreateBranchStep : IPipelineStep
             context.Run.MergeConflictFiles = mergeResult.ConflictFiles;
             if (mergeResult.HasConflicts)
             {
-                context.EmitOutputLine($"⚠️ Merged from {context.RepoProvider.BaseBranch} with {mergeResult.ConflictFiles.Count} conflict(s)");
+                context.Callbacks.EmitOutputLine($"⚠️ Merged from {context.RepoProvider.BaseBranch} with {mergeResult.ConflictFiles.Count} conflict(s)");
                 context.Logger.Information("Pipeline {RunId} merged from base with {ConflictCount} conflict(s)",
                     context.Run.RunId, mergeResult.ConflictFiles.Count);
             }
             else
             {
-                context.EmitOutputLine($"🔀 Merged from {context.RepoProvider.BaseBranch} (no conflicts)");
+                context.Callbacks.EmitOutputLine($"🔀 Merged from {context.RepoProvider.BaseBranch} (no conflicts)");
                 context.Logger.Information("Pipeline {RunId} merged from base (no conflicts)", context.Run.RunId);
             }
         }
@@ -64,18 +64,19 @@ internal sealed class CreateBranchStep : IPipelineStep
 
     private static async Task<StepResult> CreateNewBranchAsync(PipelineStepContext context, CancellationToken ct)
     {
-        // TODO: [WARNING] context.Issue! uses null-forgiving operator without guard. Add explicit null check
-        // with descriptive InvalidOperationException if step ordering becomes configurable at runtime.
-        context.EmitOutputLine("🌿 Creating branch...");
+        if (context.Issue is null)
+            throw new InvalidOperationException("Issue must be fetched before creating a branch. Ensure FetchIssueStep runs before CreateBranchStep.");
+
+        context.Callbacks.EmitOutputLine("🌿 Creating branch...");
         try
         {
             var branchName = PipelineFormatting.GenerateBranchName(
-                context.Run.IssueIdentifier, context.Issue!.Title, context.Run.RunId);
+                context.Run.IssueIdentifier, context.Issue.Title, context.Run.RunId);
             context.Run.BranchName = await context.RepoProvider.CreateBranchAsync(
                 context.Run.WorkspacePath!, branchName, ct);
             context.Logger.Information("Pipeline {RunId} branch {BranchName} created",
                 context.Run.RunId, context.Run.BranchName);
-            context.EmitOutputLine($"🌿 Created branch {context.Run.BranchName}");
+            context.Callbacks.EmitOutputLine($"🌿 Created branch {context.Run.BranchName}");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

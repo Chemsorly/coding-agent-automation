@@ -26,13 +26,10 @@ internal sealed class ReviewCodeStep : IPipelineStep
             resolvedReviewers = reviewerResolver.Resolve(allReviewerConfigs, requiredLabelsForReview);
         }
 
+        var phaseContext = context.BuildAgentPhaseContext();
+
         await context.AgentExecution.ExecuteCodeReviewAsync(
-            context.Run, context.Config, context.AgentProvider,
-            context.Issue!, context.ParsedIssue!,
-            context.Cts,
-            context.TransitionTo,
-            context.EmitOutputLine, context.NotifyChange, ct,
-            resolvedReviewers);
+            phaseContext, ct, resolvedReviewers);
 
         return StepResult.Continue;
     }

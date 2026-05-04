@@ -10,6 +10,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services.Steps;
 // TODO: [WARNING] Missing dedicated unit tests for AnalyzeCodeStep, ReviewCodeStep, and RunQualityGatesStep.
 // These steps delegate to orchestrator methods that are not virtual (cannot be mocked with Moq).
 // They are tested indirectly through PipelineOrchestrationServiceTests but lack isolated step-level tests.
+// Partial coverage added below for null guards, disabled-review short-circuit, and terminal state detection.
 
 public class PipelineStepTests
 {
@@ -49,6 +50,7 @@ public class PipelineStepTests
         BrainSyncOrchestrator? brainSync = null)
     {
         var prOrchestrator = new PullRequestOrchestrator(_logger);
+        var callbacks = new TestCallbacks(_transitions, _outputLines);
         return new PipelineStepContext
         {
             Run = _run,
@@ -60,18 +62,11 @@ public class PipelineStepTests
             Cts = new CancellationTokenSource(),
             ConfigStore = _configStore.Object,
             IssueProvider = _issueProvider.Object,
-            TransitionTo = step => _transitions.Add(step),
-            EmitOutputLine = line => _outputLines.Add(line),
-            NotifyChange = () => { },
-            AddRunToHistory = _ => { },
-            UpdateFileChangeStats = _ => Task.CompletedTask,
-            SwapAgentLabel = (_, _, _) => Task.CompletedTask,
-            RemoveAllAgentLabels = (_, _) => Task.CompletedTask,
-            CreatePullRequest = (_, _, _, _) => Task.CompletedTask,
+            Callbacks = callbacks,
             IssueOps = _issueOps.Object,
             AgentExecution = new AgentExecutionOrchestrator(_logger),
             QualityGates = new QualityGateOrchestrator(
-                Mock.Of<IQualityGateValidator>(), new CiLogWriter(_logger), prOrchestrator, _logger),
+                Mock.Of<IQualityGateValidator>(), prOrchestrator, _logger),
             BrainSync = brainSync,
             PrOrchestrator = prOrchestrator,
             Logger = _logger
@@ -459,6 +454,123 @@ public class PipelineStepTests
             () => PipelineStepRunner.ExecuteAsync([step], context, cts.Token));
     }
 
+    // ── AnalyzeCodeStep ──
+
+    [Fact]
+    public async Task AnalyzeCodeStep_NullIssue_ThrowsInvalidOperationException()
+    {
+        var step = new AnalyzeCodeStep();
+        var context = BuildContext();
+        context.Issue = null;
+        context.ParsedIssue = null;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => step.ExecuteAsync(context, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task AnalyzeCodeStep_NullParsedIssue_ThrowsInvalidOperationException()
+    {
+        var step = new AnalyzeCodeStep();
+        var context = BuildContext();
+        context.Issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        context.ParsedIssue = null;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => step.ExecuteAsync(context, CancellationToken.None));
+    }
+
+    // ── GenerateCodeStep (null guard) ──
+
+    [Fact]
+    public async Task GenerateCodeStep_NullIssue_ThrowsInvalidOperationException()
+    {
+        _run.LinkedPullRequest = null; // new issue flow, not rework
+        var step = new GenerateCodeStep();
+        var context = BuildContext();
+        context.Issue = null;
+        context.ParsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => step.ExecuteAsync(context, CancellationToken.None));
+    }
+
+    // ── ReviewCodeStep (null guard) ──
+
+    [Fact]
+    public async Task ReviewCodeStep_NullIssue_ThrowsInvalidOperationException()
+    {
+        var step = new ReviewCodeStep();
+        var context = BuildContext();
+        context.Issue = null;
+        context.ParsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
+        context.PreResolvedReviewerConfigs = new List<ReviewerConfiguration>();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => step.ExecuteAsync(context, CancellationToken.None));
+    }
+
+    // ── RunQualityGatesStep ──
+
+    [Fact]
+    public async Task RunQualityGatesStep_RunAlreadyFailed_ReturnsStop()
+    {
+        _run.CurrentStep = PipelineStep.Failed;
+        _run.WorkspacePath = "/tmp/test";
+
+        var step = new RunQualityGatesStep();
+        var context = BuildContext();
+        context.PreResolvedQualityGateConfigs = new List<QualityGateConfiguration>();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepResult.Stop, result);
+    }
+
+    [Fact]
+    public async Task RunQualityGatesStep_RunAlreadyCompleted_ReturnsStop()
+    {
+        _run.CurrentStep = PipelineStep.Completed;
+        _run.WorkspacePath = "/tmp/test";
+
+        var step = new RunQualityGatesStep();
+        var context = BuildContext();
+        context.PreResolvedQualityGateConfigs = new List<QualityGateConfiguration>();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepResult.Stop, result);
+    }
+
+    [Fact]
+    public async Task RunQualityGatesStep_RunAlreadyCancelled_ReturnsStop()
+    {
+        _run.CurrentStep = PipelineStep.Cancelled;
+        _run.WorkspacePath = "/tmp/test";
+
+        var step = new RunQualityGatesStep();
+        var context = BuildContext();
+        context.PreResolvedQualityGateConfigs = new List<QualityGateConfiguration>();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepResult.Stop, result);
+    }
+
+    // ── PipelineStepRunner (null guard) ──
+
+    [Fact]
+    public async Task PipelineStepRunner_NullSteps_ThrowsArgumentNullException()
+    {
+        var context = BuildContext();
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            () => PipelineStepRunner.ExecuteAsync(null!, context, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task PipelineStepRunner_NullContext_ThrowsArgumentNullException()
+    {
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            () => PipelineStepRunner.ExecuteAsync([], null!, CancellationToken.None));
+    }
+
     // ── Helper ──
 
     private sealed class TestStep : IPipelineStep
@@ -477,5 +589,17 @@ public class PipelineStepTests
             if (_throwOnCancel) ct.ThrowIfCancellationRequested();
             return Task.FromResult(_execute());
         }
+    }
+
+    private sealed class TestCallbacks(List<PipelineStep> transitions, List<string> outputLines) : IPipelineCallbacks
+    {
+        public void TransitionTo(PipelineStep step) => transitions.Add(step);
+        public void EmitOutputLine(string line) => outputLines.Add(line);
+        public void NotifyChange() { }
+        public void AddRunToHistory(PipelineRun run) { }
+        public Task UpdateFileChangeStats(PipelineRun run) => Task.CompletedTask;
+        public Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct) => Task.CompletedTask;
+        public Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct) => Task.CompletedTask;
+        public Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct) => Task.CompletedTask;
     }
 }

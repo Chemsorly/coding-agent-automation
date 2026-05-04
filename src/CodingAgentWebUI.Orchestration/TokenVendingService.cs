@@ -9,7 +9,7 @@ using Microsoft.IdentityModel.Tokens;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Services;
+namespace CodingAgentWebUI.Orchestration;
 
 /// <summary>
 /// Generates short-lived GitHub installation access tokens scoped to specific repositories
@@ -17,7 +17,7 @@ namespace CodingAgentWebUI.Services;
 /// Agents receive these tokens instead of the GitHub App private key.
 /// Registered as a singleton in DI.
 /// </summary>
-public sealed partial class TokenVendingService
+public sealed partial class TokenVendingService : ITokenVendingService
 {
     private readonly ILogger _logger;
     private readonly HttpClient _httpClient;

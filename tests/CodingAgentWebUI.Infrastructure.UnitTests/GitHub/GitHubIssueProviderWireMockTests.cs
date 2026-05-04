@@ -178,7 +178,7 @@ public class GitHubIssueProviderWireMockTests : WireMockTestBase
 
         await using var provider = CreateProvider();
         await provider.Invoking(p => p.GetIssueAsync("42", CancellationToken.None))
-            .Should().ThrowAsync<ForbiddenException>();
+            .Should().ThrowAsync<CodingAgentWebUI.Pipeline.Models.RateLimitExceededException>();
     }
 
     [Fact]

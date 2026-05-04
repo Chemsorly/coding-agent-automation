@@ -4,6 +4,10 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Orchestration
+@using CodingAgentWebUI.Orchestration.Dispatch
+@using CodingAgentWebUI.Orchestration.Health
+@using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
 @inject PipelineOrchestrationService PipelineService
 @inject PipelineLoopService LoopService
@@ -942,6 +946,13 @@
             !_repoProviders.Any(p => p.Id == _drawerTemplate.RepoProviderId))
         {
             _errorMessage = "Template references providers that no longer exist.";
+            return;
+        }
+
+        // Check if any agents are connected before attempting dispatch
+        if (!JobDispatcher.HasRegisteredAgents)
+        {
+            _errorMessage = "Could not dispatch — no agents are currently connected.";
             return;
         }
 

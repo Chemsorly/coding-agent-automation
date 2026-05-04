@@ -44,7 +44,7 @@ internal sealed class FetchIssueStep : IPipelineStep
         context.Issue = issue;
         context.ParsedIssue = parsed;
 
-        context.EmitOutputLine($"🚀 Pipeline started for issue #{context.Run.IssueIdentifier} — {issue.Title}");
+        context.Callbacks.EmitOutputLine($"🚀 Pipeline started for issue #{context.Run.IssueIdentifier} — {issue.Title}");
 
         IReadOnlyList<IssueComment> issueComments = Array.Empty<IssueComment>();
         try

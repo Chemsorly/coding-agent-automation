@@ -43,6 +43,7 @@ services:
       - AGENT_TYPE=kiro-dotnet10
       - AGENT_LABELS=kiro,dotnet,dotnet10
       - AGENT_API_KEY=${AGENT_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-Information}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 10s
@@ -68,6 +69,7 @@ services:
       - AGENT_TYPE=kiro-dotnet10
       - AGENT_LABELS=kiro,dotnet,dotnet10
       - AGENT_API_KEY=${AGENT_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-Information}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 10s
@@ -93,6 +95,7 @@ services:
       - AGENT_TYPE=kiro-python312
       - AGENT_LABELS=kiro,python,python312
       - AGENT_API_KEY=${AGENT_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-Information}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 10s
@@ -118,6 +121,7 @@ services:
       - AGENT_TYPE=kiro-java21
       - AGENT_LABELS=kiro,java,java21
       - AGENT_API_KEY=${AGENT_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-Information}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 10s

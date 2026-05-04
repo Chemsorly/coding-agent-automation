@@ -277,4 +277,65 @@ public class KiroCliAgentProviderTests
             "Invalid model name rejected: {Model}",
             "model with spaces"), Times.Once);
     }
+
+    // --- ExecuteAsync timeout tests ---
+
+    [Fact]
+    public async Task ExecuteAsync_Timeout_ReturnsExitCode124()
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<string, string, bool, CancellationToken, Action<string>?>(
+                async (_, _, _, ct, _) =>
+                {
+                    // Simulate a long-running operation that exceeds the timeout
+                    await Task.Delay(Timeout.Infinite, ct);
+                    return 0; // Never reached
+                });
+
+        var request = new AgentRequest
+        {
+            Prompt = "slow prompt",
+            WorkspacePath = "/ws",
+            Timeout = TimeSpan.FromMilliseconds(50)
+        };
+
+        var result = await _provider.ExecuteAsync(request, CancellationToken.None);
+
+        result.ExitCode.Should().Be(124);
+        result.Success.Should().BeFalse();
+    }
+
+    // --- ExecuteAsync ANSI stripping tests ---
+
+    [Fact]
+    public async Task ExecuteAsync_StripsAnsiEscapeSequences_FromOutputLines()
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<string, string, bool, CancellationToken, Action<string>?>(
+                (_, _, _, _, onOutput) =>
+                {
+                    onOutput?.Invoke("\x1b[31mError:\x1b[0m something failed");
+                    onOutput?.Invoke("\x1b[1;32mSuccess\x1b[0m");
+                    onOutput?.Invoke("plain text no ansi");
+                })
+            .ReturnsAsync(0);
+
+        var externalLines = new List<string>();
+        var request = new AgentRequest { Prompt = "test", WorkspacePath = "/ws" };
+        var result = await _provider.ExecuteAsync(request, CancellationToken.None, line => externalLines.Add(line));
+
+        result.OutputLines.Should().BeEquivalentTo(["Error: something failed", "Success", "plain text no ansi"]);
+        externalLines.Should().BeEquivalentTo(["Error: something failed", "Success", "plain text no ansi"]);
+        // Verify no ANSI sequences remain
+        foreach (var line in result.OutputLines)
+        {
+            line.Should().NotContain("\x1b[");
+        }
+    }
 }

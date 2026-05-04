@@ -1,0 +1,297 @@
+using CodingAgentWebUI.E2ETests.Fakes;
+using CodingAgentWebUI.E2ETests.Infrastructure;
+using CodingAgentWebUI.E2ETests.PageObjects;
+using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Services;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Playwright;
+
+namespace CodingAgentWebUI.E2ETests.Tests;
+
+/// <summary>
+/// Tests that validate monitoring page interactions: run detail modal, queue management,
+/// and agent status display.
+/// </summary>
+[Trait("Category", "E2E")]
+public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EFixture>
+{
+    public MonitoringInteractionTests(E2EFixture fixture) : base(fixture) { }
+
+    [Fact]
+    public async Task Monitoring_ActiveRun_ShowsInTable()
+    {
+        // Arrange: seed template, issue, profile, and connect an agent
+        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        {
+            PipelineJobTemplates = new[]
+            {
+                new PipelineJobTemplate
+                {
+                    Id = "template-1",
+                    Name = "Monitor Template",
+                    IssueProviderId = "issue-e2e",
+                    RepoProviderId = "repo-e2e",
+                    Enabled = true
+                }
+            }
+        }, CancellationToken.None);
+
+        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        {
+            Id = "profile-e2e",
+            DisplayName = "E2E Agent Profile",
+            MatchLabels = new[] { "e2e" },
+            AgentProviderConfigId = "agent-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "70",
+            Title = "Monitoring active run test",
+            Description = "Test",
+            Labels = new[] { "enhancement" }
+        });
+
+        await using var fakeAgent = new FakeAgentClient("monitor-agent-1", "e2e");
+        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await Task.Delay(500);
+
+        // Dispatch the issue
+        var codingPage = new AgentCodingPage(Page, BaseUrl);
+        await codingPage.NavigateAsync();
+        await codingPage.SelectTemplateAsync("Monitor Template");
+        await codingPage.ClickBrowseIssuesAsync();
+        await codingPage.SelectIssueAsync("70");
+        await codingPage.ClickStartPipelineAsync();
+
+        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await fakeAgent.AcceptJobAsync(assignment.JobId);
+        await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
+        await Task.Delay(500);
+
+        // Act: navigate to monitoring page
+        var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
+        await monitoringPage.NavigateAsync();
+
+        // Assert: active run is visible in the table
+        var activeRunsHeader = await Page.TextContentAsync("h2:has-text('Active Runs')");
+        Assert.NotNull(activeRunsHeader);
+        Assert.DoesNotContain("(0)", activeRunsHeader); // Should have at least 1 active run
+
+        // Verify the issue identifier is shown
+        var issueCell = await Page.QuerySelectorAsync("td:has-text('#70')");
+        Assert.NotNull(issueCell);
+    }
+
+    [Fact]
+    public async Task Monitoring_RunDetailModal_OpensOnRowClick()
+    {
+        // Arrange: seed template, issue, profile, and connect an agent
+        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        {
+            PipelineJobTemplates = new[]
+            {
+                new PipelineJobTemplate
+                {
+                    Id = "template-1",
+                    Name = "Modal Template",
+                    IssueProviderId = "issue-e2e",
+                    RepoProviderId = "repo-e2e",
+                    Enabled = true
+                }
+            }
+        }, CancellationToken.None);
+
+        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        {
+            Id = "profile-e2e",
+            DisplayName = "E2E Agent Profile",
+            MatchLabels = new[] { "e2e" },
+            AgentProviderConfigId = "agent-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "71",
+            Title = "Modal test issue",
+            Description = "Test",
+            Labels = new[] { "enhancement" }
+        });
+
+        await using var fakeAgent = new FakeAgentClient("modal-agent-1", "e2e");
+        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await Task.Delay(500);
+
+        // Dispatch and get the run active
+        var codingPage = new AgentCodingPage(Page, BaseUrl);
+        await codingPage.NavigateAsync();
+        await codingPage.SelectTemplateAsync("Modal Template");
+        await codingPage.ClickBrowseIssuesAsync();
+        await codingPage.SelectIssueAsync("71");
+        await codingPage.ClickStartPipelineAsync();
+
+        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await fakeAgent.AcceptJobAsync(assignment.JobId);
+        await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
+        await Task.Delay(500);
+
+        // Act: navigate to monitoring and click the active run row
+        var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
+        await monitoringPage.NavigateAsync();
+
+        // Click the clickable row
+        await Page.ClickAsync("tr.monitoring-row-clickable");
+        await Page.WaitForTimeoutAsync(500);
+
+        // Assert: modal is open
+        var modal = Page.Locator(".modal-overlay");
+        var modalCount = await modal.CountAsync();
+        Assert.True(modalCount > 0, "Run detail modal should open when clicking an active run row");
+
+        // Verify modal contains issue info
+        var modalText = await Page.TextContentAsync(".modal-card");
+        Assert.Contains("#71", modalText);
+    }
+
+    [Fact]
+    public async Task Monitoring_RunDetailModal_ClosesOnEscape()
+    {
+        // Arrange: same setup as above — get an active run
+        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        {
+            PipelineJobTemplates = new[]
+            {
+                new PipelineJobTemplate
+                {
+                    Id = "template-1",
+                    Name = "Escape Template",
+                    IssueProviderId = "issue-e2e",
+                    RepoProviderId = "repo-e2e",
+                    Enabled = true
+                }
+            }
+        }, CancellationToken.None);
+
+        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        {
+            Id = "profile-e2e",
+            DisplayName = "E2E Agent Profile",
+            MatchLabels = new[] { "e2e" },
+            AgentProviderConfigId = "agent-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "72",
+            Title = "Escape modal test",
+            Description = "Test",
+            Labels = new[] { "enhancement" }
+        });
+
+        await using var fakeAgent = new FakeAgentClient("escape-agent-1", "e2e");
+        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await Task.Delay(500);
+
+        var codingPage = new AgentCodingPage(Page, BaseUrl);
+        await codingPage.NavigateAsync();
+        await codingPage.SelectTemplateAsync("Escape Template");
+        await codingPage.ClickBrowseIssuesAsync();
+        await codingPage.SelectIssueAsync("72");
+        await codingPage.ClickStartPipelineAsync();
+
+        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await fakeAgent.AcceptJobAsync(assignment.JobId);
+        await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
+        await Task.Delay(500);
+
+        // Navigate to monitoring and open modal
+        var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
+        await monitoringPage.NavigateAsync();
+        await Page.ClickAsync("tr.monitoring-row-clickable");
+        await Page.WaitForSelectorAsync(".modal-overlay", new() { Timeout = 5_000 });
+
+        // Act: focus the modal overlay (tabindex="-1" makes it focusable) then press Escape
+        await Page.FocusAsync(".modal-overlay");
+        await Page.WaitForTimeoutAsync(200);
+        await Page.Keyboard.PressAsync("Escape");
+        await Page.WaitForTimeoutAsync(500);
+
+        // Assert: modal is closed
+        var modalCount = await Page.Locator(".modal-overlay").CountAsync();
+        Assert.Equal(0, modalCount);
+    }
+
+    [Fact]
+    public async Task Monitoring_AgentStatus_ShowsBusyDuringJob()
+    {
+        // Arrange: connect an agent and give it a job
+        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        {
+            PipelineJobTemplates = new[]
+            {
+                new PipelineJobTemplate
+                {
+                    Id = "template-1",
+                    Name = "Status Template",
+                    IssueProviderId = "issue-e2e",
+                    RepoProviderId = "repo-e2e",
+                    Enabled = true
+                }
+            }
+        }, CancellationToken.None);
+
+        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        {
+            Id = "profile-e2e",
+            DisplayName = "E2E Agent Profile",
+            MatchLabels = new[] { "e2e" },
+            AgentProviderConfigId = "agent-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "73",
+            Title = "Status test issue",
+            Description = "Test",
+            Labels = new[] { "enhancement" }
+        });
+
+        await using var fakeAgent = new FakeAgentClient("status-agent-1", "e2e");
+        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await Task.Delay(500);
+
+        // Dispatch and accept job
+        var codingPage = new AgentCodingPage(Page, BaseUrl);
+        await codingPage.NavigateAsync();
+        await codingPage.SelectTemplateAsync("Status Template");
+        await codingPage.ClickBrowseIssuesAsync();
+        await codingPage.SelectIssueAsync("73");
+        await codingPage.ClickStartPipelineAsync();
+
+        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await fakeAgent.AcceptJobAsync(assignment.JobId);
+        await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
+        await Task.Delay(500);
+
+        // Act: navigate to monitoring
+        var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
+        await monitoringPage.NavigateAsync();
+
+        // Assert: agent shows "Busy" status
+        var status = await monitoringPage.GetAgentStatusAsync("status-agent-1");
+        Assert.Equal("Busy", status);
+    }
+}

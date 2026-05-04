@@ -18,7 +18,7 @@ public class GitHubValidationService
 
     public GitHubValidationService(IProviderFactory providerFactory)
     {
-        // NOTE: [GH-06] Add ArgumentNullException.ThrowIfNull(providerFactory) per project convention
+        ArgumentNullException.ThrowIfNull(providerFactory);
         _providerFactory = providerFactory;
     }
 

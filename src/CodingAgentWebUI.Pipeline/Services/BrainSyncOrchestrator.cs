@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// change detection, validation, commit, and push. Extracted from
 /// PipelineOrchestrationService to reduce file size.
 /// </summary>
-internal class BrainSyncOrchestrator
+internal class BrainSyncOrchestrator : IBrainSyncService
 {
     private readonly IBrainUpdateService _brainUpdateService;
     private readonly Serilog.ILogger _logger;

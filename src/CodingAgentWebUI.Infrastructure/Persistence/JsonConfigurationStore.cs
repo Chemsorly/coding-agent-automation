@@ -12,13 +12,7 @@ public class JsonConfigurationStore : IConfigurationStore
     private readonly SemaphoreSlim _pipelineConfigLock = new(1, 1);
     private readonly ILogger _logger = Log.ForContext<JsonConfigurationStore>();
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals,
-        Converters = { new TimeSpanJsonConverter(), new System.Text.Json.Serialization.JsonStringEnumConverter() }
-    };
+    private static JsonSerializerOptions JsonOptions => PipelineJsonOptions.Default;
 
     public JsonConfigurationStore(string baseDirectory = "config/pipeline")
     {
@@ -75,18 +69,7 @@ public class JsonConfigurationStore : IConfigurationStore
     public async Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct)
     {
         var directory = GetProviderDirectory(kind);
-        if (!Directory.Exists(directory))
-            return Array.Empty<ProviderConfig>();
-
-        var configs = new List<ProviderConfig>();
-        foreach (var file in Directory.GetFiles(directory, "*.json"))
-        {
-            var config = await LoadJsonAsync<ProviderConfig>(file, ct);
-            if (config is not null)
-                configs.Add(config);
-        }
-
-        return configs.AsReadOnly();
+        return await LoadAllFromDirectoryAsync<ProviderConfig>(directory, ct);
     }
 
     public async Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct)
@@ -112,24 +95,7 @@ public class JsonConfigurationStore : IConfigurationStore
     public async Task<IReadOnlyList<AgentProfile>> LoadAgentProfilesAsync(CancellationToken ct)
     {
         var directory = Path.Combine(_baseDirectory, "profiles");
-        if (!Directory.Exists(directory))
-            return Array.Empty<AgentProfile>();
-
-        var profiles = new List<AgentProfile>();
-        foreach (var file in Directory.GetFiles(directory, "*.json"))
-        {
-            var profile = await LoadJsonAsync<AgentProfile>(file, ct);
-            if (profile is not null)
-            {
-                profiles.Add(profile);
-            }
-            else
-            {
-                _logger.Warning("Skipping corrupted agent profile file: {FilePath}", file);
-            }
-        }
-
-        return profiles.AsReadOnly();
+        return await LoadAllFromDirectoryAsync<AgentProfile>(directory, ct);
     }
 
     public async Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct)
@@ -155,24 +121,7 @@ public class JsonConfigurationStore : IConfigurationStore
     public async Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct)
     {
         var directory = Path.Combine(_baseDirectory, "quality-gates");
-        if (!Directory.Exists(directory))
-            return Array.Empty<QualityGateConfiguration>();
-
-        var configs = new List<QualityGateConfiguration>();
-        foreach (var file in Directory.GetFiles(directory, "*.json"))
-        {
-            var config = await LoadJsonAsync<QualityGateConfiguration>(file, ct);
-            if (config is not null)
-            {
-                configs.Add(config);
-            }
-            else
-            {
-                _logger.Warning("Skipping corrupted quality gate configuration file: {FilePath}", file);
-            }
-        }
-
-        return configs.AsReadOnly();
+        return await LoadAllFromDirectoryAsync<QualityGateConfiguration>(directory, ct);
     }
 
     public async Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct)
@@ -198,24 +147,7 @@ public class JsonConfigurationStore : IConfigurationStore
     public async Task<IReadOnlyList<ReviewerConfiguration>> LoadReviewerConfigsAsync(CancellationToken ct)
     {
         var directory = Path.Combine(_baseDirectory, "reviewers");
-        if (!Directory.Exists(directory))
-            return Array.Empty<ReviewerConfiguration>();
-
-        var configs = new List<ReviewerConfiguration>();
-        foreach (var file in Directory.GetFiles(directory, "*.json"))
-        {
-            var config = await LoadJsonAsync<ReviewerConfiguration>(file, ct);
-            if (config is not null)
-            {
-                configs.Add(config);
-            }
-            else
-            {
-                _logger.Warning("Skipping corrupted reviewer configuration file: {FilePath}", file);
-            }
-        }
-
-        return configs.AsReadOnly();
+        return await LoadAllFromDirectoryAsync<ReviewerConfiguration>(directory, ct);
     }
 
     public async Task SaveReviewerConfigAsync(ReviewerConfiguration config, CancellationToken ct)
@@ -266,6 +198,28 @@ public class JsonConfigurationStore : IConfigurationStore
         }
     }
 
+    private async Task<IReadOnlyList<T>> LoadAllFromDirectoryAsync<T>(string directory, CancellationToken ct) where T : class
+    {
+        if (!Directory.Exists(directory))
+            return Array.Empty<T>();
+
+        var items = new List<T>();
+        foreach (var file in Directory.GetFiles(directory, "*.json"))
+        {
+            var item = await LoadJsonAsync<T>(file, ct);
+            if (item is not null)
+            {
+                items.Add(item);
+            }
+            else
+            {
+                _logger.Warning("Skipping corrupted configuration file: {FilePath}", file);
+            }
+        }
+
+        return items.AsReadOnly();
+    }
+
     private async Task SaveJsonAsync<T>(string path, T value, CancellationToken ct)
     {
         try
@@ -284,21 +238,4 @@ public class JsonConfigurationStore : IConfigurationStore
         }
     }
 
-    /// <summary>
-    /// Custom converter for TimeSpan since System.Text.Json doesn't natively support it.
-    /// Serializes as ISO 8601 duration string.
-    /// </summary>
-    private sealed class TimeSpanJsonConverter : System.Text.Json.Serialization.JsonConverter<TimeSpan>
-    {
-        public override TimeSpan Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-        {
-            var value = reader.GetString();
-            return value is not null ? TimeSpan.Parse(value, System.Globalization.CultureInfo.InvariantCulture) : default;
-        }
-
-        public override void Write(Utf8JsonWriter writer, TimeSpan value, JsonSerializerOptions options)
-        {
-            writer.WriteStringValue(value.ToString("c", System.Globalization.CultureInfo.InvariantCulture));
-        }
-    }
 }

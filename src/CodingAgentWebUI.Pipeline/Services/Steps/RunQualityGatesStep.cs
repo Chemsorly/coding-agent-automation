@@ -28,13 +28,8 @@ internal sealed class RunQualityGatesStep : IPipelineStep
             RepoProvider = context.RepoProvider,
             PipelineProvider = context.PipelineProvider,
             OrchestratorCts = context.Cts,
-            TransitionTo = context.TransitionTo,
             IssueOps = context.IssueOps,
-            RemoveAllAgentLabels = context.RemoveAllAgentLabels,
-            AddRunToHistory = context.AddRunToHistory,
-            OnOutputLine = context.EmitOutputLine,
-            OnChange = context.NotifyChange,
-            CreatePullRequest = context.CreatePullRequest,
+            Callbacks = context.Callbacks,
             QualityGateConfigs = allQgcs,
             QgcsConfiguredAtDispatch = allQgcs.Count > 0
         };

@@ -21,26 +21,16 @@ public sealed class ProfileResolver
         ArgumentNullException.ThrowIfNull(profiles);
         ArgumentNullException.ThrowIfNull(agentLabels);
 
-        var agentLabelSet = new HashSet<string>(agentLabels, StringComparer.OrdinalIgnoreCase);
-
-        return profiles
-            .Where(p => p.Enabled)
-            .Where(p => IsSubset(p.MatchLabels, agentLabelSet))
-            .OrderByDescending(p => p.MatchLabels.Count)
-            .ThenByDescending(p => p.Priority)
-            .ThenBy(p => p.Id, StringComparer.Ordinal)
+        return LabelMatchResolver.Resolve(
+            profiles,
+            agentLabels,
+            enabledPredicate: p => p.Enabled,
+            labelSelector: p => p.MatchLabels,
+            matchStrategy: LabelMatchStrategies.Subset,
+            orderBy: items => items
+                .OrderByDescending(p => p.MatchLabels.Count)
+                .ThenByDescending(p => p.Priority)
+                .ThenBy(p => p.Id, StringComparer.Ordinal))
             .FirstOrDefault();
-    }
-
-    /// <summary>
-    /// Checks whether all items in <paramref name="subset"/> exist in <paramref name="superset"/>.
-    /// An empty subset matches any superset (default/catch-all profile).
-    /// </summary>
-    private static bool IsSubset(IReadOnlyList<string> subset, HashSet<string> superset)
-    {
-        if (subset.Count == 0)
-            return true;
-
-        return subset.All(label => superset.Contains(label));
     }
 }

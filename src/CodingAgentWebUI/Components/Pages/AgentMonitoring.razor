@@ -4,6 +4,10 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Orchestration
+@using CodingAgentWebUI.Orchestration.Dispatch
+@using CodingAgentWebUI.Orchestration.Health
+@using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
 @inject AgentRegistryService Registry
 @inject JobDispatcherService Dispatcher
@@ -90,7 +94,7 @@
         if (modalRun != null)
         {
             var modalAgent = modalRun.AgentId != null ? Registry.GetByAgentId(modalRun.AgentId) : null;
-            <div class="modal-overlay" @onclick="DismissRunDetailModal" @onkeydown="HandleModalKeyDown">
+            <div class="modal-overlay" tabindex="-1" @ref="_modalOverlayRef" @onclick="DismissRunDetailModal" @onkeydown="HandleModalKeyDown">
                 <div class="modal-card modal-card-wide" @onclick:stopPropagation="true"
                      role="dialog" aria-modal="true" aria-labelledby="run-detail-title">
                     <h3 id="run-detail-title">
@@ -459,6 +463,8 @@
     private string? _selectedRunId;
     private bool _showRunDetailModal;
     private bool _scrollModalOnNextRender;
+    private bool _focusModalOnNextRender;
+    private ElementReference _modalOverlayRef;
     private bool _disposed;
     private Timer? _refreshTimer;
     private int _maxRetries = 3;
@@ -517,6 +523,16 @@
             }
             catch { /* JS interop may fail during dispose */ }
         }
+
+        if (_focusModalOnNextRender && _showRunDetailModal)
+        {
+            _focusModalOnNextRender = false;
+            try
+            {
+                await _modalOverlayRef.FocusAsync();
+            }
+            catch { /* Focus may fail during dispose */ }
+        }
     }
 
     private void RefreshData()
@@ -562,6 +578,7 @@
         _selectedRunId = runId;
         _showRunDetailModal = true;
         _scrollModalOnNextRender = true;
+        _focusModalOnNextRender = true;
     }
 
     private void DismissRunDetailModal()

@@ -114,7 +114,9 @@ public class GitHubActionsPipelineProviderTests
             });
         SetupJobs(1, new[] { CreateJob("build", WorkflowJobStatus.Completed, WorkflowJobConclusion.Success) });
 
-        var result = await _provider.WaitForCompletionAsync("main", "abc", TimeSpan.FromSeconds(10), CancellationToken.None);
+        // Use a generous timeout — this test validates polling behavior, not performance.
+        // On slow CI runners (GitHub Actions), mock overhead can exceed 10s for 3 poll iterations.
+        var result = await _provider.WaitForCompletionAsync("main", "abc", TimeSpan.FromSeconds(60), CancellationToken.None);
 
         result.State.Should().Be(PipelineRunState.Passed);
         callCount.Should().BeGreaterThanOrEqualTo(3);

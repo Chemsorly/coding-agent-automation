@@ -17,7 +17,7 @@ internal sealed class DetectReworkStep : IPipelineStep
             {
                 var selectedPr = agentPrs.OrderByDescending(pr => pr.Number).First();
                 context.Run.LinkedPullRequest = selectedPr;
-                context.EmitOutputLine($"🔄 Rework mode: updating existing PR #{selectedPr.Number}");
+                context.Callbacks.EmitOutputLine($"🔄 Rework mode: updating existing PR #{selectedPr.Number}");
                 context.Logger.Information(
                     "Pipeline {RunId} detected existing agent PR #{PrNumber} for issue {IssueIdentifier}, entering rework mode",
                     context.Run.RunId, selectedPr.Number, context.Run.IssueIdentifier);

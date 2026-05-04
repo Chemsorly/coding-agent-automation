@@ -5,7 +5,7 @@ using CodingAgentWebUI.Pipeline.Services;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Services;
+namespace CodingAgentWebUI.Orchestration;
 
 /// <summary>
 /// Tracks all active pipeline runs across agents. Replaces the single <c>ActiveRun</c>
@@ -13,9 +13,51 @@ namespace CodingAgentWebUI.Services;
 /// Also manages per-run <see cref="OutputRingBuffer"/> instances.
 /// Registered as a singleton in DI.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>Design Decision: Intentionally non-sealed.</b>
+/// This class is non-sealed to allow E2E test subclasses (specifically
+/// <c>ResettableOrchestratorRunService</c> in
+/// <c>tests/CodingAgentWebUI.E2ETests/Infrastructure/ResettableServices.cs</c>)
+/// to inherit and expose a <c>Reset()</c> method for test isolation.
+/// </para>
+/// <para>
+/// <b>Sealed + Composition vs Non-Sealed + Inheritance Tradeoff:</b>
+/// The preferred .NET pattern is to seal classes by default and use composition-based
+/// test doubles (e.g., wrapper/decorator pattern with extracted interfaces). The current
+/// non-sealed + inheritance approach was chosen for pragmatic E2E test state reset without
+/// polluting the production API with reset methods. Migration to sealed + composition
+/// requires: (1) extracting an interface (already done: <see cref="IOrchestratorRunService"/>),
+/// (2) updating E2E tests to use a wrapper/decorator that delegates to the real service
+/// and adds reset capability, and (3) verifying no production code relies on inheritance.
+/// This migration is documented as a future improvement — see Requirement 22.
+/// </para>
+/// </remarks>
 public class OrchestratorRunService : IOrchestratorRunService
 {
+    /// <summary>
+    /// Backing store for active pipeline runs. Exposed as <c>protected</c> to allow
+    /// E2E test subclasses (e.g., <c>ResettableOrchestratorRunService</c>) to clear state
+    /// between tests via <c>_activeRuns.Clear()</c>.
+    /// </summary>
+    /// <remarks>
+    /// The preferred .NET pattern for test access is <c>internal</c> visibility combined with
+    /// <c>[InternalsVisibleTo]</c> in the <c>.csproj</c>. The <c>protected</c> modifier is used
+    /// here because the E2E test subclass pattern requires inheritance-based access. If migrating
+    /// to sealed + composition, this field should become <c>private</c>.
+    /// </remarks>
     protected readonly ConcurrentDictionary<string, PipelineRun> _activeRuns = new();
+
+    /// <summary>
+    /// Per-run output ring buffers for streaming output to the UI. Exposed as <c>protected</c>
+    /// to allow E2E test subclasses to clear state between tests.
+    /// </summary>
+    /// <remarks>
+    /// The preferred .NET pattern for test access is <c>internal</c> visibility combined with
+    /// <c>[InternalsVisibleTo]</c> in the <c>.csproj</c>. The <c>protected</c> modifier is used
+    /// here because the E2E test subclass pattern requires inheritance-based access. If migrating
+    /// to sealed + composition, this field should become <c>private</c>.
+    /// </remarks>
     protected readonly ConcurrentDictionary<string, OutputRingBuffer> _outputBuffers = new();
     private readonly int _defaultBufferCapacity;
     private readonly ILogger _logger;

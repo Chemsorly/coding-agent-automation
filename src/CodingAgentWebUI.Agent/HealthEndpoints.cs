@@ -16,6 +16,44 @@ namespace CodingAgentWebUI.Agent;
 ///     started. Until this succeeds, liveness and readiness probes are disabled by Kubernetes.</item>
 /// </list>
 /// </summary>
+/// <remarks>
+/// <para><b>Probe semantics and failure conditions:</b></para>
+/// <list type="bullet">
+///   <item><b>Liveness (<c>/healthz</c>)</b>: Always returns 200 OK. This probe intentionally
+///     never checks external dependencies (database, orchestrator, etc.). If the process can
+///     serve HTTP, it is alive. Returning unhealthy here causes Kubernetes to restart the pod,
+///     which is only appropriate for unrecoverable states (deadlocks, corrupted memory).
+///     Unhealthy condition: process crash (probe unreachable).</item>
+///   <item><b>Readiness (<c>/readyz</c>)</b>: Returns 503 Service Unavailable when
+///     <see cref="AgentWorkerService.IsConnected"/> is <c>false</c> — i.e., the SignalR
+///     connection to the orchestrator hub is not established or has been lost. While unready,
+///     Kubernetes removes the pod from Service endpoints so no new jobs are dispatched to it.
+///     The pod is NOT restarted; it remains running and can recover when the connection is
+///     re-established.</item>
+///   <item><b>Startup (<c>/startupz</c>)</b>: Returns 503 until <see cref="MarkStarted"/>
+///     is called (after the host is fully built and listening). Until this probe succeeds,
+///     Kubernetes disables liveness and readiness checks, preventing premature restarts during
+///     slow startup (e.g., waiting for initial orchestrator connection, loading configuration).
+///     Unhealthy condition: application still initializing.</item>
+/// </list>
+/// <para><b>Recommended K8s probe configuration:</b></para>
+/// <code>
+/// livenessProbe:
+///   httpGet: { path: /healthz, port: 8080 }
+///   initialDelaySeconds: 5
+///   periodSeconds: 10
+///   failureThreshold: 3
+/// readinessProbe:
+///   httpGet: { path: /readyz, port: 8080 }
+///   periodSeconds: 5
+///   failureThreshold: 2
+/// startupProbe:
+///   httpGet: { path: /startupz, port: 8080 }
+///   initialDelaySeconds: 2
+///   periodSeconds: 3
+///   failureThreshold: 10
+/// </code>
+/// </remarks>
 public static class HealthEndpoints
 {
     private static bool _started;

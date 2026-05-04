@@ -1,4 +1,8 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Health;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Moq;
@@ -244,4 +248,71 @@ public class OrchestratorRunServiceTests
         var act = () => service.GetOutputBuffer(null!);
         act.Should().Throw<ArgumentNullException>();
     }
+
+    #region Concurrency Tests
+
+    [Fact]
+    public async Task AddRun_ConcurrentFromMultipleThreads_AllRunsTrackedWithoutDataLoss()
+    {
+        var service = CreateService();
+        const int threadCount = 50;
+
+        var tasks = Enumerable.Range(0, threadCount)
+            .Select(i => Task.Run(() => service.AddRun(CreateRun($"run-{i}", $"issue-{i}"))))
+            .ToArray();
+
+        await Task.WhenAll(tasks);
+
+        service.ActiveRunCount.Should().Be(threadCount);
+        for (var i = 0; i < threadCount; i++)
+        {
+            service.GetRun($"run-{i}").Should().NotBeNull();
+            service.IsIssueBeingProcessed($"issue-{i}").Should().BeTrue();
+        }
+    }
+
+    [Fact]
+    public async Task GetActiveRuns_ReturnsConsistentSnapshotDuringConcurrentModifications()
+    {
+        var service = CreateService();
+
+        // Pre-populate with some runs
+        for (var i = 0; i < 20; i++)
+            service.AddRun(CreateRun($"run-{i}", $"issue-{i}"));
+
+        // Concurrently add and remove runs while taking snapshots
+        var snapshots = new List<IReadOnlyList<PipelineRun>>();
+        var snapshotLock = new object();
+
+        var addTasks = Enumerable.Range(20, 30)
+            .Select(i => Task.Run(() => service.AddRun(CreateRun($"run-{i}", $"issue-{i}"))))
+            .ToArray();
+
+        var removeTasks = Enumerable.Range(0, 10)
+            .Select(i => Task.Run(() => service.RemoveRun($"run-{i}")))
+            .ToArray();
+
+        var snapshotTasks = Enumerable.Range(0, 10)
+            .Select(_ => Task.Run(() =>
+            {
+                var snapshot = service.GetActiveRuns();
+                lock (snapshotLock)
+                {
+                    snapshots.Add(snapshot);
+                }
+            }))
+            .ToArray();
+
+        await Task.WhenAll(addTasks.Concat(removeTasks).Concat(snapshotTasks));
+
+        // Each snapshot should be a valid consistent list (no nulls, no duplicates)
+        foreach (var snapshot in snapshots)
+        {
+            snapshot.Should().NotBeNull();
+            snapshot.Should().OnlyContain(r => r != null);
+            snapshot.Select(r => r.RunId).Should().OnlyHaveUniqueItems();
+        }
+    }
+
+    #endregion
 }

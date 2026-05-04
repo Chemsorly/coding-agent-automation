@@ -11,6 +11,27 @@ namespace CodingAgentWebUI.Agent;
 /// <see cref="PipelineOrchestrationService.ExecutePipelineStepsAsync"/>.
 /// Reports all progress back to the orchestrator via SignalR hub methods.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>Hub-to-Pipeline Bridge:</b> This class bridges the event-driven SignalR hub layer
+/// with the sequential pipeline execution model. When <see cref="AgentWorkerService"/>
+/// receives a <c>JobAssignmentMessage</c> via the hub, it delegates to this executor which:
+/// </para>
+/// <list type="number">
+///   <item>Constructs provider instances (repository, agent, issue, pipeline, brain) from
+///     the job's provider configurations using <see cref="AgentProviderFactory"/>.</item>
+///   <item>Builds a <see cref="Pipeline.Services.Steps.PipelineStepContext"/> with all resolved
+///     providers, callbacks, and configuration.</item>
+///   <item>Runs the pipeline steps sequentially via <see cref="Pipeline.Services.Steps.PipelineStepRunner"/>.</item>
+///   <item>Reports progress back to the orchestrator by invoking hub methods (e.g.,
+///     <c>ReportStepTransition</c>, <c>ReportOutput</c>) through an <c>AgentCallbacks</c>
+///     implementation of <see cref="Pipeline.Interfaces.IPipelineCallbacks"/>.</item>
+/// </list>
+/// <para>
+/// This design allows the agent to execute the same pipeline logic as the orchestrator's
+/// server-side execution path, ensuring behavioral parity between local and remote execution.
+/// </para>
+/// </remarks>
 public sealed class LocalPipelineExecutor
 {
     private readonly IKiroCliOrchestrator _orchestrator;
@@ -154,9 +175,8 @@ public sealed class LocalPipelineExecutor
 
         // Orchestrators
         var agentExecution = new AgentExecutionOrchestrator(_logger);
-        var ciLogWriter = new CiLogWriter(_logger);
         var prOrchestrator = new PullRequestOrchestrator(_logger);
-        var qualityGates = new QualityGateOrchestrator(_qualityGateValidator, ciLogWriter, prOrchestrator, _logger);
+        var qualityGates = new QualityGateOrchestrator(_qualityGateValidator, prOrchestrator, _logger);
         BrainSyncOrchestrator? brainSync = _brainUpdateService is not null
             ? new BrainSyncOrchestrator(_brainUpdateService, _logger)
             : null;
@@ -202,6 +222,16 @@ public sealed class LocalPipelineExecutor
             var linkedCt = localCts.Token;
 
             // Build step context
+            var callbacks = new AgentCallbacks(
+                step => TransitionTo(step),
+                EmitOutputLine,
+                issueOps,
+                prOrchestrator,
+                repoProvider,
+                report => ReportQualityGateResult(report),
+                (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, repoProvider, agentProvider,
+                    brainProvider, brainSync, config, issueOps, connection, job, EmitOutputLine, token));
+
             var context = new PipelineStepContext
             {
                 Run = run,
@@ -212,19 +242,7 @@ public sealed class LocalPipelineExecutor
                 PipelineProvider = pipelineProvider,
                 Cts = localCts,
                 ConfigStore = new NullConfigurationStore(),
-                TransitionTo = step => TransitionTo(step),
-                EmitOutputLine = EmitOutputLine,
-                NotifyChange = () => { },
-                AddRunToHistory = _ => { },
-                UpdateFileChangeStats = r => prOrchestrator.UpdateFileChangeStatsAsync(r, repoProvider),
-                SwapAgentLabel = (id, label, token) => issueOps.SwapLabelAsync(id, label, token),
-                RemoveAllAgentLabels = (id, token) => issueOps.SwapLabelAsync(id, string.Empty, token),
-                CreatePullRequest = async (r, report, isDraft, token) =>
-                {
-                    ReportQualityGateResult(report);
-                    await CreatePullRequestAsync(r, report, isDraft, repoProvider, agentProvider,
-                        brainProvider, brainSync, config, issueOps, connection, job, EmitOutputLine, token);
-                },
+                Callbacks = callbacks,
                 IssueOps = issueOps,
                 AgentExecution = agentExecution,
                 QualityGates = qualityGates,
@@ -470,49 +488,40 @@ public sealed class LocalPipelineExecutor
     /// <summary>
     /// Writes the MCP server configuration to the workspace at the path specified by
     /// the agent provider's mcpConfigPath setting (defaults to .kiro/settings/mcp.json for Kiro CLI).
-    /// Supports both stdio (command-based) and HTTP (URL-based) MCP servers.
+    /// Delegates to <see cref="McpConfigWriter.WriteConfig"/> for the shared implementation.
     /// </summary>
     internal static void WriteMcpConfigToWorkspace(string workspacePath, IReadOnlyList<McpServerConfig> mcpServers, string mcpConfigRelativePath)
     {
         var fullPath = Path.Combine(workspacePath, mcpConfigRelativePath);
-        var directory = Path.GetDirectoryName(fullPath);
-        if (directory is not null)
-            Directory.CreateDirectory(directory);
+        McpConfigWriter.WriteConfig(fullPath, mcpServers);
+    }
 
-        var serversDict = new Dictionary<string, object>();
-        foreach (var server in mcpServers)
+    /// <summary>
+    /// Adapts the agent executor's callback methods to <see cref="IPipelineCallbacks"/>.
+    /// </summary>
+    private sealed class AgentCallbacks(
+        Action<PipelineStep> transitionTo,
+        Action<string> emitOutputLine,
+        IAgentIssueOperations issueOps,
+        PullRequestOrchestrator prOrchestrator,
+        IRepositoryProvider repoProvider,
+        Action<QualityGateReport> reportQualityGateResult,
+        Func<PipelineRun, QualityGateReport, bool, CancellationToken, Task> createPullRequest) : IPipelineCallbacks
+    {
+        public void TransitionTo(PipelineStep step) => transitionTo(step);
+        public void EmitOutputLine(string line) => emitOutputLine(line);
+        public void NotifyChange() { }
+        public void AddRunToHistory(PipelineRun run) { }
+        public Task UpdateFileChangeStats(PipelineRun run)
+            => prOrchestrator.UpdateFileChangeStatsAsync(run, repoProvider);
+        public Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
+            => issueOps.SwapLabelAsync(issueIdentifier, label, ct);
+        public Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
+            => issueOps.SwapLabelAsync(issueIdentifier, string.Empty, ct);
+        public Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
-            if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase))
-            {
-                serversDict[server.Name] = new
-                {
-                    type = "http",
-                    url = server.Url,
-                    disabled = server.Disabled,
-                    autoApprove = server.AutoApprove
-                };
-            }
-            else
-            {
-                // stdio (default)
-                serversDict[server.Name] = new
-                {
-                    command = server.Command,
-                    args = server.Args,
-                    env = server.Env,
-                    disabled = server.Disabled,
-                    autoApprove = server.AutoApprove
-                };
-            }
+            reportQualityGateResult(report);
+            return createPullRequest(run, report, isDraft, ct);
         }
-
-        var mcpConfig = new { mcpServers = serversDict };
-        var json = System.Text.Json.JsonSerializer.Serialize(mcpConfig, new System.Text.Json.JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-        });
-
-        File.WriteAllText(fullPath, json);
     }
 }

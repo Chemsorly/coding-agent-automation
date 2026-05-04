@@ -275,8 +275,8 @@ public class PreparingForPullRequestPropertyTests
             configStore.Object,
             factory.Object,
             new IssueDescriptionParser(),
-            mockValidator.Object,
-            new CiLogWriter(logger.Object),
+            new AgentExecutionOrchestrator(logger.Object),
+            new QualityGateOrchestrator(mockValidator.Object, new PullRequestOrchestrator(logger.Object), logger.Object),
             logger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
@@ -312,8 +312,8 @@ public class PreparingForPullRequestPropertyTests
             configStore.Object,
             factory.Object,
             new IssueDescriptionParser(),
-            mockValidator.Object,
-            new CiLogWriter(logger.Object),
+            new AgentExecutionOrchestrator(logger.Object),
+            new QualityGateOrchestrator(mockValidator.Object, new PullRequestOrchestrator(logger.Object), logger.Object),
             logger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);

@@ -7,7 +7,7 @@ namespace KiroCliLib.Core;
 /// <summary>
 /// Manages the Kiro CLI process lifecycle with WSL integration support.
 /// </summary>
-public class ProcessWrapper : IDisposable
+public class ProcessWrapper : IProcessWrapper
 {
     private readonly Configuration.Configuration _config;
     private readonly ILogger _logger;
@@ -40,10 +40,22 @@ public class ProcessWrapper : IDisposable
         if (_process != null)
             throw new InvalidOperationException("Process is already running. Call Kill() first.");
 
-        var escapedPrompt = prompt.Replace("\"", "\\\"");
+        // Write prompt to a temporary file and use Kiro's @path file reference syntax.
+        // File references expand file contents inline before sending to the model.
+        // See: https://kiro.dev/docs/cli/chat/file-references/
+        // This avoids shell argument escaping issues with complex prompts containing
+        // quotes, newlines, backticks, and JSON that cause exit code 2 (argument parse error).
+        var kiroDir = Path.Combine(workspaceDirectory, ".kiro");
+        Directory.CreateDirectory(kiroDir);
+        var promptFile = Path.Combine(kiroDir, "prompt-input.md");
+        await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
+
+        // The @path syntax expands file contents inline before sending (per Kiro docs).
+        // Use explicit relative path (@./path) to avoid prompt name collision.
+        var inlinePrompt = "@.kiro/prompt-input.md";
         var kiroArgs = useResume
-            ? $"chat --no-interactive --resume --trust-all-tools \"{escapedPrompt}\""
-            : $"chat --no-interactive --trust-all-tools \"{escapedPrompt}\"";
+            ? $"chat --no-interactive --resume --trust-all-tools \"{inlinePrompt}\""
+            : $"chat --no-interactive --trust-all-tools \"{inlinePrompt}\"";
 
         var startInfo = new ProcessStartInfo
         {
@@ -57,7 +69,8 @@ public class ProcessWrapper : IDisposable
             CreateNoWindow = true
         };
 
-        _logger.Debug("Starting Kiro CLI: {FileName} {Arguments}", startInfo.FileName, startInfo.Arguments);
+        _logger.Debug("Starting Kiro CLI: {FileName} {Arguments} (prompt written to {PromptFile}, {Length} chars)",
+            startInfo.FileName, startInfo.Arguments, promptFile, prompt.Length);
         _process = new Process { StartInfo = startInfo };
         _process.OutputDataReceived += OnOutputDataReceived;
         _process.ErrorDataReceived += OnErrorDataReceived;
@@ -85,8 +98,22 @@ public class ProcessWrapper : IDisposable
         }
         catch (OperationCanceledException) { Kill(); throw; }
         catch (Exception ex) { Kill(); throw new InvalidOperationException("Failed to execute Kiro CLI process", ex); }
+        finally
+        {
+            // Clean up the prompt file
+            try { File.Delete(promptFile); } catch { /* best-effort cleanup */ }
+        }
     }
 
+    /// <summary>
+    /// Forcefully terminates the running process and its process tree.
+    /// </summary>
+    /// <remarks>
+    /// This method is intentionally synchronous because process termination is immediate
+    /// (not a graceful cancel-and-wait pattern). <see cref="GracefulShutdownHelper"/> is not
+    /// applicable here since there is no CancellationTokenSource or awaitable Task to cancel —
+    /// the process is killed directly via OS signals.
+    /// </remarks>
     public void Kill()
     {
         if (_process == null || _process.HasExited) return;

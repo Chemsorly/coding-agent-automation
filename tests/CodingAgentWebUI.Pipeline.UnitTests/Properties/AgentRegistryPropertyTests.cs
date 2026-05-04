@@ -1,6 +1,10 @@
 using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Xunit;
+using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Health;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Moq;

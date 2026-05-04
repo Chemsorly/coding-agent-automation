@@ -10,14 +10,12 @@ internal sealed class AnalyzeCodeStep : IPipelineStep
 {
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
-        context.EmitOutputLine("🔍 Starting analysis...");
+        context.Callbacks.EmitOutputLine("🔍 Starting analysis...");
+
+        var phaseContext = context.BuildAgentPhaseContext();
 
         var shouldContinue = await context.AgentExecution.ExecuteAnalysisPhaseAsync(
-            context.Run, context.Config, context.AgentProvider, context.IssueOps,
-            context.Issue!, context.ParsedIssue!, context.IssueComments ?? Array.Empty<IssueComment>(),
-            context.TransitionTo,
-            context.AddRunToHistory,
-            context.EmitOutputLine, context.NotifyChange, ct);
+            phaseContext, context.IssueComments ?? Array.Empty<IssueComment>(), ct);
 
         return shouldContinue ? StepResult.Continue : StepResult.Stop;
     }

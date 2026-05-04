@@ -1,0 +1,108 @@
+using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
+
+namespace CodingAgentWebUI.Hubs;
+
+/// <summary>
+/// Facade interface that groups related operations currently spread across multiple
+/// injected services in <see cref="AgentHub"/>. Reduces the hub's constructor
+/// parameter count from 11 to 5 (facade, token vending, orchestration, model fetch, logger).
+/// </summary>
+/// <remarks>
+/// <para>
+/// The facade absorbs: <see cref="CodingAgentWebUI.Orchestration.Registry.AgentRegistryService"/>,
+/// <see cref="CodingAgentWebUI.Orchestration.OrchestratorRunService"/>,
+/// <see cref="CodingAgentWebUI.Orchestration.Dispatch.JobDispatcherService"/>,
+/// <see cref="CodingAgentWebUI.Orchestration.Dispatch.JobQueueDrainService"/>,
+/// <see cref="IPipelineRunHistoryService"/>, <see cref="IConfigurationStore"/>,
+/// and <see cref="IProviderFactory"/>.
+/// </para>
+/// <para>
+/// Direct dependencies remaining on <see cref="AgentHub"/>:
+/// <see cref="ITokenVendingService"/>, <see cref="PipelineOrchestrationService"/>,
+/// <see cref="CodingAgentWebUI.Orchestration.Health.ModelFetchService"/>, and <c>ILogger</c>.
+/// </para>
+/// </remarks>
+public interface IAgentHubFacade
+{
+    // ── Registry operations ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Registers an agent or updates an existing entry on reconnection.
+    /// </summary>
+    AgentEntry Register(AgentRegistrationMessage message, string connectionId);
+
+    /// <summary>
+    /// Removes an agent from the registry entirely.
+    /// </summary>
+    bool Deregister(string agentId);
+
+    /// <summary>
+    /// Looks up an agent by its unique agent identifier.
+    /// </summary>
+    AgentEntry? GetByAgentId(string agentId);
+
+    /// <summary>
+    /// Looks up an agent by its current SignalR connection ID.
+    /// </summary>
+    AgentEntry? GetByConnectionId(string connectionId);
+
+    /// <summary>
+    /// Transitions an agent to a new status.
+    /// </summary>
+    void TransitionStatus(string agentId, AgentStatus newStatus);
+
+    /// <summary>
+    /// Updates the heartbeat timestamp for the specified agent.
+    /// </summary>
+    void UpdateHeartbeat(string agentId, DateTimeOffset timestamp);
+
+    // ── Run state operations ────────────────────────────────────────────
+
+    /// <summary>
+    /// Gets a specific run by its RunId.
+    /// </summary>
+    PipelineRun? GetRun(string jobId);
+
+    /// <summary>
+    /// Gets or creates the per-run output ring buffer.
+    /// </summary>
+    OutputRingBuffer GetOutputBuffer(string jobId);
+
+    /// <summary>
+    /// Removes a pipeline run from the active runs collection.
+    /// </summary>
+    void RemoveRun(string jobId);
+
+    // ── Dispatch operations ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Marks an issue as no longer being processed in the dispatcher.
+    /// </summary>
+    void MarkIssueComplete(string issueIdentifier);
+
+    /// <summary>
+    /// Signals the drain service to attempt dispatch for idle agents.
+    /// </summary>
+    void Signal();
+
+    // ── History ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Persists a completed pipeline run to history.
+    /// </summary>
+    void AddRunToHistory(PipelineRun run);
+
+    // ── Issue provider operations ───────────────────────────────────────
+
+    /// <summary>
+    /// Loads provider configurations of the specified kind.
+    /// </summary>
+    Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct);
+
+    /// <summary>
+    /// Creates an issue provider from the given configuration.
+    /// </summary>
+    IIssueProvider CreateIssueProvider(ProviderConfig config);
+}

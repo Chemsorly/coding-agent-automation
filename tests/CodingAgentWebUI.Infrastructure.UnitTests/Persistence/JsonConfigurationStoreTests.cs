@@ -1,3 +1,5 @@
+using System.Text.Json;
+using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.Persistence;
@@ -159,5 +161,139 @@ public class JsonConfigurationStoreTests : IDisposable
     {
         // Should not throw when deleting a non-existent config
         await _store.DeleteProviderConfigAsync("does-not-exist", ProviderKind.Agent, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task SavePipelineConfigAsync_SerializesToCorrectFilePath_WithProperJsonFormatting()
+    {
+        // Arrange
+        var config = new PipelineConfiguration
+        {
+            MaxRetries = 7,
+            AgentTimeout = TimeSpan.FromMinutes(60),
+            WorkspaceBaseDirectory = "/custom/workspaces"
+        };
+
+        // Act
+        await _store.SavePipelineConfigAsync(config, CancellationToken.None);
+
+        // Assert — file exists at expected path
+        var expectedPath = Path.Combine(_tempDir, "pipeline-config.json");
+        File.Exists(expectedPath).Should().BeTrue();
+
+        // Assert — JSON is properly formatted (indented, camelCase)
+        var json = await File.ReadAllTextAsync(expectedPath);
+        json.Should().Contain("\"maxRetries\": 7");
+        json.Should().Contain("\"workspaceBaseDirectory\": \"/custom/workspaces\"");
+
+        // Verify indentation (WriteIndented = true)
+        json.Should().Contain("\n");
+        var lines = json.Split('\n');
+        lines.Should().HaveCountGreaterThan(1, "JSON should be indented across multiple lines");
+    }
+
+    [Fact]
+    public async Task UpdatePipelineConfigAsync_LoadsTransformsAndSaves()
+    {
+        // Arrange — save an initial config
+        var initial = new PipelineConfiguration
+        {
+            MaxRetries = 2,
+            AgentTimeout = TimeSpan.FromMinutes(10),
+            WorkspaceBaseDirectory = "/initial"
+        };
+        await _store.SavePipelineConfigAsync(initial, CancellationToken.None);
+
+        // Act — update via transform
+        await _store.UpdatePipelineConfigAsync(
+            existing => existing with { MaxRetries = 10, WorkspaceBaseDirectory = "/updated" },
+            CancellationToken.None);
+
+        // Assert — reload and verify transform was applied
+        var loaded = await _store.LoadPipelineConfigAsync(CancellationToken.None);
+        loaded.MaxRetries.Should().Be(10);
+        loaded.WorkspaceBaseDirectory.Should().Be("/updated");
+        // Verify untouched fields remain from original
+        loaded.AgentTimeout.Should().Be(TimeSpan.FromMinutes(10));
+    }
+
+    [Fact]
+    public async Task UpdatePipelineConfigAsync_WhenNoFileExists_CreatesFromDefault()
+    {
+        // Arrange — no file exists yet
+
+        // Act — update from default
+        await _store.UpdatePipelineConfigAsync(
+            existing => existing with { MaxRetries = 99 },
+            CancellationToken.None);
+
+        // Assert — config was created with transformed default
+        var loaded = await _store.LoadPipelineConfigAsync(CancellationToken.None);
+        loaded.MaxRetries.Should().Be(99);
+        // Default values for untouched fields
+        loaded.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30));
+    }
+
+    [Fact]
+    public async Task DeleteProviderConfigAsync_ExistingConfig_RemovesFileFromDisk()
+    {
+        // Arrange — save a provider config
+        var config = new ProviderConfig
+        {
+            Id = "disk-check",
+            Kind = ProviderKind.Pipeline,
+            ProviderType = "GitHub",
+            DisplayName = "Disk Check Provider"
+        };
+        await _store.SaveProviderConfigAsync(config, CancellationToken.None);
+
+        var filePath = Path.Combine(_tempDir, "providers", "pipeline", "disk-check.json");
+        File.Exists(filePath).Should().BeTrue("file should exist after save");
+
+        // Act
+        await _store.DeleteProviderConfigAsync("disk-check", ProviderKind.Pipeline, CancellationToken.None);
+
+        // Assert — file is physically removed from disk
+        File.Exists(filePath).Should().BeFalse("file should be removed after delete");
+    }
+
+    [Fact]
+    public async Task DeleteProviderConfigAsync_NonExistentConfig_DoesNotThrow()
+    {
+        // Arrange — ensure the provider directory doesn't even exist
+        var dirPath = Path.Combine(_tempDir, "providers", "repository");
+        Directory.Exists(dirPath).Should().BeFalse();
+
+        // Act & Assert — should complete without throwing
+        var act = () => _store.DeleteProviderConfigAsync("non-existent-id", ProviderKind.Repository, CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task SaveAgentProfileAsync_SerializesWithCorrectFilenameBasedOnId()
+    {
+        // Arrange
+        var profileId = "my-custom-profile-id";
+        var profile = new AgentProfile
+        {
+            Id = profileId,
+            DisplayName = "Test Profile",
+            AgentProviderConfigId = "provider-123",
+            MatchLabels = ["dotnet", "csharp"],
+            Enabled = true,
+            Priority = 5
+        };
+
+        // Act
+        await _store.SaveAgentProfileAsync(profile, CancellationToken.None);
+
+        // Assert — file is saved at profiles/{id}.json
+        var expectedPath = Path.Combine(_tempDir, "profiles", $"{profileId}.json");
+        File.Exists(expectedPath).Should().BeTrue("profile should be saved with ID as filename");
+
+        // Verify content is valid JSON with expected data
+        var json = await File.ReadAllTextAsync(expectedPath);
+        json.Should().Contain("\"displayName\": \"Test Profile\"");
+        json.Should().Contain("\"agentProviderConfigId\": \"provider-123\"");
     }
 }

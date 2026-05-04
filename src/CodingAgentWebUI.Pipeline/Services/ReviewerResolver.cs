@@ -23,15 +23,15 @@ public sealed class ReviewerResolver
         ArgumentNullException.ThrowIfNull(allConfigs);
         ArgumentNullException.ThrowIfNull(jobRequiredLabels);
 
-        var jobLabelSet = new HashSet<string>(jobRequiredLabels, StringComparer.OrdinalIgnoreCase);
-
-        return allConfigs
-            .Where(rc => rc.Enabled)
-            .Where(rc => IsMatch(rc.MatchLabels, jobLabelSet))
-            .OrderBy(rc => rc.ExecutionOrder)
-            .ThenBy(rc => rc.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToList()
-            .AsReadOnly();
+        return LabelMatchResolver.Resolve(
+            allConfigs,
+            jobRequiredLabels,
+            enabledPredicate: rc => rc.Enabled,
+            labelSelector: rc => rc.MatchLabels,
+            matchStrategy: LabelMatchStrategies.Intersection,
+            orderBy: items => items
+                .OrderBy(rc => rc.ExecutionOrder)
+                .ThenBy(rc => rc.DisplayName, StringComparer.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -50,17 +50,5 @@ public sealed class ReviewerResolver
             .Select(ra => new ReviewAgentConfig { Name = ra.Name, Prompt = ra.Prompt })
             .ToList()
             .AsReadOnly();
-    }
-
-    /// <summary>
-    /// A configuration matches if its MatchLabels is empty (global fallback) or has at least one label
-    /// in common with the job's required labels.
-    /// </summary>
-    private static bool IsMatch(IReadOnlyList<string> matchLabels, HashSet<string> jobLabelSet)
-    {
-        if (matchLabels.Count == 0)
-            return true;
-
-        return matchLabels.Any(label => jobLabelSet.Contains(label));
     }
 }

@@ -3,7 +3,7 @@ namespace KiroCliLib.Core;
 /// <summary>
 /// Defines the contract for orchestrating Kiro CLI execution.
 /// </summary>
-public interface IKiroCliOrchestrator
+public interface IKiroCliOrchestrator : IDisposable
 {
     /// <summary>Whether an execution is currently in progress.</summary>
     bool IsExecuting { get; }

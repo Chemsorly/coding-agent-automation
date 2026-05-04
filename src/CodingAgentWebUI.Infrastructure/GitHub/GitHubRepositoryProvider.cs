@@ -292,7 +292,8 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
             Draft = prInfo.IsDraft
         };
 
-        var pr = await client.PullRequest.Create(Owner, Repo, newPr);
+        var pr = await ExecuteWithRateLimitHandlingAsync(
+            () => client.PullRequest.Create(Owner, Repo, newPr));
         return pr.HtmlUrl;
     }
 
@@ -408,9 +409,10 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         var branchPrefix = $"feature/auto-{issueIdentifier}-";
 
         // 1. List all open PRs for the repository
-        var allPrs = await client.PullRequest.GetAllForRepository(
-            Owner, Repo,
-            new PullRequestRequest { State = ItemStateFilter.Open });
+        var allPrs = await ExecuteWithRateLimitHandlingAsync(
+            () => client.PullRequest.GetAllForRepository(
+                Owner, Repo,
+                new PullRequestRequest { State = ItemStateFilter.Open }));
 
         // 2. Filter by branch name prefix (client-side)
         var matching = allPrs
@@ -424,11 +426,14 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         var results = new List<LinkedPullRequest>();
         foreach (var pr in matching)
         {
-            var detailed = await client.PullRequest.Get(Owner, Repo, pr.Number);
+            var detailed = await ExecuteWithRateLimitHandlingAsync(
+                () => client.PullRequest.Get(Owner, Repo, pr.Number));
 
             // 4. Fetch review comments (inline + conversation), filter by content markers, cap at 50
-            var reviewComments = await client.PullRequest.ReviewComment.GetAll(Owner, Repo, pr.Number);
-            var conversationComments = await client.Issue.Comment.GetAllForIssue(Owner, Repo, pr.Number);
+            var reviewComments = await ExecuteWithRateLimitHandlingAsync(
+                () => client.PullRequest.ReviewComment.GetAll(Owner, Repo, pr.Number));
+            var conversationComments = await ExecuteWithRateLimitHandlingAsync(
+                () => client.Issue.Comment.GetAllForIssue(Owner, Repo, pr.Number));
 
             var allComments = reviewComments
                 .Where(c => !IsPipelineGeneratedComment(c.Body))
@@ -557,8 +562,9 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         var client = await GetClientAsync(ct);
         try
         {
-            await client.PullRequest.Update(Owner, Repo, pullRequestNumber,
-                new PullRequestUpdate { Body = body });
+            await ExecuteWithRateLimitHandlingAsync(
+                () => client.PullRequest.Update(Owner, Repo, pullRequestNumber,
+                    new PullRequestUpdate { Body = body }));
         }
         catch (Octokit.NotFoundException ex)
         {

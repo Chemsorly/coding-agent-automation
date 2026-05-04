@@ -10,6 +10,30 @@ namespace CodingAgentWebUI.Agent;
 /// Background service that manages the agent lifecycle: connects to the orchestrator,
 /// registers, handles job assignments, sends heartbeats, and gracefully shuts down.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>Event-Driven Lifecycle:</b> This service follows a fully event-driven model driven
+/// by SignalR messages from the orchestrator hub. The lifecycle is:
+/// </para>
+/// <list type="number">
+///   <item><b>Connect</b> — <see cref="HubConnectionManager"/> establishes a SignalR connection
+///     to the orchestrator with automatic reconnection and exponential backoff.</item>
+///   <item><b>Register</b> — The agent sends a registration message (ID, type, labels, capabilities)
+///     to the orchestrator, which adds it to the agent registry.</item>
+///   <item><b>Receive Job</b> — The orchestrator dispatches a <see cref="Pipeline.Models.JobAssignmentMessage"/>
+///     via the <c>AssignJob</c> hub method, triggering <see cref="HubConnectionManager.OnAssignJob"/>.</item>
+///   <item><b>Execute</b> — <see cref="LocalPipelineExecutor"/> runs the full pipeline locally,
+///     reporting progress back to the orchestrator via hub invocations.</item>
+///   <item><b>Report</b> — On completion (success or failure), the agent sends a
+///     <c>JobCompleted</c> message with the result payload.</item>
+///   <item><b>Idle</b> — The agent returns to idle state, sending periodic heartbeats until
+///     the next job assignment or shutdown signal.</item>
+/// </list>
+/// <para>
+/// Heartbeats are sent every 30 seconds while idle. The orchestrator uses heartbeat absence
+/// to detect stale agents via <c>HeartbeatMonitorService</c>.
+/// </para>
+/// </remarks>
 public sealed class AgentWorkerService : BackgroundService
 {
     private readonly HubConnectionManager _hubManager;
@@ -482,48 +506,10 @@ public sealed class AgentWorkerService : BackgroundService
 
     /// <summary>
     /// Writes MCP server configuration to the specified file path.
+    /// Delegates to <see cref="McpConfigWriter.WriteConfig"/> for the shared implementation.
     /// </summary>
     private static void WriteMcpConfig(string fullPath, IReadOnlyList<McpServerConfig> mcpServers)
-    {
-        var directory = Path.GetDirectoryName(fullPath);
-        if (directory is not null)
-            Directory.CreateDirectory(directory);
-
-        var serversDict = new Dictionary<string, object>();
-        foreach (var server in mcpServers)
-        {
-            if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase))
-            {
-                serversDict[server.Name] = new
-                {
-                    type = "http",
-                    url = server.Url,
-                    disabled = server.Disabled,
-                    autoApprove = server.AutoApprove
-                };
-            }
-            else
-            {
-                serversDict[server.Name] = new
-                {
-                    command = server.Command,
-                    args = server.Args,
-                    env = server.Env,
-                    disabled = server.Disabled,
-                    autoApprove = server.AutoApprove
-                };
-            }
-        }
-
-        var mcpConfig = new { mcpServers = serversDict };
-        var json = System.Text.Json.JsonSerializer.Serialize(mcpConfig, new System.Text.Json.JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-        });
-
-        File.WriteAllText(fullPath, json);
-    }
+        => McpConfigWriter.WriteConfig(fullPath, mcpServers);
 
     private async Task SendHeartbeatAsync(CancellationToken ct)
     {
@@ -546,24 +532,12 @@ public sealed class AgentWorkerService : BackgroundService
         if (_activeJobId is not null)
         {
             _logger.Information("Cancelling active job {JobId} due to shutdown", _activeJobId);
-            _jobCts?.Cancel();
-
-            // Wait briefly for the job to finish its current step
-            if (_activeJobTask is not null)
-            {
-                try
-                {
-                    await _activeJobTask.WaitAsync(TimeSpan.FromSeconds(30));
-                }
-                catch (TimeoutException)
-                {
-                    _logger.Warning("Active job did not complete within shutdown timeout");
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Error waiting for active job to complete during shutdown");
-                }
-            }
+            await GracefulShutdownHelper.CancelAndWaitAsync(
+                _jobCts,
+                _activeJobTask,
+                TimeSpan.FromSeconds(30),
+                _logger,
+                "Active job shutdown");
         }
 
         // Deregister from orchestrator
