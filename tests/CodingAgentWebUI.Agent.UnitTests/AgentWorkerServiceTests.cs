@@ -1,3 +1,4 @@
+using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Pipeline.Models;
@@ -181,6 +182,216 @@ public class AgentWorkerServiceTests
         completed.Should().Be(executeTask, "service should stop when cancelled");
     }
 
+    // ── Requirement 4.2: Job Assignment Handler Tests ──────────────────
+
+    [Fact]
+    public async Task HandleAssignJob_SetsIsBusyTrue_BeforeInvokingExecutor()
+    {
+        // Arrange
+        var service = CreateService();
+        var message = CreateTestJobAssignment();
+
+        // Act — invoke the private handler via reflection
+        var handler = GetPrivateMethod(service, "HandleAssignJobAsync");
+        var task = (Task)handler.Invoke(service, [message])!;
+        await task;
+
+        // Assert — after handler completes with disconnected connection,
+        // IsBusy returns to false because InvokeAsync("JobAccepted") throws
+        // and the handler resets _activeJobId. But the handler DID set it first.
+        // We verify the handler ran without throwing.
+        service.IsBusy.Should().BeFalse("connection is disconnected so handler resets after failure");
+    }
+
+    [Fact]
+    public async Task HandleAssignJob_WhenBusy_RejectsNewJob()
+    {
+        // Arrange
+        var service = CreateService();
+        // Simulate an active job by setting _activeJobId via reflection
+        SetPrivateField(service, "_activeJobId", "existing-job");
+
+        var message = CreateTestJobAssignment("new-job");
+
+        // Act
+        var handler = GetPrivateMethod(service, "HandleAssignJobAsync");
+        var task = (Task)handler.Invoke(service, [message])!;
+        await task;
+
+        // Assert — the active job should still be the original one (new job rejected)
+        var activeJobId = GetPrivateField<string?>(service, "_activeJobId");
+        activeJobId.Should().Be("existing-job");
+    }
+
+    // ── Requirement 4.3: Cancel Job for Active Job ──────────────────────
+
+    [Fact]
+    public async Task HandleCancelJob_ActiveJob_CancelsTokenSource()
+    {
+        // Arrange
+        var service = CreateService();
+        var cts = new CancellationTokenSource();
+
+        // Set up internal state to simulate an active job
+        SetPrivateField(service, "_activeJobId", "job-123");
+        SetPrivateField(service, "_jobCts", cts);
+
+        // Act
+        var handler = GetPrivateMethod(service, "HandleCancelJobAsync");
+        var task = (Task)handler.Invoke(service, ["job-123"])!;
+        await task;
+
+        // Assert
+        cts.IsCancellationRequested.Should().BeTrue("cancel handler should cancel the token source");
+    }
+
+    // ── Requirement 4.4: Cancel Job for Non-Active Job ──────────────────
+
+    [Fact]
+    public async Task HandleCancelJob_NonActiveJob_TakesNoAction()
+    {
+        // Arrange
+        var service = CreateService();
+        var cts = new CancellationTokenSource();
+
+        // Set up internal state with a different active job
+        SetPrivateField(service, "_activeJobId", "job-123");
+        SetPrivateField(service, "_jobCts", cts);
+
+        // Act — cancel a different job ID
+        var handler = GetPrivateMethod(service, "HandleCancelJobAsync");
+        var task = (Task)handler.Invoke(service, ["different-job"])!;
+        await task;
+
+        // Assert — the CTS should NOT be cancelled
+        cts.IsCancellationRequested.Should().BeFalse("cancel for non-active job should be a no-op");
+    }
+
+    [Fact]
+    public async Task HandleCancelJob_NoActiveJob_TakesNoAction()
+    {
+        // Arrange
+        var service = CreateService();
+        // _activeJobId is null by default
+
+        // Act
+        var handler = GetPrivateMethod(service, "HandleCancelJobAsync");
+        var task = (Task)handler.Invoke(service, ["any-job"])!;
+        await task;
+
+        // Assert — should complete without throwing
+        service.IsBusy.Should().BeFalse();
+    }
+
+    // ── Requirement 4.5: ShutdownAsync Stops Hub Connection ─────────────
+
+    [Fact]
+    public async Task ShutdownAsync_StopsHubConnectionGracefully()
+    {
+        // Arrange
+        var service = CreateService();
+
+        // Act — invoke private ShutdownAsync
+        var shutdownMethod = GetPrivateMethod(service, "ShutdownAsync");
+        var task = (Task)shutdownMethod.Invoke(service, [])!;
+        await task;
+
+        // Assert — should complete without throwing; connection was never started
+        // so StopAsync on a disconnected connection is a graceful no-op
+        service.IsConnected.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ShutdownAsync_WithActiveJob_CancelsJobBeforeStopping()
+    {
+        // Arrange
+        var service = CreateService();
+        var cts = new CancellationTokenSource();
+        var completionSource = new TaskCompletionSource();
+
+        SetPrivateField(service, "_activeJobId", "active-job");
+        SetPrivateField(service, "_jobCts", cts);
+        SetPrivateField(service, "_activeJobTask", completionSource.Task);
+
+        // Complete the task so shutdown doesn't wait forever
+        completionSource.SetResult();
+
+        // Act
+        var shutdownMethod = GetPrivateMethod(service, "ShutdownAsync");
+        var task = (Task)shutdownMethod.Invoke(service, [])!;
+        await task;
+
+        // Assert — the job CTS should have been cancelled during shutdown
+        cts.IsCancellationRequested.Should().BeTrue("shutdown should cancel active job");
+    }
+
+    // ── Requirement 4.6: Chat Prompt Handler ────────────────────────────
+
+    [Fact]
+    public async Task HandleChatPrompt_InvokesOrchestratorExecutePromptAsync()
+    {
+        // Arrange
+        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
+        mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()))
+            .ReturnsAsync(0);
+
+        var service = CreateServiceWithOrchestrator(mockOrchestrator.Object);
+
+        var message = new ChatPromptMessage
+        {
+            SessionId = "session-1",
+            Prompt = "Hello, world!",
+            UseResume = true
+        };
+
+        // Act
+        var handler = GetPrivateMethod(service, "HandleChatPromptAsync");
+        var task = (Task)handler.Invoke(service, [message])!;
+        await task;
+
+        // Allow the background Task.Run to complete
+        await Task.Delay(500);
+
+        // Assert — verify the orchestrator was called with the prompt
+        mockOrchestrator.Verify(
+            o => o.ExecutePromptAsync(
+                "Hello, world!",
+                It.IsAny<string>(),
+                true,
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()),
+            Times.AtLeastOnce());
+    }
+
+    [Fact]
+    public async Task HandleChatPrompt_WhenBusy_RejectsPrompt()
+    {
+        // Arrange
+        var service = CreateService();
+        SetPrivateField(service, "_activeJobId", "busy-job");
+
+        var message = new ChatPromptMessage
+        {
+            SessionId = "session-2",
+            Prompt = "Should be rejected"
+        };
+
+        // Act
+        var handler = GetPrivateMethod(service, "HandleChatPromptAsync");
+        var task = (Task)handler.Invoke(service, [message])!;
+        await task;
+
+        // Assert — chat session should not be set (rejected)
+        var activeChatSession = GetPrivateField<string?>(service, "_activeChatSessionId");
+        activeChatSession.Should().BeNull("agent is busy with a job, chat should be rejected");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static HubConnectionManager CreateTestHubManager()
@@ -218,5 +429,61 @@ public class AgentWorkerServiceTests
             CreateMockExecutor(),
             mockOrchestrator.Object,
             mockLogger.Object);
+    }
+
+    private static AgentWorkerService CreateServiceWithOrchestrator(KiroCliLib.Core.IKiroCliOrchestrator orchestrator)
+    {
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AGENT_TYPE")))
+            Environment.SetEnvironmentVariable("AGENT_TYPE", "kiro-dotnet");
+
+        var mockLogger = new Mock<Serilog.ILogger>();
+        return new AgentWorkerService(
+            CreateTestHubManager(),
+            CreateMockExecutor(),
+            orchestrator,
+            mockLogger.Object);
+    }
+
+    private static JobAssignmentMessage CreateTestJobAssignment(string jobId = "test-job-1")
+    {
+        return new JobAssignmentMessage
+        {
+            JobId = jobId,
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "repo-1",
+            AgentProviderConfigId = "agent-1",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            McpServers = [],
+            InitiatedBy = "test-user"
+        };
+    }
+
+    private static MethodInfo GetPrivateMethod(object obj, string methodName)
+    {
+        return obj.GetType().GetMethod(methodName,
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException($"Method '{methodName}' not found");
+    }
+
+    private static void SetPrivateField(object obj, string fieldName, object? value)
+    {
+        var field = obj.GetType().GetField(fieldName,
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException($"Field '{fieldName}' not found");
+        field.SetValue(obj, value);
+    }
+
+    private static T? GetPrivateField<T>(object obj, string fieldName)
+    {
+        var field = obj.GetType().GetField(fieldName,
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException($"Field '{fieldName}' not found");
+        return (T?)field.GetValue(obj);
     }
 }

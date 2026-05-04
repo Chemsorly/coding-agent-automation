@@ -147,6 +147,53 @@ public class KiroCliAgentProviderPropertyTests
         Assert.NotNull(capturedUseResume);
         Assert.Equal(useResume, capturedUseResume.Value);
     }
+
+    /// <summary>
+    /// Feature: 019-unit-test-coverage-improvement, Property 2: ANSI escape sequence stripping
+    /// For any output string containing ANSI escape sequences (CSI sequences like \x1b[31m,
+    /// \x1b[0m, etc.), when processed through KiroCliAgentProvider's ExecuteAsync output pipeline,
+    /// the resulting output lines SHALL contain no ANSI escape sequences.
+    /// **Validates: Requirements 5.6**
+    /// </summary>
+    [Property(MaxTest = 100, Arbitrary = [typeof(AnsiContainingStringArbitrary)])]
+    public void AnsiStripping_ForAnyStringWithCsiSequences_ResultContainsNoAnsiSequences(AnsiContainingString input)
+    {
+        // Arrange — the input is guaranteed to contain at least one ANSI CSI sequence
+        var mockOrchestrator = new Mock<IKiroCliOrchestrator>();
+        var mockLogger = new Mock<Serilog.ILogger>();
+        var provider = new KiroCliAgentProvider(mockOrchestrator.Object, mockLogger.Object);
+
+        mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<string, string, bool, CancellationToken, Action<string>?>(
+                (_, _, _, _, onOutput) =>
+                {
+                    onOutput?.Invoke(input.Value);
+                })
+            .ReturnsAsync(0);
+
+        var request = new AgentRequest
+        {
+            Prompt = "test",
+            WorkspacePath = Path.GetTempPath()
+        };
+
+        // Act
+        var result = provider.ExecuteAsync(request, CancellationToken.None).GetAwaiter().GetResult();
+
+        // Assert — no ANSI CSI sequences remain in the output
+        Assert.Single(result.OutputLines);
+        var outputLine = result.OutputLines[0];
+
+        // Verify stripping is idempotent (applying Strip again produces the same result)
+        // This proves no ANSI sequences remain — if any did, Strip would change the string
+        Assert.Equal(outputLine, AnsiStripper.Strip(outputLine));
+
+        // Verify the input actually contained ANSI sequences (precondition)
+        Assert.NotEqual(input.Value, AnsiStripper.Strip(input.Value));
+    }
 }
 
 /// <summary>
@@ -238,5 +285,73 @@ public static class AnsiOutputArbitrary
             .Select(t => t.Item1.Item1 + t.Item1.Item2 + t.Item2);
 
         return Gen.OneOf(plainGen, ansiPrefixed, ansiSuffixed, ansiWrapped, ansiGen);
+    }
+}
+
+/// <summary>
+/// Wrapper type for strings that always contain at least one ANSI CSI escape sequence.
+/// Used for property testing that ANSI stripping removes all sequences.
+/// </summary>
+public sealed class AnsiContainingString
+{
+    public string Value { get; }
+    public AnsiContainingString(string value) => Value = value;
+    public override string ToString() => Value;
+}
+
+/// <summary>
+/// FsCheck arbitrary that generates strings guaranteed to contain ANSI CSI escape sequences.
+/// </summary>
+public static class AnsiContainingStringArbitrary
+{
+    /// <summary>
+    /// CSI sequences matched by AnsiStripper's regex: \x1B\[[0-9;]*[A-Za-z]
+    /// These are ESC + [ + zero or more digits/semicolons + a single letter.
+    /// </summary>
+    private static readonly string[] CsiSequences =
+    [
+        "\x1b[0m",       // Reset
+        "\x1b[1m",       // Bold
+        "\x1b[31m",      // Red foreground
+        "\x1b[32m",      // Green foreground
+        "\x1b[1;32m",    // Bold green
+        "\x1b[38;5;196m",// 256-color red
+        "\x1b[48;2;0;128;0m", // 24-bit green background
+        "\x1b[K",        // Erase to end of line
+        "\x1b[2J",       // Clear screen
+        "\x1b[H",        // Cursor home
+        "\x1b[10A",      // Cursor up 10
+        "\x1b[5B",       // Cursor down 5
+        "\x1b[3C",       // Cursor forward 3
+        "\x1b[2D",       // Cursor back 2
+        "\x1b[4m",       // Underline
+        "\x1b[7m",       // Reverse video
+    ];
+
+    public static Arbitrary<AnsiContainingString> AnsiContainingStrings()
+    {
+        const string safeChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !@#$%^&*()_+-={}|:\"<>?,./~`';";
+        var charGen = Gen.Elements(safeChars.ToCharArray());
+
+        var plainGen =
+            from len in Gen.Choose(0, 15)
+            from chars in Gen.ArrayOf(charGen, len)
+            select new string(chars);
+
+        var csiGen =
+            from idx in Gen.Choose(0, CsiSequences.Length - 1)
+            select CsiSequences[idx];
+
+        // Generate strings with 1-4 ANSI sequences interspersed with plain text
+        var gen =
+            from segmentCount in Gen.Choose(1, 4)
+            from segments in Gen.ArrayOf(
+                from plain in plainGen
+                from ansi in csiGen
+                select plain + ansi, segmentCount)
+            from suffix in plainGen
+            select new AnsiContainingString(string.Concat(segments) + suffix);
+
+        return gen.ToArbitrary();
     }
 }

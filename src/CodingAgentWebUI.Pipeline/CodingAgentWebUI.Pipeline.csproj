@@ -14,6 +14,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="CodingAgentWebUI" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Agent" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Agent.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure.UnitTests" />
