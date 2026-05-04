@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Text.Json;
+using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Hosting;
+using Polly;
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
@@ -40,6 +42,7 @@ public sealed class AgentWorkerService : BackgroundService
     private readonly LocalPipelineExecutor _executor;
     private readonly IKiroCliOrchestrator _orchestrator;
     private readonly Serilog.ILogger _logger;
+    private readonly ResiliencePipeline _signalRPipeline;
 
     private readonly string _agentId;
     private readonly string _agentType;
@@ -69,6 +72,7 @@ public sealed class AgentWorkerService : BackgroundService
         _executor = executor;
         _orchestrator = orchestrator;
         _logger = logger;
+        _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
 
         _agentId = Environment.GetEnvironmentVariable("AGENT_ID")
             ?? Environment.MachineName;
@@ -114,7 +118,8 @@ public sealed class AgentWorkerService : BackgroundService
                 Labels = _labels
             };
 
-            await _hubManager.Connection.InvokeAsync("RegisterAgent", registration, stoppingToken);
+            await _signalRPipeline.ExecuteAsync(async token =>
+                await _hubManager.Connection.InvokeAsync("RegisterAgent", registration, token), stoppingToken);
             _logger.Information("Agent {AgentId} registered as {AgentType} with labels [{Labels}]",
                 _agentId, _agentType, string.Join(", ", _labels));
 
@@ -172,7 +177,8 @@ public sealed class AgentWorkerService : BackgroundService
 
         try
         {
-            await _hubManager.Connection.InvokeAsync("JobAccepted", message.JobId);
+            await _signalRPipeline.ExecuteAsync(async token =>
+                await _hubManager.Connection.InvokeAsync("JobAccepted", message.JobId, token), CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -232,7 +238,8 @@ public sealed class AgentWorkerService : BackgroundService
                 try
                 {
                     if (completion is not null)
-                        await _hubManager.Connection.InvokeAsync("ReportJobCompleted", message.JobId, completion);
+                        await _signalRPipeline.ExecuteAsync(async token =>
+                            await _hubManager.Connection.InvokeAsync("ReportJobCompleted", message.JobId, completion, token), CancellationToken.None);
                 }
                 catch (Exception ex)
                 {
@@ -352,6 +359,10 @@ public sealed class AgentWorkerService : BackgroundService
                     onOutputLine: line =>
                     {
                         var clean = KiroCliLib.Core.AnsiStripper.Strip(line);
+                        // TODO: [RES-07] sync-over-async — onOutputLine callback is Action<string> (synchronous),
+                        // but AddLineAsync acquires a semaphore and may flush via SignalR. This can cause
+                        // thread-pool starvation under high output volume. Fix requires changing
+                        // IKiroCliOrchestrator.ExecutePromptAsync to accept Func<string, Task> callback.
                         outputBatcher.AddLineAsync(clean).GetAwaiter().GetResult();
                     });
 

@@ -1,7 +1,10 @@
 using LibGit2Sharp;
 using Octokit;
+using Polly;
+using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using Serilog;
 using Signature = LibGit2Sharp.Signature;
 using Repository = LibGit2Sharp.Repository;
 using MergeResult = CodingAgentWebUI.Pipeline.Models.MergeResult;
@@ -16,14 +19,13 @@ namespace CodingAgentWebUI.Infrastructure.GitHub;
 public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
 {
     private readonly string _baseBranch;
+    private readonly ResiliencePipeline _gitPipeline;
 
     static GitHubRepositoryProvider()
     {
         // Disable libgit2's directory ownership validation. In Docker containers,
         // cloned workspace directories often have ownership mismatches (CVE-2022-24765
         // mitigation). Without this, Commands.Stage() silently fails.
-        // See: https://github.com/libgit2/libgit2sharp/issues/2058
-        //      https://stackoverflow.com/questions/76366963
         GlobalSettings.SetOwnerValidation(false);
     }
 
@@ -43,17 +45,18 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     {
         ArgumentNullException.ThrowIfNull(baseBranch);
         _baseBranch = baseBranch;
+        _gitPipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(Log.Logger);
     }
 
     /// <summary>
     /// Creates a provider with a token provider delegate (for GitHub App auth).
-    /// The delegate is called before each API call to obtain a fresh token.
     /// </summary>
     public GitHubRepositoryProvider(string apiUrl, Func<CancellationToken, Task<string>> tokenProvider, string owner, string repo, string baseBranch)
         : base(apiUrl, tokenProvider, owner, repo)
     {
         ArgumentNullException.ThrowIfNull(baseBranch);
         _baseBranch = baseBranch;
+        _gitPipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(Log.Logger);
     }
 
     /// <summary>
@@ -64,6 +67,7 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     {
         ArgumentNullException.ThrowIfNull(baseBranch);
         _baseBranch = baseBranch;
+        _gitPipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(Log.Logger);
     }
 
     public Task CloneAsync(string workspacePath, CancellationToken ct)
@@ -74,9 +78,8 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         {
             var token = await GetTokenAsync(ct);
 
-            // Derive clone URL: api.github.com → github.com, or GHE api base → GHE base
+            // Derive clone URL
             var cloneBaseUrl = (ApiUrl ?? string.Empty).Replace("api.github.com", "github.com", StringComparison.OrdinalIgnoreCase);
-            // For GHE: https://github.example.com/api/v3 → https://github.example.com
             if (cloneBaseUrl.EndsWith("/api/v3", StringComparison.OrdinalIgnoreCase))
                 cloneBaseUrl = cloneBaseUrl[..^"/api/v3".Length];
             var cloneUrl = $"{cloneBaseUrl.TrimEnd('/')}/{Owner}/{Repo}.git";
@@ -89,7 +92,12 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                         new UsernamePasswordCredentials { Username = "x-access-token", Password = token }
                 }
             };
-            Repository.Clone(cloneUrl, workspacePath, options);
+
+            await _gitPipeline.ExecuteAsync(async _ =>
+            {
+                await Task.CompletedTask;
+                Repository.Clone(cloneUrl, workspacePath, options);
+            }, ct);
         }, ct);
     }
 
@@ -101,34 +109,33 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         {
             var token = await GetTokenAsync(ct);
 
-            using var repo = new Repository(workspacePath);
-            var remote = repo.Network.Remotes["origin"];
-
-            // Fetch
-            var fetchOptions = new FetchOptions
+            await _gitPipeline.ExecuteAsync(async _ =>
             {
-                CredentialsProvider = (_, _, _) =>
-                    new UsernamePasswordCredentials
-                        { Username = "x-access-token", Password = token }
-            };
-            var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
-            Commands.Fetch(repo, remote.Name, refSpecs, fetchOptions, null);
+                await Task.CompletedTask;
+                using var repo = new Repository(workspacePath);
+                var remote = repo.Network.Remotes["origin"];
 
-            // Fast-forward merge only. If the merge is not fast-forward,
-            // PullAsync returns without merging — the caller (BrainUpdateService)
-            // owns conflict detection and resolution.
-            var trackingBranch = repo.Head.TrackedBranch
-                ?? repo.Branches[$"origin/{_baseBranch}"];
-            if (trackingBranch != null)
-            {
-                var signature = new Signature(
-                    "CodingAgentWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
-                repo.Merge(trackingBranch, signature, new MergeOptions
+                var fetchOptions = new FetchOptions
                 {
-                    FastForwardStrategy = FastForwardStrategy.FastForwardOnly
-                });
-                // If merge results in conflicts, leave them in the index for the caller to resolve.
-            }
+                    CredentialsProvider = (_, _, _) =>
+                        new UsernamePasswordCredentials
+                            { Username = "x-access-token", Password = token }
+                };
+                var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
+                Commands.Fetch(repo, remote.Name, refSpecs, fetchOptions, null);
+
+                var trackingBranch = repo.Head.TrackedBranch
+                    ?? repo.Branches[$"origin/{_baseBranch}"];
+                if (trackingBranch != null)
+                {
+                    var signature = new Signature(
+                        "CodingAgentWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
+                    repo.Merge(trackingBranch, signature, new MergeOptions
+                    {
+                        FastForwardStrategy = FastForwardStrategy.FastForwardOnly
+                    });
+                }
+            }, ct);
         }, ct);
     }
 
@@ -155,8 +162,6 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
 
     /// <summary>
     /// Stages all changes, unstages blacklisted paths, and commits.
-    /// When <paramref name="allowEmpty"/> is true, creates an empty commit if no files changed
-    /// (useful for triggering CI re-runs after retry fixes that didn't change files).
     /// </summary>
     public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message,
         IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct)
@@ -168,29 +173,22 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         {
             using var repo = new Repository(workspacePath);
 
-            // Retrieve status — this reloads the on-disk index per libgit2sharp docs.
             var preStatus = repo.RetrieveStatus(new StatusOptions
             {
                 DetectRenamesInIndex = false,
                 DetectRenamesInWorkDir = false
             });
 
-            // Diagnostic: log every entry and its state so we can trace staging issues
             foreach (var entry in preStatus)
             {
                 Serilog.Log.Debug("CommitAllAsync status: {FilePath} = {State}", entry.FilePath, entry.State);
             }
 
-            // Stage workdir changes using repo.Index.Add()/Remove() + repo.Index.Write().
-            // Deleted files must use Index.Remove() — Index.Add() tries to stat the file
-            // on disk and throws NotFoundException for files that no longer exist.
-            // This matches the pattern in LibGit2Sharp's own Commands.Stage implementation.
             var stagedAny = false;
             foreach (var entry in preStatus)
             {
                 if (entry.State.HasFlag(FileStatus.Conflicted))
                 {
-                    // Merge conflict resolved in working tree by the agent — stage to mark resolution.
                     Serilog.Log.Debug("CommitAllAsync staging conflicted (resolved) file via Index.Add: {FilePath}", entry.FilePath);
                     repo.Index.Add(entry.FilePath);
                     stagedAny = true;
@@ -215,9 +213,6 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
             if (stagedAny)
                 repo.Index.Write();
 
-            // Enforce blacklist: unstage any staged files matching blacklisted path prefixes.
-            // Use Diff.Compare against the index to reliably detect staged changes,
-            // since RepositoryStatus.Staged can miss NewInIndex files.
             var unstaged = new List<string>();
             if (blacklistedPaths is { Count: > 0 })
             {
@@ -232,8 +227,6 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                 }
             }
 
-            // Use Diff.Compare to reliably detect staged changes (index vs HEAD).
-            // RepositoryStatus.Staged does not include NewInIndex files.
             var stagedChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
             Serilog.Log.Debug("CommitAllAsync final staged count (via Diff): {Count}", stagedChanges.Count);
             foreach (var change in stagedChanges)
@@ -245,8 +238,6 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                 throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
 
             var signature = new Signature("CodingAgentWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
-            // NOTE: [ARC-07a] The allowEmpty path is currently only exercised by the retry loop's empty commit
-            // for CI re-trigger. Add an integration test with a real LibGit2Sharp repo to verify AllowEmptyCommit works.
             var commitOptions = allowEmpty ? new CommitOptions { AllowEmptyCommit = true } : new CommitOptions();
             repo.Commit(message, signature, signature, commitOptions);
 
@@ -273,10 +264,22 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                 OnPushStatusError = error =>
                     pushError = $"Push failed for ref '{error.Reference}': {error.Message}"
             };
-            repo.Network.Push(remote, $"refs/heads/{branchName}", options);
 
-            if (pushError != null)
-                throw new InvalidOperationException(pushError);
+            await _gitPipeline.ExecuteAsync(async _ =>
+            {
+                await Task.CompletedTask;
+                pushError = null;
+                repo.Network.Push(remote, $"refs/heads/{branchName}", options);
+
+                if (pushError != null)
+                {
+                    var category = PushErrorClassifier.Classify(pushError);
+                    var message = PushErrorClassifier.GetActionableMessage(category, branchName);
+                    throw category == PushErrorClassifier.PushFailureCategory.Network
+                        ? new LibGit2SharpException(pushError)
+                        : new InvalidOperationException(message);
+                }
+            }, ct);
         }, ct);
     }
 
@@ -284,16 +287,15 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     {
         ArgumentNullException.ThrowIfNull(prInfo);
 
-        var client = await GetClientAsync(ct);
-
         var newPr = new NewPullRequest(prInfo.Title, prInfo.BranchName, prInfo.BaseBranch)
         {
             Body = prInfo.Body,
             Draft = prInfo.IsDraft
         };
 
-        var pr = await ExecuteWithRateLimitHandlingAsync(
-            () => client.PullRequest.Create(Owner, Repo, newPr));
+        var pr = await ExecuteWithResilienceAsync(
+            client => client.PullRequest.Create(Owner, Repo, newPr),
+            "CreatePullRequest", ct);
         return pr.HtmlUrl;
     }
 
@@ -310,6 +312,9 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     }
 
     /// <inheritdoc />
+    // TODO: [RES-07] HasCommitsAheadAsync (divergence check) is not wrapped with _gitPipeline.
+    // FindMergeBase is a local operation on already-fetched data, but the acceptance criteria
+    // names it as one of the 5 LibGit2Sharp network operations to wrap.
     public Task<bool> HasCommitsAheadAsync(string workspacePath, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(workspacePath);
@@ -322,7 +327,7 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                 var head = repo.Head.Tip;
                 var baseBranchRef = repo.Branches[$"origin/{_baseBranch}"]
                     ?? repo.Branches[_baseBranch];
-                if (baseBranchRef == null) return true; // Can't determine — assume there are changes
+                if (baseBranchRef == null) return true;
                 var mergeBase = repo.ObjectDatabase.FindMergeBase(head, baseBranchRef.Tip);
                 return mergeBase == null || mergeBase.Sha != head.Sha;
             }
@@ -353,8 +358,6 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
 
                 var changes = CollectChangesWithLineStats(repo, baseCommit.Tree, headCommit.Tree);
 
-                // If no committed changes yet, check the working directory against the base branch.
-                // This captures files the agent has written but not yet committed.
                 if (changes.Count == 0)
                 {
                     var workingDiff = repo.Diff.Compare<TreeChanges>(
@@ -390,7 +393,6 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         }
         catch
         {
-            // Fall back to TreeChanges if Patch fails (e.g. binary files)
             var diff = repo.Diff.Compare<TreeChanges>(baseTree, headTree);
             foreach (var entry in diff)
             {
@@ -405,14 +407,14 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         string issueIdentifier, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
-        var client = await GetClientAsync(ct);
         var branchPrefix = $"feature/auto-{issueIdentifier}-";
 
         // 1. List all open PRs for the repository
-        var allPrs = await ExecuteWithRateLimitHandlingAsync(
-            () => client.PullRequest.GetAllForRepository(
+        var allPrs = await ExecuteWithResilienceAsync(
+            client => client.PullRequest.GetAllForRepository(
                 Owner, Repo,
-                new PullRequestRequest { State = ItemStateFilter.Open }));
+                new PullRequestRequest { State = ItemStateFilter.Open }),
+            "GetAgentPullRequests.List", ct);
 
         // 2. Filter by branch name prefix (client-side)
         var matching = allPrs
@@ -426,14 +428,17 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         var results = new List<LinkedPullRequest>();
         foreach (var pr in matching)
         {
-            var detailed = await ExecuteWithRateLimitHandlingAsync(
-                () => client.PullRequest.Get(Owner, Repo, pr.Number));
+            var detailed = await ExecuteWithResilienceAsync(
+                client => client.PullRequest.Get(Owner, Repo, pr.Number),
+                "GetAgentPullRequests.Get", ct);
 
-            // 4. Fetch review comments (inline + conversation), filter by content markers, cap at 50
-            var reviewComments = await ExecuteWithRateLimitHandlingAsync(
-                () => client.PullRequest.ReviewComment.GetAll(Owner, Repo, pr.Number));
-            var conversationComments = await ExecuteWithRateLimitHandlingAsync(
-                () => client.Issue.Comment.GetAllForIssue(Owner, Repo, pr.Number));
+            // 4. Fetch review comments
+            var reviewComments = await ExecuteWithResilienceAsync(
+                client => client.PullRequest.ReviewComment.GetAll(Owner, Repo, pr.Number),
+                "GetAgentPullRequests.ReviewComments", ct);
+            var conversationComments = await ExecuteWithResilienceAsync(
+                client => client.Issue.Comment.GetAllForIssue(Owner, Repo, pr.Number),
+                "GetAgentPullRequests.ConversationComments", ct);
 
             var allComments = reviewComments
                 .Where(c => !IsPipelineGeneratedComment(c.Body))
@@ -473,10 +478,6 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         return results;
     }
 
-    /// <summary>
-    /// Checks if a comment was generated by the pipeline using content markers.
-    /// Reuses the same pattern as PromptBuilder.ExcludedCommentMarkers.
-    /// </summary>
     private static bool IsPipelineGeneratedComment(string? body)
     {
         if (string.IsNullOrEmpty(body)) return false;
@@ -493,14 +494,12 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         {
             using var repo = new Repository(workspacePath);
 
-            // After CloneAsync, all remote tracking branches are available
             var remoteBranch = repo.Branches[$"origin/{branchName}"];
             if (remoteBranch == null)
                 throw new InvalidOperationException(
                     $"Remote branch 'origin/{branchName}' not found. " +
                     $"The branch may have been deleted.");
 
-            // Create local branch tracking the remote
             var localBranch = repo.CreateBranch(branchName, remoteBranch.Tip);
             repo.Branches.Update(localBranch,
                 b => b.TrackedBranch = remoteBranch.CanonicalName);
@@ -559,12 +558,12 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     {
         ArgumentNullException.ThrowIfNull(body);
 
-        var client = await GetClientAsync(ct);
         try
         {
-            await ExecuteWithRateLimitHandlingAsync(
-                () => client.PullRequest.Update(Owner, Repo, pullRequestNumber,
-                    new PullRequestUpdate { Body = body }));
+            await ExecuteWithResilienceAsync(
+                client => client.PullRequest.Update(Owner, Repo, pullRequestNumber,
+                    new PullRequestUpdate { Body = body }),
+                "UpdatePullRequest", ct);
         }
         catch (Octokit.NotFoundException ex)
         {
