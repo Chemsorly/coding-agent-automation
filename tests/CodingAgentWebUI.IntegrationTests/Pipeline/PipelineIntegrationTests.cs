@@ -46,7 +46,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
             StallPollInterval = TimeSpan.FromSeconds(15),
             BlacklistedPaths = new[] { ".kiro", ".github", ".secret" },
             BlacklistMode = BlacklistMode.Fail,
-            CleanupSuccessfulWorkspaces = false,
             FailedWorkspaceRetentionDays = 14,
             LastUsedProviderIds = new Dictionary<string, string>
             {
@@ -79,7 +78,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
         loaded.StallPollInterval.Should().Be(original.StallPollInterval);
         loaded.BlacklistedPaths.Should().BeEquivalentTo(original.BlacklistedPaths);
         loaded.BlacklistMode.Should().Be(original.BlacklistMode);
-        loaded.CleanupSuccessfulWorkspaces.Should().Be(original.CleanupSuccessfulWorkspaces);
         loaded.FailedWorkspaceRetentionDays.Should().Be(original.FailedWorkspaceRetentionDays);
         loaded.LastUsedProviderIds.Should().BeEquivalentTo(original.LastUsedProviderIds);
         loaded.BrainReadOnly.Should().Be(original.BrainReadOnly);

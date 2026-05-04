@@ -89,11 +89,6 @@ public sealed record PipelineConfiguration
     public BlacklistMode BlacklistMode { get; init; } = BlacklistMode.WarnAndExclude;
 
     /// <summary>
-    /// When enabled, workspace folders are deleted after a successful (non-draft) PR is created.
-    /// </summary>
-    public bool CleanupSuccessfulWorkspaces { get; init; } = true;
-
-    /// <summary>
     /// Number of days to retain workspace folders for failed or cancelled runs.
     /// Set to 0 to delete immediately. Set to -1 to retain indefinitely.
     /// </summary>
