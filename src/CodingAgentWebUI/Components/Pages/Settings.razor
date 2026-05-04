@@ -8,6 +8,7 @@
 @using CodingAgentWebUI.Orchestration.Health
 @using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
+@using Serilog
 @inject IConfigurationStore ConfigStore
 @inject GitHubValidationService GitHubValidator
 @inject IProviderFactory ProviderFactory
@@ -165,7 +166,10 @@
             await using var provider = ProviderFactory.CreateIssueProvider(config);
             hasLabels = await provider.HasAgentLabelsAsync(CancellationToken.None);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to check agent labels for provider {ProviderId}", config.Id);
+        }
 
         if (!hasLabels)
             _modals?.ShowConfigureLabels(config);

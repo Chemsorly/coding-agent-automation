@@ -10,6 +10,7 @@
 @using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
 @using Microsoft.AspNetCore.SignalR
+@using Serilog
 @inject AgentRegistryService Registry
 @inject IConfigurationStore ConfigStore
 @inject PipelineOrchestrationService PipelineService
@@ -324,7 +325,7 @@
                 {
                     await HubContext.Clients.Client(agent.ConnectionId).CancelChat(_activeSessionId);
                 }
-                catch { /* best effort */ }
+                catch (Exception ex) { Log.Warning(ex, "Failed to send cancel to agent {AgentId}", _selectedAgentId); }
             }
         }
 
@@ -359,7 +360,7 @@
         {
             await JS.InvokeVoidAsync("eval", "document.querySelector('.chat-messages')?.scrollTo(0, document.querySelector('.chat-messages')?.scrollHeight)");
         }
-        catch { /* best effort */ }
+        catch (Exception ex) { Log.Debug(ex, "Failed to scroll chat to bottom"); }
     }
 
     private static string GetRoleIcon(ChatRole role) => role switch
@@ -389,7 +390,7 @@
                     {
                         await HubContext.Clients.Client(agent.ConnectionId).CancelChat(_activeSessionId);
                     }
-                    catch { /* best effort */ }
+                    catch (Exception ex) { Log.Warning(ex, "Failed to cancel chat on dispose for agent {AgentId}", _selectedAgentId); }
                 }
             }
 

@@ -354,7 +354,7 @@ public sealed class LocalPipelineExecutor
 
         run.CurrentStep = PipelineStep.CreatingPullRequest;
         try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.CreatingPullRequest, DateTimeOffset.UtcNow, ct); }
-        catch { /* best effort */ }
+        catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", PipelineStep.CreatingPullRequest); }
 
         if (run.LinkedPullRequest is not null)
         {
@@ -398,7 +398,7 @@ public sealed class LocalPipelineExecutor
         {
             run.CurrentStep = PipelineStep.ReflectingOnRun;
             try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.ReflectingOnRun, DateTimeOffset.UtcNow, ct); }
-            catch { /* best effort */ }
+            catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", PipelineStep.ReflectingOnRun); }
 
             emitOutputLine("🧠 Reflecting on run and updating brain knowledge...");
             try
@@ -428,7 +428,7 @@ public sealed class LocalPipelineExecutor
 
             run.CurrentStep = PipelineStep.SyncingBrainRepoPostRun;
             try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.SyncingBrainRepoPostRun, DateTimeOffset.UtcNow, ct); }
-            catch { /* best effort */ }
+            catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", PipelineStep.SyncingBrainRepoPostRun); }
 
             try { await brainSync.SyncPostRunAsync(run, brainProvider, ct, emitOutputLine, config.BrainPushMaxRetries); }
             catch (Exception ex) when (ex is not OperationCanceledException)

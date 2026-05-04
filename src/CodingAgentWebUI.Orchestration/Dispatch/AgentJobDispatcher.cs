@@ -306,7 +306,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
                     await revertProvider.AddLabelAsync(issueIdentifier, AgentLabels.Next, CancellationToken.None);
                 }
             }
-            catch { /* best effort */ }
+            catch (Exception revertEx) { _logger.Warning(revertEx, "Best-effort label revert failed for issue {IssueIdentifier}", issueIdentifier); }
 
             return false;
         }
