@@ -521,8 +521,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             else
                 _lifecycle.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
 
-            if (finalStep == PipelineStep.Completed && _activeConfig!.CleanupSuccessfulWorkspaces)
-                _historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig.WorkspaceBaseDirectory);
+            if (finalStep == PipelineStep.Completed)
+                _historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig!.WorkspaceBaseDirectory);
             _logger.Information("Pipeline {RunId} {Outcome} in {Duration}. Retries: {RetryCount}. PR: {PullRequestUrl}",
                 run.RunId, finalStep, run.CompletedAt!.Value - run.StartedAt, run.RetryCount, prUrl);
         }

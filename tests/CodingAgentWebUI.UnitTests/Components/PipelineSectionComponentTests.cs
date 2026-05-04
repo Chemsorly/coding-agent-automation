@@ -233,7 +233,6 @@ public class PipelineSectionComponentTests : BunitContext
         var cut = Render<PipelineSecuritySection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
         Assert.Contains("Blacklisted Paths", cut.Markup);
         Assert.Contains("Blacklist Mode", cut.Markup);
-        Assert.Contains("Delete Workspace After Successful PR", cut.Markup);
         Assert.Contains("Failed Run Workspace Retention", cut.Markup);
         Assert.Contains("Brain Repository Read-Only", cut.Markup);
     }
@@ -246,7 +245,6 @@ public class PipelineSectionComponentTests : BunitContext
             {
                 BlacklistedPaths = new[] { ".secret", ".env" },
                 BlacklistMode = BlacklistMode.Fail,
-                CleanupSuccessfulWorkspaces = false,
                 FailedWorkspaceRetentionDays = 14,
                 BrainReadOnly = true
             });

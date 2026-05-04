@@ -207,7 +207,6 @@ public class PreparingForPullRequestPropertyTests
             StallPollInterval = config.StallPollInterval,
             BlacklistedPaths = config.BlacklistedPaths,
             BlacklistMode = config.BlacklistMode,
-            CleanupSuccessfulWorkspaces = config.CleanupSuccessfulWorkspaces,
             FailedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays,
             ClosedLoopPollInterval = config.ClosedLoopPollInterval,
             ClosedLoopMaxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle,
