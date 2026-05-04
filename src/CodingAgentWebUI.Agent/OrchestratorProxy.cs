@@ -4,7 +4,6 @@ using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR.Client;
 using Polly;
 using Serilog;
-using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Agent;
 
