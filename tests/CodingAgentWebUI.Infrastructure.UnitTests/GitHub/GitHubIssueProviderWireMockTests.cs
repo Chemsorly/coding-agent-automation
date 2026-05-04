@@ -255,9 +255,6 @@ public class GitHubIssueProviderWireMockTests : WireMockTestBase
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/1"), BuildIssueJson(1, "T", "B", []));
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/2"), BuildIssueJson(2, "T2", "B2", []));
 
-        // NOTE: Token assertion uses substring matching (Contain). If tokens shared a common prefix
-        // (e.g., "token" and "token-extended"), the assertion could pass incorrectly. Consider using
-        // exact match on the full "Token <value>" header string for stricter verification.
         await using var provider = CreateProviderWithTokenProvider(ct =>
         {
             var token = tokens[Math.Min(Interlocked.Increment(ref callCount) - 1, tokens.Length - 1)];
@@ -273,8 +270,10 @@ public class GitHubIssueProviderWireMockTests : WireMockTestBase
             .ToList();
 #pragma warning restore CS8602
 
+        // Token is cached: both requests use the first token (no redundant refresh)
         authHeaders.Should().HaveCount(2);
         authHeaders[0].Should().Contain("token-first");
-        authHeaders[1].Should().Contain("token-second");
+        authHeaders[1].Should().Contain("token-first");
+        callCount.Should().Be(1, "token provider should only be called once due to caching");
     }
 }

@@ -222,8 +222,10 @@ public class GitHubActionsPipelineProviderWireMockTests : WireMockTestBase
             .ToList();
 #pragma warning restore CS8602
 
+        // Token is cached: both requests use the first token (no redundant refresh)
         authHeaders.Should().HaveCount(2);
         authHeaders[0].Should().Contain("token-alpha");
-        authHeaders[1].Should().Contain("token-beta");
+        authHeaders[1].Should().Contain("token-alpha");
+        callCount.Should().Be(1, "token provider should only be called once due to caching");
     }
 }

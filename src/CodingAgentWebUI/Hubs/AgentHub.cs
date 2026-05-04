@@ -414,18 +414,30 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         if (run is null)
             throw new HubException($"No active run found for job {jobId}");
 
-        // NOTE: Currently always generates a token from the repo provider config regardless of providerKind.
-        // All GitHub App-authenticated providers (repo, brain, pipeline) share the same installation,
-        // so the token works for all of them. If providers use different installations in the future,
-        // this should be updated to look up the correct config by providerKind.
-        var repoConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
-        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == run.RepoProviderConfigId);
-        if (repoConfig is null)
-            throw new HubException($"Repository provider config '{run.RepoProviderConfigId}' not found");
+        // Resolve the correct provider config based on the requested kind.
+        // Brain repos need their own scoped token (different repository scope).
+        ProviderConfig? targetConfig = null;
 
-        var (token, expiresAt) = await _tokenVending.GenerateAgentTokenAsync(repoConfig, CancellationToken.None);
+        if (providerKind == ProviderKind.Brain && !string.IsNullOrEmpty(run.BrainProviderConfigId))
+        {
+            var repoConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
+            targetConfig = repoConfigs.FirstOrDefault(c => c.Id == run.BrainProviderConfigId);
+        }
 
-        _logger.Information("Token refreshed for job {JobId}, expires at {ExpiresAt}", jobId, expiresAt);
+        if (targetConfig is null)
+        {
+            // Default: use the work repo config (covers Repository kind and fallback)
+            var repoConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
+            targetConfig = repoConfigs.FirstOrDefault(c => c.Id == run.RepoProviderConfigId);
+        }
+
+        if (targetConfig is null)
+            throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
+
+        var (token, expiresAt) = await _tokenVending.GenerateAgentTokenAsync(targetConfig, CancellationToken.None);
+
+        _logger.Information("Token refreshed for job {JobId} (kind: {ProviderKind}), expires at {ExpiresAt}",
+            jobId, providerKind, expiresAt);
 
         return new TokenRefreshResponse { Token = token, ExpiresAt = expiresAt };
     }

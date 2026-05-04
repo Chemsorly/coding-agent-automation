@@ -174,6 +174,7 @@ public class JsonConfigurationStore : IConfigurationStore
         {
             ProviderKind.Issue => "issue",
             ProviderKind.Repository => "repository",
+            ProviderKind.Brain => "repository", // Brain repos are stored alongside work repos
             ProviderKind.Agent => "agent",
             ProviderKind.Pipeline => "pipeline",
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown provider kind")
