@@ -11,8 +11,12 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.SignalR;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -20,6 +24,22 @@ var builder = WebApplication.CreateBuilder(args);
 // Register services
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddSingleton(BuildInfo.Load());
+
+// OpenTelemetry — tracing + metrics with OTLP exporter
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService(
+        serviceName: "coding-agent-orchestrator",
+        serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0"))
+    .WithTracing(t => t
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddSource(PipelineTelemetry.SourceName)
+        .AddOtlpExporter())
+    .WithMetrics(m => m
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddMeter(PipelineTelemetry.SourceName)
+        .AddOtlpExporter());
 
 // Pipeline — Configuration Store
 var configStore = new JsonConfigurationStore("config/pipeline");

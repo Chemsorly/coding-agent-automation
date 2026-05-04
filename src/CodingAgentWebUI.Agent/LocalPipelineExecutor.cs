@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Services.Steps;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
 namespace CodingAgentWebUI.Agent;
@@ -220,6 +222,10 @@ public sealed class LocalPipelineExecutor
         {
             localCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             var linkedCt = localCts.Token;
+            using var executePipelineActivity = PipelineTelemetry.ActivitySource.StartActivity("ExecutePipeline");
+            executePipelineActivity?.SetTag("pipeline.run_id", run.RunId);
+            executePipelineActivity?.SetTag("pipeline.issue", run.IssueIdentifier);
+            var pipelineStopwatch = Stopwatch.StartNew();
 
             // Build step context
             var callbacks = new AgentCallbacks(
@@ -269,6 +275,12 @@ public sealed class LocalPipelineExecutor
                 catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
             }
 
+            pipelineStopwatch.Stop();
+            PipelineTelemetry.JobDuration.Record(pipelineStopwatch.Elapsed.TotalSeconds);
+            if (run.CurrentStep == PipelineStep.Completed)
+                PipelineTelemetry.JobsCompleted.Add(1);
+            else if (run.CurrentStep == PipelineStep.Failed)
+                PipelineTelemetry.JobsFailed.Add(1);
             return BuildCompletionPayload(run);
         }
         catch (OperationCanceledException)
@@ -292,6 +304,7 @@ public sealed class LocalPipelineExecutor
         }
         catch (Exception ex)
         {
+            PipelineTelemetry.JobsFailed.Add(1);
             _logger.Error(ex, "Pipeline execution failed with unhandled error");
             return BuildFailurePayload(run, ex.Message);
         }
@@ -347,6 +360,10 @@ public sealed class LocalPipelineExecutor
         HubConnection connection, JobAssignmentMessage job,
         Action<string> emitOutputLine, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("CreatePullRequest");
+        activity?.SetTag("pipeline.run_id", run.RunId);
+        activity?.SetTag("pipeline.pr.is_draft", isDraft);
+
         var prOrchestrator = new PullRequestOrchestrator(_logger);
 
         // NOTE: QualityGateOrchestrator already transitions to PreparingForPullRequest

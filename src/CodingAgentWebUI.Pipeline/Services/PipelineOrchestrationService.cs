@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using Serilog.Context;
 
 namespace CodingAgentWebUI.Pipeline.Services;
@@ -328,6 +330,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         PipelineRun run, IIssueProvider issueProvider, CancellationToken ct)
     {
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
+        using var executePipelineActivity = PipelineTelemetry.ActivitySource.StartActivity("ExecutePipeline");
+        executePipelineActivity?.SetTag("pipeline.run_id", run.RunId);
+        executePipelineActivity?.SetTag("pipeline.issue", run.IssueIdentifier);
+        var pipelineStopwatch = Stopwatch.StartNew();
+
         IAgentIssueOperations issueOps = new IssueProviderIssueOperations(issueProvider, _logger);
         Steps.PipelineStepContext? ctx = null;
 
@@ -347,6 +354,13 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         try
         {
             await Steps.PipelineStepRunner.ExecuteAsync(BuildStepPipeline(), ctx, ct);
+
+            pipelineStopwatch.Stop();
+            PipelineTelemetry.JobDuration.Record(pipelineStopwatch.Elapsed.TotalSeconds);
+            if (run.CurrentStep == PipelineStep.Completed)
+                PipelineTelemetry.JobsCompleted.Add(1);
+            else if (run.CurrentStep == PipelineStep.Failed)
+                PipelineTelemetry.JobsFailed.Add(1);
         }
         catch (OperationCanceledException)
         {
@@ -442,6 +456,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     private async Task CreatePullRequestAsync(
         PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("CreatePullRequest");
+        activity?.SetTag("pipeline.run_id", run.RunId);
+        activity?.SetTag("pipeline.pr.is_draft", isDraft);
+
         _lifecycle.TransitionTo(run, PipelineStep.CreatingPullRequest);
         try
         {

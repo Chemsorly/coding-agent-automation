@@ -2,6 +2,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
@@ -271,6 +272,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             // Send the assignment via IAgentCommunication
             await _agentComm.AssignJobAsync(agent.ConnectionId, message, ct);
 
+            PipelineTelemetry.JobsDispatched.Add(1);
             _logger.Information(
                 "Job {JobId} dispatched to agent {AgentId} for issue {IssueIdentifier} (profile={ProfileId}, qgcs={QgcCount}, reviewerConfigs={ReviewerConfigCount})",
                 run.RunId, agent.AgentId, issueIdentifier, profile.Id, resolvedQgcs.Count, resolvedReviewerConfigs.Count);

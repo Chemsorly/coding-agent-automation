@@ -2,9 +2,13 @@ using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Configuration;
 using KiroCliLib.Core;
 using KiroCliLib.Models;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Serilog;
 
 // ── Read required environment variables early ──
@@ -46,6 +50,20 @@ try
 
     // Use Serilog
     builder.Host.UseSerilog();
+
+    // OpenTelemetry — tracing + metrics with OTLP exporter
+    builder.Services.AddOpenTelemetry()
+        .ConfigureResource(r => r.AddService(
+            serviceName: "coding-agent-worker",
+            serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0"))
+        .WithTracing(t => t
+            .AddHttpClientInstrumentation()
+            .AddSource(PipelineTelemetry.SourceName)
+            .AddOtlpExporter())
+        .WithMetrics(m => m
+            .AddHttpClientInstrumentation()
+            .AddMeter(PipelineTelemetry.SourceName)
+            .AddOtlpExporter());
 
     // ── KiroCliLib ──
     var kiroConfig = new Configuration
