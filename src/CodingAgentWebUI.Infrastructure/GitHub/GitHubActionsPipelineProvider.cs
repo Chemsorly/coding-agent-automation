@@ -1,4 +1,6 @@
 using Octokit;
+using Polly;
+using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
@@ -12,6 +14,7 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
 {
     private readonly TimeSpan _pollInterval;
     private readonly Serilog.ILogger _logger;
+    private readonly ResiliencePipeline _logsPipeline;
 
     /// <inheritdoc />
     public PipelineProviderType ProviderType => PipelineProviderType.GitHubActions;
@@ -30,6 +33,7 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
     {
         _pollInterval = pollInterval;
         _logger = logger ?? Serilog.Log.Logger;
+        _logsPipeline = ResiliencePipelineFactory.CreateGitHubActionsLogsPipeline(_logger);
     }
 
     /// <summary>
@@ -46,6 +50,7 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
     {
         _pollInterval = pollInterval;
         _logger = logger ?? Serilog.Log.Logger;
+        _logsPipeline = ResiliencePipelineFactory.CreateGitHubActionsLogsPipeline(_logger);
     }
 
     /// <summary>
@@ -61,6 +66,7 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
     {
         _pollInterval = pollInterval;
         _logger = logger ?? Serilog.Log.Logger;
+        _logsPipeline = ResiliencePipelineFactory.CreateGitHubActionsLogsPipeline(_logger);
     }
 
     public async Task<PipelineRunStatus> GetRunStatusAsync(
@@ -68,9 +74,10 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
     {
         ArgumentNullException.ThrowIfNull(branchName);
 
-        var client = await GetClientAsync(ct);
         var request = new WorkflowRunsRequest { Branch = branchName };
-        var runs = await client.Actions.Workflows.Runs.List(Owner, Repo, request);
+        var runs = await ExecuteWithResilienceAsync(
+            client => client.Actions.Workflows.Runs.List(Owner, Repo, request),
+            "GetRunStatus.ListRuns", ct);
 
         // Filter by commit SHA if provided
         var matchingRuns = commitSha != null
@@ -90,7 +97,9 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         var jobs = new List<PipelineJobResult>();
         foreach (var run in matchingRuns)
         {
-            var runJobs = await client.Actions.Workflows.Jobs.List(Owner, Repo, run.Id);
+            var runJobs = await ExecuteWithResilienceAsync(
+                client => client.Actions.Workflows.Jobs.List(Owner, Repo, run.Id),
+                "GetRunStatus.ListJobs", ct);
             foreach (var job in runJobs.Jobs)
             {
                 jobs.Add(new PipelineJobResult
@@ -155,7 +164,6 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
                 {
                     _logger.Information("CI completed: {State} after {PollCount} poll(s)", status.State, pollCount);
 
-                    // Automatically fetch logs for failed jobs so callers get actionable diagnostics
                     if (status.State == PipelineRunState.Failed)
                     {
                         status = await EnrichFailedJobsWithLogsAsync(status, linkedCt);
@@ -185,8 +193,11 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
     {
         try
         {
-            var client = await GetClientAsync(ct);
-            var rawLog = await client.Actions.Workflows.Jobs.GetLogs(Owner, Repo, jobId);
+            var rawLog = await _logsPipeline.ExecuteAsync(async token =>
+            {
+                var client = await GetClientAsync(token);
+                return await client.Actions.Workflows.Jobs.GetLogs(Owner, Repo, jobId);
+            }, ct);
             return string.IsNullOrEmpty(rawLog) ? null : rawLog;
         }
         catch (Exception ex)
@@ -197,10 +208,7 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
     }
 
     /// <summary>
-    /// Fetches full log content from the GitHub Actions API for each failed job
-    /// and returns a new <see cref="PipelineRunStatus"/> with enriched jobs.
-    /// Delegates to <see cref="GetJobLogsAsync"/> per job.
-    /// Failures are logged and swallowed — missing logs should never block the pipeline.
+    /// Fetches full log content from the GitHub Actions API for each failed job.
     /// </summary>
     private async Task<PipelineRunStatus> EnrichFailedJobsWithLogsAsync(
         PipelineRunStatus status, CancellationToken ct)
@@ -228,7 +236,6 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         if (logsByJobId.Count == 0)
             return status;
 
-        // Rebuild jobs list with LogContent set via init
         var enrichedJobs = status.Jobs.Select(job =>
         {
             if (logsByJobId.TryGetValue(job.JobId, out var content))
@@ -262,7 +269,6 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         if (status == WorkflowJobStatus.Queued) return PipelineRunState.Pending;
         if (status == WorkflowJobStatus.InProgress) return PipelineRunState.Running;
 
-        // Completed — check conclusion
         return conclusion switch
         {
             WorkflowJobConclusion.Success => PipelineRunState.Passed,

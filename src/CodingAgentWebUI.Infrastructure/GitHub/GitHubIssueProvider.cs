@@ -38,9 +38,9 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         ArgumentNullException.ThrowIfNull(identifier);
         var issueNumber = ParseIssueIdentifier(identifier);
 
-        var client = await GetClientAsync(ct);
-        var issue = await ExecuteWithRateLimitHandlingAsync(
-            () => client.Issue.Get(Owner, Repo, issueNumber));
+        var issue = await ExecuteWithResilienceAsync(
+            client => client.Issue.Get(Owner, Repo, issueNumber),
+            "GetIssue", ct);
         return MapToIssueDetail(issue);
     }
 
@@ -69,9 +69,9 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
             PageCount = 1
         };
 
-        var client = await GetClientAsync(ct);
-        var issues = await ExecuteWithRateLimitHandlingAsync(
-            () => client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions));
+        var issues = await ExecuteWithResilienceAsync(
+            client => client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions),
+            "ListOpenIssues", ct);
 
         var items = issues
             .Where(i => i.PullRequest == null)
@@ -114,9 +114,9 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         ArgumentNullException.ThrowIfNull(body);
         var issueNumber = ParseIssueIdentifier(identifier);
 
-        var client = await GetClientAsync(ct);
-        await ExecuteWithRateLimitHandlingAsync(
-            () => client.Issue.Comment.Create(Owner, Repo, issueNumber, body));
+        await ExecuteWithResilienceAsync(
+            client => client.Issue.Comment.Create(Owner, Repo, issueNumber, body),
+            "PostComment", ct);
     }
 
     public async Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct)
@@ -129,9 +129,9 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         if (!int.TryParse(commentId, out var commentIdParsed))
             throw new ArgumentException($"Invalid comment identifier: '{commentId}'. Expected a numeric comment ID.", nameof(commentId));
 
-        var client = await GetClientAsync(ct);
-        await ExecuteWithRateLimitHandlingAsync(
-            () => client.Issue.Comment.Update(Owner, Repo, commentIdParsed, body));
+        await ExecuteWithResilienceAsync(
+            client => client.Issue.Comment.Update(Owner, Repo, commentIdParsed, body),
+            "UpdateComment", ct);
     }
 
     public async Task<IReadOnlyList<PipelineIssueComment>> ListCommentsAsync(string identifier, CancellationToken ct)
@@ -139,9 +139,9 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         ArgumentNullException.ThrowIfNull(identifier);
         var issueNumber = ParseIssueIdentifier(identifier);
 
-        var client = await GetClientAsync(ct);
-        var comments = await ExecuteWithRateLimitHandlingAsync(
-            () => client.Issue.Comment.GetAllForIssue(Owner, Repo, issueNumber));
+        var comments = await ExecuteWithResilienceAsync(
+            client => client.Issue.Comment.GetAllForIssue(Owner, Repo, issueNumber),
+            "ListComments", ct);
 
         return comments
             .Select(c => new PipelineIssueComment
@@ -162,9 +162,9 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         ArgumentNullException.ThrowIfNull(labels);
         var issueNumber = ParseIssueIdentifier(identifier);
 
-        var client = await GetClientAsync(ct);
-        await ExecuteWithRateLimitHandlingAsync(
-            () => client.Issue.Labels.AddToIssue(Owner, Repo, issueNumber, labels.ToArray()));
+        await ExecuteWithResilienceAsync(
+            client => client.Issue.Labels.AddToIssue(Owner, Repo, issueNumber, labels.ToArray()),
+            "AddLabels", ct);
     }
 
     /// <inheritdoc />
@@ -174,11 +174,11 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         ArgumentNullException.ThrowIfNull(label);
         var issueNumber = ParseIssueIdentifier(identifier);
 
-        var client = await GetClientAsync(ct);
         try
         {
-            await ExecuteWithRateLimitHandlingAsync(
-                () => client.Issue.Labels.RemoveFromIssue(Owner, Repo, issueNumber, label));
+            await ExecuteWithResilienceAsync(
+                async client => { await client.Issue.Labels.RemoveFromIssue(Owner, Repo, issueNumber, label); return true; },
+                "RemoveLabel", ct);
         }
         catch (NotFoundException)
         {
@@ -189,9 +189,9 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     /// <inheritdoc />
     public async Task<bool> HasAgentLabelsAsync(CancellationToken ct)
     {
-        var client = await GetClientAsync(ct);
-        var repoLabels = await ExecuteWithRateLimitHandlingAsync(
-            () => client.Issue.Labels.GetAllForRepository(Owner, Repo));
+        var repoLabels = await ExecuteWithResilienceAsync(
+            client => client.Issue.Labels.GetAllForRepository(Owner, Repo),
+            "HasAgentLabels", ct);
         var repoLabelNames = repoLabels.Select(l => l.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return AgentLabels.All.All(name => repoLabelNames.Contains(name));
     }
@@ -224,13 +224,15 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     public async Task<bool> EnsureAgentLabelsAsync(CancellationToken ct)
     {
         var allSucceeded = true;
+        // TODO: [RES-07] Remove unused GetClientAsync call — ExecuteWithResilienceAsync acquires its own client internally.
         var client = await GetClientAsync(ct);
         foreach (var (name, color) in AgentLabels.Definitions)
         {
             try
             {
-                await ExecuteWithRateLimitHandlingAsync(
-                    () => client.Issue.Labels.Create(Owner, Repo, new NewLabel(name, color)));
+                await ExecuteWithResilienceAsync(
+                    c => c.Issue.Labels.Create(Owner, Repo, new NewLabel(name, color)),
+                    "EnsureAgentLabels", ct);
             }
             catch (ApiValidationException)
             {
@@ -250,9 +252,9 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         ArgumentNullException.ThrowIfNull(identifier);
         var issueNumber = ParseIssueIdentifier(identifier);
 
-        var client = await GetClientAsync(ct);
-        await ExecuteWithRateLimitHandlingAsync(
-            () => client.Issue.Update(Owner, Repo, issueNumber, new IssueUpdate { State = ItemState.Closed }));
+        await ExecuteWithResilienceAsync(
+            client => client.Issue.Update(Owner, Repo, issueNumber, new IssueUpdate { State = ItemState.Closed }),
+            "CloseIssue", ct);
     }
 
     private static IssueSummary MapToIssueSummary(Issue issue)
