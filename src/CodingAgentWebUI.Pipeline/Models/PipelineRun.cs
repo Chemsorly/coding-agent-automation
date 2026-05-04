@@ -88,7 +88,7 @@ public sealed class PipelineRun
     public string? PullRequestNumber { get; set; }
 
     /// <summary>Files excluded from the commit due to blacklist rules (from GIT-04).</summary>
-    // TODO: [ARC-10] Setter allows mutable List<string> assignment behind IReadOnlyList interface
+    // NOTE: [ARC-10] Setter allows mutable List<string> assignment behind IReadOnlyList interface — deferred to separate issue
     public IReadOnlyList<string> BlacklistedFilesDetected { get; set; } = Array.Empty<string>();
 
     /// <summary>Model configured for the agent provider used in this run (e.g. "auto", "claude-sonnet-4.6").</summary>
@@ -140,7 +140,7 @@ public sealed class PipelineRun
     public IReadOnlyList<string> ResolvedReviewerConfigIds { get; set; } = Array.Empty<string>();
 
     /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
-    // TODO: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
+    // NOTE: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
     public PipelineRunSummary ToSummary() => new()
     {
         RunId = RunId,

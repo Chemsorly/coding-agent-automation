@@ -1,4 +1,8 @@
 using System.Reflection;
+using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Health;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.SignalR;
 using ILogger = Serilog.ILogger;

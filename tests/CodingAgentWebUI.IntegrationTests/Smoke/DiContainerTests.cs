@@ -22,7 +22,8 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
     [InlineData(typeof(PipelineLoopService))]
     [InlineData(typeof(IBrainUpdateService))]
     [InlineData(typeof(IPipelineRunHistoryService))]
-    [InlineData(typeof(CiLogWriter))]
+    [InlineData(typeof(IAgentPhaseExecutor))]
+    [InlineData(typeof(IQualityGateExecutor))]
     [InlineData(typeof(IssueDescriptionParser))]
     [InlineData(typeof(GitHubValidationService))]
     public void Key_Service_Resolves_Without_Error(Type serviceType)

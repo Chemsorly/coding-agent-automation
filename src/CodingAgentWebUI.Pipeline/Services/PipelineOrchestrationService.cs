@@ -6,28 +6,35 @@ namespace CodingAgentWebUI.Pipeline.Services;
 
 /// <summary>
 /// Singleton service that coordinates the entire automated development pipeline.
-/// Manages the active pipeline run, state transitions, chat interaction, retry logic,
-/// quality gate validation, and PR creation.
+/// Manages provider resolution, execution orchestration, label swaps, and PR creation.
+/// Delegates run state, lifecycle transitions, events, and cancellation to <see cref="PipelineRunLifecycleService"/>.
 /// Supports both local execution (single <see cref="ActiveRun"/>) and multi-agent
 /// dispatch (concurrent runs tracked via <see cref="IOrchestratorRunService"/>).
 /// </summary>
+// TODO: Target ~400 lines post-lifecycle extraction (spec 017). Currently ~678 lines.
+// If this service exceeds 500 lines after lifecycle extraction is complete, evaluate
+// extracting provider lifecycle management (resolution, disposal, active provider tracking)
+// into a dedicated PipelineProviderManager service. See spec 017 for the extraction pattern.
+//
+// TODO: Evaluate IProviderOperationsFacade — a facade grouping SwapAgentLabel,
+// RemoveAllAgentLabels, and PostComment could reduce parameter passing in pipeline steps.
+// However, IPipelineCallbacks already partially serves this role (it exposes SwapAgentLabel,
+// RemoveAllAgentLabels, and CreatePullRequest). A separate facade may introduce unnecessary
+// indirection without meaningful simplification. Revisit if pipeline steps accumulate more
+// provider-operation parameters beyond what IPipelineCallbacks covers.
 public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 {
-    private readonly IPipelineConfigStore _pipelineConfigStore;
-    private readonly IProviderConfigStore _providerConfigStore;
-    private readonly IQualityGateConfigStore _qualityGateConfigStore;
-    private readonly IReviewerConfigStore _reviewerConfigStore;
+    private readonly PipelineRunLifecycleService _lifecycle;
+    private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
     private readonly IssueDescriptionParser _issueParser;
     private readonly BrainSyncOrchestrator _brainSync;
     private readonly PullRequestOrchestrator _prOrchestrator;
     private readonly IPipelineRunHistoryService _historyService;
-    private readonly AgentExecutionOrchestrator _agentExecution;
-    private readonly QualityGateOrchestrator _qualityGates;
-    private readonly IOrchestratorRunService? _runService;
+    private readonly IAgentPhaseExecutor _agentExecution;
+    private readonly IQualityGateExecutor _qualityGates;
     private readonly Serilog.ILogger _logger;
 
-    protected CancellationTokenSource? _cancellationTokenSource;
     private readonly SemaphoreSlim _startLock = new(1, 1);
     protected IAgentProvider? _activeAgentProvider;
     protected IRepositoryProvider? _activeRepoProvider;
@@ -40,104 +47,95 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     protected ParsedIssue? _activeParsedIssue;
     protected IReadOnlyList<IssueComment>? _activeIssueComments;
 
-    /// <summary>Fired after each state transition for UI binding.</summary>
-    public event Action? OnChange;
+    // ── Delegating properties (backward compatibility) ───────────────────
 
-    /// <summary>Fired for each agent output line for real-time display.</summary>
-    public event Action<string>? OnOutputLine;
-
-    /// <summary>Clears all event subscribers. Used by subclasses for state reset.</summary>
-    protected void ClearEventSubscribers()
+    /// <summary>Fired after each state transition for UI binding. Delegates to lifecycle service.</summary>
+    public event Action? OnChange
     {
-        OnChange = null;
-        OnOutputLine = null;
+        add => _lifecycle.OnChange += value;
+        remove => _lifecycle.OnChange -= value;
     }
 
-    /// <summary>The currently active local pipeline run, or null if idle. For agent runs, use <see cref="GetAllActiveRuns"/>.</summary>
-    public PipelineRun? ActiveRun { get; protected set; }
-
-    /// <summary>Whether a local pipeline run is currently in progress.</summary>
-    public bool IsRunning => ActiveRun != null
-        && ActiveRun.CurrentStep != PipelineStep.Completed
-        && ActiveRun.CurrentStep != PipelineStep.Failed
-        && ActiveRun.CurrentStep != PipelineStep.Cancelled;
-
-    /// <summary>
-    /// Checks whether the given issue is being processed by any active run (local or agent).
-    /// Use this instead of <see cref="IsRunning"/> when dispatching to agents.
-    /// </summary>
-    public bool IsIssueBeingProcessed(string issueIdentifier)
+    /// <summary>Fired for each agent output line for real-time display. Delegates to lifecycle service.</summary>
+    public event Action<string>? OnOutputLine
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
-
-        // Check local run
-        if (ActiveRun != null && ActiveRun.IssueIdentifier == issueIdentifier && IsRunning)
-            return true;
-
-        // Check agent runs via OrchestratorRunService
-        return _runService?.IsIssueBeingProcessed(issueIdentifier) == true;
+        add => _lifecycle.OnOutputLine += value;
+        remove => _lifecycle.OnOutputLine -= value;
     }
+
+    /// <summary>Fired when chat response lines are received from an agent. Delegates to lifecycle service.</summary>
+    public event Action<string, IReadOnlyList<string>>? OnChatResponse
+    {
+        add => _lifecycle.OnChatResponse += value;
+        remove => _lifecycle.OnChatResponse -= value;
+    }
+
+    /// <summary>Fired when a chat session completes on an agent. Delegates to lifecycle service.</summary>
+    public event Action<string, int, string?>? OnChatCompleted
+    {
+        add => _lifecycle.OnChatCompleted += value;
+        remove => _lifecycle.OnChatCompleted -= value;
+    }
+
+    /// <summary>The currently active local pipeline run, or null if idle. Delegates to lifecycle service.</summary>
+    public PipelineRun? ActiveRun
+    {
+        get => _lifecycle.ActiveRun;
+        protected set => _lifecycle.ActiveRun = value;
+    }
+
+    /// <summary>Whether a local pipeline run is currently in progress. Delegates to lifecycle service.</summary>
+    public bool IsRunning => _lifecycle.IsRunning;
+
+    /// <summary>Whether any pipeline run is active (local or agent). Delegates to lifecycle service.</summary>
+    public bool HasAnyActiveRuns => _lifecycle.HasAnyActiveRuns;
 
     /// <summary>
     /// Returns all active runs — both the local run (if any) and all agent-dispatched runs.
+    /// Delegates to lifecycle service.
     /// </summary>
-    public IReadOnlyList<PipelineRun> GetAllActiveRuns()
-    {
-        var runs = new List<PipelineRun>();
-
-        if (ActiveRun != null && IsRunning)
-            runs.Add(ActiveRun);
-
-        if (_runService != null)
-            runs.AddRange(_runService.GetActiveRuns());
-
-        return runs.AsReadOnly();
-    }
+    public IReadOnlyList<PipelineRun> GetAllActiveRuns() => _lifecycle.GetAllActiveRuns();
 
     /// <summary>
-    /// Whether any pipeline run is active (local or agent).
+    /// Checks whether the given issue is being processed by any active run (local or agent).
+    /// Delegates to lifecycle service.
     /// </summary>
-    public bool HasAnyActiveRuns => IsRunning || (_runService?.HasActiveRuns == true);
+    public bool IsIssueBeingProcessed(string issueIdentifier) => _lifecycle.IsIssueBeingProcessed(issueIdentifier);
 
     public PipelineOrchestrationService(
-        IPipelineConfigStore pipelineConfigStore,
-        IProviderConfigStore providerConfigStore,
-        IQualityGateConfigStore qualityGateConfigStore,
-        IReviewerConfigStore reviewerConfigStore,
+        IConfigurationStore configStore,
         IProviderFactory providerFactory,
         IssueDescriptionParser issueParser,
-        IQualityGateValidator qualityGateValidator,
-        CiLogWriter ciLogWriter,
+        IAgentPhaseExecutor agentExecution,
+        IQualityGateExecutor qualityGates,
         Serilog.ILogger logger,
         IBrainUpdateService? brainUpdateService = null,
         IPipelineRunHistoryService? historyService = null,
-        IOrchestratorRunService? runService = null)
+        IOrchestratorRunService? runService = null,
+        PipelineRunLifecycleService? lifecycle = null)
     {
-        ArgumentNullException.ThrowIfNull(pipelineConfigStore);
-        ArgumentNullException.ThrowIfNull(providerConfigStore);
-        ArgumentNullException.ThrowIfNull(qualityGateConfigStore);
-        ArgumentNullException.ThrowIfNull(reviewerConfigStore);
+        ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
         ArgumentNullException.ThrowIfNull(issueParser);
-        ArgumentNullException.ThrowIfNull(qualityGateValidator);
-        ArgumentNullException.ThrowIfNull(ciLogWriter);
+        ArgumentNullException.ThrowIfNull(agentExecution);
+        ArgumentNullException.ThrowIfNull(qualityGates);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _pipelineConfigStore = pipelineConfigStore;
-        _providerConfigStore = providerConfigStore;
-        _qualityGateConfigStore = qualityGateConfigStore;
-        _reviewerConfigStore = reviewerConfigStore;
+        _configStore = configStore;
         _providerFactory = providerFactory;
         _issueParser = issueParser;
         _logger = logger;
-        _runService = runService;
+        _agentExecution = agentExecution;
+        _qualityGates = qualityGates;
 
         ArgumentNullException.ThrowIfNull(brainUpdateService);
         _brainSync = new BrainSyncOrchestrator(brainUpdateService, logger);
         _prOrchestrator = new PullRequestOrchestrator(logger);
         _historyService = historyService ?? throw new ArgumentNullException(nameof(historyService));
-        _agentExecution = new AgentExecutionOrchestrator(logger);
-        _qualityGates = new QualityGateOrchestrator(qualityGateValidator, ciLogWriter, _prOrchestrator, logger);
+
+        // Use provided lifecycle service or create one internally for backward compatibility
+        _lifecycle = lifecycle ?? new PipelineRunLifecycleService(
+            _historyService, runService, logger);
     }
 
     /// <summary>
@@ -160,18 +158,18 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             if (IsRunning)
                 throw new InvalidOperationException("A pipeline run is already in progress.");
 
-            _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            _lifecycle.CreateLinkedCancellationToken(ct);
         }
         finally
         {
             _startLock.Release();
         }
 
-        var linkedCt = _cancellationTokenSource.Token;
+        var linkedCt = _lifecycle.CancellationTokenSource!.Token;
 
         try
         {
-            _activeConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(linkedCt);
+            _activeConfig = await _configStore.LoadPipelineConfigAsync(linkedCt);
             _historyService.CleanupExpiredWorkspaces(_activeConfig, ActiveRun?.RunId);
 
             var issueProviderConfig = await ResolveProviderConfigAsync(issueProviderId, ProviderKind.Issue, linkedCt);
@@ -219,7 +217,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 BrainProviderConfigId = _activeBrainProvider != null ? brainProviderId : null,
                 InitiatedBy = initiatedBy
             };
-            ActiveRun = run;
+            _lifecycle.ActiveRun = run;
             _logger.Information("Pipeline {RunId} using model {Model}", run.RunId, configuredModel);
             _activePipelineProvider = null;
             if (_activeConfig.ExternalCiEnabled)
@@ -229,7 +227,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                     pipelineProviderConfig = await ResolveProviderConfigAsync(pipelineProviderId, ProviderKind.Pipeline, linkedCt);
                 else
                 {
-                    var pipelineConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, linkedCt);
+                    var pipelineConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, linkedCt);
                     if (pipelineConfigs.Count > 0) pipelineProviderConfig = pipelineConfigs[0];
                 }
                 if (pipelineProviderConfig is not null)
@@ -244,7 +242,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             await ValidateProvidersAsync(_activeRepoProvider, repoProviderConfig,
                 _activeAgentProvider, agentProviderConfig, _activePipelineProvider, linkedCt);
             _logger.Information("Pipeline {RunId} created for issue {IssueIdentifier}", run.RunId, issueIdentifier);
-            NotifyChange();
+            _lifecycle.NotifyChange();
             try
             {
                 var labelsOk = await issueProvider.InitializeAsync(linkedCt);
@@ -265,11 +263,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             throw;
         }
     }
-    private void EmitOutputLine(string message)
-    {
-        try { OnOutputLine?.Invoke(message); }
-        catch (Exception ex) { _logger.Warning(ex, "OnOutputLine handler threw an exception"); }
-    }
 
     /// <summary>
     /// Creates a <see cref="PipelineRun"/> for dispatch to a remote agent.
@@ -289,17 +282,13 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(agentProviderId);
         ArgumentNullException.ThrowIfNull(agentId);
 
-        if (_runService == null)
-            throw new InvalidOperationException("OrchestratorRunService is not configured. Cannot dispatch to agents.");
-
-        // Check if this issue is already being processed (local or agent)
-        if (IsIssueBeingProcessed(issueIdentifier))
+        if (_lifecycle.IsIssueBeingProcessed(issueIdentifier))
         {
             _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping dispatch", issueIdentifier);
             return null;
         }
 
-        var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
+        var config = await _configStore.LoadPipelineConfigAsync(ct);
 
         // Resolve repo provider config to get repository name
         var repoProviderConfig = await ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, ct);
@@ -324,14 +313,14 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             AgentId = agentId
         };
 
-        // Track in OrchestratorRunService
-        _runService.AddRun(run);
+        // Delegate registration to lifecycle service
+        if (!_lifecycle.RegisterDispatchedRun(run))
+            return null;
 
         _logger.Information(
             "Dispatched run {RunId} created for issue {IssueIdentifier} → agent {AgentId}",
             run.RunId, issueIdentifier, agentId);
 
-        NotifyChange();
         return run;
     }
 
@@ -339,234 +328,25 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         PipelineRun run, IIssueProvider issueProvider, CancellationToken ct)
     {
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
+        IAgentIssueOperations issueOps = new IssueProviderIssueOperations(issueProvider, _logger);
+        Steps.PipelineStepContext? ctx = null;
+
+        var callbacks = new OrchestratorCallbacks(this, run, () => ctx);
+        ctx = new Steps.PipelineStepContext
+        {
+            Run = run, Config = _activeConfig!, RepoProvider = _activeRepoProvider!,
+            AgentProvider = _activeAgentProvider!, BrainProvider = _activeBrainProvider,
+            PipelineProvider = _activePipelineProvider, Cts = _lifecycle.CancellationTokenSource,
+            ConfigStore = _configStore, IssueProvider = issueProvider,
+            Callbacks = callbacks,
+            IssueOps = issueOps, AgentExecution = _agentExecution,
+            QualityGates = _qualityGates, BrainSync = _brainSync,
+            PrOrchestrator = _prOrchestrator, Logger = _logger
+        };
 
         try
         {
-            // Fetch and validate issue
-            IssueDetail issue;
-            try { issue = await issueProvider.GetIssueAsync(run.IssueIdentifier, ct); }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Error(ex, "Pipeline {RunId} failed to fetch issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
-                await FailRunAsync(run, $"Failed to fetch issue: {ex.Message}");
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(issue.Title) || string.IsNullOrWhiteSpace(issue.Description))
-            { _logger.Warning("Pipeline {RunId} issue has insufficient information", run.RunId); await FailRunAsync(run, "insufficient issue information"); return; }
-
-            run.IssueTitle = issue.Title;
-            run.IssueLabels = issue.Labels;
-            var parsed = _issueParser.Parse(issue.Description);
-            _activeIssue = issue;
-            _activeParsedIssue = parsed;
-
-            EmitOutputLine($"🚀 Pipeline started for issue #{run.IssueIdentifier} — {issue.Title}");
-
-            IReadOnlyList<IssueComment> issueComments = Array.Empty<IssueComment>();
-            try
-            {
-                issueComments = await issueProvider.ListCommentsAsync(run.IssueIdentifier, ct);
-                _logger.Information("Pipeline {RunId} fetched {CommentCount} comment(s) for issue {IssueIdentifier}",
-                    run.RunId, issueComments.Count, run.IssueIdentifier);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            { _logger.Warning(ex, "Pipeline {RunId} failed to fetch issue comments, proceeding without them", run.RunId); }
-            _activeIssueComments = issueComments;
-            // Create workspace and clone
-            var workspacePath = Path.Combine(_activeConfig!.WorkspaceBaseDirectory, run.RunId);
-            Directory.CreateDirectory(workspacePath);
-            run.WorkspacePath = workspacePath;
-
-            TransitionTo(run, PipelineStep.CloningRepository);
-            EmitOutputLine($"📋 Cloning repository {run.RepositoryName}...");
-            await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.InProgress, ct);
-            try { await _activeRepoProvider!.CloneAsync(workspacePath, ct); }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            { _logger.Error(ex, "Pipeline {RunId} failed to clone repository", run.RunId); await FailRunAsync(run, $"Repository clone failed: {ex.Message}"); return; }
-            // Brain sync pre-run
-            if (_activeBrainProvider != null)
-            {
-                TransitionTo(run, PipelineStep.SyncingBrainRepoPreRun);
-                try { await _brainSync.SyncPreRunAsync(run, _activeBrainProvider, workspacePath, ct, line => EmitOutputLine(line)); }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Pipeline {RunId} brain sync failed, continuing without brain context", run.RunId);
-                    run.BrainContextLoaded = false;
-                }
-            }
-            // Rework detection: check for existing agent PRs before branch setup
-            try
-            {
-                var agentPrs = await _activeRepoProvider!.GetAgentPullRequestsAsync(run.IssueIdentifier, ct);
-                if (agentPrs.Count > 0)
-                {
-                    var selectedPr = agentPrs.OrderByDescending(pr => pr.Number).First();
-                    run.LinkedPullRequest = selectedPr;
-                    EmitOutputLine($"🔄 Rework mode: updating existing PR #{selectedPr.Number}");
-                    _logger.Information("Pipeline {RunId} detected existing agent PR #{PrNumber} for issue {IssueIdentifier}, entering rework mode",
-                        run.RunId, selectedPr.Number, run.IssueIdentifier);
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Warning(ex, "Pipeline {RunId} failed to detect agent PRs for issue {IssueIdentifier}, falling back to new-issue flow",
-                    run.RunId, run.IssueIdentifier);
-            }
-
-            // Create branch (or checkout existing branch in rework mode)
-            TransitionTo(run, PipelineStep.CreatingBranch);
-            if (run.LinkedPullRequest != null)
-            {
-                // Rework mode: checkout existing PR branch
-                try
-                {
-                    await _activeRepoProvider!.CheckoutRemoteBranchAsync(
-                        workspacePath, run.LinkedPullRequest.BranchName, ct);
-                    run.BranchName = run.LinkedPullRequest.BranchName;
-                    EmitOutputLine($"🌿 Checked out existing branch {run.BranchName}");
-                    _logger.Information("Pipeline {RunId} checked out existing branch {BranchName}", run.RunId, run.BranchName);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Error(ex, "Pipeline {RunId} failed to checkout branch {BranchName}", run.RunId, run.LinkedPullRequest.BranchName);
-                    await FailRunAsync(run, $"Branch checkout failed: {ex.Message}");
-                    return;
-                }
-
-                // Merge from base branch
-                try
-                {
-                    var mergeResult = await _activeRepoProvider.MergeFromBaseAsync(workspacePath, ct);
-                    run.MergeConflictFiles = mergeResult.ConflictFiles;
-                    if (mergeResult.HasConflicts)
-                    {
-                        EmitOutputLine($"⚠️ Merged from {_activeRepoProvider.BaseBranch} with {mergeResult.ConflictFiles.Count} conflict(s)");
-                        _logger.Information("Pipeline {RunId} merged from base with {ConflictCount} conflict(s)", run.RunId, mergeResult.ConflictFiles.Count);
-                    }
-                    else
-                    {
-                        EmitOutputLine($"🔀 Merged from {_activeRepoProvider.BaseBranch} (no conflicts)");
-                        _logger.Information("Pipeline {RunId} merged from base (no conflicts)", run.RunId);
-                    }
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Error(ex, "Pipeline {RunId} failed to merge from base branch", run.RunId);
-                    await FailRunAsync(run, $"Base branch merge failed: {ex.Message}");
-                    return;
-                }
-            }
-            else
-            {
-                // New-issue flow: create new branch
-                EmitOutputLine("🌿 Creating branch...");
-                try
-                {
-                    var branchName = PipelineFormatting.GenerateBranchName(run.IssueIdentifier, issue.Title, run.RunId);
-                    run.BranchName = await _activeRepoProvider.CreateBranchAsync(workspacePath, branchName, ct);
-                    _logger.Information("Pipeline {RunId} branch {BranchName} created", run.RunId, run.BranchName);
-                    EmitOutputLine($"🌿 Created branch {run.BranchName}");
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Error(ex, "Pipeline {RunId} failed to create branch", run.RunId);
-                    await FailRunAsync(run, $"Branch creation failed: {ex.Message}");
-                    return;
-                }
-            }
-            // Analysis phase
-            EmitOutputLine("🔍 Starting analysis...");
-            IAgentIssueOperations issueOps = new IssueProviderIssueOperations(_activeIssueProvider!, _logger);
-            var analysisShouldContinue = await _agentExecution.ExecuteAnalysisPhaseAsync(
-                run, _activeConfig, _activeAgentProvider!, issueOps,
-                issue, parsed, issueComments,
-                step => TransitionTo(run, step),
-                r => AddRunToHistory(r),
-                line => EmitOutputLine(line), () => NotifyChange(), ct);
-            if (!analysisShouldContinue) return;
-            // Code generation phase
-            string? reworkPromptOverride = null;
-            if (run.LinkedPullRequest != null)
-            {
-                reworkPromptOverride = PromptBuilder.BuildReworkPrompt(
-                    run.MergeConflictFiles,
-                    run.LinkedPullRequest.ReviewComments,
-                    isDraft: run.LinkedPullRequest.IsDraft);
-
-                if (reworkPromptOverride == null)
-                {
-                    // Nothing to rework — no conflicts, no comments, not draft. Skip code generation.
-                    EmitOutputLine("⏭️ No conflicts, review comments, or draft status — skipping code generation");
-                    _logger.Information("Pipeline {RunId} rework prompt is null (no conflicts, no comments, not draft), skipping code generation", run.RunId);
-                }
-                else
-                {
-                    EmitOutputLine("⚙️ Starting rework code generation...");
-                }
-            }
-            else
-            {
-                EmitOutputLine("⚙️ Starting code generation...");
-            }
-
-            if (reworkPromptOverride != null || run.LinkedPullRequest == null)
-            {
-                var shouldContinue = await _agentExecution.ExecuteCodeGenerationAsync(
-                    run, _activeConfig, _activeAgentProvider!,
-                    issue, parsed,
-                    _cancellationTokenSource,
-                    step => TransitionTo(run, step),
-                    line => OnOutputLine?.Invoke(line), () => NotifyChange(),
-                    r => UpdateFileChangeStatsAsync(r),
-                    issueOps,
-                    r => AddRunToHistory(r), ct,
-                    promptOverride: reworkPromptOverride);
-                if (!shouldContinue) return;
-            }
-            // Brain pull before write
-            if (_activeBrainProvider != null && !_activeConfig!.BrainReadOnly && run.BrainContextLoaded)
-            {
-                try { await _brainSync.PullBeforeWriteAsync(run, _activeBrainProvider, ct); }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                { _logger.Warning(ex, "Pipeline {RunId} brain repo pull-before-write failed, continuing", run.RunId); }
-            }
-            // Code review phase
-            var allReviewerConfigs = await _reviewerConfigStore.LoadReviewerConfigsAsync(ct);
-            var reviewerResolver = new ReviewerResolver();
-            var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-            var repoConfigForLabels = repoConfigs.FirstOrDefault(c => c.Id == run.RepoProviderConfigId);
-            var requiredLabelsForReview = LabelResolver.ResolveRequiredLabels(repoConfigForLabels, _activeConfig!);
-            var resolvedReviewers = reviewerResolver.Resolve(allReviewerConfigs, requiredLabelsForReview);
-
-            await _agentExecution.ExecuteCodeReviewAsync(
-                run, _activeConfig!, _activeAgentProvider!,
-                _activeIssue!, _activeParsedIssue!,
-                _cancellationTokenSource,
-                step => TransitionTo(run, step),
-                line => OnOutputLine?.Invoke(line), () => NotifyChange(), ct,
-                resolvedReviewers);
-            // Quality gates
-            var allQgcs = await _qualityGateConfigStore.LoadQualityGateConfigsAsync(ct);
-            var qualityGateContext = new QualityGateContext
-            {
-                Run = run,
-                Config = _activeConfig!,
-                AgentProvider = _activeAgentProvider!,
-                RepoProvider = _activeRepoProvider!,
-                PipelineProvider = _activePipelineProvider,
-                OrchestratorCts = _cancellationTokenSource,
-                TransitionTo = step => TransitionTo(run, step),
-                IssueOps = issueOps,
-                RemoveAllAgentLabels = (id, token) => RemoveAllAgentLabelsAsync(id, token),
-                AddRunToHistory = r => AddRunToHistory(r),
-                OnOutputLine = line => OnOutputLine?.Invoke(line),
-                OnChange = () => NotifyChange(),
-                CreatePullRequest = (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, token),
-                QualityGateConfigs = allQgcs,
-                QgcsConfiguredAtDispatch = allQgcs.Count > 0
-            };
-            await _qualityGates.ProceedToQualityGatesAsync(qualityGateContext, ct);
+            await Steps.PipelineStepRunner.ExecuteAsync(BuildStepPipeline(), ctx, ct);
         }
         catch (OperationCanceledException)
         {
@@ -575,43 +355,67 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
                 run.CompletedAt = DateTime.UtcNow;
                 await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
-                EmitOutputLine("🚫 Pipeline cancelled");
-                TransitionTo(run, PipelineStep.Cancelled);
-                AddRunToHistory(run);
+                _lifecycle.EmitOutputLine("🚫 Pipeline cancelled");
+                _lifecycle.TransitionTo(run, PipelineStep.Cancelled);
+                _lifecycle.AddRunToHistory(run);
             }
         }
     }
-    /// <summary>Cancels the active pipeline run.</summary>
+
+    /// <summary>
+    /// Builds the ordered list of pipeline steps. Step ordering is explicit and configurable.
+    /// </summary>
+    private IReadOnlyList<Steps.IPipelineStep> BuildStepPipeline()
+    {
+        return new Steps.IPipelineStep[]
+        {
+            new Steps.FetchIssueStep(_issueParser),
+            new Steps.CloneRepositoryStep(),
+            new Steps.SyncBrainPreRunStep(),
+            new Steps.DetectReworkStep(),
+            new Steps.CreateBranchStep(),
+            new Steps.AnalyzeCodeStep(),
+            new Steps.GenerateCodeStep(),
+            new Steps.BrainPullBeforeWriteStep(),
+            new Steps.ReviewCodeStep(),
+            new Steps.RunQualityGatesStep()
+        };
+    }
+
+    /// <summary>Cancels the active pipeline run. Delegates state transitions to lifecycle service.</summary>
     public async Task CancelPipelineAsync()
     {
         if (ActiveRun == null || !IsRunning) return;
         var run = ActiveRun;
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
-        _logger.Information("Pipeline {RunId} cancellation requested", run.RunId);
-        _cancellationTokenSource?.Cancel();
-        run.CompletedAt = DateTime.UtcNow;
+
+        // Label swap requires the active issue provider (orchestration concern)
         if (_activeIssueProvider != null)
             await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
-        EmitOutputLine("🚫 Pipeline cancelled");
-        TransitionTo(run, PipelineStep.Cancelled);
-        AddRunToHistory(run);
+
+        // Delegate state transitions to lifecycle
+        await _lifecycle.CancelPipelineAsync();
     }
 
     /// <summary>
     /// Best-effort label swap to <see cref="AgentLabels.Cancelled"/> for all agent-dispatched active runs.
     /// Called during graceful shutdown to mark interrupted runs.
+    /// Delegates state changes to lifecycle service, retains label swap logic.
     /// </summary>
     public async Task CancelActiveAgentRunsAsync()
     {
-        if (_runService is null) return;
-        var activeRuns = _runService.GetActiveRuns();
-        if (activeRuns.Count == 0) return;
+        // Label swap logic (requires provider resolution)
+        var allRuns = _lifecycle.GetAllActiveRuns()
+            .Where(r => r.AgentId != null)
+            .ToList();
 
-        foreach (var run in activeRuns)
+        if (allRuns.Count == 0) return;
+
+        foreach (var run in allRuns)
         {
             try
             {
-                var issueConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+                var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
                 var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
                 if (issueConfig is null) continue;
 
@@ -626,14 +430,19 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                     run.RunId, run.IssueIdentifier);
             }
         }
+
+        // Delegate state changes to lifecycle
+        await _lifecycle.MarkAgentRunsCancelled();
     }
+
     /// <summary>Returns the in-memory run history.</summary>
     public IReadOnlyList<PipelineRunSummary> GetRunHistory() => _historyService.GetRunHistory();
+
     // --- Private helpers ---
     private async Task CreatePullRequestAsync(
         PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
     {
-        TransitionTo(run, PipelineStep.CreatingPullRequest);
+        _lifecycle.TransitionTo(run, PipelineStep.CreatingPullRequest);
         try
         {
             // Set PR info from linked PR before calling the orchestrator (rework mode)
@@ -645,7 +454,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 
             var prUrl = await _prOrchestrator.CreatePullRequestAsync(
                 run, report, isDraft, _activeRepoProvider!, _activeIssue,
-                _activeIssueComments, _activeConfig!, ct, line => EmitOutputLine(line),
+                _activeIssueComments, _activeConfig!, ct, line => _lifecycle.EmitOutputLine(line),
                 isRework: run.LinkedPullRequest != null);
 
             if (prUrl == null && _activeConfig?.BlacklistMode == BlacklistMode.Fail
@@ -667,8 +476,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             if (!isDraft && _activeBrainProvider != null && !_activeConfig!.BrainReadOnly)
             {
                 // Reflection step: ask the agent to review the entire run and enrich .brain/ knowledge
-                TransitionTo(run, PipelineStep.ReflectingOnRun);
-                EmitOutputLine("🧠 Reflecting on run and updating brain knowledge...");
+                _lifecycle.TransitionTo(run, PipelineStep.ReflectingOnRun);
+                _lifecycle.EmitOutputLine("🧠 Reflecting on run and updating brain knowledge...");
                 try
                 {
                     var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
@@ -687,7 +496,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                         line =>
                         {
                             run.OutputLines.Enqueue(line);
-                            OnOutputLine?.Invoke(line);
+                            _lifecycle.EmitOutputLine(line);
                         });
 
                     _logger.Information("Pipeline {RunId} reflection step completed", run.RunId);
@@ -697,24 +506,23 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                     _logger.Warning(ex, "Pipeline {RunId} reflection step failed, continuing with brain sync", run.RunId);
                 }
 
-                TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
-                try { await _brainSync.SyncPostRunAsync(run, _activeBrainProvider, ct, line => EmitOutputLine(line), _activeConfig!.BrainPushMaxRetries); }
+                _lifecycle.TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
+                try { await _brainSync.SyncPostRunAsync(run, _activeBrainProvider, ct, line => _lifecycle.EmitOutputLine(line), _activeConfig!.BrainPushMaxRetries); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 { _logger.Warning(ex, "Pipeline {RunId} brain post-run sync failed", run.RunId); run.BrainUpdatesPushed = false; }
             }
 
-            TransitionTo(run, finalStep);
-            AddRunToHistory(run);
+            _lifecycle.TransitionTo(run, finalStep);
+            _lifecycle.AddRunToHistory(run);
 
-            // TODO: [UX-16] duration.TotalMinutes:F0 rounds instead of truncating — use (int)duration.TotalMinutes
             var duration = run.CompletedAt!.Value - run.StartedAt;
             if (finalStep == PipelineStep.Completed)
-                EmitOutputLine($"✅ Pipeline completed in {duration.TotalMinutes:F0}m {duration.Seconds}s");
+                _lifecycle.EmitOutputLine($"✅ Pipeline completed in {(int)duration.TotalMinutes}m {duration.Seconds}s");
             else
-                EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
+                _lifecycle.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
 
-            if (finalStep == PipelineStep.Completed && _activeConfig!.CleanupSuccessfulWorkspaces)
-                _historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig.WorkspaceBaseDirectory);
+            if (finalStep == PipelineStep.Completed)
+                _historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig!.WorkspaceBaseDirectory);
             _logger.Information("Pipeline {RunId} {Outcome} in {Duration}. Retries: {RetryCount}. PR: {PullRequestUrl}",
                 run.RunId, finalStep, run.CompletedAt!.Value - run.StartedAt, run.RetryCount, prUrl);
         }
@@ -765,7 +573,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             lastUsed["agent"] = agentId;
             if (!string.IsNullOrEmpty(brainId)) lastUsed["brain"] = brainId;
             if (!string.IsNullOrEmpty(pipelineId)) lastUsed["pipeline"] = pipelineId;
-            await _pipelineConfigStore.UpdatePipelineConfigAsync(
+            await _configStore.UpdatePipelineConfigAsync(
                 current => current with { LastUsedProviderIds = lastUsed }, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -773,16 +581,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     }
     private Task UpdateFileChangeStatsAsync(PipelineRun run)
         => _prOrchestrator.UpdateFileChangeStatsAsync(run, _activeRepoProvider!);
-    private void TransitionTo(PipelineRun run, PipelineStep step)
-    {
-        var previousStep = run.CurrentStep;
-        run.CurrentStep = step;
-        if (step is not (PipelineStep.Failed or PipelineStep.Cancelled)
-            && (int)step > (int)run.HighWaterMark)
-            run.HighWaterMark = step;
-        _logger.Information("Pipeline {RunId} transitioned from {PreviousStep} to {Step}", run.RunId, previousStep, step);
-        NotifyChange();
-    }
     private async Task SwapAgentLabelAsync(string issueId, string newLabel, CancellationToken ct)
     {
         try
@@ -802,67 +600,29 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from issue {Issue}", issueId); }
     }
-    internal void NotifyChange()
-    {
-        try { OnChange?.Invoke(); }
-        catch (Exception ex) { _logger.Warning(ex, "OnChange handler threw an exception"); }
-    }
-
-    /// <summary>Fired when chat response lines are received from an agent.</summary>
-    public event Action<string, IReadOnlyList<string>>? OnChatResponse;
-
-    /// <summary>Fired when a chat session completes on an agent.</summary>
-    public event Action<string, int, string?>? OnChatCompleted;
-
-    /// <summary>
-    /// Notifies subscribers that chat response lines were received for a session.
-    /// </summary>
-    internal void NotifyChatResponse(string sessionId, IReadOnlyList<string> lines)
-    {
-        try { OnChatResponse?.Invoke(sessionId, lines); }
-        catch (Exception ex) { _logger.Warning(ex, "OnChatResponse handler threw an exception"); }
-    }
-
-    /// <summary>
-    /// Notifies subscribers that a chat session has completed.
-    /// </summary>
-    internal void NotifyChatCompleted(string sessionId, int exitCode, string? error)
-    {
-        try { OnChatCompleted?.Invoke(sessionId, exitCode, error); }
-        catch (Exception ex) { _logger.Warning(ex, "OnChatCompleted handler threw an exception"); }
-    }
-    private async Task<ProviderConfig> ResolveProviderConfigAsync(string providerId, ProviderKind kind, CancellationToken ct)
-    {
-        var configs = await _providerConfigStore.LoadProviderConfigsAsync(kind, ct);
-        return configs.FirstOrDefault(c => c.Id == providerId)
-            ?? throw new InvalidOperationException($"Provider config '{providerId}' of kind '{kind}' not found.");
-    }
     private async Task HandlePipelineErrorAsync(PipelineRun run, Exception ex)
     {
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
         _logger.Error(ex, "Pipeline {RunId} encountered an unhandled error at step {Step}", run.RunId, run.CurrentStep);
         await FailRunAsync(run, ex.Message);
     }
-    private void AddRunToHistory(PipelineRun run) => _historyService.AddRunToHistory(run);
     private async Task FailRunAsync(PipelineRun run, string reason, CancellationToken ct = default)
     {
         run.FailureReason = reason;
         run.CompletedAt = DateTime.UtcNow;
         await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
-        EmitOutputLine($"❌ Pipeline failed: {reason}");
-        TransitionTo(run, PipelineStep.Failed);
-        AddRunToHistory(run);
+        _lifecycle.EmitOutputLine($"❌ Pipeline failed: {reason}");
+        _lifecycle.TransitionTo(run, PipelineStep.Failed);
+        _lifecycle.AddRunToHistory(run);
     }
     public async ValueTask DisposeAsync()
     {
-        _cancellationTokenSource?.Dispose();
         _startLock.Dispose();
         await DisposePreviousProvidersAsync();
         GC.SuppressFinalize(this);
     }
     public void Dispose()
     {
-        _cancellationTokenSource?.Dispose();
         _startLock.Dispose();
         // Do not call DisposePreviousProvidersAsync synchronously — .GetAwaiter().GetResult()
         // deadlocks in Blazor Server's SynchronizationContext (review finding #13).
@@ -871,36 +631,74 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// Adapts <see cref="IIssueProvider"/> to <see cref="IAgentIssueOperations"/> for use
-    /// by <see cref="AgentExecutionOrchestrator"/> and <see cref="QualityGateOrchestrator"/>.
-    /// Implements the label swap logic (remove all agent labels, add new label) inline.
+    /// Adapts the orchestration service's private helper methods to <see cref="IPipelineCallbacks"/>.
+    /// Delegates lifecycle operations (TransitionTo, EmitOutputLine, NotifyChange, AddRunToHistory) to the lifecycle service.
+    /// Retains provider-dependent operations (SwapAgentLabel, RemoveAllAgentLabels, UpdateFileChangeStats, CreatePullRequest).
     /// </summary>
-    private sealed class IssueProviderIssueOperations : IAgentIssueOperations
+    /// <remarks>
+    /// <para>
+    /// <b>Closure Pattern:</b> This class captures a <c>Func&lt;PipelineStepContext?&gt;</c> (<paramref name="ctxAccessor"/>)
+    /// rather than a direct reference to the <see cref="Steps.PipelineStepContext"/>. This is necessary because the
+    /// step context is constructed <em>after</em> the callbacks instance (the callbacks are a constructor argument
+    /// to the context itself). The <c>Func</c> closure resolves the chicken-and-egg problem: callbacks are created
+    /// first, then the context is created referencing the callbacks, and the <c>Func</c> captures the local variable
+    /// that is assigned after construction.
+    /// </para>
+    /// <para>
+    /// Additionally, mutable properties on the step context (e.g., <c>Issue</c>, <c>ParsedIssue</c>,
+    /// <c>IssueComments</c>) change during pipeline execution as steps populate them. A direct reference
+    /// captured at construction time would be stale for operations like <see cref="CreatePullRequest"/>
+    /// that need the latest state. The <c>Func</c> ensures the current context snapshot is always accessed.
+    /// </para>
+    /// </remarks>
+    private sealed class OrchestratorCallbacks(
+        PipelineOrchestrationService svc,
+        PipelineRun run,
+        Func<Steps.PipelineStepContext?> ctxAccessor) : IPipelineCallbacks
     {
-        private readonly IIssueProvider _issueProvider;
-        private readonly Serilog.ILogger _logger;
-
-        public IssueProviderIssueOperations(IIssueProvider issueProvider, Serilog.ILogger logger)
+        public void TransitionTo(PipelineStep step) => svc._lifecycle.TransitionTo(run, step);
+        public void EmitOutputLine(string line) => svc._lifecycle.EmitOutputLine(line);
+        public void NotifyChange() => svc._lifecycle.NotifyChange();
+        public void AddRunToHistory(PipelineRun r) => svc._lifecycle.AddRunToHistory(r);
+        public Task UpdateFileChangeStats(PipelineRun r) => svc.UpdateFileChangeStatsAsync(r);
+        public Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
+            => svc.SwapAgentLabelAsync(issueIdentifier, label, ct);
+        public Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
+            => svc.RemoveAllAgentLabelsAsync(issueIdentifier, ct);
+        public Task CreatePullRequest(PipelineRun r, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
-            _issueProvider = issueProvider;
-            _logger = logger;
-        }
-
-        public Task PostCommentAsync(string issueIdentifier, string body, CancellationToken ct)
-            => _issueProvider.PostCommentAsync(issueIdentifier, body, ct);
-
-        public async Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct)
-        {
-            try
-            {
-                foreach (var label in AgentLabels.All)
-                    await _issueProvider.RemoveLabelAsync(issueIdentifier, label, ct);
-                await _issueProvider.AddLabelAsync(issueIdentifier, newLabel, ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to swap agent label to {Label} on issue {Issue}", newLabel, issueIdentifier);
-            }
+            var ctx = ctxAccessor();
+            svc._activeIssue = ctx?.Issue;
+            svc._activeParsedIssue = ctx?.ParsedIssue;
+            svc._activeIssueComments = ctx?.IssueComments;
+            return svc.CreatePullRequestAsync(r, report, isDraft, ct);
         }
     }
+
+    private async Task<ProviderConfig> ResolveProviderConfigAsync(string providerId, ProviderKind kind, CancellationToken ct)
+    {
+        var configs = await _configStore.LoadProviderConfigsAsync(kind, ct);
+        return configs.FirstOrDefault(c => c.Id == providerId)
+            ?? throw new InvalidOperationException($"Provider config '{providerId}' of kind '{kind}' not found.");
+    }
+
+    /// <summary>
+    /// Notifies subscribers that chat response lines were received for a session.
+    /// Delegates to lifecycle service.
+    /// </summary>
+    internal void NotifyChatResponse(string sessionId, IReadOnlyList<string> lines)
+        => _lifecycle.NotifyChatResponse(sessionId, lines);
+
+    /// <summary>
+    /// Notifies subscribers that a chat session has completed.
+    /// Delegates to lifecycle service.
+    /// </summary>
+    internal void NotifyChatCompleted(string sessionId, int exitCode, string? error)
+        => _lifecycle.NotifyChatCompleted(sessionId, exitCode, error);
+
+    /// <summary>
+    /// Notifies subscribers of a state change. Delegates to lifecycle service.
+    /// Called by AgentHub for agent-dispatched run state updates.
+    /// </summary>
+    internal void NotifyChange() => _lifecycle.NotifyChange();
 }

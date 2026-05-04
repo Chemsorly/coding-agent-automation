@@ -207,7 +207,6 @@ public class PreparingForPullRequestPropertyTests
             StallPollInterval = config.StallPollInterval,
             BlacklistedPaths = config.BlacklistedPaths,
             BlacklistMode = config.BlacklistMode,
-            CleanupSuccessfulWorkspaces = config.CleanupSuccessfulWorkspaces,
             FailedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays,
             ClosedLoopPollInterval = config.ClosedLoopPollInterval,
             ClosedLoopMaxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle,
@@ -273,13 +272,10 @@ public class PreparingForPullRequestPropertyTests
 
         return new PipelineOrchestrationService(
             configStore.Object,
-            configStore.Object,
-            configStore.Object,
-            configStore.Object,
             factory.Object,
             new IssueDescriptionParser(),
-            mockValidator.Object,
-            new CiLogWriter(logger.Object),
+            new AgentExecutionOrchestrator(logger.Object),
+            new QualityGateOrchestrator(mockValidator.Object, new PullRequestOrchestrator(logger.Object), logger.Object),
             logger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
@@ -313,13 +309,10 @@ public class PreparingForPullRequestPropertyTests
 
         return new PipelineOrchestrationService(
             configStore.Object,
-            configStore.Object,
-            configStore.Object,
-            configStore.Object,
             factory.Object,
             new IssueDescriptionParser(),
-            mockValidator.Object,
-            new CiLogWriter(logger.Object),
+            new AgentExecutionOrchestrator(logger.Object),
+            new QualityGateOrchestrator(mockValidator.Object, new PullRequestOrchestrator(logger.Object), logger.Object),
             logger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);

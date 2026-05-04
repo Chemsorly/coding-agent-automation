@@ -179,7 +179,7 @@ public class GitHubIssueProviderTests
     }
 
     [Theory]
-    [InlineData("not-a-number", "100", "issueIdentifier")]
+    [InlineData("not-a-number", "100", "identifier")]
     [InlineData("42", "not-a-number", "commentId")]
     public async Task UpdateCommentAsync_NonNumericIdentifier_ThrowsArgumentException(
         string issueIdentifier, string commentId, string expectedParamName)
@@ -399,7 +399,8 @@ public class GitHubIssueProviderTests
     public async Task ValidateAsync_PrivateKeyDecodeFailure_ThrowsUserFriendlyMessage()
     {
         var mockRepos = new Mock<IRepositoriesClient>();
-        mockRepos.Setup(r => r.Get("owner", "repo")).ThrowsAsync(new InvalidOperationException("Failed to decode private key from base64"));
+        mockRepos.Setup(r => r.Get("owner", "repo")).ThrowsAsync(
+            new GitHubAuthException(GitHubAuthErrorKind.PrivateKeyDecodeFailure, "Failed to decode private key from base64"));
         _mockClient.Setup(c => c.Repository).Returns(mockRepos.Object);
 
         var act = () => _provider.ValidateAsync(CancellationToken.None);
@@ -411,7 +412,8 @@ public class GitHubIssueProviderTests
     public async Task ValidateAsync_TokenExchangeFailure_ThrowsUserFriendlyMessage()
     {
         var mockRepos = new Mock<IRepositoriesClient>();
-        mockRepos.Setup(r => r.Get("owner", "repo")).ThrowsAsync(new InvalidOperationException("token exchange failed", new Exception("bad credentials")));
+        mockRepos.Setup(r => r.Get("owner", "repo")).ThrowsAsync(
+            new GitHubAuthException(GitHubAuthErrorKind.TokenExchangeFailure, "token exchange failed", new Exception("bad credentials")));
         _mockClient.Setup(c => c.Repository).Returns(mockRepos.Object);
 
         var act = () => _provider.ValidateAsync(CancellationToken.None);
@@ -524,7 +526,7 @@ public class GitHubIssueProviderTests
         ex.Which.InnerException.Should().BeOfType<Octokit.RateLimitExceededException>();
     }
 
-    // TODO: [RES-03] Add tests for AbuseException wrapping — both RetryAfterSeconds.HasValue and fallback branches are untested (review finding #5)
+    // NOTE: [RES-03] Add tests for AbuseException wrapping — both RetryAfterSeconds.HasValue and fallback branches are untested (review finding #5)
 
     private static Issue CreateOctokitIssue(int number, string title, string? body, string[] labels)
     {

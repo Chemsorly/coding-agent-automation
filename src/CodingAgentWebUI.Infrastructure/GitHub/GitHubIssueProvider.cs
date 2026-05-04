@@ -2,7 +2,6 @@ using Octokit;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using PipelineIssueComment = CodingAgentWebUI.Pipeline.Models.IssueComment;
-using PipelineRateLimitExceededException = CodingAgentWebUI.Pipeline.Models.RateLimitExceededException;
 
 namespace CodingAgentWebUI.Infrastructure.GitHub;
 
@@ -13,8 +12,6 @@ namespace CodingAgentWebUI.Infrastructure.GitHub;
 /// </summary>
 public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
 {
-    private static readonly TimeSpan DefaultRateLimitWait = TimeSpan.FromSeconds(60);
-
     public IssueProviderType ProviderType => IssueProviderType.GitHub;
 
     /// <summary>
@@ -39,12 +36,11 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     public async Task<IssueDetail> GetIssueAsync(string identifier, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(identifier);
+        var issueNumber = ParseIssueIdentifier(identifier);
 
-        if (!int.TryParse(identifier, out var issueNumber))
-            throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
-
-        var client = await GetClientAsync(ct);
-        var issue = await client.Issue.Get(Owner, Repo, issueNumber);
+        var issue = await ExecuteWithResilienceAsync(
+            client => client.Issue.Get(Owner, Repo, issueNumber),
+            "GetIssue", ct);
         return MapToIssueDetail(issue);
     }
 
@@ -73,24 +69,9 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
             PageCount = 1
         };
 
-        var client = await GetClientAsync(ct);
-        IReadOnlyList<Issue> issues;
-        // TODO: [RES-03] Rate limit wrapping only covers ListOpenIssuesAsync — other API methods (GetIssueAsync, AddLabelsAsync, etc.) propagate raw Octokit exceptions (review finding #4)
-        try
-        {
-            issues = await client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions);
-        }
-        catch (Octokit.RateLimitExceededException ex)
-        {
-            throw new PipelineRateLimitExceededException(ex.Reset, ex);
-        }
-        catch (AbuseException ex)
-        {
-            var resetAt = ex.RetryAfterSeconds.HasValue
-                ? DateTimeOffset.UtcNow.AddSeconds(ex.RetryAfterSeconds.Value)
-                : DateTimeOffset.UtcNow.Add(DefaultRateLimitWait);
-            throw new PipelineRateLimitExceededException(resetAt, ex);
-        }
+        var issues = await ExecuteWithResilienceAsync(
+            client => client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions),
+            "ListOpenIssues", ct);
 
         var items = issues
             .Where(i => i.PullRequest == null)
@@ -131,12 +112,11 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     {
         ArgumentNullException.ThrowIfNull(identifier);
         ArgumentNullException.ThrowIfNull(body);
+        var issueNumber = ParseIssueIdentifier(identifier);
 
-        if (!int.TryParse(identifier, out var issueNumber))
-            throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
-
-        var client = await GetClientAsync(ct);
-        await client.Issue.Comment.Create(Owner, Repo, issueNumber, body);
+        await ExecuteWithResilienceAsync(
+            client => client.Issue.Comment.Create(Owner, Repo, issueNumber, body),
+            "PostComment", ct);
     }
 
     public async Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct)
@@ -144,26 +124,24 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(commentId);
         ArgumentNullException.ThrowIfNull(body);
-
-        if (!int.TryParse(issueIdentifier, out _))
-            throw new ArgumentException($"Invalid issue identifier: '{issueIdentifier}'. Expected a numeric issue number.", nameof(issueIdentifier));
+        ParseIssueIdentifier(issueIdentifier);
 
         if (!int.TryParse(commentId, out var commentIdParsed))
             throw new ArgumentException($"Invalid comment identifier: '{commentId}'. Expected a numeric comment ID.", nameof(commentId));
 
-        var client = await GetClientAsync(ct);
-        await client.Issue.Comment.Update(Owner, Repo, commentIdParsed, body);
+        await ExecuteWithResilienceAsync(
+            client => client.Issue.Comment.Update(Owner, Repo, commentIdParsed, body),
+            "UpdateComment", ct);
     }
 
     public async Task<IReadOnlyList<PipelineIssueComment>> ListCommentsAsync(string identifier, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(identifier);
+        var issueNumber = ParseIssueIdentifier(identifier);
 
-        if (!int.TryParse(identifier, out var issueNumber))
-            throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
-
-        var client = await GetClientAsync(ct);
-        var comments = await client.Issue.Comment.GetAllForIssue(Owner, Repo, issueNumber);
+        var comments = await ExecuteWithResilienceAsync(
+            client => client.Issue.Comment.GetAllForIssue(Owner, Repo, issueNumber),
+            "ListComments", ct);
 
         return comments
             .Select(c => new PipelineIssueComment
@@ -182,12 +160,11 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     {
         ArgumentNullException.ThrowIfNull(identifier);
         ArgumentNullException.ThrowIfNull(labels);
+        var issueNumber = ParseIssueIdentifier(identifier);
 
-        if (!int.TryParse(identifier, out var issueNumber))
-            throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
-
-        var client = await GetClientAsync(ct);
-        await client.Issue.Labels.AddToIssue(Owner, Repo, issueNumber, labels.ToArray());
+        await ExecuteWithResilienceAsync(
+            client => client.Issue.Labels.AddToIssue(Owner, Repo, issueNumber, labels.ToArray()),
+            "AddLabels", ct);
     }
 
     /// <inheritdoc />
@@ -195,14 +172,13 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     {
         ArgumentNullException.ThrowIfNull(identifier);
         ArgumentNullException.ThrowIfNull(label);
+        var issueNumber = ParseIssueIdentifier(identifier);
 
-        if (!int.TryParse(identifier, out var issueNumber))
-            throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
-
-        var client = await GetClientAsync(ct);
         try
         {
-            await client.Issue.Labels.RemoveFromIssue(Owner, Repo, issueNumber, label);
+            await ExecuteWithResilienceAsync(
+                async client => { await client.Issue.Labels.RemoveFromIssue(Owner, Repo, issueNumber, label); return true; },
+                "RemoveLabel", ct);
         }
         catch (NotFoundException)
         {
@@ -213,8 +189,9 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     /// <inheritdoc />
     public async Task<bool> HasAgentLabelsAsync(CancellationToken ct)
     {
-        var client = await GetClientAsync(ct);
-        var repoLabels = await client.Issue.Labels.GetAllForRepository(Owner, Repo);
+        var repoLabels = await ExecuteWithResilienceAsync(
+            client => client.Issue.Labels.GetAllForRepository(Owner, Repo),
+            "HasAgentLabels", ct);
         var repoLabelNames = repoLabels.Select(l => l.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return AgentLabels.All.All(name => repoLabelNames.Contains(name));
     }
@@ -222,16 +199,15 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     /// <inheritdoc />
     public override async Task ValidateAsync(CancellationToken ct)
     {
-        // TODO: [GH-06] Exception filters match on message substrings — fragile if upstream wording changes. Consider defining sentinel exception types in GitHubAppAuthService instead.
         try
         {
             await base.ValidateAsync(ct);
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("Failed to decode private key"))
+        catch (GitHubAuthException ex) when (ex.ErrorKind == GitHubAuthErrorKind.PrivateKeyDecodeFailure)
         {
             throw new InvalidOperationException("Invalid private key: could not decode from base64", ex);
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("token exchange failed"))
+        catch (GitHubAuthException ex) when (ex.ErrorKind == GitHubAuthErrorKind.TokenExchangeFailure)
         {
             throw new InvalidOperationException($"Authentication failed: {ex.InnerException?.Message ?? ex.Message}", ex);
         }
@@ -248,12 +224,15 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     public async Task<bool> EnsureAgentLabelsAsync(CancellationToken ct)
     {
         var allSucceeded = true;
+        // TODO: [RES-07] Remove unused GetClientAsync call — ExecuteWithResilienceAsync acquires its own client internally.
         var client = await GetClientAsync(ct);
         foreach (var (name, color) in AgentLabels.Definitions)
         {
             try
             {
-                await client.Issue.Labels.Create(Owner, Repo, new NewLabel(name, color));
+                await ExecuteWithResilienceAsync(
+                    c => c.Issue.Labels.Create(Owner, Repo, new NewLabel(name, color)),
+                    "EnsureAgentLabels", ct);
             }
             catch (ApiValidationException)
             {
@@ -271,12 +250,11 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     public async Task CloseIssueAsync(string identifier, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(identifier);
+        var issueNumber = ParseIssueIdentifier(identifier);
 
-        if (!int.TryParse(identifier, out var issueNumber))
-            throw new ArgumentException($"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.", nameof(identifier));
-
-        var client = await GetClientAsync(ct);
-        await client.Issue.Update(Owner, Repo, issueNumber, new IssueUpdate { State = ItemState.Closed });
+        await ExecuteWithResilienceAsync(
+            client => client.Issue.Update(Owner, Repo, issueNumber, new IssueUpdate { State = ItemState.Closed }),
+            "CloseIssue", ct);
     }
 
     private static IssueSummary MapToIssueSummary(Issue issue)

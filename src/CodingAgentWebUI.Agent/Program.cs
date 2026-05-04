@@ -1,8 +1,7 @@
 using CodingAgentWebUI.Agent;
-using CodingAgentWebUI.Infrastructure.Git;
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using KiroCliLib.Configuration;
 using KiroCliLib.Core;
 using KiroCliLib.Models;
@@ -21,8 +20,16 @@ if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AGENT_TYPE")))
     throw new InvalidOperationException("AGENT_TYPE environment variable is required");
 
 // ── Configure Serilog ──
+var logLevel = Environment.GetEnvironmentVariable("LOG_LEVEL")?.ToLowerInvariant() switch
+{
+    "debug" or "dbg" => Serilog.Events.LogEventLevel.Debug,
+    "verbose" or "trace" => Serilog.Events.LogEventLevel.Verbose,
+    "warning" or "warn" => Serilog.Events.LogEventLevel.Warning,
+    "error" or "err" => Serilog.Events.LogEventLevel.Error,
+    _ => Serilog.Events.LogEventLevel.Information
+};
 Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
+    .MinimumLevel.Is(logLevel)
     // Suppress noisy ASP.NET Core request logging (health checks every 10s)
     .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()
@@ -70,11 +77,8 @@ try
         return new AgentProviderFactory(orchestrator, pipelineConfig);
     });
 
-    // ── Quality gate validator ──
-    builder.Services.AddSingleton<IQualityGateValidator>(sp => new QualityGateValidator(Log.Logger));
-
-    // ── Brain update service ──
-    builder.Services.AddSingleton<IBrainUpdateService>(sp => new BrainUpdateService(Log.Logger));
+    // ── Shared pipeline services (IQualityGateValidator, IBrainUpdateService, IAgentPhaseExecutor, IQualityGateExecutor) ──
+    builder.Services.AddPipelineServices(Log.Logger);
 
     // ── Hub connection manager ──
     builder.Services.AddSingleton(sp =>

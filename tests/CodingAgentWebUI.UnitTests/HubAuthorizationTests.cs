@@ -1,5 +1,9 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Health;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
@@ -33,7 +37,6 @@ public class HubAuthorizationTests
             new Mock<IPipelineRunHistoryService>().Object,
             new JobDispatcherService(registry, new Mock<ILogger>().Object),
             new Mock<IProviderFactory>().Object,
-            mockConfigStore.Object,
             mockConfigStore.Object,
             new Mock<ILogger>().Object);
 

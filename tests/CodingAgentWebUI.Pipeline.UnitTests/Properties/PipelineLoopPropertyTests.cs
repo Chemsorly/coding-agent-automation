@@ -100,7 +100,7 @@ public class PipelineLoopPropertyTests
         var mockProvider = new Mock<IIssueProvider>();
         mockProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary>(), Page = 1, PageSize = 100, HasMore = false });
+            .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary>(), Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false });
 
         var mockFactory = new Mock<IProviderFactory>();
         mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
@@ -150,7 +150,7 @@ public class PipelineLoopPropertyTests
         var mockProvider = new Mock<IIssueProvider>();
         mockProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary>(), Page = 1, PageSize = 100, HasMore = false });
+            .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary>(), Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false });
 
         var mockFactory = new Mock<IProviderFactory>();
         mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
@@ -218,7 +218,7 @@ public class PipelineLoopPropertyTests
                         {
                             lock (polledIds) { polledIds.Add(cfg.Id); }
                             return Task.FromResult(new PagedResult<IssueSummary>
-                            { Items = new List<IssueSummary>(), Page = 1, PageSize = 100, HasMore = false });
+                            { Items = new List<IssueSummary>(), Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false });
                         });
                 }
                 return mock.Object;
@@ -281,7 +281,7 @@ public class PipelineLoopPropertyTests
                             if (count == 1)
                                 throw new RateLimitExceededException(DateTimeOffset.UtcNow.AddMilliseconds(100));
                             return Task.FromResult(new PagedResult<IssueSummary>
-                            { Items = new List<IssueSummary>(), Page = 1, PageSize = 100, HasMore = false });
+                            { Items = new List<IssueSummary>(), Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false });
                         });
                 }
                 else
@@ -289,7 +289,7 @@ public class PipelineLoopPropertyTests
                     mock.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
                             It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
                         .ReturnsAsync(new PagedResult<IssueSummary>
-                        { Items = new List<IssueSummary>(), Page = 1, PageSize = 100, HasMore = false });
+                        { Items = new List<IssueSummary>(), Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false });
                 }
                 return mock.Object;
             });
@@ -345,7 +345,7 @@ public class PipelineLoopPropertyTests
                 var mock = new Mock<IIssueProvider>();
                 mock.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
                         It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-                    .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary>(), Page = 1, PageSize = 100, HasMore = false });
+                    .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary>(), Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false });
                 return mock.Object;
             });
 
@@ -393,8 +393,10 @@ public class PipelineLoopPropertyTests
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockValidator = new Mock<IQualityGateValidator>();
         var orchestration = new PipelineOrchestrationService(
-            mockStore.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
-            mockValidator.Object, new CiLogWriter(mockLogger.Object), mockLogger.Object,
+            mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
+            new AgentExecutionOrchestrator(mockLogger.Object),
+            new QualityGateOrchestrator(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
+            mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 

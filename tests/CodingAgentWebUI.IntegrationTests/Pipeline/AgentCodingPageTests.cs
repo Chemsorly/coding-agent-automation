@@ -39,13 +39,10 @@ public class AgentCodingPageTests
 
         _service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
-            _mockConfigStore.Object,
-            _mockConfigStore.Object,
-            _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
-            _mockValidator.Object,
-            new CiLogWriter(_mockLogger.Object),
+            new AgentExecutionOrchestrator(_mockLogger.Object),
+            new QualityGateOrchestrator(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
             _mockLogger.Object,
             brainUpdateService: new BrainUpdateService(_mockLogger.Object),
             historyService: new PipelineRunHistoryService(_mockLogger.Object, Path.Combine(Path.GetTempPath(), $"test-runs-{Guid.NewGuid()}")));

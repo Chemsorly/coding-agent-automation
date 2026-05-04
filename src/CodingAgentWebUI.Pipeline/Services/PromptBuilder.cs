@@ -173,7 +173,7 @@ public static class PromptBuilder
     }
 
     /// <summary>Markers identifying bot-generated comments that should be excluded from context.</summary>
-    // TODO: [ARC-08a] Gate comment markers rely on exact substring match — if a human edits the comment to remove the HTML marker, the gate comment leaks into prompt context
+    // NOTE: [ARC-08a] Gate comment markers rely on exact substring match — if a human edits the comment to remove the HTML marker, the gate comment leaks into prompt context
     internal static readonly string[] ExcludedCommentMarkers =
     [
         "## 🤖 Agent Analysis",

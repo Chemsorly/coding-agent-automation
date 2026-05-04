@@ -182,7 +182,7 @@ public class QualityGateValidator : IQualityGateValidator
         WriteGateOutput(workspacePath, $"{qgc.DisplayName}-compilation", stdout, stderr);
 
         string details;
-        if (exitCode == 0)
+        if (exitCode == ExitCodes.Success)
         {
             details = "Build succeeded";
         }
@@ -195,7 +195,7 @@ public class QualityGateValidator : IQualityGateValidator
         return new GateResult
         {
             GateName = "Compilation",
-            Passed = exitCode == 0,
+            Passed = exitCode == ExitCodes.Success,
             Details = details
         };
     }
@@ -284,8 +284,8 @@ public class QualityGateValidator : IQualityGateValidator
         return new GateResult
         {
             GateName = "Tests",
-            Passed = exitCode == 0,
-            Details = exitCode == 0
+            Passed = exitCode == ExitCodes.Success,
+            Details = exitCode == ExitCodes.Success
                 ? $"Tests passed: {passed} passed, {failed} failed, {skipped} skipped"
                 : $"Tests failed: {passed} passed, {failed} failed, {skipped} skipped.",
             TestsPassed = passed,

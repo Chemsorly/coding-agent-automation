@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.Models;
+
 namespace CodingAgentWebUI.Pipeline.Services;
 
 /// <summary>
@@ -11,7 +13,7 @@ public sealed class OutputRingBuffer
     private int _count;
     private readonly object _lock = new();
 
-    public OutputRingBuffer(int capacity = 10_000)
+    public OutputRingBuffer(int capacity = PipelineConstants.DefaultOutputBufferCapacity)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(capacity, 0);
         _buffer = new string[capacity];

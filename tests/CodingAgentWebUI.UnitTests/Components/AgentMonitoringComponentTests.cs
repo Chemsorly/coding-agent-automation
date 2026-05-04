@@ -1,6 +1,10 @@
 using Bunit;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Health;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -34,8 +38,10 @@ public class AgentMonitoringComponentTests : BunitContext
         mockHistory.Setup(h => h.GetRunHistory()).Returns(Array.Empty<PipelineRunSummary>());
 
         _pipelineService = new PipelineOrchestrationService(
-            mockStore.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
-            mockValidator.Object, new CiLogWriter(mockLogger.Object), mockLogger.Object,
+            mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
+            new AgentExecutionOrchestrator(mockLogger.Object),
+            new QualityGateOrchestrator(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
+            mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: mockHistory.Object);
 

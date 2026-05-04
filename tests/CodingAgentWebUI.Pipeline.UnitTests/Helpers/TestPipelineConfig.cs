@@ -28,7 +28,6 @@ public static class TestPipelineConfig
             MaxIterations = 2,
             Prompt = PipelineConfiguration.DefaultCodeReviewPrompt,
             FixPrompt = null,
-            Agents = null,
         },
         ExternalCiEnabled = false,
         ExternalCiTimeout = TimeSpan.FromMinutes(15),
@@ -37,13 +36,12 @@ public static class TestPipelineConfig
         StallPollInterval = TimeSpan.FromSeconds(30),
         BlacklistedPaths = new[] { ".kiro", ".github" },
         BlacklistMode = BlacklistMode.WarnAndExclude,
-        CleanupSuccessfulWorkspaces = true,
         FailedWorkspaceRetentionDays = 7,
         ClosedLoopPollInterval = TimeSpan.FromSeconds(60),
         ClosedLoopMaxRunsPerCycle = 0,
         ClosedLoopMaxConsecutivePollFailures = 5,
         ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15),
-        // TODO: [REF-01] Add ClosedLoopMaxPagesToFetch = 10 — omitted from explicit property list (review finding #1)
+        ClosedLoopMaxPagesToFetch = 10,
     };
 
     /// <summary>
@@ -63,7 +61,6 @@ public static class TestPipelineConfig
             MaxIterations = 2,
             Prompt = PipelineConfiguration.DefaultCodeReviewPrompt,
             FixPrompt = null,
-            Agents = null,
         },
         ExternalCiEnabled = false,
         ExternalCiTimeout = TimeSpan.FromMinutes(15),
@@ -72,12 +69,11 @@ public static class TestPipelineConfig
         StallPollInterval = TimeSpan.FromSeconds(30),
         BlacklistedPaths = new[] { ".kiro", ".github" },
         BlacklistMode = BlacklistMode.WarnAndExclude,
-        CleanupSuccessfulWorkspaces = true,
         FailedWorkspaceRetentionDays = 7,
         ClosedLoopPollInterval = TimeSpan.FromSeconds(60),
         ClosedLoopMaxRunsPerCycle = 0,
         ClosedLoopMaxConsecutivePollFailures = 5,
         ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15),
-        // TODO: [REF-01] Add ClosedLoopMaxPagesToFetch = 10 — omitted from explicit property list (review finding #1)
+        ClosedLoopMaxPagesToFetch = 10,
     };
 }

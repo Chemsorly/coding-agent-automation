@@ -1,4 +1,8 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Health;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Moq;
@@ -363,6 +367,50 @@ public class JobDispatcherServiceTests
     {
         var service = CreateService();
         service.GetQueuedJobs().Should().BeEmpty();
+    }
+
+    #endregion
+
+    #region Concurrency Tests
+
+    [Fact]
+    public async Task ConcurrentEnqueueAndDequeue_MaintainsConsistency()
+    {
+        var registry = CreateRegistry();
+        var service = CreateService(registry);
+        var agent = CreateAgent(labels: new[] { "dotnet", "linux", "python" });
+
+        const int enqueueCount = 50;
+
+        // Enqueue jobs concurrently
+        var enqueueTasks = Enumerable.Range(0, enqueueCount)
+            .Select(i => Task.Run(() => service.EnqueueJob(CreateJob($"issue-{i}", labels: Array.Empty<string>()))))
+            .ToArray();
+
+        await Task.WhenAll(enqueueTasks);
+
+        // All should have been enqueued (unique issue identifiers)
+        var enqueuedCount = enqueueTasks.Count(t => t.Result);
+        enqueuedCount.Should().Be(enqueueCount);
+
+        // Dequeue concurrently from multiple threads
+        var dequeuedJobs = new System.Collections.Concurrent.ConcurrentBag<PendingJob>();
+        var dequeueTasks = Enumerable.Range(0, enqueueCount)
+            .Select(_ => Task.Run(() =>
+            {
+                var job = service.DequeueForAgent(agent);
+                if (job != null)
+                    dequeuedJobs.Add(job);
+            }))
+            .ToArray();
+
+        await Task.WhenAll(dequeueTasks);
+
+        // All dequeued jobs should have unique issue identifiers (no duplicates)
+        dequeuedJobs.Select(j => j.IssueIdentifier).Should().OnlyHaveUniqueItems();
+
+        // Total dequeued + remaining in queue should equal original count
+        (dequeuedJobs.Count + service.QueueLength).Should().Be(enqueueCount);
     }
 
     #endregion

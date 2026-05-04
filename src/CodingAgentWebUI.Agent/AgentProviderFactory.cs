@@ -80,9 +80,14 @@ public sealed class AgentProviderFactory : IProviderFactory
 
         if (_orchestratorProxy is not null)
         {
-            // Use the token provider constructor — refreshes token via orchestrator before each operation
+            // Use the correct ProviderKind based on the config's role so the orchestrator
+            // generates a token scoped to the correct repository.
+            var kind = config.RepositoryRole == RepositoryRole.Brain
+                ? ProviderKind.Brain
+                : ProviderKind.Repository;
+
             Func<CancellationToken, Task<string>> tokenProvider =
-                ct => _orchestratorProxy.RequestTokenRefreshAsync(ProviderKind.Repository, ct);
+                ct => _orchestratorProxy.RequestTokenRefreshAsync(kind, ct);
             return new GitHubRepositoryProvider(apiUrl, tokenProvider, owner, repo, baseBranch);
         }
 

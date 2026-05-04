@@ -18,7 +18,7 @@ public class GitHubValidationService
 
     public GitHubValidationService(IProviderFactory providerFactory)
     {
-        // TODO: [GH-06] Add ArgumentNullException.ThrowIfNull(providerFactory) per project convention
+        ArgumentNullException.ThrowIfNull(providerFactory);
         _providerFactory = providerFactory;
     }
 
@@ -76,7 +76,7 @@ public class GitHubValidationService
         }
 
         // Step 3: owner/repo provided — verify repository access and permissions
-        // TODO: [GH-06] Provider delegation (below) already validates credentials + repo access via provider.ValidateAsync. The subsequent Repository.Get call is redundant for access validation — only the permission extraction (read/write/admin) is needed. Refactor to skip the redundant API call.
+        // NOTE: [GH-06] Provider delegation (below) already validates credentials + repo access via provider.ValidateAsync. The subsequent Repository.Get call is redundant for access validation — only the permission extraction (read/write/admin) is needed. Refactor to skip the redundant API call.
         // Delegate basic credential + repo access check to the provider's ValidateAsync when available
         if (_providerFactory is not null)
         {

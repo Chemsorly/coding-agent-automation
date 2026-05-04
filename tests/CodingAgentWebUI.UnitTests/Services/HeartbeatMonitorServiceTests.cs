@@ -1,4 +1,8 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Health;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
@@ -42,7 +46,6 @@ public class HeartbeatMonitorServiceTests
             _mockHistoryService.Object,
             dispatcher,
             _mockProviderFactory.Object,
-            _mockConfigStore.Object,
             _mockConfigStore.Object,
             _mockLogger.Object);
     }

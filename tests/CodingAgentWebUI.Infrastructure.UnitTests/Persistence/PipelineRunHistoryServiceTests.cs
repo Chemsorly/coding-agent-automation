@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Pipeline.Models;
@@ -9,9 +10,23 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests;
 /// <summary>
 /// Unit tests for PipelineRunHistoryService (concrete infrastructure behavior).
 /// </summary>
-public class PipelineRunHistoryServiceTests
+public class PipelineRunHistoryServiceTests : IDisposable
 {
     private readonly Mock<ILogger> _mockLogger = new();
+    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), $"test-history-{Guid.NewGuid()}");
+
+    private static JsonSerializerOptions JsonOptions => new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_tempDir))
+            Directory.Delete(_tempDir, recursive: true);
+    }
 
     [Fact]
     public void CleanupExpiredWorkspaces_DeletesExpiredFailedRunWorkspaces()
@@ -186,5 +201,173 @@ public class PipelineRunHistoryServiceTests
             var rate = (int)Math.Round(100.0 * completed / runs.Count);
             rate.Should().Be(expectedRate);
         }
+    }
+
+    [Fact]
+    public void AddRunToHistory_ThrowsOnNull()
+    {
+        var runsDir = Path.Combine(Path.GetTempPath(), $"runs-{Guid.NewGuid()}");
+        var service = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
+
+        var act = () => service.AddRunToHistory(null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("run");
+    }
+
+    [Fact]
+    public void CleanupExpiredWorkspaces_ThrowsOnNullConfig()
+    {
+        var runsDir = Path.Combine(Path.GetTempPath(), $"runs-{Guid.NewGuid()}");
+        var service = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
+
+        var act = () => service.CleanupExpiredWorkspaces(null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("config");
+    }
+
+    [Fact]
+    public void AddRunToHistory_PersistsRunToConfiguredDirectory()
+    {
+        Directory.CreateDirectory(_tempDir);
+        var service = new PipelineRunHistoryService(_mockLogger.Object, _tempDir);
+
+        var run = new PipelineRun
+        {
+            RunId = "persist-test-run",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "provider-1",
+            RepoProviderConfigId = "repo-1",
+            CurrentStep = PipelineStep.Completed,
+            StartedAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow.AddMinutes(5)
+        };
+
+        service.AddRunToHistory(run);
+
+        var expectedFile = Path.Combine(_tempDir, "persist-test-run.json");
+        File.Exists(expectedFile).Should().BeTrue();
+
+        var json = File.ReadAllText(expectedFile);
+        var deserialized = JsonSerializer.Deserialize<PipelineRunSummary>(json, JsonOptions);
+        deserialized.Should().NotBeNull();
+        deserialized!.RunId.Should().Be("persist-test-run");
+        deserialized.IssueIdentifier.Should().Be("42");
+        deserialized.IssueTitle.Should().Be("Test Issue");
+        deserialized.FinalStep.Should().Be(PipelineStep.Completed);
+    }
+
+    [Fact]
+    public void GetRunHistory_ReturnsAllPersistedRunsInChronologicalOrder_NewestFirst()
+    {
+        Directory.CreateDirectory(_tempDir);
+
+        // Write runs with different timestamps
+        var oldRun = new PipelineRunSummary
+        {
+            RunId = "old-run",
+            IssueIdentifier = "1",
+            IssueTitle = "Old",
+            FinalStep = PipelineStep.Completed,
+            StartedAt = new DateTime(2024, 1, 1, 10, 0, 0, DateTimeKind.Utc),
+            CompletedAt = new DateTime(2024, 1, 1, 10, 30, 0, DateTimeKind.Utc)
+        };
+        var middleRun = new PipelineRunSummary
+        {
+            RunId = "middle-run",
+            IssueIdentifier = "2",
+            IssueTitle = "Middle",
+            FinalStep = PipelineStep.Failed,
+            StartedAt = new DateTime(2024, 6, 15, 12, 0, 0, DateTimeKind.Utc),
+            CompletedAt = new DateTime(2024, 6, 15, 12, 45, 0, DateTimeKind.Utc)
+        };
+        var newestRun = new PipelineRunSummary
+        {
+            RunId = "newest-run",
+            IssueIdentifier = "3",
+            IssueTitle = "Newest",
+            FinalStep = PipelineStep.Completed,
+            StartedAt = new DateTime(2025, 3, 20, 8, 0, 0, DateTimeKind.Utc),
+            CompletedAt = new DateTime(2025, 3, 20, 9, 0, 0, DateTimeKind.Utc)
+        };
+
+        File.WriteAllText(Path.Combine(_tempDir, $"{oldRun.RunId}.json"), JsonSerializer.Serialize(oldRun, JsonOptions));
+        File.WriteAllText(Path.Combine(_tempDir, $"{middleRun.RunId}.json"), JsonSerializer.Serialize(middleRun, JsonOptions));
+        File.WriteAllText(Path.Combine(_tempDir, $"{newestRun.RunId}.json"), JsonSerializer.Serialize(newestRun, JsonOptions));
+
+        var service = new PipelineRunHistoryService(_mockLogger.Object, _tempDir);
+
+        var history = service.GetRunHistory();
+
+        history.Should().HaveCount(3);
+        history[0].RunId.Should().Be("newest-run");
+        history[1].RunId.Should().Be("middle-run");
+        history[2].RunId.Should().Be("old-run");
+    }
+
+    [Fact]
+    public void GetRunHistory_EmptyDirectory_ReturnsEmptyList()
+    {
+        Directory.CreateDirectory(_tempDir);
+
+        var service = new PipelineRunHistoryService(_mockLogger.Object, _tempDir);
+
+        var history = service.GetRunHistory();
+
+        history.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void GetRunHistory_CorruptedJsonFileIsSkipped_RemainingFilesStillLoaded()
+    {
+        Directory.CreateDirectory(_tempDir);
+
+        // Write a valid run
+        var validRun = new PipelineRunSummary
+        {
+            RunId = "valid-run",
+            IssueIdentifier = "1",
+            IssueTitle = "Valid",
+            FinalStep = PipelineStep.Completed,
+            StartedAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow.AddMinutes(5)
+        };
+        File.WriteAllText(Path.Combine(_tempDir, $"{validRun.RunId}.json"), JsonSerializer.Serialize(validRun, JsonOptions));
+
+        // Write a corrupted JSON file
+        File.WriteAllText(Path.Combine(_tempDir, "corrupted-run.json"), "{ this is not valid json !!!");
+
+        var service = new PipelineRunHistoryService(_mockLogger.Object, _tempDir);
+
+        var history = service.GetRunHistory();
+
+        history.Should().ContainSingle();
+        history[0].RunId.Should().Be("valid-run");
+    }
+
+    [Fact]
+    public void AddRunToHistory_CreatesTargetDirectory_IfItDoesNotExist()
+    {
+        var nonExistentDir = Path.Combine(_tempDir, "nested", "runs");
+        Directory.Exists(nonExistentDir).Should().BeFalse();
+
+        var service = new PipelineRunHistoryService(_mockLogger.Object, nonExistentDir);
+
+        var run = new PipelineRun
+        {
+            RunId = "dir-create-test",
+            IssueIdentifier = "99",
+            IssueTitle = "Directory Creation Test",
+            IssueProviderConfigId = "provider-1",
+            RepoProviderConfigId = "repo-1",
+            CurrentStep = PipelineStep.Completed,
+            StartedAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow.AddMinutes(1)
+        };
+
+        service.AddRunToHistory(run);
+
+        Directory.Exists(nonExistentDir).Should().BeTrue();
+        File.Exists(Path.Combine(nonExistentDir, "dir-create-test.json")).Should().BeTrue();
     }
 }

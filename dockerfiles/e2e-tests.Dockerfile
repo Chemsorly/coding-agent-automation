@@ -16,6 +16,7 @@ COPY CodingAgentAutomation.sln ./
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
 COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAgentWebUI.Pipeline/
 COPY src/CodingAgentWebUI.Infrastructure/CodingAgentWebUI.Infrastructure.csproj src/CodingAgentWebUI.Infrastructure/
+COPY src/CodingAgentWebUI.Orchestration/CodingAgentWebUI.Orchestration.csproj src/CodingAgentWebUI.Orchestration/
 COPY src/CodingAgentWebUI/CodingAgentWebUI.csproj src/CodingAgentWebUI/
 COPY src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj src/CodingAgentWebUI.Agent/
 COPY tests/CodingAgentWebUI.E2ETests/CodingAgentWebUI.E2ETests.csproj tests/CodingAgentWebUI.E2ETests/

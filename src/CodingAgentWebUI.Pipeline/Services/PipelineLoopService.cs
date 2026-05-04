@@ -60,7 +60,7 @@ public sealed class PipelineLoopService : BackgroundService
     public int QueueCount { get; private set; }
 
     /// <summary>Number of consecutive poll failures since last successful poll.</summary>
-    // TODO: [RES-03] ConsecutivePollFailures, IsCircuitBroken, and LastPollError are written in RunMultiTemplateLoopAsync without _lock — consider wrapping writes under lock for consistency with StartLoop/StopLoop/ResumeLoop (review finding .NET #1)
+    // NOTE: [RES-03] ConsecutivePollFailures, IsCircuitBroken, and LastPollError are written in RunMultiTemplateLoopAsync without _lock — consider wrapping writes under lock for consistency with StartLoop/StopLoop/ResumeLoop (review finding .NET #1)
     public int ConsecutivePollFailures { get; private set; }
 
     /// <summary>Whether the circuit breaker has tripped due to consecutive poll failures.</summary>
@@ -545,7 +545,7 @@ public sealed class PipelineLoopService : BackgroundService
     {
         var result = new List<IssueSummary>();
         int page = 1;
-        const int pageSize = 100;
+        const int pageSize = PipelineConstants.DefaultPageSize;
 
         while (true)
         {

@@ -473,7 +473,6 @@ Pipeline behavior is configured in `config/pipeline/pipeline-config.json`:
 | `externalCiEnabled` | true | Wait for GitHub Actions CI to pass |
 | `externalCiTimeout` | 00:15:00 | Max wait time for external CI |
 | `blacklistedPaths` | .kiro, .github, .brain | Paths excluded from agent commits |
-| `cleanupSuccessfulWorkspaces` | true | Auto-delete workspaces after successful runs |
 | `failedWorkspaceRetentionDays` | 7 | Days to keep failed workspaces |
 
 ### Closed-loop mode

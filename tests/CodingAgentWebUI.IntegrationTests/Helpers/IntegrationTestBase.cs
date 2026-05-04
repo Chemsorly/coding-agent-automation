@@ -116,13 +116,10 @@ public class IntegrationTestBase : IDisposable
 
         return new PipelineOrchestrationService(
             ConfigStore,
-            ConfigStore,
-            ConfigStore,
-            ConfigStore,
             MockFactory.Object,
             new IssueDescriptionParser(),
-            MockValidator.Object,
-            new CiLogWriter(MockLogger.Object),
+            new AgentExecutionOrchestrator(MockLogger.Object),
+            new QualityGateOrchestrator(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), MockLogger.Object),
             MockLogger.Object,
             brainUpdateService: new BrainUpdateService(MockLogger.Object),
             historyService: new PipelineRunHistoryService(MockLogger.Object, RunsDir));

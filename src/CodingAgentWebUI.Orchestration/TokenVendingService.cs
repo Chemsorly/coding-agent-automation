@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -6,10 +7,12 @@ using System.Text.Json.Serialization;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
+using Polly;
+using Polly.Retry;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Services;
+namespace CodingAgentWebUI.Orchestration;
 
 /// <summary>
 /// Generates short-lived GitHub installation access tokens scoped to specific repositories
@@ -17,11 +20,13 @@ namespace CodingAgentWebUI.Services;
 /// Agents receive these tokens instead of the GitHub App private key.
 /// Registered as a singleton in DI.
 /// </summary>
-public sealed partial class TokenVendingService
+public sealed partial class TokenVendingService : ITokenVendingService
 {
     private readonly ILogger _logger;
     private readonly HttpClient _httpClient;
+    private readonly ResiliencePipeline _httpPipeline;
 
+    // TODO: [RES-07] Singleton owns HttpClient but does not implement IDisposable — DI container cannot clean it up on shutdown.
     public TokenVendingService(ILogger logger)
         : this(logger, new HttpClient())
     {
@@ -36,6 +41,35 @@ public sealed partial class TokenVendingService
         ArgumentNullException.ThrowIfNull(httpClient);
         _logger = logger;
         _httpClient = httpClient;
+        _httpPipeline = CreateHttpPipeline(logger);
+    }
+
+    private static ResiliencePipeline CreateHttpPipeline(ILogger logger)
+    {
+        return new ResiliencePipelineBuilder()
+            .AddRetry(new RetryStrategyOptions
+            {
+                MaxRetryAttempts = 3,
+                BackoffType = DelayBackoffType.Exponential,
+                UseJitter = true,
+                Delay = TimeSpan.FromSeconds(1),
+                ShouldHandle = new PredicateBuilder()
+                    .Handle<HttpRequestException>()
+                    .Handle<SocketException>()
+                    .Handle<TaskCanceledException>(ex => ex.InnerException is TimeoutException),
+                OnRetry = args =>
+                {
+                    logger.Warning(
+                        "{Operation} retry {Attempt}/{MaxAttempts} after {Exception}",
+                        "GenerateAgentToken",
+                        args.AttemptNumber + 1,
+                        3,
+                        args.Outcome.Exception?.GetType().Name ?? "unknown");
+                    return ValueTask.CompletedTask;
+                }
+            })
+            .AddTimeout(TimeSpan.FromSeconds(30))
+            .Build();
     }
 
     /// <summary>
@@ -87,25 +121,28 @@ public sealed partial class TokenVendingService
         }
 
         var requestJson = JsonSerializer.Serialize(requestBody, TokenRequestJsonContext.Default.TokenRequestBody);
+        var requestUrl = $"{apiUrl}/app/installations/{installationId}/access_tokens";
 
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post,
-            $"{apiUrl}/app/installations/{installationId}/access_tokens");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", jwt);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-        request.Headers.UserAgent.Add(new ProductInfoHeaderValue("CodingAgentWebUI-TokenVending", "1.0"));
-        request.Content = new StringContent(requestJson, Encoding.UTF8, "application/json");
-
-        var response = await _httpClient.SendAsync(request, ct);
-
-        if (!response.IsSuccessStatusCode)
+        var responseJson = await _httpPipeline.ExecuteAsync(async token =>
         {
-            var errorBody = await response.Content.ReadAsStringAsync(ct);
-            throw new InvalidOperationException(
-                $"GitHub token exchange failed (HTTP {(int)response.StatusCode}): {errorBody}");
-        }
+            using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", jwt);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+            request.Headers.UserAgent.Add(new ProductInfoHeaderValue("CodingAgentWebUI-TokenVending", "1.0"));
+            request.Content = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
-        var responseJson = await response.Content.ReadAsStringAsync(ct);
+            using var response = await _httpClient.SendAsync(request, token);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync(token);
+                throw new HttpRequestException(
+                    $"GitHub token exchange failed (HTTP {(int)response.StatusCode}): {errorBody}");
+            }
+
+            return await response.Content.ReadAsStringAsync(token);
+        }, ct);
+
         var tokenResponse = JsonSerializer.Deserialize(responseJson, TokenResponseJsonContext.Default.TokenResponseBody)
             ?? throw new InvalidOperationException("Failed to deserialize token response");
 

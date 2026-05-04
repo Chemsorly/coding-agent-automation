@@ -1,6 +1,10 @@
 using Bunit;
 using Moq;
 using CodingAgentWebUI.Components.Pages;
+using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Health;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -38,13 +42,10 @@ public class DispatchFeedbackComponentTests : BunitContext
 
         var pipelineService = new PipelineOrchestrationService(
             _mockStore.Object,
-            _mockStore.Object,
-            _mockStore.Object,
-            _mockStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
-            mockValidator.Object,
-            new CiLogWriter(mockLogger.Object),
+            new AgentExecutionOrchestrator(mockLogger.Object),
+            new QualityGateOrchestrator(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
             mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: mockHistoryService.Object);

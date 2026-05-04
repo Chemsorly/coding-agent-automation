@@ -6,7 +6,7 @@ namespace KiroCliLib.Core;
 /// <summary>
 /// Parses Kiro CLI output to detect states, extract information, and trigger events.
 /// </summary>
-public class OutputParser
+public class OutputParser : IOutputParser
 {
     private KiroState _currentState = KiroState.Started;
     private TestResult? _testResults;

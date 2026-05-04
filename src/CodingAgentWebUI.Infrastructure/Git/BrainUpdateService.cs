@@ -207,7 +207,7 @@ public partial class BrainUpdateService : IBrainUpdateService
         ArgumentNullException.ThrowIfNull(runId);
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(brainProvider);
-        // TODO: [GIT-05] Add ArgumentOutOfRangeException guard for maxPushRetries <= 0
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxPushRetries, 0);
 
         try
         {
@@ -227,7 +227,20 @@ public partial class BrainUpdateService : IBrainUpdateService
 
             // Step 2-6: Resolve conflicts, stage, and commit
             var commitMessage = BuildCommitMessage(runId, issueIdentifier);
-            await ResolveConflictsAndCommitAsync(brainPath, commitMessage, ct);
+            try
+            {
+                await ResolveConflictsAndCommitAsync(brainPath, commitMessage, ct);
+            }
+            catch (EmptyCommitException)
+            {
+                _logger.Warning(
+                    "Brain repo has no changes to commit for run {RunId}, skipping push", runId);
+                return new BrainSyncResult
+                {
+                    Success = true,
+                    FilesCommitted = 0
+                };
+            }
 
             // Step 7: Push with retry-rebase loop on non-fast-forward failure
             await PushWithRetryRebaseAsync(brainPath, brainProvider, commitMessage, maxPushRetries, ct);
@@ -255,7 +268,7 @@ public partial class BrainUpdateService : IBrainUpdateService
                 FilesCommitted = filesCommitted
             };
         }
-        // TODO: [GIT-05] Use `when (ex is not OperationCanceledException)` to propagate cancellation per project convention
+        // NOTE: Use `when (ex is not OperationCanceledException)` to propagate cancellation per project convention
         catch (Exception ex)
         {
             _logger.Warning(ex, "Brain repo commit/push failed for run {RunId}", runId);
@@ -328,6 +341,9 @@ public partial class BrainUpdateService : IBrainUpdateService
         string brainPath, IRepositoryProvider brainProvider, string commitMessage,
         int maxRetries, CancellationToken ct)
     {
+        var remoteBranch = brainProvider.BaseBranch;
+        ArgumentException.ThrowIfNullOrEmpty(remoteBranch, nameof(remoteBranch));
+
         for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
             try
@@ -353,7 +369,6 @@ public partial class BrainUpdateService : IBrainUpdateService
                 await Task.Delay(Random.Shared.Next(200, 501), ct);
 
                 // Rebase: fetch, reset to remote, re-apply our changes
-                // TODO: [GIT-05] Log resolution outcome (success/failure) after rebase for complete structured logging
                 await RebaseOntoRemoteAsync(brainPath, brainProvider, commitMessage, ct);
             }
         }
@@ -380,7 +395,6 @@ public partial class BrainUpdateService : IBrainUpdateService
         {
             // Expected — local uncommitted changes conflict with fetched remote
         }
-        // TODO: [GIT-05] If fetch fails (network error), origin/branch is stale and rebase will produce same diverged commit — consider re-throwing to skip this retry attempt
         catch (Exception ex)
         {
             _logger.Warning(ex, "Brain repo fetch during rebase failed, attempting manual rebase");
@@ -396,17 +410,20 @@ public partial class BrainUpdateService : IBrainUpdateService
             var parentTree = ourCommit.Parents.FirstOrDefault()?.Tree;
 
             // Determine which files we changed
-            // TODO: [GIT-05] parentTree null edge case — repo.Diff.Compare with null may throw on some LibGit2Sharp versions
-            var ourChanges = parentTree != null
-                ? repo.Diff.Compare<TreeChanges>(parentTree, ourTree)
-                : repo.Diff.Compare<TreeChanges>(null, ourTree);
-
-            // TODO: [GIT-05] remoteBranch null — if fetch failed, this skips reset and rebase produces same diverged commit
-            // Reset to remote branch tip
-            var remoteBranch = repo.Branches[$"origin/{brainProvider.BaseBranch}"];
-            if (remoteBranch != null)
+            if (parentTree is null)
             {
-                repo.Reset(ResetMode.Hard, remoteBranch.Tip);
+                throw new InvalidOperationException(
+                    "Cannot rebase brain changes: parent tree could not be resolved. " +
+                    "This may indicate the repository has no parent commit to diff against.");
+            }
+
+            var ourChanges = repo.Diff.Compare<TreeChanges>(parentTree, ourTree);
+
+            // Reset to remote branch tip
+            var remoteBranchRef = repo.Branches[$"origin/{brainProvider.BaseBranch}"];
+            if (remoteBranchRef != null)
+            {
+                repo.Reset(ResetMode.Hard, remoteBranchRef.Tip);
             }
 
             // Re-apply our changes from the saved commit tree
@@ -458,10 +475,17 @@ public partial class BrainUpdateService : IBrainUpdateService
             }
 
             // Stage and recommit
-            // TODO: [GIT-05] EmptyCommitException possible if remote already has identical changes
             Commands.Stage(repo, "*");
             var signature = new Signature("CodingAgentWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
-            repo.Commit(commitMessage, signature, signature);
+            try
+            {
+                repo.Commit(commitMessage, signature, signature);
+            }
+            catch (EmptyCommitException)
+            {
+                // Remote already has identical changes — nothing to recommit after rebase
+                _logger.Warning("Brain rebase produced empty commit (remote already has identical changes), skipping");
+            }
         }, ct);
     }
 

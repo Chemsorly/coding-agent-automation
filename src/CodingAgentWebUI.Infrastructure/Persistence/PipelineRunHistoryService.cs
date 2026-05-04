@@ -13,12 +13,7 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     private readonly string _runsDirectory;
     private readonly Serilog.ILogger _logger;
 
-    private static readonly System.Text.Json.JsonSerializerOptions _jsonOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
-        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-    };
+    private static System.Text.Json.JsonSerializerOptions JsonOptions => PipelineJsonOptions.Default;
 
     public PipelineRunHistoryService(Serilog.ILogger logger, string runsDirectory = "config/pipeline/runs")
     {
@@ -43,9 +38,9 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     }
 
     /// <summary>Adds a completed run to history and persists the summary to disk.</summary>
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public void AddRunToHistory(PipelineRun run)
     {
+        ArgumentNullException.ThrowIfNull(run);
         var summary = run.ToSummary();
         _runHistory.Insert(0, summary);
         PersistRunSummary(summary);
@@ -59,7 +54,7 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
                 Directory.CreateDirectory(_runsDirectory);
 
             var path = Path.Combine(_runsDirectory, $"{summary.RunId}.json");
-            var json = System.Text.Json.JsonSerializer.Serialize(summary, _jsonOptions);
+            var json = System.Text.Json.JsonSerializer.Serialize(summary, JsonOptions);
             File.WriteAllText(path, json);
         }
         catch (Exception ex)
@@ -81,7 +76,7 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
                 try
                 {
                     var json = File.ReadAllText(file);
-                    var summary = System.Text.Json.JsonSerializer.Deserialize<PipelineRunSummary>(json, _jsonOptions);
+                    var summary = System.Text.Json.JsonSerializer.Deserialize<PipelineRunSummary>(json, JsonOptions);
                     if (summary != null)
                         summaries.Add(summary);
                 }
@@ -141,9 +136,9 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     /// <summary>
     /// Cleans up expired workspace folders for failed/cancelled runs based on retention policy.
     /// </summary>
-    // TODO: [ARC-10] Add ArgumentNullException.ThrowIfNull for public method parameters
     public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null)
     {
+        ArgumentNullException.ThrowIfNull(config);
         if (config.FailedWorkspaceRetentionDays < 0)
             return;
 

@@ -4,13 +4,17 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Orchestration
+@using CodingAgentWebUI.Orchestration.Dispatch
+@using CodingAgentWebUI.Orchestration.Health
+@using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
+@using Serilog
 @inject AgentRegistryService Registry
 @inject JobDispatcherService Dispatcher
 @inject OrchestratorRunService RunService
 @inject PipelineOrchestrationService PipelineService
 @inject IConfigurationStore ConfigStore
-@inject IPipelineRunHistoryService HistoryService
 @inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
 @inject IJSRuntime JS
 @using Microsoft.AspNetCore.SignalR
@@ -90,7 +94,7 @@
         if (modalRun != null)
         {
             var modalAgent = modalRun.AgentId != null ? Registry.GetByAgentId(modalRun.AgentId) : null;
-            <div class="modal-overlay" @onclick="DismissRunDetailModal" @onkeydown="HandleModalKeyDown">
+            <div class="modal-overlay" tabindex="-1" @ref="_modalOverlayRef" @onclick="DismissRunDetailModal" @onkeydown="HandleModalKeyDown">
                 <div class="modal-card modal-card-wide" @onclick:stopPropagation="true"
                      role="dialog" aria-modal="true" aria-labelledby="run-detail-title">
                     <h3 id="run-detail-title">
@@ -141,7 +145,6 @@
                                 <h4 style="font-size: 0.85rem; margin: 12px 0 6px;">Agent</h4>
                                 @if (modalAgent != null)
                                 {
-                                    var agentRuns = HistoryService.GetRunsByAgentId(modalAgent.AgentId, 10);
                                     <div class="agent-detail-grid">
                                         <div class="detail-label">Agent ID</div>
                                         <div class="detail-value detail-mono">@modalAgent.AgentId</div>
@@ -172,32 +175,7 @@
                                         <div class="detail-value">@FormatTimeAgo(modalAgent.LastHeartbeatAt)</div>
                                     </div>
 
-                                    @* Agent Job History *@
-                                    @if (agentRuns.Count > 0)
-                                    {
-                                        var successCount = agentRuns.Count(r => r.FinalStep == PipelineStep.Completed);
-                                        var successRate = (int)Math.Round(100.0 * successCount / agentRuns.Count);
-                                        var avgDuration = ComputeAverageDuration(agentRuns);
-                                        <div class="agent-detail-stats">
-                                            <span>Total: @agentRuns.Count</span>
-                                            <span>Success: @successRate%</span>
-                                            <span>Avg: @avgDuration</span>
-                                        </div>
-                                        <div class="agent-history-list">
-                                            @foreach (var run in agentRuns)
-                                            {
-                                                <div class="agent-history-item">
-                                                    <span class="history-issue">#@run.IssueIdentifier</span>
-                                                    <span class="step-badge step-@run.FinalStep.ToString().ToLowerInvariant()">@GetStepIcon(run.FinalStep)</span>
-                                                    <span class="history-duration">@FormatDuration(run.StartedAt, run.CompletedAt)</span>
-                                                </div>
-                                            }
-                                        </div>
-                                    }
-                                    else
-                                    {
-                                        <div class="monitoring-empty" style="font-size: 0.8rem;">No completed jobs yet.</div>
-                                    }
+
 
                                     @* Agent Actions *@
                                     <div style="margin-top: 8px; display: flex; gap: 8px;">
@@ -459,6 +437,8 @@
     private string? _selectedRunId;
     private bool _showRunDetailModal;
     private bool _scrollModalOnNextRender;
+    private bool _focusModalOnNextRender;
+    private ElementReference _modalOverlayRef;
     private bool _disposed;
     private Timer? _refreshTimer;
     private int _maxRetries = 3;
@@ -476,30 +456,42 @@
             var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
             _maxRetries = config.MaxRetries;
         }
-        catch { /* use default */ }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load pipeline config, using defaults");
+        }
 
         try
         {
             var allConfigs = new List<ProviderConfig>();
             foreach (var kind in Enum.GetValues<ProviderKind>())
                 allConfigs.AddRange(await ConfigStore.LoadProviderConfigsAsync(kind, CancellationToken.None));
-            _providerConfigLookup = allConfigs.ToDictionary(c => c.Id);
+            _providerConfigLookup = allConfigs.DistinctBy(c => c.Id).ToDictionary(c => c.Id);
         }
-        catch { /* use empty lookup */ }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load provider configs");
+        }
 
         try
         {
             var profiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
             _profileLookup = profiles.ToDictionary(p => p.Id);
         }
-        catch { /* use empty lookup */ }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load agent profiles");
+        }
 
         try
         {
             var qgcs = await ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None);
             _qgcLookup = qgcs.ToDictionary(q => q.Id);
         }
-        catch { /* use empty lookup */ }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load quality gate configs");
+        }
 
         RefreshData();
     }
@@ -515,7 +507,17 @@
                 await JS.InvokeVoidAsync("scrollActiveStepIntoView", "sidebarSteps");
                 await JS.InvokeVoidAsync("scrollToBottom", "modalOutputPanel");
             }
-            catch { /* JS interop may fail during dispose */ }
+            catch (Exception ex) { Log.Debug(ex, "JS interop scroll failed in modal render"); }
+        }
+
+        if (_focusModalOnNextRender && _showRunDetailModal)
+        {
+            _focusModalOnNextRender = false;
+            try
+            {
+                await _modalOverlayRef.FocusAsync();
+            }
+            catch (Exception ex) { Log.Debug(ex, "Modal focus failed"); }
         }
     }
 
@@ -562,6 +564,7 @@
         _selectedRunId = runId;
         _showRunDetailModal = true;
         _scrollModalOnNextRender = true;
+        _focusModalOnNextRender = true;
     }
 
     private void DismissRunDetailModal()
@@ -587,7 +590,7 @@
         {
             await HubContext.Clients.Client(agent.ConnectionId).CancelJob(run.RunId);
         }
-        catch (Exception) { /* Agent may be disconnected */ }
+        catch (Exception ex) { Log.Warning(ex, "Failed to cancel run {RunId} on agent {AgentId}", run.RunId, run.AgentId); }
     }
 
     private async Task CancelLocalRun()
@@ -625,7 +628,7 @@
             if (agent.Status != AgentStatus.Disconnected)
             {
                 try { await HubContext.Clients.Client(agent.ConnectionId).ForceDisconnect(); }
-                catch { /* Agent may not respond */ }
+                catch (Exception ex) { Log.Warning(ex, "Agent {AgentId} did not respond to force disconnect", agent.AgentId); }
             }
 
             if (agent.ActiveJobId != null)
@@ -642,7 +645,10 @@
 
             Registry.Deregister(agent.AgentId);
         }
-        catch { /* Best effort */ }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Force disconnect failed for agent {AgentId}", agent.AgentId);
+        }
 
         _showDisconnectConfirm = false;
         DismissRunDetailModal();
@@ -654,14 +660,6 @@
         AgentStatus.Busy => "🟡",
         AgentStatus.Disconnected => "🔴",
         _ => "⚪"
-    };
-
-    private static string GetStepIcon(PipelineStep step) => step switch
-    {
-        PipelineStep.Completed => "✅",
-        PipelineStep.Failed => "❌",
-        PipelineStep.Cancelled => "⊘",
-        _ => "○"
     };
 
     private static string FormatStep(PipelineStep step) => step switch
@@ -693,17 +691,6 @@
         if (ago.TotalSeconds < 60) return $"{(int)ago.TotalSeconds}s ago";
         if (ago.TotalMinutes < 60) return $"{(int)ago.TotalMinutes}m ago";
         return $"{(int)ago.TotalHours}h ago";
-    }
-
-    private static string ComputeAverageDuration(IReadOnlyList<PipelineRunSummary> runs)
-    {
-        var withDuration = runs
-            .Where(r => r.CompletedAt.HasValue)
-            .Select(r => r.CompletedAt!.Value - r.StartedAt)
-            .ToList();
-        if (withDuration.Count == 0) return "N/A";
-        var avg = TimeSpan.FromTicks((long)withDuration.Average(d => d.Ticks));
-        return avg.ToString(@"hh\:mm\:ss");
     }
 
     private static string Truncate(string? value, int maxLength)

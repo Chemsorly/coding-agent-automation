@@ -101,7 +101,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
             _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
-            exitCode = 124;
+            exitCode = ExitCodes.Timeout;
         }
 
         return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };

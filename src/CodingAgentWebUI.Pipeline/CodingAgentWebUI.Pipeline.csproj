@@ -14,9 +14,13 @@
   <ItemGroup>
     <InternalsVisibleTo Include="CodingAgentWebUI" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Agent" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Agent.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.E2ETests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.IntegrationTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.UnitTests" />
   </ItemGroup>
 
   <ItemGroup>

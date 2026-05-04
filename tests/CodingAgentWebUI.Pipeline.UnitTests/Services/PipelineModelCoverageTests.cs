@@ -31,7 +31,7 @@ public class PipelineModelCoverageTests
     public void AgentResult_Success_ReflectsExitCode()
     {
         new AgentResult { ExitCode = 0, OutputLines = [] }.Success.Should().BeTrue();
-        new AgentResult { ExitCode = 1, OutputLines = [] }.Success.Should().BeFalse();
+        new AgentResult { ExitCode = ExitCodes.GeneralFailure, OutputLines = [] }.Success.Should().BeFalse();
     }
 
     [Fact]

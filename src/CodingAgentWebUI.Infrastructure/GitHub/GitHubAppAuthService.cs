@@ -54,9 +54,19 @@ public sealed class GitHubAppAuthService
     }
 
     /// <summary>
-    /// Internal constructor that accepts an optional client factory for testing.
+    /// Internal constructor that accepts an optional client factory for unit testing.
     /// When clientFactory is null, defaults to creating real Octokit GitHubClient instances.
     /// </summary>
+    /// <remarks>
+    /// This constructor exists to enable unit testing without real HTTP calls to GitHub.
+    /// Tests inject a mock <see cref="IGitHubClient"/> via the <paramref name="clientFactory"/>
+    /// delegate, allowing verification of JWT generation and token caching logic in isolation.
+    ///
+    /// Access is granted to the test project via <c>&lt;InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure.UnitTests" /&gt;</c>
+    /// in the <c>.csproj</c> file. This is the standard pattern in this codebase for testing sealed
+    /// services with external dependencies: expose an internal constructor accepting a factory/mock
+    /// parameter, and grant test access via <c>InternalsVisibleTo</c>.
+    /// </remarks>
     internal GitHubAppAuthService(
         string clientId,
         long installationId,
@@ -88,7 +98,10 @@ public sealed class GitHubAppAuthService
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException("Failed to decode private key from base64", ex);
+            throw new GitHubAuthException(
+                GitHubAuthErrorKind.PrivateKeyDecodeFailure,
+                "Failed to decode private key from base64",
+                ex);
         }
     }
 
@@ -149,8 +162,10 @@ public sealed class GitHubAppAuthService
                     return _cachedToken;
                 }
 
-                throw new InvalidOperationException(
-                    $"GitHub App token exchange failed: {ex.Message}", ex);
+                throw new GitHubAuthException(
+                    GitHubAuthErrorKind.TokenExchangeFailure,
+                    $"GitHub App token exchange failed: {ex.Message}",
+                    ex);
             }
         }
         finally

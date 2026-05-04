@@ -4,7 +4,12 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Orchestration
+@using CodingAgentWebUI.Orchestration.Dispatch
+@using CodingAgentWebUI.Orchestration.Health
+@using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
+@using Serilog
 @inject PipelineOrchestrationService PipelineService
 @inject PipelineLoopService LoopService
 @inject OrchestratorRunService RunService
@@ -945,6 +950,13 @@
             return;
         }
 
+        // Check if any agents are connected before attempting dispatch
+        if (!JobDispatcher.HasRegisteredAgents)
+        {
+            _errorMessage = "Could not dispatch — no agents are currently connected.";
+            return;
+        }
+
         _drawerDispatching = true;
         StateHasChanged();
 
@@ -1068,7 +1080,7 @@
                     await JS.InvokeVoidAsync("scrollToBottom", "outputPanel");
                     await JS.InvokeVoidAsync("scrollActiveStepIntoView", "sidebarSteps");
                 }
-                catch { }
+                catch (Exception ex) { Log.Debug(ex, "JS interop scroll failed during state change"); }
             });
         }
         catch (ObjectDisposedException) { }
@@ -1088,7 +1100,7 @@
                 {
                     await JS.InvokeVoidAsync("scrollToBottom", "outputPanel");
                 }
-                catch { }
+                catch (Exception ex) { Log.Debug(ex, "JS interop scroll failed during output"); }
             });
         }
         catch (ObjectDisposedException) { }

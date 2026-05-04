@@ -1,8 +1,14 @@
 using System.Net;
 using System.Text.Json;
 using AwesomeAssertions;
+using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Health;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
+using FsCheck;
+using FsCheck.Xunit;
 using Moq;
 using Moq.Protected;
 using ILogger = Serilog.ILogger;
@@ -206,4 +212,152 @@ public class TokenVendingServiceTests
         result[0].ProviderType.Should().Be("KiroCli");
         result[0].DisplayName.Should().Be("My Agent");
     }
+
+    #region GenerateAgentTokenAsync with valid RSA key
+
+    private static string GenerateTestRsaPrivateKeyBase64()
+    {
+        using var rsa = System.Security.Cryptography.RSA.Create(2048);
+        var pem = rsa.ExportRSAPrivateKeyPem();
+        return Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(pem));
+    }
+
+    private static ProviderConfig CreateRepoConfigWithValidKey(string privateKeyBase64) => new()
+    {
+        Id = "repo-valid",
+        Kind = ProviderKind.Repository,
+        ProviderType = "GitHub",
+        DisplayName = "Test Repo",
+        Settings = new Dictionary<string, string>
+        {
+            ["privateKeyBase64"] = privateKeyBase64,
+            ["clientId"] = "Iv1.abc123",
+            ["installationId"] = "12345",
+            ["apiUrl"] = "https://api.github.com",
+            ["owner"] = "test-owner",
+            ["repo"] = "test-repo"
+        }
+    };
+
+    [Fact]
+    public async Task GenerateAgentTokenAsync_WithValidRsaKeyAndMockHttpHandler_ReturnsValidNonEmptyToken()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var config = CreateRepoConfigWithValidKey(privateKeyBase64);
+
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new { token = "ghs_test_token_123", expires_at = "2026-06-01T12:00:00Z" }),
+                    System.Text.Encoding.UTF8,
+                    "application/json")
+            });
+
+        var httpClient = new HttpClient(mockHandler.Object);
+        var service = new TokenVendingService(_mockLogger.Object, httpClient);
+
+        var (token, expiresAt) = await service.GenerateAgentTokenAsync(config, CancellationToken.None);
+
+        token.Should().NotBeNullOrEmpty();
+        token.Should().Be("ghs_test_token_123");
+    }
+
+    [Fact]
+    public async Task GenerateAgentTokenAsync_WithSuccessfulHttpResponse_ExtractsTokenAndExpiration()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var config = CreateRepoConfigWithValidKey(privateKeyBase64);
+        var expectedExpiration = "2026-06-15T18:30:00Z";
+
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new { token = "ghs_another_token", expires_at = expectedExpiration }),
+                    System.Text.Encoding.UTF8,
+                    "application/json")
+            });
+
+        var httpClient = new HttpClient(mockHandler.Object);
+        var service = new TokenVendingService(_mockLogger.Object, httpClient);
+
+        var (token, expiresAt) = await service.GenerateAgentTokenAsync(config, CancellationToken.None);
+
+        token.Should().Be("ghs_another_token");
+        expiresAt.Should().Be(DateTimeOffset.Parse(expectedExpiration));
+    }
+
+    #endregion
+
+    #region PrepareAgentConfigsAsync with empty config list
+
+    [Fact]
+    public async Task PrepareAgentConfigsAsync_WithEmptyConfigList_ReturnsEmptyList()
+    {
+        var service = new TokenVendingService(_mockLogger.Object);
+
+        var result = await service.PrepareAgentConfigsAsync(
+            Array.Empty<ProviderConfig>(), "repo-1", CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
+    #endregion
+
+    #region Property 6: PrepareAgentConfigsAsync strips private keys
+
+    /// <summary>
+    /// Property 6: PrepareAgentConfigsAsync strips private keys
+    /// For any ProviderConfig that contains a `privateKeyBase64` setting, after calling
+    /// PrepareAgentConfigsAsync, the resulting config SHALL NOT contain the `privateKeyBase64`
+    /// key in its Settings dictionary.
+    /// **Validates: Requirements 14.2**
+    /// </summary>
+    [Property(MaxTest = 100)]
+    public bool PrepareAgentConfigsAsync_AnyConfigWithPrivateKey_StripsPrivateKeyBase64(
+        NonEmptyString privateKeyValue,
+        NonEmptyString configId,
+        ProviderKind kind)
+    {
+        // Arrange: Create a ProviderConfig with a privateKeyBase64 setting
+        var config = new ProviderConfig
+        {
+            Id = configId.Get,
+            Kind = kind,
+            ProviderType = "GitHub",
+            DisplayName = "Test Config",
+            Settings = new Dictionary<string, string>
+            {
+                ["privateKeyBase64"] = privateKeyValue.Get,
+                ["clientId"] = "client-123",
+                ["installationId"] = "456",
+                ["owner"] = "test-owner",
+                ["repo"] = "test-repo"
+            }
+        };
+
+        var service = new TokenVendingService(new Mock<ILogger>().Object);
+
+        // Act: PrepareAgentConfigsAsync will fail token generation (invalid key)
+        // but should still strip the privateKeyBase64 setting
+        var result = service.PrepareAgentConfigsAsync(
+            new List<ProviderConfig> { config }, configId.Get, CancellationToken.None)
+            .GetAwaiter().GetResult();
+
+        // Assert: privateKeyBase64 must NOT be present in the result
+        return result.Count == 1 && !result[0].Settings.ContainsKey("privateKeyBase64");
+    }
+
+    #endregion
 }

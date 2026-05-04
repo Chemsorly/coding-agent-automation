@@ -69,7 +69,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
                 {
                     new() { Identifier = "101", Title = "Healthy Issue", Labels = new[] { "agent:next" } }
                 },
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
             });
 
         var failingProvider = new Mock<IIssueProvider>();
@@ -99,8 +99,10 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             .ReturnsAsync(true);
 
         var orchestration = new PipelineOrchestrationService(
-            ConfigStore, ConfigStore, ConfigStore, ConfigStore, MockFactory.Object, new IssueDescriptionParser(),
-            MockValidator.Object, new CiLogWriter(MockLogger.Object), MockLogger.Object,
+            ConfigStore, MockFactory.Object, new IssueDescriptionParser(),
+            new AgentExecutionOrchestrator(MockLogger.Object),
+            new QualityGateOrchestrator(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), MockLogger.Object),
+            MockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
@@ -227,8 +229,10 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             CancellationToken.None);
 
         var orchestration = new PipelineOrchestrationService(
-            ConfigStore, ConfigStore, ConfigStore, ConfigStore, MockFactory.Object, new IssueDescriptionParser(),
-            MockValidator.Object, new CiLogWriter(MockLogger.Object), MockLogger.Object,
+            ConfigStore, MockFactory.Object, new IssueDescriptionParser(),
+            new AgentExecutionOrchestrator(MockLogger.Object),
+            new QualityGateOrchestrator(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), MockLogger.Object),
+            MockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
