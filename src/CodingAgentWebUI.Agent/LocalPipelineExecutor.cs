@@ -302,7 +302,7 @@ public sealed class LocalPipelineExecutor
             // Workspace cleanup
             try
             {
-                if (run.CurrentStep == PipelineStep.Completed && config.CleanupSuccessfulWorkspaces
+                if (run.CurrentStep == PipelineStep.Completed
                     && !string.IsNullOrEmpty(run.WorkspacePath) && Directory.Exists(run.WorkspacePath))
                 {
                     Directory.Delete(run.WorkspacePath, recursive: true);
