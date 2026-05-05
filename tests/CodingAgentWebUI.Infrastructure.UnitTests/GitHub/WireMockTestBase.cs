@@ -97,10 +97,11 @@ public abstract class WireMockTestBase : IAsyncDisposable
             .RespondWith(response);
     }
 
-    /// <summary>Stubs a 403 with rate limit headers.</summary>
+    /// <summary>Stubs a 403 with rate limit headers. Uses a reset time in the past so the
+    /// resilience pipeline falls through to default exponential backoff instead of waiting minutes.</summary>
     protected void StubRateLimited(string path)
     {
-        var resetTime = DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds();
+        var resetTime = DateTimeOffset.UtcNow.AddSeconds(-1).ToUnixTimeSeconds();
         Server.Given(Request.Create().WithPath(path))
             .RespondWith(Response.Create()
                 .WithStatusCode(403)

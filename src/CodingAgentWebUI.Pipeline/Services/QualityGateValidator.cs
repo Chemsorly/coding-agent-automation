@@ -139,13 +139,20 @@ public class QualityGateValidator : IQualityGateValidator
                 : $"Compilation failed in QGC '{firstFailingQgc?.DisplayName}'"
         };
 
+        var totalTestsPassed = qgcResults.Sum(r => r.Tests?.TestsPassed ?? 0);
+        var totalTestsFailed = qgcResults.Sum(r => r.Tests?.TestsFailed ?? 0);
+        var totalTestsSkipped = qgcResults.Sum(r => r.Tests?.TestsSkipped ?? 0);
+
         var aggregateTests = new GateResult
         {
             GateName = "Tests",
             Passed = allTestsPassed,
             Details = allTestsPassed
-                ? "All QGC tests passed"
-                : $"Tests failed in QGC '{firstFailingQgc?.DisplayName}'"
+                ? $"All QGC tests passed: {totalTestsPassed} passed, {totalTestsFailed} failed, {totalTestsSkipped} skipped"
+                : $"Tests failed in QGC '{firstFailingQgc?.DisplayName}'",
+            TestsPassed = totalTestsPassed,
+            TestsFailed = totalTestsFailed,
+            TestsSkipped = totalTestsSkipped
         };
 
         // Aggregate coverage: take the first non-null coverage result

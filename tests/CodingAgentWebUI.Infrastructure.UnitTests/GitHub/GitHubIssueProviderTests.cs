@@ -352,8 +352,9 @@ public class GitHubIssueProviderTests
     public async Task EnsureAgentLabelsAsync_ReturnsFalse_WhenLabelCreationFails()
     {
         var mockLabels = new Mock<IIssuesLabelsClient>();
+        // Use NotFoundException (not retried by resilience pipeline) to avoid exponential backoff delays.
         mockLabels.Setup(l => l.Create("owner", "repo", It.Is<NewLabel>(nl => nl.Name == "agent:next")))
-            .ThrowsAsync(new HttpRequestException("Network error"));
+            .ThrowsAsync(new NotFoundException("Not found", System.Net.HttpStatusCode.NotFound));
         _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
 
         var result = await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
@@ -444,8 +445,10 @@ public class GitHubIssueProviderTests
         mockRepos.Setup(r => r.Get("owner", "repo")).ReturnsAsync(CreateMockRepository());
         _mockClient.Setup(c => c.Repository).Returns(mockRepos.Object);
         var mockLabels = new Mock<IIssuesLabelsClient>();
+        // Use NotFoundException (not retried by resilience pipeline) to avoid exponential backoff delays.
+        // The test verifies graceful handling of label creation failure, not retry behavior.
         mockLabels.Setup(l => l.Create("owner", "repo", It.IsAny<NewLabel>()))
-            .ThrowsAsync(new HttpRequestException("Network error"));
+            .ThrowsAsync(new NotFoundException("Label endpoint not found", System.Net.HttpStatusCode.NotFound));
         _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
 
         var result = await provider.InitializeAsync(CancellationToken.None);
@@ -497,7 +500,9 @@ public class GitHubIssueProviderTests
     [Fact]
     public async Task ListOpenIssuesAsync_RateLimitException_WrapsAsCustomException()
     {
-        var resetTime = DateTimeOffset.UtcNow.AddMinutes(5);
+        // Use a reset time in the past so the resilience pipeline's retry delay generator
+        // falls through to default exponential backoff (~seconds) instead of waiting minutes.
+        var resetTime = DateTimeOffset.UtcNow.AddSeconds(-1);
         var resetUnix = resetTime.ToUnixTimeSeconds().ToString();
         var headers = new Dictionary<string, string>
         {

@@ -156,11 +156,19 @@ public class GitHubActionsPipelineProviderWireMockTests : WireMockTestBase
         var job = BuildWorkflowJobJson(200, "build", "in_progress", null);
         StubGet(JobsPath(100), new { total_count = 1, jobs = new[] { job } });
 
-        await using var provider = CreateProvider();
-        var result = await provider.WaitForCompletionAsync(
-            "main", "abc123", TimeSpan.FromMilliseconds(200), CancellationToken.None);
+        // Use a long poll interval so the timeout fires during Task.Delay (between polls),
+        // not during an HTTP call where the resilience pipeline's own timeout could interfere.
+        // The 3s timeout is generous enough for the first poll's HTTP calls to complete,
+        // and the 30s poll interval ensures we're waiting in Task.Delay when cancellation fires.
+        var provider = new GitHubActionsPipelineProvider(
+            Server.Url!, Token, Owner, Repo, TimeSpan.FromSeconds(30));
+        await using (provider)
+        {
+            var result = await provider.WaitForCompletionAsync(
+                "main", "abc123", TimeSpan.FromSeconds(3), CancellationToken.None);
 
-        result.State.Should().Be(PipelineRunState.Running);
+            result.State.Should().Be(PipelineRunState.Running);
+        }
     }
 
     [Fact]
