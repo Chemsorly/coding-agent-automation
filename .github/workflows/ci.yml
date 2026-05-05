@@ -61,7 +61,7 @@ jobs:
 
     steps:
       - name: Build and push ${{ matrix.tag }}
-        shell: /busybox/sh
+        shell: sh
         run: |
           # Configure Docker Hub auth
           AUTH=$(echo -n "${{ secrets.DOCKERHUB_USERNAME }}:${{ secrets.DOCKERHUB_TOKEN }}" | base64)
