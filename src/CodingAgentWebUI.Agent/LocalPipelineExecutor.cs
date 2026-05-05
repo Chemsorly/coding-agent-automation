@@ -291,6 +291,11 @@ public sealed class LocalPipelineExecutor
         catch (Exception ex)
         {
             _logger.Error(ex, "Pipeline execution failed with unhandled error");
+
+            // Set agent:error label (best-effort)
+            try { await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None); }
+            catch (Exception labelEx) { _logger.Warning(labelEx, "Failed to set error label"); }
+
             return BuildFailurePayload(run, ex.Message);
         }
         finally
