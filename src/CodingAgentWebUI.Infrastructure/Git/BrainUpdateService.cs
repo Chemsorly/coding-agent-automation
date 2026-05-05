@@ -230,7 +230,7 @@ public partial class BrainUpdateService : IBrainUpdateService
                 };
             }
 
-            // Step 7: Push with retry-rebase loop on non-fast-forward failure
+            // Push with retry-rebase loop on non-fast-forward failure
             await PushWithRetryRebaseAsync(brainPath, brainProvider, commitMessage, maxPushRetries, ct);
 
             // Count committed files
