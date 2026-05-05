@@ -7,7 +7,9 @@
 
 # Stage 1: Build
 # Pinned to 10.0.200 feature band to match global.json (rollForward: latestFeature)
-FROM mcr.microsoft.com/dotnet/sdk:10.0.203 AS build
+# --platform=linux/arm64: Forces native ARM execution on ARM CI runners (avoids .NET QEMU crash)
+# Cross-compiles to linux-x64 via RID so the output runs in the amd64 runtime stage.
+FROM --platform=linux/arm64 mcr.microsoft.com/dotnet/sdk:10.0.203 AS build
 WORKDIR /src
 
 # Copy solution and project files first for layer caching
@@ -18,11 +20,11 @@ COPY src/CodingAgentWebUI.Infrastructure/CodingAgentWebUI.Infrastructure.csproj 
 COPY src/CodingAgentWebUI.Orchestration/CodingAgentWebUI.Orchestration.csproj src/CodingAgentWebUI.Orchestration/
 COPY src/CodingAgentWebUI/CodingAgentWebUI.csproj src/CodingAgentWebUI/
 COPY src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj src/CodingAgentWebUI.Agent/
-RUN dotnet restore src/CodingAgentWebUI/CodingAgentWebUI.csproj
+RUN dotnet restore src/CodingAgentWebUI/CodingAgentWebUI.csproj -r linux-x64
 
 # Copy everything else and publish
 COPY . .
-RUN dotnet publish src/CodingAgentWebUI/CodingAgentWebUI.csproj -c Release -o /app/publish
+RUN dotnet publish src/CodingAgentWebUI/CodingAgentWebUI.csproj -c Release -r linux-x64 --self-contained false -o /app/publish
 
 # Stage 2: Runtime (ASP.NET only — no SDK, no Kiro CLI, no Node.js)
 # The orchestrator only serves Blazor UI and SignalR hub.
