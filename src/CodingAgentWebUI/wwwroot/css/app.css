@@ -310,23 +310,23 @@ select option { background: var(--surface); color: var(--text); }
 .modal-existing-badge { font-size: 0.75rem; color: var(--warning); margin-left: 6px; }
 
 /* Wide modal variant — used for run detail view */
-.modal-card-wide { width: 960px; max-height: 85vh; overflow-y: auto; }
-.modal-two-column { display: flex; gap: 16px; min-height: 0; flex: 1; }
-.modal-column-left { flex: 3; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
-.modal-column-right { flex: 2; min-width: 0; display: flex; flex-direction: column; }
+.modal-card-wide { width: 960px; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column; }
+.modal-two-column { display: flex; gap: 16px; min-height: 0; flex: 1; overflow: hidden; }
+.modal-column-left { flex: 3; min-width: 0; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+.modal-column-right { flex: 2; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 .modal-provider-list { font-size: 0.82rem; display: flex; flex-direction: column; gap: 4px; }
 .modal-provider-list strong { color: var(--text-muted); }
 .modal-card-wide .pipeline-sidebar {
     width: 100%; min-width: 0; max-width: none;
     border-left: none; border: 1px solid var(--border); border-radius: var(--radius);
-    max-height: none; overflow: hidden; flex: 1;
+    max-height: none; overflow: hidden; flex: 1; min-height: 0;
 }
-.modal-card-wide .sidebar-steps { max-height: 320px; }
+.modal-card-wide .sidebar-steps { max-height: none; overflow-y: auto; }
 .modal-card-wide .sidebar-footer { display: none; }
 .modal-card-wide .output-panel { max-height: 250px; }
 @media (max-width: 900px) {
     .modal-two-column { flex-direction: column; }
-    .modal-column-right { max-height: 300px; }
+    .modal-column-right { max-height: 300px; overflow-y: auto; }
 }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 
