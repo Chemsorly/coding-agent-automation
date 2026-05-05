@@ -31,4 +31,7 @@ public sealed class PipelineRunSummary
 
     /// <summary>Whether this run was a rework of an existing PR.</summary>
     public bool IsRework { get; init; }
+
+    /// <summary>Why the run failed, or null if it did not fail.</summary>
+    public string? FailureReason { get; init; }
 }

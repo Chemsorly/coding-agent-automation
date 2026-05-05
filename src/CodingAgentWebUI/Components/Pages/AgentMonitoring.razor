@@ -393,7 +393,8 @@
                         <tbody>
                             @foreach (var run in _runHistory.Take(20))
                             {
-                                <tr>
+                                <tr class="monitoring-row-clickable"
+                                    @onclick="() => OpenHistoryRunDetail(run)">
                                     <td class="monitoring-mono" title="@run.RunId">@run.RunId</td>
                                     <td title="#@run.IssueIdentifier @run.IssueTitle">#@run.IssueIdentifier @run.IssueTitle</td>
                                     <td>@(run.AgentId ?? "local")</td>
@@ -423,6 +424,60 @@
         }
     </section>
 
+    @* ── History Run Detail Modal ── *@
+    @if (_showHistoryDetailModal && _selectedHistoryRun != null)
+    {
+        <div class="modal-overlay" tabindex="-1" @ref="_historyModalOverlayRef"
+             @onclick="DismissHistoryDetailModal" @onkeydown="HandleHistoryModalKeyDown">
+            <div class="modal-card" @onclick:stopPropagation="true"
+                 role="dialog" aria-modal="true" aria-labelledby="history-detail-title">
+                <h3 id="history-detail-title">
+                    Run @Truncate(_selectedHistoryRun.RunId, 12) — #@_selectedHistoryRun.IssueIdentifier @Truncate(_selectedHistoryRun.IssueTitle, 40)
+                </h3>
+
+                @if (!string.IsNullOrEmpty(_selectedHistoryRun.FailureReason))
+                {
+                    <div class="summary-failure-callout" role="alert">⚠️ @_selectedHistoryRun.FailureReason</div>
+                }
+
+                <div class="modal-provider-list">
+                    <div><strong>Final Step:</strong>
+                        <span class="step-badge step-@_selectedHistoryRun.FinalStep.ToString().ToLowerInvariant()">
+                            @FormatStep(_selectedHistoryRun.FinalStep)
+                        </span>
+                    </div>
+                    <div><strong>Duration:</strong> @FormatDuration(_selectedHistoryRun.StartedAt, _selectedHistoryRun.CompletedAt)</div>
+                    <div><strong>Agent:</strong> @(_selectedHistoryRun.AgentId ?? "local")</div>
+                    <div><strong>Initiated By:</strong> @_selectedHistoryRun.InitiatedBy</div>
+                    @if (_selectedHistoryRun.ModelName != null)
+                    {
+                        <div><strong>Model:</strong> @_selectedHistoryRun.ModelName</div>
+                    }
+                    @if (_selectedHistoryRun.BrainRepoUsed)
+                    {
+                        <div><strong>Brain:</strong> Used @(_selectedHistoryRun.BrainUpdatesPushed ? "(updates pushed)" : "(read-only)")</div>
+                    }
+                    @if (_selectedHistoryRun.IsRework)
+                    {
+                        <div><strong>Rework:</strong> Yes</div>
+                    }
+                    @if (!string.IsNullOrEmpty(_selectedHistoryRun.PullRequestUrl))
+                    {
+                        <div><strong>PR:</strong> <a href="@_selectedHistoryRun.PullRequestUrl" target="_blank" rel="noopener">@_selectedHistoryRun.PullRequestUrl</a></div>
+                    }
+                    @if (_selectedHistoryRun.RetryCount > 0)
+                    {
+                        <div><strong>Retries:</strong> @_selectedHistoryRun.RetryCount</div>
+                    }
+                </div>
+
+                <div style="margin-top: 12px; text-align: right;">
+                    <button class="btn-cancel" @onclick="DismissHistoryDetailModal">Close</button>
+                </div>
+            </div>
+        </div>
+    }
+
 </div>
 
 @code {
@@ -439,6 +494,9 @@
     private bool _scrollModalOnNextRender;
     private bool _focusModalOnNextRender;
     private ElementReference _modalOverlayRef;
+    private PipelineRunSummary? _selectedHistoryRun;
+    private bool _showHistoryDetailModal;
+    private ElementReference _historyModalOverlayRef;
     private bool _disposed;
     private Timer? _refreshTimer;
     private int _maxRetries = 3;
@@ -571,6 +629,24 @@
     {
         _showRunDetailModal = false;
         _selectedRunId = null;
+    }
+
+    private void OpenHistoryRunDetail(PipelineRunSummary run)
+    {
+        _selectedHistoryRun = run;
+        _showHistoryDetailModal = true;
+    }
+
+    private void DismissHistoryDetailModal()
+    {
+        _showHistoryDetailModal = false;
+        _selectedHistoryRun = null;
+    }
+
+    private void HandleHistoryModalKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            DismissHistoryDetailModal();
     }
 
     private void HandleModalKeyDown(KeyboardEventArgs e)
