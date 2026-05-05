@@ -15,31 +15,17 @@ jobs:
   e2e:
     runs-on: arc-runner-set
     timeout-minutes: 15
+    container:
+      image: mcr.microsoft.com/playwright/dotnet:v1.49.0-noble
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Setup .NET 10
-        uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
-        with:
-          dotnet-version: '10.0.2xx'
-
-      - name: Cache NuGet packages
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
 
       - name: Restore
         run: dotnet restore tests/CodingAgentWebUI.E2ETests/CodingAgentWebUI.E2ETests.csproj
 
       - name: Build
         run: dotnet build tests/CodingAgentWebUI.E2ETests/ -c Debug
-
-      - name: Install Playwright Chromium
-        run: pwsh tests/CodingAgentWebUI.E2ETests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium
 
       - name: Run E2E Tests
         run: dotnet test tests/CodingAgentWebUI.E2ETests/ -c Debug --no-build --filter "Category=E2E" --logger trx --results-directory TestResults
