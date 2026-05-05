@@ -41,9 +41,7 @@ jobs:
     runs-on: arc-runner-set
     timeout-minutes: 30
     container:
-      image: moby/buildkit:rootless
-      env:
-        BUILDKITD_FLAGS: "--oci-worker-no-process-sandbox"
+      image: quay.io/buildah/stable
 
     permissions:
       contents: read
@@ -62,6 +60,8 @@ jobs:
             tag: coding-agent-kiro-java21
 
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
       - name: Build and push ${{ matrix.tag }}
         shell: sh
         env:
@@ -69,21 +69,27 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           # Configure registry auth
-          mkdir -p ~/.docker
           AUTH=$(echo -n "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" | base64)
           echo "::add-mask::${AUTH}"
-          echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"${AUTH}\"}}}" > ~/.docker/config.json
+          mkdir -p /run/containers/0
+          echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"${AUTH}\"}}}" > /run/containers/0/auth.json
 
-          # Build flags
-          OUTPUT="type=image,name=chemsorly/dev:${{ matrix.tag }},push=true"
-          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
-            OUTPUT="type=image,name=chemsorly/dev:${{ matrix.tag }},push=false"
+          # Use vfs storage driver (no mount syscall needed, works in any container)
+          export BUILDAH_ISOLATION=chroot
+          sed -i 's/^driver =.*/driver = "vfs"/' /etc/containers/storage.conf 2>/dev/null || true
+
+          # Build
+          buildah build \
+            --isolation chroot \
+            --storage-driver vfs \
+            -f ${{ matrix.dockerfile }} \
+            -t docker.io/chemsorly/dev:${{ matrix.tag }} \
+            .
+
+          # Push only on main
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            buildah push \
+              --storage-driver vfs \
+              --authfile /run/containers/0/auth.json \
+              docker.io/chemsorly/dev:${{ matrix.tag }}
           fi
-
-          buildctl-daemonless.sh build \
-            --frontend dockerfile.v0 \
-            --opt filename=${{ matrix.dockerfile }} \
-            --local context=https://${DOCKERHUB_USERNAME}:${{ github.token }}@github.com/${{ github.repository }}.git#${{ github.sha }} \
-            --export-cache type=registry,ref=chemsorly/dev:${{ matrix.tag }}-cache \
-            --import-cache type=registry,ref=chemsorly/dev:${{ matrix.tag }}-cache \
-            --output ${OUTPUT}
