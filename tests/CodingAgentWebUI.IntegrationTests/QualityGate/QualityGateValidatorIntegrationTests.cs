@@ -22,7 +22,6 @@ public class QualityGateValidatorIntegrationTests : IDisposable
             TestCommand = "dotnet",
             TestArguments = ["test", "--no-restore", "--no-build"],
             CoverageThreshold = 0,
-            SecurityScanEnabled = false,
             Enabled = true,
             ExecutionOrder = 0
         }

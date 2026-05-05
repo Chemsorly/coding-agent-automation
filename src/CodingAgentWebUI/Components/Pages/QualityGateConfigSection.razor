@@ -108,12 +108,7 @@
                 <label>Coverage Threshold (%) <span class="form-hint">(leave empty to skip)</span></label>
                 <input type="number" @bind="_form.CoverageThreshold" min="0" max="100" step="0.1" />
             </div>
-            <div class="form-group form-checkbox">
-                <label>
-                    <input type="checkbox" @bind="_form.SecurityScanEnabled" />
-                    Security Scan Enabled
-                </label>
-            </div>
+
             <div class="form-group form-checkbox">
                 <label>
                     <input type="checkbox" @bind="_form.Enabled" />
@@ -196,7 +191,6 @@
             TestCommand = qgc.TestCommand ?? "",
             TestArguments = qgc.TestArguments != null ? string.Join(" ", qgc.TestArguments) : "",
             CoverageThreshold = qgc.CoverageThreshold,
-            SecurityScanEnabled = qgc.SecurityScanEnabled,
             Enabled = qgc.Enabled,
             ExecutionOrder = qgc.ExecutionOrder
         };
@@ -243,7 +237,6 @@
             TestCommand = testCmd,
             TestArguments = testArgs.Count > 0 ? testArgs : null,
             CoverageThreshold = _form.CoverageThreshold,
-            SecurityScanEnabled = _form.SecurityScanEnabled,
             Enabled = _form.Enabled,
             ExecutionOrder = _form.ExecutionOrder
         };
@@ -325,7 +318,6 @@
         public string TestCommand { get; set; } = "";
         public string TestArguments { get; set; } = "";
         public double? CoverageThreshold { get; set; }
-        public bool SecurityScanEnabled { get; set; }
         public bool Enabled { get; set; } = true;
         public int ExecutionOrder { get; set; } = 0;
     }
