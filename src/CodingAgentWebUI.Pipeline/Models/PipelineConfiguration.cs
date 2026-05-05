@@ -1,4 +1,6 @@
 // TODO: Consider extracting TimeSpan default values (AgentTimeout, ExternalCiTimeout, etc.) into named constants per issue #238.
+using System.Text.Json.Serialization;
+
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
@@ -57,42 +59,128 @@ public sealed record PipelineConfiguration
     public const string DefaultAnalysisPrompt = DefaultPrompts.Analysis;
     public const string DefaultImplementationPrompt = DefaultPrompts.Implementation;
 
-    public int MaxRetries { get; init; } = 3;
+    // ── Domain-specific sub-configurations (source of truth) ────────────
+
+    /// <summary>Retry and timeout settings.</summary>
+    [JsonIgnore]
+    public RetryConfiguration Retry { get; init; } = new();
+
+    /// <summary>Workspace directory and retention settings.</summary>
+    [JsonIgnore]
+    public WorkspaceConfiguration Workspace { get; init; } = new();
+
+    /// <summary>External CI integration settings.</summary>
+    [JsonIgnore]
+    public ExternalCiConfiguration ExternalCi { get; init; } = new();
+
+    /// <summary>Closed-loop polling settings.</summary>
+    [JsonIgnore]
+    public ClosedLoopConfiguration ClosedLoop { get; init; } = new();
+
+    /// <summary>Multi-agent orchestration settings.</summary>
+    [JsonIgnore]
+    public AgentConfiguration Agent { get; init; } = new();
+
+    /// <summary>Commit blacklist and enforcement settings.</summary>
+    [JsonIgnore]
+    public CommitConfiguration Commit { get; init; } = new();
+
+    // ── Flat properties (JSON serialization surface, delegate to sub-configs) ──
+
+    public int MaxRetries
+    {
+        get => Retry.MaxRetries;
+        init => Retry = Retry with { MaxRetries = value };
+    }
 
     /// <summary>
     /// Maximum number of retry attempts for the analysis phase.
     /// Default 1 = 2 total attempts (initial + 1 retry).
     /// Set to 0 to disable retry (fail on first failure).
     /// </summary>
-    public int MaxAnalysisRetries { get; init; } = 2;
+    public int MaxAnalysisRetries
+    {
+        get => Retry.MaxAnalysisRetries;
+        init => Retry = Retry with { MaxAnalysisRetries = value };
+    }
 
     public int IssuePageSize { get; init; } = 25;
-    public TimeSpan AgentTimeout { get; init; } = TimeSpan.FromMinutes(30);
-    public string WorkspaceBaseDirectory { get; init; } = "./workspaces";
+
+    public TimeSpan AgentTimeout
+    {
+        get => Retry.AgentTimeout;
+        init => Retry = Retry with { AgentTimeout = value };
+    }
+
+    public string WorkspaceBaseDirectory
+    {
+        get => Workspace.WorkspaceBaseDirectory;
+        init => Workspace = Workspace with { WorkspaceBaseDirectory = value };
+    }
+
     public CodeReviewConfiguration CodeReview { get; init; } = new();
     public string AnalysisPrompt { get; init; } = DefaultAnalysisPrompt;
     public string ImplementationPrompt { get; init; } = DefaultImplementationPrompt;
-    public bool ExternalCiEnabled { get; init; } = false;
-    public TimeSpan ExternalCiTimeout { get; init; } = TimeSpan.FromMinutes(15);
-    public TimeSpan ExternalCiPollInterval { get; init; } = TimeSpan.FromSeconds(30);
+
+    public bool ExternalCiEnabled
+    {
+        get => ExternalCi.ExternalCiEnabled;
+        init => ExternalCi = ExternalCi with { ExternalCiEnabled = value };
+    }
+
+    public TimeSpan ExternalCiTimeout
+    {
+        get => ExternalCi.ExternalCiTimeout;
+        init => ExternalCi = ExternalCi with { ExternalCiTimeout = value };
+    }
+
+    public TimeSpan ExternalCiPollInterval
+    {
+        get => ExternalCi.ExternalCiPollInterval;
+        init => ExternalCi = ExternalCi with { ExternalCiPollInterval = value };
+    }
+
     /// <summary>
     /// How long the agent can be silent (no output) before the stall monitor logs a warning.
     /// The warning resets after each occurrence so it fires again after another interval of silence.
     /// </summary>
-    public TimeSpan StallWarningInterval { get; init; } = TimeSpan.FromMinutes(2);
+    public TimeSpan StallWarningInterval
+    {
+        get => Retry.StallWarningInterval;
+        init => Retry = Retry with { StallWarningInterval = value };
+    }
+
     /// <summary>
     /// How often the stall monitor polls <see cref="IAgentProvider.GetHealthStatus"/>.
     /// Default is 30 seconds. Tests can set a shorter interval for faster execution.
     /// </summary>
-    public TimeSpan StallPollInterval { get; init; } = TimeSpan.FromSeconds(30);
-    public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".kiro", ".github", ".brain" };
-    public BlacklistMode BlacklistMode { get; init; } = BlacklistMode.WarnAndExclude;
+    public TimeSpan StallPollInterval
+    {
+        get => Retry.StallPollInterval;
+        init => Retry = Retry with { StallPollInterval = value };
+    }
+
+    public IReadOnlyList<string> BlacklistedPaths
+    {
+        get => Commit.BlacklistedPaths;
+        init => Commit = Commit with { BlacklistedPaths = value };
+    }
+
+    public BlacklistMode BlacklistMode
+    {
+        get => Commit.BlacklistMode;
+        init => Commit = Commit with { BlacklistMode = value };
+    }
 
     /// <summary>
     /// Number of days to retain workspace folders for failed or cancelled runs.
     /// Set to 0 to delete immediately. Set to -1 to retain indefinitely.
     /// </summary>
-    public int FailedWorkspaceRetentionDays { get; init; } = 7;
+    public int FailedWorkspaceRetentionDays
+    {
+        get => Workspace.FailedWorkspaceRetentionDays;
+        init => Workspace = Workspace with { FailedWorkspaceRetentionDays = value };
+    }
 
     /// <summary>
     /// Records the last-used provider ID for each provider selection per pipeline.
@@ -109,19 +197,31 @@ public sealed record PipelineConfiguration
     /// skipped, and the SyncingBrainRepoPostRun step (commit and push) is skipped
     /// entirely. Defaults to false.
     /// </summary>
-    public bool BrainReadOnly { get; init; } = false;
+    public bool BrainReadOnly
+    {
+        get => Agent.BrainReadOnly;
+        init => Agent = Agent with { BrainReadOnly = value };
+    }
 
     /// <summary>
     /// Poll interval for the closed pipeline loop when checking for new agent:next issues.
     /// Default: 60 seconds.
     /// </summary>
-    public TimeSpan ClosedLoopPollInterval { get; init; } = TimeSpan.FromSeconds(60);
+    public TimeSpan ClosedLoopPollInterval
+    {
+        get => ClosedLoop.ClosedLoopPollInterval;
+        init => ClosedLoop = ClosedLoop with { ClosedLoopPollInterval = value };
+    }
 
     /// <summary>
     /// Maximum number of issues to process per poll cycle in the closed loop.
     /// 0 means unlimited (process entire backlog). Counter resets each poll cycle.
     /// </summary>
-    public int ClosedLoopMaxRunsPerCycle { get; init; } = 0;
+    public int ClosedLoopMaxRunsPerCycle
+    {
+        get => ClosedLoop.ClosedLoopMaxRunsPerCycle;
+        init => ClosedLoop = ClosedLoop with { ClosedLoopMaxRunsPerCycle = value };
+    }
 
     /// <summary>
     /// Number of consecutive poll failures before the circuit breaker pauses the loop.
@@ -129,18 +229,19 @@ public sealed record PipelineConfiguration
     /// </summary>
     public int ClosedLoopMaxConsecutivePollFailures
     {
-        get => _closedLoopMaxConsecutivePollFailures;
-        init => _closedLoopMaxConsecutivePollFailures = value >= 1
-            ? value
-            : throw new ArgumentOutOfRangeException(nameof(ClosedLoopMaxConsecutivePollFailures), value, "Value must be at least 1.");
+        get => ClosedLoop.ClosedLoopMaxConsecutivePollFailures;
+        init => ClosedLoop = ClosedLoop with { ClosedLoopMaxConsecutivePollFailures = value };
     }
-    private readonly int _closedLoopMaxConsecutivePollFailures = 5;
 
     /// <summary>
     /// Maximum backoff interval between poll retries after consecutive failures.
     /// Backoff uses exponential formula capped at this value. Default: 15 minutes.
     /// </summary>
-    public TimeSpan ClosedLoopMaxBackoffInterval { get; init; } = TimeSpan.FromMinutes(15);
+    public TimeSpan ClosedLoopMaxBackoffInterval
+    {
+        get => ClosedLoop.ClosedLoopMaxBackoffInterval;
+        init => ClosedLoop = ClosedLoop with { ClosedLoopMaxBackoffInterval = value };
+    }
 
     /// <summary>
     /// Maximum number of pages to fetch when polling for agent:next issues.
@@ -148,12 +249,9 @@ public sealed record PipelineConfiguration
     /// </summary>
     public int ClosedLoopMaxPagesToFetch
     {
-        get => _closedLoopMaxPagesToFetch;
-        init => _closedLoopMaxPagesToFetch = value >= 1
-            ? value
-            : throw new ArgumentOutOfRangeException(nameof(ClosedLoopMaxPagesToFetch), value, "Value must be at least 1.");
+        get => ClosedLoop.ClosedLoopMaxPagesToFetch;
+        init => ClosedLoop = ClosedLoop with { ClosedLoopMaxPagesToFetch = value };
     }
-    private readonly int _closedLoopMaxPagesToFetch = 10;
 
     // ── Multi-agent fields ──────────────────────────────────────────────
 
@@ -162,26 +260,42 @@ public sealed record PipelineConfiguration
     /// does not specify <c>requiredAgentLabels</c>. Comma-separated string (e.g., "kiro,dotnet").
     /// Null means any idle agent can be selected.
     /// </summary>
-    public string? DefaultRequiredAgentLabels { get; init; }
+    public string? DefaultRequiredAgentLabels
+    {
+        get => Agent.DefaultRequiredAgentLabels;
+        init => Agent = Agent with { DefaultRequiredAgentLabels = value };
+    }
 
     /// <summary>
     /// Maximum number of retry attempts when brain repo push fails with a non-fast-forward error
     /// (concurrent push conflict). Each retry fetches, rebases, resolves conflicts, and retries push.
     /// Default: 3.
     /// </summary>
-    public int BrainPushMaxRetries { get; init; } = 3;
+    public int BrainPushMaxRetries
+    {
+        get => Agent.BrainPushMaxRetries;
+        init => Agent = Agent with { BrainPushMaxRetries = value };
+    }
 
     /// <summary>
     /// How long to wait after an agent disconnects before marking its active run as Failed.
     /// Default: 5 minutes.
     /// </summary>
-    public TimeSpan AgentDisconnectGracePeriod { get; init; } = TimeSpan.FromMinutes(5);
+    public TimeSpan AgentDisconnectGracePeriod
+    {
+        get => Agent.AgentDisconnectGracePeriod;
+        init => Agent = Agent with { AgentDisconnectGracePeriod = value };
+    }
 
     /// <summary>
     /// Maximum number of output lines to retain per active pipeline run (ring buffer capacity).
     /// Default: 10,000.
     /// </summary>
-    public int OutputBufferCapacity { get; init; } = PipelineConstants.DefaultOutputBufferCapacity;
+    public int OutputBufferCapacity
+    {
+        get => Agent.OutputBufferCapacity;
+        init => Agent = Agent with { OutputBufferCapacity = value };
+    }
 
     // ── Multi-repo pipeline loop ────────────────────────────────────────
 
