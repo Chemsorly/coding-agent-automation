@@ -16,10 +16,16 @@ jobs:
     runs-on: arc-runner-set
     timeout-minutes: 15
     container:
-      image: mcr.microsoft.com/playwright/dotnet:v1.49.0-noble
+      image: mcr.microsoft.com/playwright/dotnet:v1.59.0-noble
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install .NET 10 SDK
+        shell: sh
+        run: |
+          curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --install-dir /usr/share/dotnet --channel 10.0
+          dotnet --version
 
       - name: Restore
         run: dotnet restore tests/CodingAgentWebUI.E2ETests/CodingAgentWebUI.E2ETests.csproj
