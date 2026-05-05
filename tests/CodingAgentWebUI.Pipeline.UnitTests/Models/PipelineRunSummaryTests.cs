@@ -87,4 +87,41 @@ public class PipelineRunSummaryTests
 
         summary.AgentId.Should().BeNull();
     }
+
+    [Fact]
+    public void FailureReason_WhenSet_MapsToSummary()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            FailureReason = "Analysis failed after 2 attempt(s)"
+        };
+
+        var summary = run.ToSummary();
+
+        summary.FailureReason.Should().Be("Analysis failed after 2 attempt(s)");
+    }
+
+    [Fact]
+    public void FailureReason_WhenNull_MapsNullToSummary()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow
+        };
+
+        var summary = run.ToSummary();
+
+        summary.FailureReason.Should().BeNull();
+    }
 }

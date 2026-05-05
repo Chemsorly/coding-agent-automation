@@ -13,23 +13,12 @@ permissions:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: arc-runner-set
+    container:
+      image: mcr.microsoft.com/dotnet/sdk:10.0
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Setup .NET 10
-        uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
-        with:
-          dotnet-version: '10.0.2xx'
-
-      - name: Cache NuGet packages
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
 
       - name: Restore dependencies
         run: dotnet restore
@@ -47,85 +36,65 @@ jobs:
           path: TestResults
         if: ${{ always() }}
 
-  docker-build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Build Web UI image
-        run: docker build -f dockerfiles/webui.Dockerfile -t coding-agent-webui:ci .
-
-      - name: Build Agent (dotnet10) image
-        run: docker build -f dockerfiles/agent-dotnet10.Dockerfile -t coding-agent-kiro-dotnet10:ci .
-
-      - name: Build Agent (python312) image
-        run: docker build -f dockerfiles/agent-python312.Dockerfile -t coding-agent-kiro-python312:ci .
-
-      - name: Build Agent (java21) image
-        run: docker build -f dockerfiles/agent-java21.Dockerfile -t coding-agent-kiro-java21:ci .
-
-  docker-push:
-    needs: [build-and-test, docker-build]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+  docker:
+    needs: [build-and-test]
+    runs-on: arc-runner-set
+    timeout-minutes: 30
+    container:
+      image: gcr.io/kaniko-project/executor:debug
 
     permissions:
       contents: read
 
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dockerfile: dockerfiles/webui.Dockerfile
+            tag: coding-agent-webui
+          - dockerfile: dockerfiles/agent-dotnet10.Dockerfile
+            tag: coding-agent-kiro-dotnet10
+          - dockerfile: dockerfiles/agent-python312.Dockerfile
+            tag: coding-agent-kiro-python312
+          - dockerfile: dockerfiles/agent-java21.Dockerfile
+            tag: coding-agent-kiro-java21
+
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Generate build info
+      - name: Build and push ${{ matrix.tag }}
+        shell: sh
         run: |
-          cat <<EOF > build-info.json
-          {
-            "commitSha": "${{ github.sha }}",
-            "branch": "${{ github.ref_name }}",
-            "buildTimestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "runId": "${{ github.run_id }}",
-            "runNumber": "${{ github.run_number }}",
-            "imageTag": "chemsorly/dev:coding-agent",
-            "repositoryUrl": "${{ github.server_url }}/${{ github.repository }}"
-          }
-          EOF
+          # Configure Docker Hub auth
+          AUTH=$(echo -n "${{ secrets.DOCKERHUB_USERNAME }}:${{ secrets.DOCKERHUB_TOKEN }}" | base64)
+          echo "::add-mask::${AUTH}"
+          mkdir -p /kaniko/.docker
+          echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"${AUTH}\"}}}" > /kaniko/.docker/config.json
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          # Build flags
+          PUSH_FLAG=""
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            PUSH_FLAG="--no-push"
+          fi
 
-      - name: Build and push Web UI
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
-        with:
-          context: .
-          file: dockerfiles/webui.Dockerfile
-          push: true
-          tags: chemsorly/dev:coding-agent-webui
+          # Configure git credentials for context fetch
+          export GIT_USERNAME="x-access-token"
+          export GIT_PASSWORD="${{ github.token }}"
 
-      - name: Build and push Agent (dotnet10)
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
-        with:
-          context: .
-          file: dockerfiles/agent-dotnet10.Dockerfile
-          push: true
-          tags: chemsorly/dev:coding-agent-kiro-dotnet10
+          # Build args for build-info (only relevant for webui, ignored by other Dockerfiles)
+          BUILD_ARGS=""
+          BUILD_ARGS="${BUILD_ARGS} --build-arg=BUILD_COMMIT_SHA=${{ github.sha }}"
+          BUILD_ARGS="${BUILD_ARGS} --build-arg=BUILD_BRANCH=${{ github.ref_name }}"
+          BUILD_ARGS="${BUILD_ARGS} --build-arg=BUILD_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          BUILD_ARGS="${BUILD_ARGS} --build-arg=BUILD_RUN_ID=${{ github.run_id }}"
+          BUILD_ARGS="${BUILD_ARGS} --build-arg=BUILD_RUN_NUMBER=${{ github.run_number }}"
+          BUILD_ARGS="${BUILD_ARGS} --build-arg=BUILD_IMAGE_TAG=chemsorly/dev:${{ matrix.tag }}"
+          BUILD_ARGS="${BUILD_ARGS} --build-arg=BUILD_REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}"
 
-      - name: Build and push Agent (python312)
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
-        with:
-          context: .
-          file: dockerfiles/agent-python312.Dockerfile
-          push: true
-          tags: chemsorly/dev:coding-agent-kiro-python312
-
-      - name: Build and push Agent (java21)
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
-        with:
-          context: .
-          file: dockerfiles/agent-java21.Dockerfile
-          push: true
-          tags: chemsorly/dev:coding-agent-kiro-java21
+          /kaniko/executor \
+            --dockerfile="${{ matrix.dockerfile }}" \
+            --context="git://github.com/${{ github.repository }}.git#${{ github.sha }}" \
+            --destination="chemsorly/dev:${{ matrix.tag }}" \
+            --cache=true \
+            --cache-repo="chemsorly/${{ matrix.tag }}-cache" \
+            ${BUILD_ARGS} \
+            ${PUSH_FLAG} \
+            --push-retry 3

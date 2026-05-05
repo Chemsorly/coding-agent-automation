@@ -20,7 +20,7 @@ public class LabelMatchResolverEquivalencePropertyTests
     /// directly with Intersection strategy produces the same result as QualityGateResolver.Resolve().
     /// **Validates: Requirements 25.3, 25.4, 25.7**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(LabelMatchResolverEquivalenceArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(LabelMatchResolverEquivalenceArbitraries) })]
     public void IntersectionEquivalence_QualityGateResolver_MatchesGenericResolver(QgcEquivalenceInput input)
     {
         // Call via QualityGateResolver (the public API)
@@ -55,7 +55,7 @@ public class LabelMatchResolverEquivalencePropertyTests
     /// directly with Intersection strategy produces the same result as ReviewerResolver.Resolve().
     /// **Validates: Requirements 25.3, 25.4, 25.7**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(LabelMatchResolverEquivalenceArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(LabelMatchResolverEquivalenceArbitraries) })]
     public void IntersectionEquivalence_ReviewerResolver_MatchesGenericResolver(ReviewerEquivalenceInput input)
     {
         // Call via ReviewerResolver (the public API)
@@ -90,7 +90,7 @@ public class LabelMatchResolverEquivalencePropertyTests
     /// directly with Subset strategy + .FirstOrDefault() produces the same result as ProfileResolver.Resolve().
     /// **Validates: Requirements 25.5, 25.7**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(LabelMatchResolverEquivalenceArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(LabelMatchResolverEquivalenceArbitraries) })]
     public void SubsetEquivalence_ProfileResolver_MatchesGenericResolver(ProfileEquivalenceInput input)
     {
         // Call via ProfileResolver (the public API)

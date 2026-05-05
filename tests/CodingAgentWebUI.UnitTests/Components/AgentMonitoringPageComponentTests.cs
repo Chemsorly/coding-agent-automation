@@ -303,7 +303,7 @@ public class AgentMonitoringPageComponentTests : BunitContext
     private static PipelineRunSummary CreateSummary(
         string runId, string issueId, string issueTitle, PipelineStep finalStep,
         string? agentId = null, string? prUrl = null, string initiatedBy = "manual",
-        DateTime? startedAt = null, DateTime? completedAt = null)
+        DateTime? startedAt = null, DateTime? completedAt = null, string? failureReason = null)
     {
         var start = startedAt ?? DateTime.UtcNow.AddMinutes(-30);
         return new PipelineRunSummary
@@ -316,7 +316,77 @@ public class AgentMonitoringPageComponentTests : BunitContext
             CompletedAt = completedAt ?? start.AddMinutes(15),
             AgentId = agentId,
             PullRequestUrl = prUrl,
-            InitiatedBy = initiatedBy
+            InitiatedBy = initiatedBy,
+            FailureReason = failureReason
         };
+    }
+
+    [Fact]
+    public void RecentRuns_RowsAreClickable()
+    {
+        var history = new List<PipelineRunSummary>
+        {
+            CreateSummary("run-1", "42", "Test", PipelineStep.Completed)
+        };
+        RegisterDefaults(history);
+        var cut = Render<AgentMonitoring>();
+
+        var rows = cut.FindAll(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable");
+        Assert.Single(rows);
+    }
+
+    [Fact]
+    public void RecentRuns_ClickingFailedRun_ShowsModalWithFailureReason()
+    {
+        var history = new List<PipelineRunSummary>
+        {
+            CreateSummary("run-1", "42", "Test Issue", PipelineStep.Failed,
+                failureReason: "Analysis failed after 2 attempt(s): analysis.md not found")
+        };
+        RegisterDefaults(history);
+        var cut = Render<AgentMonitoring>();
+
+        var row = cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable");
+        row.Click();
+
+        var callout = cut.Find(".summary-failure-callout");
+        Assert.Contains("Analysis failed after 2 attempt(s): analysis.md not found", callout.TextContent);
+    }
+
+    [Fact]
+    public void RecentRuns_ClickingCompletedRun_ShowsModalWithoutFailureCallout()
+    {
+        var history = new List<PipelineRunSummary>
+        {
+            CreateSummary("run-1", "42", "Test Issue", PipelineStep.Completed)
+        };
+        RegisterDefaults(history);
+        var cut = Render<AgentMonitoring>();
+
+        var row = cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable");
+        row.Click();
+
+        Assert.Empty(cut.FindAll(".summary-failure-callout"));
+        // Modal should still be visible with run details
+        Assert.Contains("Run", cut.Markup);
+        Assert.Contains("#42", cut.Markup);
+    }
+
+    [Fact]
+    public void RecentRuns_HistoryModal_CanBeDismissedWithCloseButton()
+    {
+        var history = new List<PipelineRunSummary>
+        {
+            CreateSummary("run-1", "42", "Test", PipelineStep.Failed, failureReason: "error")
+        };
+        RegisterDefaults(history);
+        var cut = Render<AgentMonitoring>();
+
+        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
+        Assert.NotEmpty(cut.FindAll(".summary-failure-callout"));
+
+        // Click close button
+        cut.Find(".modal-card .btn-cancel").Click();
+        Assert.Empty(cut.FindAll(".summary-failure-callout"));
     }
 }

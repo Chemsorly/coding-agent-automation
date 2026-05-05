@@ -24,6 +24,11 @@ builder.Services.AddSingleton(BuildInfo.Load());
 // Pipeline — Configuration Store
 var configStore = new JsonConfigurationStore("config/pipeline");
 builder.Services.AddSingleton<IConfigurationStore>(configStore);
+builder.Services.AddSingleton<IPipelineConfigStore>(configStore);
+builder.Services.AddSingleton<IProviderConfigStore>(configStore);
+builder.Services.AddSingleton<IAgentProfileStore>(configStore);
+builder.Services.AddSingleton<IQualityGateConfigStore>(configStore);
+builder.Services.AddSingleton<IReviewerConfigStore>(configStore);
 
 // Load pipeline config eagerly (before DI container is built) to avoid sync-over-async deadlocks
 var pipelineConfig = await configStore.LoadPipelineConfigAsync(CancellationToken.None);
@@ -59,7 +64,8 @@ builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
 builder.Services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(
     sp.GetRequiredService<PipelineOrchestrationService>(),
     sp.GetRequiredService<IProviderFactory>(),
-    sp.GetRequiredService<IConfigurationStore>(),
+    sp.GetRequiredService<IPipelineConfigStore>(),
+    sp.GetRequiredService<IProviderConfigStore>(),
     Serilog.Log.Logger,
     sp.GetRequiredService<IJobDispatcher>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());

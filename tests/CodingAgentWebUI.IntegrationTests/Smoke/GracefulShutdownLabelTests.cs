@@ -72,6 +72,11 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             builder.ConfigureServices(services =>
             {
                 ReplaceService<IConfigurationStore>(services, _mockConfigStore.Object);
+                ReplaceService<IPipelineConfigStore>(services, _mockConfigStore.Object);
+                ReplaceService<IProviderConfigStore>(services, _mockConfigStore.Object);
+                ReplaceService<IAgentProfileStore>(services, _mockConfigStore.Object);
+                ReplaceService<IQualityGateConfigStore>(services, _mockConfigStore.Object);
+                ReplaceService<IReviewerConfigStore>(services, _mockConfigStore.Object);
                 ReplaceService<IProviderFactory>(services, _mockProviderFactory.Object);
                 ReplaceService<IQualityGateValidator>(services, new Mock<IQualityGateValidator>().Object);
             });
@@ -153,6 +158,11 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             builder.ConfigureServices(services =>
             {
                 ReplaceService<IConfigurationStore>(services, configStore.Object);
+                ReplaceService<IPipelineConfigStore>(services, configStore.Object);
+                ReplaceService<IProviderConfigStore>(services, configStore.Object);
+                ReplaceService<IAgentProfileStore>(services, configStore.Object);
+                ReplaceService<IQualityGateConfigStore>(services, configStore.Object);
+                ReplaceService<IReviewerConfigStore>(services, configStore.Object);
                 ReplaceService<IProviderFactory>(services, providerFactory.Object);
                 ReplaceService<IQualityGateValidator>(services, new Mock<IQualityGateValidator>().Object);
             });
@@ -199,6 +209,11 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             builder.ConfigureServices(services =>
             {
                 ReplaceService<IConfigurationStore>(services, _mockConfigStore.Object);
+                ReplaceService<IPipelineConfigStore>(services, _mockConfigStore.Object);
+                ReplaceService<IProviderConfigStore>(services, _mockConfigStore.Object);
+                ReplaceService<IAgentProfileStore>(services, _mockConfigStore.Object);
+                ReplaceService<IQualityGateConfigStore>(services, _mockConfigStore.Object);
+                ReplaceService<IReviewerConfigStore>(services, _mockConfigStore.Object);
                 ReplaceService<IProviderFactory>(services, _mockProviderFactory.Object);
                 ReplaceService<IQualityGateValidator>(services, new Mock<IQualityGateValidator>().Object);
             });
