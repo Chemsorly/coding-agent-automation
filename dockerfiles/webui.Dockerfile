@@ -33,15 +33,16 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 
-USER ubuntu
-WORKDIR /app
-
-# Pre-create config directory with correct ownership (before volume mount)
+# Pre-create config and app directories with correct ownership (before USER switch)
 RUN mkdir -p /app/config/pipeline/providers/issue \
              /app/config/pipeline/providers/repository \
              /app/config/pipeline/providers/agent \
              /app/config/pipeline/providers/pipeline \
-             /app/config/pipeline/runs
+             /app/config/pipeline/runs && \
+    chown -R ubuntu:ubuntu /app
+
+USER ubuntu
+WORKDIR /app
 
 # Configure ASP.NET to listen on port 8080
 ENV ASPNETCORE_URLS=http://+:8080
