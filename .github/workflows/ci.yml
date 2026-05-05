@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build-and-test:
-    runs-on: arc-runner-set
+    runs-on: arc-runner-set-arm
     container:
       image: mcr.microsoft.com/dotnet/sdk:10.0
 
@@ -38,7 +38,7 @@ jobs:
 
   docker:
     needs: [build-and-test]
-    runs-on: arc-runner-set
+    runs-on: arc-runner-set-arm
     timeout-minutes: 30
     container:
       image: gcr.io/kaniko-project/executor:debug
@@ -93,6 +93,7 @@ jobs:
             --dockerfile="${{ matrix.dockerfile }}" \
             --context="git://github.com/${{ github.repository }}.git#${{ github.sha }}" \
             --destination="chemsorly/dev:${{ matrix.tag }}" \
+            --custom-platform=linux/amd64 \
             ${BUILD_ARGS} \
             ${PUSH_FLAG} \
             --push-retry 3
