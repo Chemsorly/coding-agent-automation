@@ -93,8 +93,6 @@ jobs:
             --dockerfile="${{ matrix.dockerfile }}" \
             --context="git://github.com/${{ github.repository }}.git#${{ github.sha }}" \
             --destination="chemsorly/dev:${{ matrix.tag }}" \
-            --cache=true \
-            --cache-repo="chemsorly/${{ matrix.tag }}-cache" \
             ${BUILD_ARGS} \
             ${PUSH_FLAG} \
             --push-retry 3
