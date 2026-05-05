@@ -60,9 +60,24 @@ jobs:
             tag: coding-agent-kiro-java21
 
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
       - name: Build and push ${{ matrix.tag }}
         shell: sh
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
+          # Configure registry auth
+          AUTH=$(echo -n "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" | base64)
+          echo "::add-mask::${AUTH}"
+          mkdir -p /run/containers/0
+          echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"${AUTH}\"}}}" > /run/containers/0/auth.json
+
+          # Use vfs storage driver (no mount syscall needed, works in any container)
+          export BUILDAH_ISOLATION=chroot
+          sed -i 's/^driver =.*/driver = "vfs"/' /etc/containers/storage.conf 2>/dev/null || true
+
           # Build args for build-info (only relevant for webui, ignored by other Dockerfiles)
           BUILD_ARGS=""
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_COMMIT_SHA=${{ github.sha }}"
@@ -74,15 +89,19 @@ jobs:
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}"
 
           # Build the image (cross-compile: ARM build stage runs natively, amd64 runtime via QEMU)
-          buildah bud \
+          buildah build \
+            --isolation chroot \
+            --storage-driver vfs \
             --platform linux/amd64 \
-            -f "${{ matrix.dockerfile }}" \
-            -t "docker.io/chemsorly/dev:${{ matrix.tag }}" \
+            -f ${{ matrix.dockerfile }} \
+            -t docker.io/chemsorly/dev:${{ matrix.tag }} \
             ${BUILD_ARGS} \
-            "https://${{ github.token }}@github.com/${{ github.repository }}.git#${{ github.sha }}"
+            .
 
-          # Push only on main branch
+          # Push only on main
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            buildah login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}" docker.io
-            buildah push "docker.io/chemsorly/dev:${{ matrix.tag }}"
+            buildah push \
+              --storage-driver vfs \
+              --authfile /run/containers/0/auth.json \
+              docker.io/chemsorly/dev:${{ matrix.tag }}
           fi
