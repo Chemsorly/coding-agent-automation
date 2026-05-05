@@ -41,7 +41,9 @@ jobs:
     runs-on: arc-runner-set
     timeout-minutes: 30
     container:
-      image: gcr.io/kaniko-project/executor:debug
+      image: moby/buildkit:rootless
+      env:
+        BUILDKITD_FLAGS: "--oci-worker-no-process-sandbox"
 
     permissions:
       contents: read
@@ -61,29 +63,27 @@ jobs:
 
     steps:
       - name: Build and push ${{ matrix.tag }}
-        shell: /busybox/sh
+        shell: sh
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          # Configure Docker Hub auth
-          AUTH=$(echo -n "${{ secrets.DOCKERHUB_USERNAME }}:${{ secrets.DOCKERHUB_TOKEN }}" | base64)
+          # Configure registry auth
+          mkdir -p ~/.docker
+          AUTH=$(echo -n "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" | base64)
           echo "::add-mask::${AUTH}"
-          mkdir -p /kaniko/.docker
-          echo "{\"auths\": {\"https://index.docker.io/v1/\": {\"auth\": \"${AUTH}\"}}}" > /kaniko/.docker/config.json
-
-          # Configure git credentials for Kaniko context fetch
-          export GIT_USERNAME="x-access-token"
-          export GIT_PASSWORD="${{ github.token }}"
+          echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"${AUTH}\"}}}" > ~/.docker/config.json
 
           # Build flags
-          PUSH_FLAG=""
+          OUTPUT="type=image,name=chemsorly/dev:${{ matrix.tag }},push=true"
           if [ "${{ github.ref }}" != "refs/heads/main" ]; then
-            PUSH_FLAG="--no-push"
+            OUTPUT="type=image,name=chemsorly/dev:${{ matrix.tag }},push=false"
           fi
 
-          /kaniko/executor \
-            --dockerfile="${{ matrix.dockerfile }}" \
-            --context="git://github.com/${{ github.repository }}.git#refs/heads/${{ github.ref_name }}" \
-            --destination="chemsorly/dev:${{ matrix.tag }}" \
-            --cache=true \
-            --cache-repo="chemsorly/${{ matrix.tag }}-cache" \
-            ${PUSH_FLAG} \
-            --push-retry 3
+          buildctl-daemonless.sh build \
+            --frontend dockerfile.v0 \
+            --opt filename=${{ matrix.dockerfile }} \
+            --local context=https://${DOCKERHUB_USERNAME}:${{ github.token }}@github.com/${{ github.repository }}.git#${{ github.sha }} \
+            --export-cache type=registry,ref=chemsorly/dev:${{ matrix.tag }}-cache \
+            --import-cache type=registry,ref=chemsorly/dev:${{ matrix.tag }}-cache \
+            --output ${OUTPUT}
