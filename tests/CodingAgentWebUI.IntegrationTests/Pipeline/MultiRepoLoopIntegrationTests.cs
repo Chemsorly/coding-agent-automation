@@ -107,7 +107,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
         var loopService = new PipelineLoopService(
-            orchestration, MockFactory.Object, ConfigStore, MockLogger.Object, mockDispatcher.Object);
+            orchestration, MockFactory.Object, ConfigStore, ConfigStore, MockLogger.Object, mockDispatcher.Object);
 
         using var cts = new CancellationTokenSource();
         await loopService.StartAsync(cts.Token);
@@ -237,7 +237,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
         var loopService = new PipelineLoopService(
-            orchestration, MockFactory.Object, ConfigStore, MockLogger.Object);
+            orchestration, MockFactory.Object, ConfigStore, ConfigStore, MockLogger.Object);
 
         // Act
         var started = await loopService.StartLoopAsync();
