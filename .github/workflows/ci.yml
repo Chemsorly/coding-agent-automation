@@ -104,3 +104,4 @@ jobs:
           tags: chemsorly/dev:${{ matrix.tag }}
           cache-from: type=registry,ref=chemsorly/dev:${{ matrix.tag }}-cache
           cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref=chemsorly/dev:{0}-cache,mode=max', matrix.tag) || '' }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.tag }}
