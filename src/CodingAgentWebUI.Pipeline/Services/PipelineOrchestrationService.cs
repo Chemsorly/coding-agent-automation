@@ -673,6 +673,13 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             svc._activeIssueComments = ctx?.IssueComments;
             return svc.CreatePullRequestAsync(r, report, isDraft, ct);
         }
+        public Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
+        {
+            run.BrainContextLoaded = contextLoaded;
+            run.BrainKnowledgeFileCount = knowledgeFileCount;
+            svc._lifecycle.NotifyChange();
+            return Task.CompletedTask;
+        }
     }
 
     private async Task<ProviderConfig> ResolveProviderConfigAsync(string providerId, ProviderKind kind, CancellationToken ct)

@@ -210,6 +210,50 @@ public class PipelineStepTests
         _transitions.Should().Contain(PipelineStep.SyncingBrainRepoPreRun);
     }
 
+    [Fact]
+    public async Task SyncBrainPreRunStep_NoBrainProvider_DoesNotReportBrainSync()
+    {
+        var step = new SyncBrainPreRunStep();
+        var context = BuildContext(brainProvider: null, brainSync: null);
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        var callbacks = (TestCallbacks)context.Callbacks;
+        callbacks.BrainSyncReports.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SyncBrainPreRunStep_WithBrainProvider_ReportsBrainSyncResult()
+    {
+        var brainProvider = Mock.Of<IRepositoryProvider>();
+        var brainSync = new BrainSyncOrchestrator(Mock.Of<IBrainUpdateService>(), _logger);
+        _run.WorkspacePath = "/tmp/test";
+
+        var step = new SyncBrainPreRunStep();
+        var context = BuildContext(brainProvider: brainProvider, brainSync: brainSync);
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        var callbacks = (TestCallbacks)context.Callbacks;
+        callbacks.BrainSyncReports.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task SyncBrainPreRunStep_SyncFails_ReportsBrainSyncFailure()
+    {
+        var mockBrainProvider = new Mock<IRepositoryProvider>();
+        mockBrainProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("clone failed"));
+        var brainSync = new BrainSyncOrchestrator(Mock.Of<IBrainUpdateService>(), _logger);
+        _run.WorkspacePath = "/tmp/test";
+
+        var step = new SyncBrainPreRunStep();
+        var context = BuildContext(brainProvider: mockBrainProvider.Object, brainSync: brainSync);
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        var callbacks = (TestCallbacks)context.Callbacks;
+        callbacks.BrainSyncReports.Should().ContainSingle()
+            .Which.ContextLoaded.Should().BeFalse();
+    }
+
     // ── DetectReworkStep ──
 
     [Fact]
@@ -593,6 +637,7 @@ public class PipelineStepTests
 
     private sealed class TestCallbacks(List<PipelineStep> transitions, List<string> outputLines) : IPipelineCallbacks
     {
+        public List<(bool ContextLoaded, int FileCount)> BrainSyncReports { get; } = [];
         public void TransitionTo(PipelineStep step) => transitions.Add(step);
         public void EmitOutputLine(string line) => outputLines.Add(line);
         public void NotifyChange() { }
@@ -601,5 +646,10 @@ public class PipelineStepTests
         public Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct) => Task.CompletedTask;
         public Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct) => Task.CompletedTask;
         public Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct) => Task.CompletedTask;
+        public Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
+        {
+            BrainSyncReports.Add((contextLoaded, knowledgeFileCount));
+            return Task.CompletedTask;
+        }
     }
 }

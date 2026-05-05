@@ -24,6 +24,8 @@ internal sealed class SyncBrainPreRunStep : IPipelineStep
             context.Run.BrainContextLoaded = false;
         }
 
+        await context.Callbacks.ReportBrainSyncResult(context.Run.BrainContextLoaded, context.Run.BrainKnowledgeFileCount);
+
         return StepResult.Continue;
     }
 }

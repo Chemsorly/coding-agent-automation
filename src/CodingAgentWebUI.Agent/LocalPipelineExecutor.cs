@@ -230,7 +230,12 @@ public sealed class LocalPipelineExecutor
                 repoProvider,
                 report => ReportQualityGateResult(report),
                 (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, repoProvider, agentProvider,
-                    brainProvider, brainSync, config, issueOps, connection, job, EmitOutputLine, token));
+                    brainProvider, brainSync, config, issueOps, connection, job, EmitOutputLine, token),
+                async (contextLoaded, fileCount) =>
+                {
+                    try { await connection.InvokeAsync("ReportBrainSyncResult", job.JobId, contextLoaded, fileCount, ct); }
+                    catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
+                });
 
             var context = new PipelineStepContext
             {
@@ -261,13 +266,6 @@ public sealed class LocalPipelineExecutor
             var steps = BuildAgentStepPipeline(job, connection);
 
             await PipelineStepRunner.ExecuteAsync(steps, context, linkedCt);
-
-            // Report brain sync result after brain step
-            if (brainProvider is not null && brainSync is not null)
-            {
-                try { await connection.InvokeAsync("ReportBrainSyncResult", job.JobId, run.BrainContextLoaded, run.BrainKnowledgeFileCount, linkedCt); }
-                catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
-            }
 
             return BuildCompletionPayload(run);
         }
@@ -506,7 +504,8 @@ public sealed class LocalPipelineExecutor
         PullRequestOrchestrator prOrchestrator,
         IRepositoryProvider repoProvider,
         Action<QualityGateReport> reportQualityGateResult,
-        Func<PipelineRun, QualityGateReport, bool, CancellationToken, Task> createPullRequest) : IPipelineCallbacks
+        Func<PipelineRun, QualityGateReport, bool, CancellationToken, Task> createPullRequest,
+        Func<bool, int, Task> reportBrainSyncResult) : IPipelineCallbacks
     {
         public void TransitionTo(PipelineStep step) => transitionTo(step);
         public void EmitOutputLine(string line) => emitOutputLine(line);
@@ -523,5 +522,7 @@ public sealed class LocalPipelineExecutor
             reportQualityGateResult(report);
             return createPullRequest(run, report, isDraft, ct);
         }
+        public Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
+            => reportBrainSyncResult(contextLoaded, knowledgeFileCount);
     }
 }
