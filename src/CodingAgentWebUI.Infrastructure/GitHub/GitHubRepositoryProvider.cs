@@ -275,7 +275,10 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                 {
                     var category = PushErrorClassifier.Classify(pushError);
                     var message = PushErrorClassifier.GetActionableMessage(category, branchName);
-                    throw category == PushErrorClassifier.PushFailureCategory.Network
+                    // Network and Unknown errors are potentially transient — throw LibGit2SharpException
+                    // so the Polly resilience pipeline can retry them.
+                    throw category is PushErrorClassifier.PushFailureCategory.Network
+                                   or PushErrorClassifier.PushFailureCategory.Unknown
                         ? new LibGit2SharpException(pushError)
                         : new InvalidOperationException(message);
                 }

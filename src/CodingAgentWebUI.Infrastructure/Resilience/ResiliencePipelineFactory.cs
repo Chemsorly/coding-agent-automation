@@ -211,15 +211,8 @@ public static class ResiliencePipelineFactory
             return false;
         }
 
-        // Retryable network patterns
-        return message.Contains("timeout", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("connection", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("DNS", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("reset", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("503", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("resolve", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("network", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("Name or service not known", StringComparison.OrdinalIgnoreCase);
+        // Retryable: known network patterns OR unclassified errors (potentially transient)
+        return true;
     }
 
     /// <summary>
