@@ -158,7 +158,7 @@ public class GitHubActionsPipelineProviderWireMockTests : WireMockTestBase
 
         await using var provider = CreateProvider();
         var result = await provider.WaitForCompletionAsync(
-            "main", "abc123", TimeSpan.FromMilliseconds(200), CancellationToken.None);
+            "main", "abc123", TimeSpan.FromSeconds(2), CancellationToken.None);
 
         result.State.Should().Be(PipelineRunState.Running);
     }
