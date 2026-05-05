@@ -33,15 +33,16 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 
-USER ubuntu
-WORKDIR /app
-
-# Pre-create config directory with correct ownership (before volume mount)
+# Pre-create config and app directories with correct ownership (before USER switch)
 RUN mkdir -p /app/config/pipeline/providers/issue \
              /app/config/pipeline/providers/repository \
              /app/config/pipeline/providers/agent \
              /app/config/pipeline/providers/pipeline \
-             /app/config/pipeline/runs
+             /app/config/pipeline/runs && \
+    chown -R ubuntu:ubuntu /app
+
+USER ubuntu
+WORKDIR /app
 
 # Configure ASP.NET to listen on port 8080
 ENV ASPNETCORE_URLS=http://+:8080
@@ -54,7 +55,16 @@ EXPOSE 8080
 # Copy published app and Docker-specific config (owned by ubuntu user)
 COPY --from=build --chown=ubuntu:ubuntu /app/publish .
 COPY --chown=ubuntu:ubuntu config/appsettings.docker.json config/appsettings.json
-COPY --chown=ubuntu:ubuntu build-info.json build-info.json
+
+# Generate build-info.json from build args (populated by CI, defaults to "local" for dev builds)
+ARG BUILD_COMMIT_SHA=local
+ARG BUILD_BRANCH=local
+ARG BUILD_TIMESTAMP=unknown
+ARG BUILD_RUN_ID=
+ARG BUILD_RUN_NUMBER=
+ARG BUILD_IMAGE_TAG=local
+ARG BUILD_REPOSITORY_URL=
+RUN echo "{\"commitSha\":\"${BUILD_COMMIT_SHA}\",\"branch\":\"${BUILD_BRANCH}\",\"buildTimestamp\":\"${BUILD_TIMESTAMP}\",\"runId\":\"${BUILD_RUN_ID}\",\"runNumber\":\"${BUILD_RUN_NUMBER}\",\"imageTag\":\"${BUILD_IMAGE_TAG}\",\"repositoryUrl\":\"${BUILD_REPOSITORY_URL}\"}" > build-info.json
 
 # Mount points:
 #   /app/config/pipeline - Pipeline provider & settings config (mount for persistence across restarts)

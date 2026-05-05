@@ -84,7 +84,6 @@ COPY --from=build --chown=ubuntu:ubuntu /app/publish .
 # Volume mount points:
 #   /home/ubuntu/.local/share/kiro-cli - Per-agent Kiro CLI auth (SQLite DB, must NOT be shared)
 #   /home/ubuntu/.aws                  - AWS SSO cache (read-only, shared from host)
-#   /app/workspaces                    - Pipeline workspaces (clone, build, test here)
-VOLUME ["/home/ubuntu/.local/share/kiro-cli", "/home/ubuntu/.aws", "/app/workspaces"]
+VOLUME ["/home/ubuntu/.local/share/kiro-cli", "/home/ubuntu/.aws"]
 
 ENTRYPOINT ["dotnet", "CodingAgentWebUI.Agent.dll"]

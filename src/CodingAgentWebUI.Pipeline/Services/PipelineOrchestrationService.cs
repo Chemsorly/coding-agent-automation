@@ -361,9 +361,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 PipelineTelemetry.JobsCompleted.Add(1);
             else if (run.CurrentStep == PipelineStep.Failed)
                 PipelineTelemetry.JobsFailed.Add(1);
+            // TODO: Non-cancellation exceptions propagate without incrementing JobsFailed or recording JobDuration — add a general catch block to match LocalPipelineExecutor behavior
         }
         catch (OperationCanceledException)
         {
+            // TODO: Record pipelineStopwatch.Elapsed and increment a cancellation metric here — cancelled runs currently produce no telemetry
             if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
             {
                 _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
@@ -690,6 +692,13 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             svc._activeParsedIssue = ctx?.ParsedIssue;
             svc._activeIssueComments = ctx?.IssueComments;
             return svc.CreatePullRequestAsync(r, report, isDraft, ct);
+        }
+        public Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
+        {
+            run.BrainContextLoaded = contextLoaded;
+            run.BrainKnowledgeFileCount = knowledgeFileCount;
+            svc._lifecycle.NotifyChange();
+            return Task.CompletedTask;
         }
     }
 

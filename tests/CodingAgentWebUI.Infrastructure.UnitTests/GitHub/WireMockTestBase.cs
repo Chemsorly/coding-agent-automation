@@ -11,11 +11,7 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests;
 /// Octokit prepends /api/v3 to all paths when using a non-github.com base URL,
 /// so all stubs must use the <see cref="ApiPath"/> helper.
 /// </summary>
-// NOTE: WireMockTestBase implements IDisposable but providers implement IAsyncDisposable.
-// xUnit calls Dispose() on the test class but not DisposeAsync(). Providers should be
-// disposed via "await using" at the individual test level. If a centralized cleanup pattern
-// is needed, consider implementing IAsyncLifetime instead.
-public abstract class WireMockTestBase : IDisposable
+public abstract class WireMockTestBase : IAsyncDisposable
 {
     protected WireMockServer Server { get; }
 
@@ -24,11 +20,12 @@ public abstract class WireMockTestBase : IDisposable
         Server = WireMockServer.Start();
     }
 
-    public void Dispose()
+    public ValueTask DisposeAsync()
     {
         Server.Stop();
         Server.Dispose();
         GC.SuppressFinalize(this);
+        return ValueTask.CompletedTask;
     }
 
     /// <summary>

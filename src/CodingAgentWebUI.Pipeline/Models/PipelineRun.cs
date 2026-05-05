@@ -157,6 +157,7 @@ public sealed class PipelineRun
         AgentId = AgentId,
         InitiatedBy = InitiatedBy,
         AnalysisRecommendation = AnalysisRecommendation,
-        IsRework = LinkedPullRequest != null
+        IsRework = LinkedPullRequest != null,
+        FailureReason = FailureReason
     };
 }

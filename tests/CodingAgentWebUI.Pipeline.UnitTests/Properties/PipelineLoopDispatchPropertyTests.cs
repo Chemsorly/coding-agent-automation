@@ -533,6 +533,6 @@ public class PipelineLoopDispatchPropertyTests
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
-        return new PipelineLoopService(orchestration, mockFactory.Object, mockStore.Object, mockLogger.Object, dispatcher);
+        return new PipelineLoopService(orchestration, mockFactory.Object, mockStore.Object, mockStore.Object, mockLogger.Object, dispatcher);
     }
 }

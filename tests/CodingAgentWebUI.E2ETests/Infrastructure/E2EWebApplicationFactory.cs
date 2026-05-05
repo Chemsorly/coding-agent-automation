@@ -59,6 +59,11 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
 
             // Replace external provider interfaces with fakes
             ReplaceService<IConfigurationStore>(services, ConfigStore);
+            ReplaceService<IPipelineConfigStore>(services, ConfigStore);
+            ReplaceService<IProviderConfigStore>(services, ConfigStore);
+            ReplaceService<IAgentProfileStore>(services, ConfigStore);
+            ReplaceService<IQualityGateConfigStore>(services, ConfigStore);
+            ReplaceService<IReviewerConfigStore>(services, ConfigStore);
             ReplaceService<IProviderFactory>(services, FakeProviders);
             ReplaceService<IQualityGateValidator>(services, QualityGateValidator);
             ReplaceService<IPipelineRunHistoryService>(services, HistoryService);

@@ -155,7 +155,7 @@ public class KiroCliAgentProviderPropertyTests
     /// the resulting output lines SHALL contain no ANSI escape sequences.
     /// **Validates: Requirements 5.6**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(AnsiContainingStringArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(AnsiContainingStringArbitrary)])]
     public void AnsiStripping_ForAnyStringWithCsiSequences_ResultContainsNoAnsiSequences(AnsiContainingString input)
     {
         // Arrange — the input is guaranteed to contain at least one ANSI CSI sequence

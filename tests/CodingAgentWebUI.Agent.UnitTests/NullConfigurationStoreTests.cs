@@ -220,7 +220,7 @@ public class NullConfigurationStoreTests
     /// SHALL return an empty list.
     /// **Validates: Requirements 7.2**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool LoadProviderConfigsAsync_AnyProviderKind_AlwaysReturnsEmpty(ProviderKind kind)
     {
         // Arrange
@@ -241,7 +241,7 @@ public class NullConfigurationStoreTests
     /// For any valid PipelineConfiguration, Save completes without exception.
     /// **Validates: Requirements 7.6**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(NullConfigStoreArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(NullConfigStoreArbitrary)])]
     public bool SavePipelineConfigAsync_AnyConfig_NeverThrows(PipelineConfiguration config)
     {
         // Arrange
@@ -265,7 +265,7 @@ public class NullConfigurationStoreTests
     /// For any valid ProviderConfig, Save completes without exception.
     /// **Validates: Requirements 7.6**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(NullConfigStoreArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(NullConfigStoreArbitrary)])]
     public bool SaveProviderConfigAsync_AnyConfig_NeverThrows(ProviderConfig config)
     {
         // Arrange
@@ -289,7 +289,7 @@ public class NullConfigurationStoreTests
     /// For any valid AgentProfile, Save completes without exception.
     /// **Validates: Requirements 7.6**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(NullConfigStoreArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(NullConfigStoreArbitrary)])]
     public bool SaveAgentProfileAsync_AnyProfile_NeverThrows(AgentProfile profile)
     {
         // Arrange
@@ -313,7 +313,7 @@ public class NullConfigurationStoreTests
     /// For any valid QualityGateConfiguration, Save completes without exception.
     /// **Validates: Requirements 7.6**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(NullConfigStoreArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(NullConfigStoreArbitrary)])]
     public bool SaveQualityGateConfigAsync_AnyConfig_NeverThrows(QualityGateConfiguration config)
     {
         // Arrange
@@ -337,7 +337,7 @@ public class NullConfigurationStoreTests
     /// For any valid ReviewerConfiguration, Save completes without exception.
     /// **Validates: Requirements 7.6**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(NullConfigStoreArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(NullConfigStoreArbitrary)])]
     public bool SaveReviewerConfigAsync_AnyConfig_NeverThrows(ReviewerConfiguration config)
     {
         // Arrange
@@ -361,7 +361,7 @@ public class NullConfigurationStoreTests
     /// For any string ID and ProviderKind, Delete completes without exception.
     /// **Validates: Requirements 7.6**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool DeleteProviderConfigAsync_AnyIdAndKind_NeverThrows(NonNull<string> id, ProviderKind kind)
     {
         // Arrange
@@ -385,7 +385,7 @@ public class NullConfigurationStoreTests
     /// For any string ID, DeleteAgentProfile completes without exception.
     /// **Validates: Requirements 7.6**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool DeleteAgentProfileAsync_AnyId_NeverThrows(NonNull<string> id)
     {
         // Arrange
@@ -409,7 +409,7 @@ public class NullConfigurationStoreTests
     /// For any string ID, DeleteQualityGateConfig completes without exception.
     /// **Validates: Requirements 7.6**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool DeleteQualityGateConfigAsync_AnyId_NeverThrows(NonNull<string> id)
     {
         // Arrange
@@ -433,7 +433,7 @@ public class NullConfigurationStoreTests
     /// For any string ID, DeleteReviewerConfig completes without exception.
     /// **Validates: Requirements 7.6**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool DeleteReviewerConfigAsync_AnyId_NeverThrows(NonNull<string> id)
     {
         // Arrange

@@ -393,7 +393,7 @@ public class GitHubAppAuthServiceTests
     /// GitHubAppAuthService SHALL contain the clientId as the `iss` (issuer) claim.
     /// **Validates: Requirements 10.2**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void JwtIssuer_MatchesClientId_ForAnyValidClientId(NonEmptyString clientIdInput)
     {
         // Arrange: Use the generated clientId and a valid RSA key

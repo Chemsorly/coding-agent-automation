@@ -48,4 +48,7 @@ public interface IPipelineCallbacks
 
     /// <summary>Creates a pull request for the completed pipeline run.</summary>
     Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct);
+
+    /// <summary>Reports brain sync result immediately after the brain sync step completes.</summary>
+    Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount);
 }

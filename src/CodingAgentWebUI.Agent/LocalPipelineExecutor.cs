@@ -236,7 +236,12 @@ public sealed class LocalPipelineExecutor
                 repoProvider,
                 report => ReportQualityGateResult(report),
                 (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, repoProvider, agentProvider,
-                    brainProvider, brainSync, config, issueOps, connection, job, EmitOutputLine, token));
+                    brainProvider, brainSync, config, issueOps, connection, job, EmitOutputLine, token),
+                async (contextLoaded, fileCount) =>
+                {
+                    try { await connection.InvokeAsync("ReportBrainSyncResult", job.JobId, contextLoaded, fileCount, ct); }
+                    catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
+                });
 
             var context = new PipelineStepContext
             {
@@ -268,6 +273,7 @@ public sealed class LocalPipelineExecutor
 
             await PipelineStepRunner.ExecuteAsync(steps, context, linkedCt);
 
+            // TODO: This duplicates the brain sync report already sent via AgentCallbacks during step execution. Remove once confirmed redundant.
             // Report brain sync result after brain step
             if (brainProvider is not null && brainSync is not null)
             {
@@ -281,10 +287,12 @@ public sealed class LocalPipelineExecutor
                 PipelineTelemetry.JobsCompleted.Add(1);
             else if (run.CurrentStep == PipelineStep.Failed)
                 PipelineTelemetry.JobsFailed.Add(1);
+
             return BuildCompletionPayload(run);
         }
         catch (OperationCanceledException)
         {
+            // TODO: Record pipelineStopwatch.Elapsed and increment a cancellation metric here — cancelled runs currently produce no telemetry
             run.CompletedAt = DateTime.UtcNow;
 
             // Set agent:cancelled label (matching monolith behavior)
@@ -306,6 +314,11 @@ public sealed class LocalPipelineExecutor
         {
             PipelineTelemetry.JobsFailed.Add(1);
             _logger.Error(ex, "Pipeline execution failed with unhandled error");
+
+            // Set agent:error label (best-effort)
+            try { await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None); }
+            catch (Exception labelEx) { _logger.Warning(labelEx, "Failed to set error label"); }
+
             return BuildFailurePayload(run, ex.Message);
         }
         finally
@@ -523,7 +536,8 @@ public sealed class LocalPipelineExecutor
         PullRequestOrchestrator prOrchestrator,
         IRepositoryProvider repoProvider,
         Action<QualityGateReport> reportQualityGateResult,
-        Func<PipelineRun, QualityGateReport, bool, CancellationToken, Task> createPullRequest) : IPipelineCallbacks
+        Func<PipelineRun, QualityGateReport, bool, CancellationToken, Task> createPullRequest,
+        Func<bool, int, Task> reportBrainSyncResult) : IPipelineCallbacks
     {
         public void TransitionTo(PipelineStep step) => transitionTo(step);
         public void EmitOutputLine(string line) => emitOutputLine(line);
@@ -540,5 +554,7 @@ public sealed class LocalPipelineExecutor
             reportQualityGateResult(report);
             return createPullRequest(run, report, isDraft, ct);
         }
+        public Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
+            => reportBrainSyncResult(contextLoaded, knowledgeFileCount);
     }
 }
