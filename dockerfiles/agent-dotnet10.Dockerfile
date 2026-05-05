@@ -61,14 +61,10 @@ RUN curl --proto '=https' --tlsv1.2 -sSf \
 # Install uv (Python package manager) for MCP server support
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Switch back to root briefly to set up app directory with correct ownership
-USER root
 WORKDIR /app
 
-# Create workspaces directory for pipeline execution (as root, then chown)
-RUN mkdir -p /app/workspaces && chown -R ubuntu:ubuntu /app
-
-USER ubuntu
+# Create workspaces directory for pipeline execution
+RUN mkdir -p /app/workspaces
 
 # --- Environment variables ---
 # Required: URL of the orchestrator's SignalR hub
@@ -88,7 +84,6 @@ COPY --from=build --chown=ubuntu:ubuntu /app/publish .
 # Volume mount points:
 #   /home/ubuntu/.local/share/kiro-cli - Per-agent Kiro CLI auth (SQLite DB, must NOT be shared)
 #   /home/ubuntu/.aws                  - AWS SSO cache (read-only, shared from host)
-#   /app/workspaces                    - Pipeline workspaces (clone, build, test here)
-VOLUME ["/home/ubuntu/.local/share/kiro-cli", "/home/ubuntu/.aws", "/app/workspaces"]
+VOLUME ["/home/ubuntu/.local/share/kiro-cli", "/home/ubuntu/.aws"]
 
 ENTRYPOINT ["dotnet", "CodingAgentWebUI.Agent.dll"]
