@@ -47,38 +47,32 @@ jobs:
           path: TestResults
         if: ${{ always() }}
 
-  docker-build:
+  docker:
+    needs: [build-and-test]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Build Web UI image
-        run: docker build -f dockerfiles/webui.Dockerfile -t coding-agent-webui:ci .
-
-      - name: Build Agent (dotnet10) image
-        run: docker build -f dockerfiles/agent-dotnet10.Dockerfile -t coding-agent-kiro-dotnet10:ci .
-
-      - name: Build Agent (python312) image
-        run: docker build -f dockerfiles/agent-python312.Dockerfile -t coding-agent-kiro-python312:ci .
-
-      - name: Build Agent (java21) image
-        run: docker build -f dockerfiles/agent-java21.Dockerfile -t coding-agent-kiro-java21:ci .
-
-  docker-push:
-    needs: [build-and-test, docker-build]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     permissions:
       contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dockerfile: dockerfiles/webui.Dockerfile
+            tag: coding-agent-webui
+          - dockerfile: dockerfiles/agent-dotnet10.Dockerfile
+            tag: coding-agent-kiro-dotnet10
+          - dockerfile: dockerfiles/agent-python312.Dockerfile
+            tag: coding-agent-kiro-python312
+          - dockerfile: dockerfiles/agent-java21.Dockerfile
+            tag: coding-agent-kiro-java21
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Generate build info
+        if: github.ref == 'refs/heads/main'
         run: |
           cat <<EOF > build-info.json
           {
@@ -87,45 +81,27 @@ jobs:
             "buildTimestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "runId": "${{ github.run_id }}",
             "runNumber": "${{ github.run_number }}",
-            "imageTag": "chemsorly/dev:coding-agent",
+            "imageTag": "chemsorly/dev:${{ matrix.tag }}",
             "repositoryUrl": "${{ github.server_url }}/${{ github.repository }}"
           }
           EOF
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
       - name: Log in to Docker Hub
+        if: github.ref == 'refs/heads/main'
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push Web UI
+      - name: Build and push ${{ matrix.tag }}
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
-          file: dockerfiles/webui.Dockerfile
-          push: true
-          tags: chemsorly/dev:coding-agent-webui
-
-      - name: Build and push Agent (dotnet10)
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
-        with:
-          context: .
-          file: dockerfiles/agent-dotnet10.Dockerfile
-          push: true
-          tags: chemsorly/dev:coding-agent-kiro-dotnet10
-
-      - name: Build and push Agent (python312)
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
-        with:
-          context: .
-          file: dockerfiles/agent-python312.Dockerfile
-          push: true
-          tags: chemsorly/dev:coding-agent-kiro-python312
-
-      - name: Build and push Agent (java21)
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
-        with:
-          context: .
-          file: dockerfiles/agent-java21.Dockerfile
-          push: true
-          tags: chemsorly/dev:coding-agent-kiro-java21
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: chemsorly/dev:${{ matrix.tag }}
+          cache-from: type=gha,scope=${{ matrix.tag }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.tag }}
