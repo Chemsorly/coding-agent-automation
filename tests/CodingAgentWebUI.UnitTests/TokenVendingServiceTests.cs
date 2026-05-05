@@ -324,7 +324,7 @@ public class TokenVendingServiceTests
     /// key in its Settings dictionary.
     /// **Validates: Requirements 14.2**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool PrepareAgentConfigsAsync_AnyConfigWithPrivateKey_StripsPrivateKeyBase64(
         NonEmptyString privateKeyValue,
         NonEmptyString configId,

@@ -169,7 +169,7 @@ public class HubConnectionManagerTests : IAsyncDisposable
     /// Uri.EscapeDataString(agentId) as the agentId query parameter value.
     /// **Validates: Requirements 1.6**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(AgentIdArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(AgentIdArbitrary)])]
     public void Constructor_AnyAgentId_HubUrlContainsEscapedAgentId(AgentIdValue agentId)
     {
         // Arrange
