@@ -79,11 +79,22 @@ jobs:
           export GIT_USERNAME="x-access-token"
           export GIT_PASSWORD="${{ github.token }}"
 
+          # Build args for build-info (only relevant for webui, ignored by other Dockerfiles)
+          BUILD_ARGS=""
+          BUILD_ARGS="${BUILD_ARGS} --build-arg=BUILD_COMMIT_SHA=${{ github.sha }}"
+          BUILD_ARGS="${BUILD_ARGS} --build-arg=BUILD_BRANCH=${{ github.ref_name }}"
+          BUILD_ARGS="${BUILD_ARGS} --build-arg=BUILD_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          BUILD_ARGS="${BUILD_ARGS} --build-arg=BUILD_RUN_ID=${{ github.run_id }}"
+          BUILD_ARGS="${BUILD_ARGS} --build-arg=BUILD_RUN_NUMBER=${{ github.run_number }}"
+          BUILD_ARGS="${BUILD_ARGS} --build-arg=BUILD_IMAGE_TAG=chemsorly/dev:${{ matrix.tag }}"
+          BUILD_ARGS="${BUILD_ARGS} --build-arg=BUILD_REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}"
+
           /kaniko/executor \
             --dockerfile="${{ matrix.dockerfile }}" \
             --context="git://github.com/${{ github.repository }}.git#${{ github.sha }}" \
             --destination="chemsorly/dev:${{ matrix.tag }}" \
             --cache=true \
             --cache-repo="chemsorly/${{ matrix.tag }}-cache" \
+            ${BUILD_ARGS} \
             ${PUSH_FLAG} \
             --push-retry 3

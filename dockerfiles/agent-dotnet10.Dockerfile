@@ -61,10 +61,14 @@ RUN curl --proto '=https' --tlsv1.2 -sSf \
 # Install uv (Python package manager) for MCP server support
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
+# Switch back to root briefly to set up app directory with correct ownership
+USER root
 WORKDIR /app
 
-# Create workspaces directory for pipeline execution
-RUN mkdir -p /app/workspaces
+# Create workspaces directory for pipeline execution (as root, then chown)
+RUN mkdir -p /app/workspaces && chown -R ubuntu:ubuntu /app
+
+USER ubuntu
 
 # --- Environment variables ---
 # Required: URL of the orchestrator's SignalR hub
