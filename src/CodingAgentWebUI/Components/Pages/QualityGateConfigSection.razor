@@ -78,6 +78,15 @@
                 <label>Display Name *</label>
                 <input type="text" @bind="_form.DisplayName" placeholder="e.g. .NET Quality Gates" />
             </div>
+            <div class="form-group form-toggle">
+                <label>
+                    <span class="toggle-switch">
+                        <input type="checkbox" @bind="_form.Enabled" />
+                        <span class="toggle-slider"></span>
+                    </span>
+                    Enabled
+                </label>
+            </div>
             <div class="form-group">
                 <label>Match Labels <span class="form-hint">(comma-separated, empty = global fallback · ANY match — applies if at least one label overlaps)</span></label>
                 <input type="text" @bind="_form.MatchLabels" placeholder="e.g. dotnet, csharp" />
@@ -109,12 +118,6 @@
                 <input type="number" @bind="_form.CoverageThreshold" min="0" max="100" step="0.1" />
             </div>
 
-            <div class="form-group form-checkbox">
-                <label>
-                    <input type="checkbox" @bind="_form.Enabled" />
-                    Enabled
-                </label>
-            </div>
             <div class="form-group">
                 <label>Execution Order <span class="form-hint">(lower runs first)</span></label>
                 <input type="number" @bind="_form.ExecutionOrder" />
