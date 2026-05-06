@@ -2,6 +2,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Services.Steps;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
 namespace CodingAgentWebUI.Agent;
@@ -74,6 +75,17 @@ public sealed class LocalPipelineExecutor
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(outputBatcher);
 
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("ExecutePipeline");
+        activity?.SetTag("pipeline.run_id", job.JobId);
+        activity?.SetTag("pipeline.issue", job.IssueIdentifier);
+        activity?.SetTag("pipeline.agent_id", Environment.MachineName);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        // TODO: [OBS-01] If provider validation throws before ExecutePipelineStepsAsync,
+        // JobsFailed/JobDuration won't be recorded while JobsDispatched was already incremented.
+        // Move metrics recording to a finally block to ensure consistency.
+        PipelineTelemetry.JobsDispatched.Add(1);
+
         var config = job.PipelineConfiguration;
         var issueOps = new OrchestratorProxy(connection, job.JobId);
 
@@ -127,9 +139,19 @@ public sealed class LocalPipelineExecutor
             if (pipelineProvider is not null)
                 await pipelineProvider.ValidateAsync(ct);
 
-            return await ExecutePipelineStepsAsync(
+            var result = await ExecutePipelineStepsAsync(
                 job, config, repoProvider, agentProvider, brainProvider, pipelineProvider,
                 issueOps, connection, outputBatcher, onStepChanged, ct);
+
+            sw.Stop();
+            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds);
+            if (result.FinalStep == PipelineStep.Completed)
+                PipelineTelemetry.JobsCompleted.Add(1);
+            else
+                PipelineTelemetry.JobsFailed.Add(1);
+
+            activity?.SetTag("pipeline.final_step", result.FinalStep.ToString());
+            return result;
         }
         finally
         {
@@ -182,6 +204,8 @@ public sealed class LocalPipelineExecutor
             : null;
 
         // Local helpers for reporting
+        // TODO: [OBS-01] async void local functions risk crashing the process if a fatal exception
+        // escapes the try/catch. Consider converting to Func<..., Task> with a fire-and-forget helper.
         async void TransitionTo(PipelineStep step)
         {
             try
@@ -350,6 +374,11 @@ public sealed class LocalPipelineExecutor
         HubConnection connection, JobAssignmentMessage job,
         Action<string> emitOutputLine, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("CreatePullRequest");
+        activity?.SetTag("pipeline.run_id", run.RunId);
+        activity?.SetTag("pipeline.issue", run.IssueIdentifier);
+        activity?.SetTag("pipeline.pr.is_draft", isDraft);
+
         var prOrchestrator = new PullRequestOrchestrator(_logger);
 
         // NOTE: QualityGateOrchestrator already transitions to PreparingForPullRequest

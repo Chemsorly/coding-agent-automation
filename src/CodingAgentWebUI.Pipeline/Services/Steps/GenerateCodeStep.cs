@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
@@ -10,6 +11,11 @@ internal sealed class GenerateCodeStep : IPipelineStep
 {
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("GenerateCode");
+        activity?.SetTag("pipeline.run_id", context.Run.RunId);
+        activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        activity?.SetTag("pipeline.is_rework", context.Run.LinkedPullRequest is not null);
+
         string? reworkPromptOverride = null;
         if (context.Run.LinkedPullRequest is not null)
         {

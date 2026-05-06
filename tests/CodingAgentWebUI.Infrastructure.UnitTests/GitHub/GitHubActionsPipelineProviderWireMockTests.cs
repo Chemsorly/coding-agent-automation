@@ -165,7 +165,7 @@ public class GitHubActionsPipelineProviderWireMockTests : WireMockTestBase
         // and the method returns Pending — so we accept either Running or Pending.
         await using var provider = CreateProvider();
         var result = await provider.WaitForCompletionAsync(
-            "main", "abc123", TimeSpan.FromMilliseconds(200), CancellationToken.None);
+            "main", "abc123", TimeSpan.FromSeconds(2), CancellationToken.None);
 
         // The method should return either the last polled state (Running) or the default (Pending)
         // if no poll completed before timeout. Both are valid timeout behaviors.

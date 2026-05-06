@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
@@ -11,6 +12,10 @@ internal sealed class ReviewCodeStep : IPipelineStep
 {
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("ReviewCode");
+        activity?.SetTag("pipeline.run_id", context.Run.RunId);
+        activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+
         IReadOnlyList<ReviewerConfiguration> resolvedReviewers;
         if (context.PreResolvedReviewerConfigs is not null)
         {

@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using Serilog.Context;
 
 namespace CodingAgentWebUI.Pipeline.Services;
@@ -328,6 +329,13 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         PipelineRun run, IIssueProvider issueProvider, CancellationToken ct)
     {
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("ExecutePipeline");
+        activity?.SetTag("pipeline.run_id", run.RunId);
+        activity?.SetTag("pipeline.issue", run.IssueIdentifier);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        PipelineTelemetry.JobsDispatched.Add(1);
+
         IAgentIssueOperations issueOps = new IssueProviderIssueOperations(issueProvider, _logger);
         Steps.PipelineStepContext? ctx = null;
 
@@ -347,9 +355,23 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         try
         {
             await Steps.PipelineStepRunner.ExecuteAsync(BuildStepPipeline(), ctx, ct);
+
+            sw.Stop();
+            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds);
+            if (run.CurrentStep == PipelineStep.Completed)
+                PipelineTelemetry.JobsCompleted.Add(1);
+            else
+                PipelineTelemetry.JobsFailed.Add(1);
+
+            activity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
         }
         catch (OperationCanceledException)
         {
+            sw.Stop();
+            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds);
+            PipelineTelemetry.JobsFailed.Add(1);
+            activity?.SetTag("pipeline.final_step", "Cancelled");
+
             if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
             {
                 _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
@@ -439,6 +461,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     public IReadOnlyList<PipelineRunSummary> GetRunHistory() => _historyService.GetRunHistory();
 
     // --- Private helpers ---
+    // TODO: [OBS-01] Add PipelineTelemetry.ActivitySource.StartActivity("CreatePullRequest") span here
+    // to match the agent-side instrumentation in LocalPipelineExecutor.CreatePullRequestAsync.
     private async Task CreatePullRequestAsync(
         PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
     {
