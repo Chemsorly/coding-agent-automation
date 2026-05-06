@@ -20,7 +20,7 @@ The pipeline runs inside a Docker container with Kiro CLI installed. The web UI 
 - **Multi-agent architecture** — Multiple agent containers run in parallel, each picking up jobs from a shared queue. Scale horizontally by adding more agent services to `docker-compose.yml`.
 - **Multi-stack support** — Label-based routing dispatches jobs to the right agent (dotnet, python, java) and applies stack-specific quality gates, review agents, and build commands. Coverage reporting supports Cobertura XML and JaCoCo XML formats with configurable file discovery.
 - **Brain repository** — A shared knowledge repo (`.brain/`) that agents read before starting and write to after completing a run. Accumulates lessons learned, architecture decisions, and project context across runs.
-- **Multi-agent code review** — After implementation, specialized review agents (Correctness, SecurityReviewer) analyze the changes sequentially. Critical findings are auto-fixed; warnings become TODO comments. Language-specific reviewers (e.g., DotNetSpecialist) can be added via label-matched Reviewer Configurations.
+- **Multi-agent code review** — After implementation, specialized review agents (Correctness, DotNetSpecialist, SecurityReviewer, AcceptanceCriteria) analyze the changes sequentially. Critical findings are auto-fixed; warnings become TODO comments. Language-specific reviewers can be added via label-matched Reviewer Configurations.
 - **Confidence gate** — Before writing code, the agent assesses whether the issue is clear enough. Vague issues get labeled `agent:needs-refinement` with specific feedback posted to GitHub.
 - **Pipeline job templates** — Define provider combinations for each repository. The UI shows a live preview of which quality gates, reviewers, and profiles will be assigned based on the repo's labels.
 - **Closed-loop automation** — The pipeline polls for `agent:next` issues and processes them autonomously with configurable rate limits and backoff.
@@ -86,6 +86,7 @@ src/
   CodingAgentWebUI/              — Blazor Server app: UI components, DI wiring, entry point
   CodingAgentWebUI.Pipeline/     — Core library: interfaces, models, orchestration services
   CodingAgentWebUI.Infrastructure/ — Provider implementations (GitHub, Git, JSON persistence)
+  CodingAgentWebUI.Orchestration/  — Agent registry, job dispatch, run tracking, token vending
   CodingAgentWebUI.Agent/        — Agent container: SignalR client, job execution, Kiro CLI invocation
   KiroCliLib/                    — Shared library: Kiro CLI process management, output parsing
 tests/
@@ -94,6 +95,7 @@ tests/
   CodingAgentWebUI.Infrastructure.UnitTests/ — Infrastructure unit tests
   CodingAgentWebUI.Agent.UnitTests/        — Agent unit tests
   CodingAgentWebUI.IntegrationTests/       — Integration tests (bUnit, full-stack)
+  CodingAgentWebUI.E2ETests/               — End-to-end tests
   KiroCliLib.UnitTests/                    — KiroCliLib unit tests
 config/
   pipeline/            — Provider configs, quality gates, profiles, reviewers, run history
@@ -103,6 +105,7 @@ dockerfiles/
   agent-dotnet10.Dockerfile  — .NET 10 agent container
   agent-python312.Dockerfile — Python 3.12 agent container
   agent-java21.Dockerfile    — Java 21 agent container
+  e2e-tests.Dockerfile       — E2E test runner
 ```
 
 ## User Interaction via GitHub Issues
@@ -220,11 +223,11 @@ stateDiagram-v2
     QualityGateDecision --> GeneratingCode : failed, retries remaining
     QualityGateDecision --> CreatingPullRequest : failed, retries exhausted (draft PR)
 
-    PreparingForPullRequest --> RunningFinalQualityGates
-    state RunningFinalQualityGates <<choice>>
-    RunningFinalQualityGates --> CreatingPullRequest : all passed
-    RunningFinalQualityGates --> GeneratingCode : failed, retries remaining
-    RunningFinalQualityGates --> CreatingPullRequest : failed, retries exhausted (draft PR)
+    state FinalQualityCheck <<choice>>
+    PreparingForPullRequest --> FinalQualityCheck : quality gates re-run after cleanup
+    FinalQualityCheck --> CreatingPullRequest : all passed
+    FinalQualityCheck --> GeneratingCode : failed, retries remaining
+    FinalQualityCheck --> CreatingPullRequest : failed, retries exhausted (draft PR)
 
     CreatingPullRequest --> ReflectingOnRun
     ReflectingOnRun --> SyncingBrainRepoPostRun
@@ -270,7 +273,7 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 | **Created** | Run initialized, providers resolved and validated |
 | **CloningRepository** | Repository cloned to a fresh workspace directory. Label swapped to `agent:in-progress` |
 | **SyncingBrainRepoPreRun** | Brain repository synced into workspace (if configured). Non-fatal on failure |
-| **CreatingBranch** | Feature branch created from default branch (format: `agent/{issue}-{slug}-{runid}`) |
+| **CreatingBranch** | Feature branch created from default branch (format: `feature/auto-{issueNumber}-{slug}-{runId}`) |
 | **AnalyzingCode** | Agent analyzes the issue and codebase, writes `analysis.md` and `analysis-assessment.json` |
 | **PostingAnalysis** | Analysis comment posted to the GitHub issue |
 | **GeneratingCode** | Agent implements the changes. Also used during quality gate retries |
@@ -355,7 +358,13 @@ stateDiagram-v2
     ip --> err : error / timeout
     ip --> cancel : user cancels
     done --> next : user requests rework
+    err --> next : user re-queues
+    nr --> next : user refines issue
+    wd --> next : user disagrees
+    cancel --> next : user re-queues
 ```
+
+Re-queueing from `agent:error` or `agent:needs-refinement` requires manual dispatch via the web UI — closed-loop mode skips issues that still carry these labels. Re-queueing from `agent:wont-do` or `agent:cancelled` works in both manual and closed-loop modes.
 
 ### Error Handling
 
@@ -374,6 +383,7 @@ The application follows Clean Architecture principles with a multi-container dep
 
 - **Pipeline (Core)** — `CodingAgentWebUI.Pipeline` — Interfaces, models, and orchestration services. Defines the pipeline steps, provider contracts, and data models. Zero infrastructure dependencies.
 - **Infrastructure** — `CodingAgentWebUI.Infrastructure` — Provider implementations (GitHub API via Octokit, JSON config store, Git operations via LibGit2Sharp). Implements the interfaces defined in Pipeline.
+- **Orchestration** — `CodingAgentWebUI.Orchestration` — Agent registry, job dispatch, run tracking, health monitoring, and token vending. Bridges the WebUI and Pipeline layers.
 - **WebUI (Presentation)** — `CodingAgentWebUI` — Blazor Server components, DI wiring, SignalR hub for agent communication, and the application entry point.
 - **Agent** — `CodingAgentWebUI.Agent` — Standalone container that connects to the orchestrator via SignalR, receives job assignments, and executes Kiro CLI to implement issues.
 - **KiroCliLib** — Shared library for Kiro CLI process management, output parsing, and configuration. Used by the agent to invoke Kiro CLI.
@@ -433,8 +443,8 @@ QGCs define per-stack quality gates. Configured in Settings → Quality Gate Con
 
 | QGC | Match Labels | Compilation | Tests | Coverage |
 |-----|-------------|-------------|-------|----------|
-| .NET Quality Gate | `dotnet` | `dotnet build --no-restore` | `dotnet test --no-restore --no-build` | Cobertura (auto-collected via coverlet) |
-| Python Quality Gate | `python` | `python -m pytest --collect-only` | `python -m pytest --cov=. --cov-report=xml` | Cobertura (`coverage.xml`) |
+| .NET Quality Gate | `dotnet` | `dotnet build --no-restore` | `dotnet test --no-restore --no-build --filter Category!=E2E` | Cobertura (auto-collected via coverlet) |
+| Python Quality Gate | `python` | `python -m pytest --collect-only` | `python -m pytest --cov=. --cov-report=xml:coverage.xml` | Cobertura (`coverage.xml`) |
 | Java Quality Gate | `java` | `mvn compile -q` | `mvn test -q` | JaCoCo (`target/site/jacoco/jacoco.xml`) |
 
 Resolution: all QGCs whose labels intersect with the job's labels are applied sequentially. A polyglot repo with labels `["dotnet", "python"]` gets both the .NET and Python quality gates.
@@ -447,9 +457,9 @@ Reviewer Configurations define per-stack code review agents. Configured in Setti
 
 | Reviewer Config | Match Labels | Agents |
 |----------------|-------------|--------|
-| Default Reviewers (dotnet) | `dotnet` | Correctness, DotNetSpecialist, SecurityReviewer |
+| Default Reviewers (dotnet) | `dotnet` | Correctness, DotNetSpecialist, SecurityReviewer, AcceptanceCriteria |
 
-Resolution: all Reviewer Configurations whose labels intersect with the job's labels are applied sequentially (ANY match). Each configuration contains one or more review agents that run in order. A configuration with empty MatchLabels acts as a global fallback (applies to all jobs). When no reviewer config matches, the default agents (Correctness, SecurityReviewer) are used as a fallback.
+Resolution: all Reviewer Configurations whose labels intersect with the job's labels are applied sequentially (ANY match). Each configuration contains one or more review agents that run in order. A configuration with empty MatchLabels acts as a global fallback (applies to all jobs). When no reviewer config matches, the default agents (Correctness, SecurityReviewer, AcceptanceCriteria) are used as a fallback.
 
 ### Setting Up a New Stack
 
@@ -467,10 +477,10 @@ Pipeline behavior is configured in `config/pipeline/pipeline-config.json`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `maxRetries` | 3 | Max retry attempts when quality gates fail |
-| `agentTimeout` | 02:00:00 | Maximum time for a single agent invocation |
+| `agentTimeout` | 00:30:00 | Maximum time for a single agent invocation |
 | `codeReview.enabled` | true | Enable multi-agent code review |
 | `codeReview.maxIterations` | 2 | Max review → fix cycles |
-| `externalCiEnabled` | true | Wait for GitHub Actions CI to pass |
+| `externalCiEnabled` | false | Wait for GitHub Actions CI to pass |
 | `externalCiTimeout` | 00:15:00 | Max wait time for external CI |
 | `blacklistedPaths` | .kiro, .github, .brain | Paths excluded from agent commits |
 | `failedWorkspaceRetentionDays` | 7 | Days to keep failed workspaces |
