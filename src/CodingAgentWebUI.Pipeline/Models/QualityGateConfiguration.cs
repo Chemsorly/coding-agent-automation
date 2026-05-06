@@ -34,13 +34,7 @@ public sealed record QualityGateConfiguration
     [Key(7)]
     public double? CoverageThreshold { get; init; }
 
-    /// <summary>
-    /// Security scanning has been removed from the quality gate validator.
-    /// Dependency vulnerability scanning should be handled by external CI/CD pipelines.
-    /// This field is retained for backward compatibility with existing serialized configurations.
-    /// </summary>
-    [Key(8)]
-    public bool SecurityScanEnabled { get; init; } = false;
+    // Key(8) is retired (was SecurityScanEnabled). Do not reuse to avoid deserialization issues with existing data.
 
     [Key(9)]
     public bool Enabled { get; init; } = true;
