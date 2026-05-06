@@ -239,4 +239,122 @@ public class BrainUpdateServicePushRetryTests : IDisposable
             p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()),
             Times.Once);
     }
+
+    [Fact]
+    public async Task CommitAndPushAsync_ConcurrentModificationToSameFile_BothSucceedAfterRetry()
+    {
+        // Arrange: Simulate two agents writing to the same file concurrently.
+        // Agent 1 pushes first; Agent 2's push fails non-fast-forward, rebases, and succeeds.
+        var sharedFile = "sessions/shared.md";
+        var sharedDir = Path.Combine(_repoPath, "sessions");
+        Directory.CreateDirectory(sharedDir);
+        File.WriteAllText(Path.Combine(_repoPath, sharedFile), "base content\n");
+
+        // Commit the base file to the bare repo so both agents start from the same state
+        using (var repo = new Repository(_repoPath))
+        {
+            Commands.Stage(repo, sharedFile);
+            var sig = new Signature("Test", "test@test.com", DateTimeOffset.UtcNow);
+            repo.Commit("add shared file", sig, sig);
+            var remote = repo.Network.Remotes["origin"];
+            repo.Network.Push(remote, "refs/heads/main");
+        }
+
+        // Clone a second working copy to simulate agent 2
+        var agent2Path = Path.Combine(Path.GetTempPath(), $"brain-test-agent2-{Guid.NewGuid():N}");
+        try
+        {
+            Repository.Clone(_bareRepoPath, agent2Path, new CloneOptions { BranchName = "main" });
+
+            // Agent 1: modify and push directly to bare repo
+            File.WriteAllText(Path.Combine(agent2Path, sharedFile), "base content\nagent1 entry\n");
+            using (var repo2 = new Repository(agent2Path))
+            {
+                Commands.Stage(repo2, sharedFile);
+                var sig = new Signature("Agent1", "agent1@test.com", DateTimeOffset.UtcNow);
+                repo2.Commit("agent1 brain update", sig, sig);
+                var remote = repo2.Network.Remotes["origin"];
+                repo2.Network.Push(remote, "refs/heads/main");
+            }
+
+            // Agent 2 (our _repoPath): modify the same file with different content
+            File.WriteAllText(Path.Combine(_repoPath, sharedFile), "base content\nagent2 entry\n");
+
+            // Set up provider to do real push via libgit2sharp
+            var realProvider = new Mock<IRepositoryProvider>();
+            realProvider.Setup(p => p.BaseBranch).Returns("main");
+            realProvider.Setup(p => p.PullAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Returns<string, CancellationToken>((path, _) =>
+                {
+                    using var repo = new Repository(path);
+                    var remote = repo.Network.Remotes["origin"];
+                    Commands.Fetch(repo, "origin", remote.FetchRefSpecs.Select(s => s.Specification), null, null);
+                    return Task.CompletedTask;
+                });
+
+            var pushAttempt = 0;
+            realProvider.Setup(p => p.PushBranchAsync(It.IsAny<string>(), "main", It.IsAny<CancellationToken>()))
+                .Returns<string, string, CancellationToken>((path, _, _) =>
+                {
+                    pushAttempt++;
+                    using var repo = new Repository(path);
+                    var remote = repo.Network.Remotes["origin"];
+                    try
+                    {
+                        repo.Network.Push(remote, "refs/heads/main");
+                    }
+                    catch (NonFastForwardException)
+                    {
+                        throw new InvalidOperationException(
+                            "Push failed for ref 'refs/heads/main': non-fast-forward");
+                    }
+                    return Task.CompletedTask;
+                });
+
+            // Act: Agent 2 commits and pushes — should fail first, rebase, then succeed
+            var result = await _sut.CommitAndPushAsync(
+                _repoPath, "run-agent2", "issue-2", realProvider.Object, CancellationToken.None);
+
+            // Assert
+            result.Success.Should().BeTrue();
+            pushAttempt.Should().BeGreaterThan(1, "push should have required at least one retry");
+
+            // Verify the final file in bare repo contains both agents' entries
+            using var finalRepo = new Repository(agent2Path);
+            Commands.Fetch(finalRepo, "origin",
+                finalRepo.Network.Remotes["origin"].FetchRefSpecs.Select(s => s.Specification), null, null);
+            var remoteTip = finalRepo.Branches["origin/main"].Tip;
+            var blob = remoteTip.Tree[sharedFile]?.Target as Blob;
+            var finalContent = blob?.GetContentText() ?? "";
+            finalContent.Should().Contain("agent1 entry");
+            finalContent.Should().Contain("agent2 entry");
+        }
+        finally
+        {
+            DeleteDirectory(agent2Path);
+        }
+    }
+
+    [Fact]
+    public async Task CommitAndPushAsync_NoPullCalledBeforeCommit_DirtyWorkingTreeSucceeds()
+    {
+        // Arrange: Verify that having a dirty working tree (local modifications) does not
+        // cause a CheckoutConflictException — the old bug where PullAsync was called first.
+        CreateBrainChange("log.md", "dirty local content\n");
+
+        // Provider that would throw CheckoutConflictException on PullAsync if called
+        var strictProvider = new Mock<IRepositoryProvider>(MockBehavior.Strict);
+        strictProvider.Setup(p => p.BaseBranch).Returns("main");
+        strictProvider.Setup(p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        // PullAsync is NOT set up — if called before commit, it would throw MockException
+
+        // Act
+        var result = await _sut.CommitAndPushAsync(
+            _repoPath, "run-1", "issue-1", strictProvider.Object, CancellationToken.None);
+
+        // Assert — succeeds without calling PullAsync before commit
+        result.Success.Should().BeTrue();
+        result.FilesCommitted.Should().BeGreaterThan(0);
+    }
 }

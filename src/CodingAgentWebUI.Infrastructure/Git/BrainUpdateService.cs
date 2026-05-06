@@ -186,13 +186,14 @@ public partial class BrainUpdateService : IBrainUpdateService
     /// <summary>
     /// Commits brain changes using the provided repository provider.
     /// Owns the full conflict resolution cycle:
-    /// (1) Pull via PullAsync (fetch + fast-forward attempt).
-    /// (2) If conflicts detected via repo.Index.Conflicts, extract both sides.
-    /// (3) Concatenate via ResolveConflictAcceptBoth.
-    /// (4) Write resolved content to disk.
-    /// (5) Stage resolved files.
-    /// (6) Commit with message referencing runId and issueIdentifier.
-    /// (7) Push with retry-rebase on non-fast-forward failure.
+    /// (1) Stage all local changes and commit (clean local state first).
+    /// (2) Push with retry-rebase on non-fast-forward failure.
+    ///     The retry-rebase loop handles remote synchronization:
+    ///     fetch → reset to remote → re-apply our changes → resolve conflicts → recommit → push.
+    ///
+    /// NOTE: No initial pull is performed. Pulling before commit corrupts the working tree
+    /// when local files have been modified (CheckoutConflictException). The retry-rebase loop
+    /// in PushWithRetryRebaseAsync handles all remote synchronization safely.
     ///
     /// NOTE: This retry-rebase approach is a local, self-healing solution that works across
     /// separate Docker containers without orchestrator involvement. If the system later requires
@@ -211,21 +212,8 @@ public partial class BrainUpdateService : IBrainUpdateService
 
         try
         {
-            // Step 1: Pull latest changes
-            try
-            {
-                await brainProvider.PullAsync(brainPath, ct);
-            }
-            catch (NonFastForwardException)
-            {
-                _logger.Warning("Brain repo pull was not fast-forward, attempting conflict resolution");
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Brain repo pull failed, attempting to commit anyway");
-            }
-
-            // Step 2-6: Resolve conflicts, stage, and commit
+            // Commit local changes first — no initial pull.
+            // PushWithRetryRebaseAsync handles remote synchronization via fetch-rebase-push.
             var commitMessage = BuildCommitMessage(runId, issueIdentifier);
             try
             {
@@ -242,7 +230,7 @@ public partial class BrainUpdateService : IBrainUpdateService
                 };
             }
 
-            // Step 7: Push with retry-rebase loop on non-fast-forward failure
+            // Push with retry-rebase loop on non-fast-forward failure
             await PushWithRetryRebaseAsync(brainPath, brainProvider, commitMessage, maxPushRetries, ct);
 
             // Count committed files
