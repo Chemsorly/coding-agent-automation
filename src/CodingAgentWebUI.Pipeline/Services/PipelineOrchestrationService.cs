@@ -216,7 +216,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 RepositoryName = _activeRepoProvider.RepositoryFullName,
                 ModelName = configuredModel,
                 BrainProviderConfigId = _activeBrainProvider != null ? brainProviderId : null,
-                InitiatedBy = initiatedBy
+                InitiatedBy = initiatedBy,
+                AgentProviderConfigId = agentProviderId
             };
             _lifecycle.ActiveRun = run;
             _logger.Information("Pipeline {RunId} using model {Model}", run.RunId, configuredModel);
@@ -311,7 +312,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             BrainProviderConfigId = brainProviderId,
             PipelineProviderConfigId = pipelineProviderId,
             InitiatedBy = initiatedBy,
-            AgentId = agentId
+            AgentId = agentId,
+            AgentProviderConfigId = agentProviderId
         };
 
         // Delegate registration to lifecycle service
