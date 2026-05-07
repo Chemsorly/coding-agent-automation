@@ -1,6 +1,7 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Infrastructure.GitHub
+@implements IAsyncDisposable
 
 <section class="settings-section">
     <h2>Issue Providers</h2>
@@ -85,6 +86,7 @@
     [Parameter] public EventCallback<string> OnDelete { get; set; }
     [Parameter] public EventCallback<ProviderConfig> OnSaved { get; set; }
 
+    private CancellationTokenSource _cts = new();
     private bool _showForm;
     private ProviderConfig? _editingProvider;
     private IssueProviderForm _form = new();
@@ -101,21 +103,21 @@
 
     private async Task InitializeRepository(ProviderConfig config)
     {
-        // TODO: [GH-06] Uses CancellationToken.None — if user navigates away mid-operation, StateHasChanged() in finally throws ObjectDisposedException. Implement IDisposable with component-scoped CTS.
         _initializingProviderId = config.Id;
         _initializeStatusProviderId = config.Id;
         _initializeStatus = null;
-        StateHasChanged();
+        if (!_cts.IsCancellationRequested) StateHasChanged();
 
         try
         {
             await using var provider = ProviderFactory.CreateIssueProvider(config);
-            var labelsOk = await provider.InitializeAsync(CancellationToken.None);
+            var labelsOk = await provider.InitializeAsync(_cts.Token);
             _initializeStatus = labelsOk
                 ? "✅ Repository initialized successfully."
                 : "⚠️ Credentials validated but some labels could not be created.";
             _initializeIsError = !labelsOk;
         }
+        catch (OperationCanceledException) { return; }
         catch (Exception ex)
         {
             _initializeStatus = $"❌ Initialization failed: {ex.Message}";
@@ -124,7 +126,7 @@
         finally
         {
             _initializingProviderId = null;
-            StateHasChanged();
+            if (!_cts.IsCancellationRequested) StateHasChanged();
         }
     }
 
@@ -184,7 +186,7 @@
         _saving = true;
         _validationMessage = "Validating GitHub App credentials...";
         _validationSuccess = true;
-        StateHasChanged();
+        if (!_cts.IsCancellationRequested) StateHasChanged();
 
         if (!long.TryParse(_form.InstallationId, out var installationId))
         {
@@ -194,43 +196,44 @@
             return;
         }
 
-        var (success, message) = await GitHubValidator.ValidateAppCredentialsAsync(
-            _form.ApiUrl, _form.ClientId, installationId, _form.PrivateKeyBase64, CancellationToken.None,
-            _form.Owner, _form.Repo);
-
-        if (!success)
-        {
-            _validationMessage = message;
-            _validationSuccess = false;
-            _saving = false;
-            return;
-        }
-
-        var config = new ProviderConfig
-        {
-            Id = _editingProvider?.Id ?? Guid.NewGuid().ToString(),
-            Kind = ProviderKind.Issue,
-            ProviderType = _form.ProviderType,
-            DisplayName = _form.DisplayName,
-            Settings = new Dictionary<string, string>
-            {
-                ["apiUrl"] = _form.ApiUrl,
-                ["clientId"] = _form.ClientId,
-                ["installationId"] = _form.InstallationId,
-                ["privateKeyBase64"] = _form.PrivateKeyBase64,
-                ["owner"] = _form.Owner,
-                ["repo"] = _form.Repo
-            }
-        };
-
         try
         {
-            await ConfigStore.SaveProviderConfigAsync(config, CancellationToken.None);
+            var (success, message) = await GitHubValidator.ValidateAppCredentialsAsync(
+                _form.ApiUrl, _form.ClientId, installationId, _form.PrivateKeyBase64, _cts.Token,
+                _form.Owner, _form.Repo);
+
+            if (!success)
+            {
+                _validationMessage = message;
+                _validationSuccess = false;
+                _saving = false;
+                return;
+            }
+
+            var config = new ProviderConfig
+            {
+                Id = _editingProvider?.Id ?? Guid.NewGuid().ToString(),
+                Kind = ProviderKind.Issue,
+                ProviderType = _form.ProviderType,
+                DisplayName = _form.DisplayName,
+                Settings = new Dictionary<string, string>
+                {
+                    ["apiUrl"] = _form.ApiUrl,
+                    ["clientId"] = _form.ClientId,
+                    ["installationId"] = _form.InstallationId,
+                    ["privateKeyBase64"] = _form.PrivateKeyBase64,
+                    ["owner"] = _form.Owner,
+                    ["repo"] = _form.Repo
+                }
+            };
+
+            await ConfigStore.SaveProviderConfigAsync(config, _cts.Token);
             _showForm = false;
             _availableRepos.Clear();
             _validationMessage = null;
             await OnSaved.InvokeAsync(config);
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             _validationMessage = $"Failed to save: {ex.Message}";
@@ -268,24 +271,36 @@
 
         _loadingRepos = true;
         _validationMessage = null;
-        StateHasChanged();
+        if (!_cts.IsCancellationRequested) StateHasChanged();
 
-        var (credOk, credMsg) = await GitHubValidator.ValidateAppCredentialsAsync(
-            _form.ApiUrl, _form.ClientId, installationId, _form.PrivateKeyBase64, CancellationToken.None);
-        if (!credOk)
+        try
         {
-            _validationMessage = credMsg;
-            _validationSuccess = false;
-            _loadingRepos = false;
-            return;
-        }
+            var (credOk, credMsg) = await GitHubValidator.ValidateAppCredentialsAsync(
+                _form.ApiUrl, _form.ClientId, installationId, _form.PrivateKeyBase64, _cts.Token);
+            if (!credOk)
+            {
+                _validationMessage = credMsg;
+                _validationSuccess = false;
+                _loadingRepos = false;
+                return;
+            }
 
-        var repos = await GitHubValidator.ListRepositoriesWithAppAsync(
-            _form.ApiUrl, _form.ClientId, installationId, _form.PrivateKeyBase64, CancellationToken.None);
-        _availableRepos = repos.ToList();
-        _validationMessage = $"{credMsg} — {repos.Count} repositories found";
-        _validationSuccess = true;
-        _loadingRepos = false;
+            var repos = await GitHubValidator.ListRepositoriesWithAppAsync(
+                _form.ApiUrl, _form.ClientId, installationId, _form.PrivateKeyBase64, _cts.Token);
+            _availableRepos = repos.ToList();
+            _validationMessage = $"{credMsg} — {repos.Count} repositories found";
+            _validationSuccess = true;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _validationMessage = $"Failed to fetch repositories: {ex.Message}";
+            _validationSuccess = false;
+        }
+        finally
+        {
+            _loadingRepos = false;
+        }
     }
 
     private class IssueProviderForm
@@ -298,5 +313,11 @@
         public string PrivateKeyBase64 { get; set; } = "";
         public string Owner { get; set; } = "";
         public string Repo { get; set; } = "";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
     }
 }
