@@ -232,6 +232,19 @@
                                 <div><a href="@Run.PullRequestUrl" target="_blank" rel="noopener noreferrer" @onclick:stopPropagation="true">🔗 View on GitHub</a></div>
                             </div>
                         }
+                        else if (step == PipelineStep.ReflectingOnRun && Run.BrainProviderConfigId != null)
+                        {
+                            <div class="step-detail">
+                                @if (state == StepState.Active)
+                                {
+                                    <span>Reflecting on run...</span>
+                                }
+                                else
+                                {
+                                    <span>✅ Reflection complete</span>
+                                }
+                            </div>
+                        }
                         else if (step == PipelineStep.SyncingBrainRepoPostRun && Run.BrainProviderConfigId != null)
                         {
                             <div class="step-detail">
