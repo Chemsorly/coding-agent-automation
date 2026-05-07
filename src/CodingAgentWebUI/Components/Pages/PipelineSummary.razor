@@ -136,26 +136,13 @@
         return $"{(cov.Passed ? "✅" : "❌")} {cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%";
     }
 
-    /// <summary>
-    /// Infers the last pipeline step that was reached before a terminal state.
-    /// </summary>
-    private PipelineStep GetLastReachedStep()
-    {
-        if (!string.IsNullOrEmpty(Run.PullRequestUrl)) return PipelineStep.CreatingPullRequest;
-        if (Run.HighWaterMark >= PipelineStep.PreparingForPullRequest && Run.LatestQualityReport is not null) return PipelineStep.PreparingForPullRequest;
-        if (Run.LatestQualityReport is not null) return PipelineStep.RunningQualityGates;
-        if (Run.CodeReviewIterationsCompleted > 0) return PipelineStep.ReviewingCode;
-        if (Run.FilesChangedCount > 0 || Run.ChatHistory.Count > 0) return PipelineStep.GeneratingCode;
-        if (Run.AnalysisContent is not null) return PipelineStep.PostingAnalysis;
-        if (!string.IsNullOrEmpty(Run.BranchName)) return PipelineStep.CreatingBranch;
-        if (!string.IsNullOrEmpty(Run.WorkspacePath)) return PipelineStep.CloningRepository;
-        return PipelineStep.Created;
-    }
+    private PipelineStep GetLastReachedStep() => Run.GetLastReachedStep();
 
     private static string FormatStepName(PipelineStep step) => step switch
     {
         PipelineStep.Created => "Pipeline Created",
         PipelineStep.CloningRepository => "Cloning Repository",
+        PipelineStep.SyncingBrainRepoPreRun => "Loading Brain Context",
         PipelineStep.CreatingBranch => "Creating Branch",
         PipelineStep.AnalyzingCode => "Analyzing Code",
         PipelineStep.PostingAnalysis => "Posting Analysis",
