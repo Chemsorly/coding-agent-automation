@@ -461,11 +461,14 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     public IReadOnlyList<PipelineRunSummary> GetRunHistory() => _historyService.GetRunHistory();
 
     // --- Private helpers ---
-    // TODO: [OBS-01] Add PipelineTelemetry.ActivitySource.StartActivity("CreatePullRequest") span here
-    // to match the agent-side instrumentation in LocalPipelineExecutor.CreatePullRequestAsync.
     private async Task CreatePullRequestAsync(
         PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("CreatePullRequest");
+        activity?.SetTag("pipeline.run_id", run.RunId);
+        activity?.SetTag("pipeline.issue", run.IssueIdentifier);
+        activity?.SetTag("pipeline.pr.is_draft", isDraft);
+
         _lifecycle.TransitionTo(run, PipelineStep.CreatingPullRequest);
         try
         {
