@@ -181,21 +181,25 @@ public class PromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_ContainsReviewInstructions()
     {
-        var result = PromptBuilder.BuildReviewPrompt("Review this code", CreateIssue(), CreateParsedIssue());
+        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review this code", CreateIssue(), CreateParsedIssue(), findingsPath);
         result.Should().StartWith("Review this code");
     }
 
     [Fact]
-    public void BuildReviewPrompt_ContainsReviewFindingsFilePath()
+    public void BuildReviewPrompt_ContainsAgentSpecificFindingsFilePath()
     {
-        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue());
-        result.Should().Contain(PromptBuilder.ReviewFindingsFilePath);
+        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("Correctness");
+        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain(findingsPath);
+        result.Should().Contain(".kiro/review-findings-correctness.md");
     }
 
     [Fact]
     public void BuildReviewPrompt_ContainsGitRestriction()
     {
-        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue());
+        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath);
         result.Should().Contain("Do NOT run git write commands");
     }
 
@@ -203,14 +207,55 @@ public class PromptBuilderTests
     public void BuildReviewPrompt_ContainsIssueContext()
     {
         var issue = CreateIssue(title: "Add caching");
-        var result = PromptBuilder.BuildReviewPrompt("Review", issue, CreateParsedIssue());
+        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review", issue, CreateParsedIssue(), findingsPath);
         result.Should().Contain("Add caching");
     }
 
     [Fact]
     public void BuildReviewPrompt_NullInstructions_Throws()
     {
-        var act = () => PromptBuilder.BuildReviewPrompt(null!, CreateIssue(), CreateParsedIssue());
+        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var act = () => PromptBuilder.BuildReviewPrompt(null!, CreateIssue(), CreateParsedIssue(), findingsPath);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_NullFindingsFilePath_Throws()
+    {
+        var act = () => PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    #endregion
+
+    #region GetReviewFindingsFilePath
+
+    [Fact]
+    public void GetReviewFindingsFilePath_ReturnsExpectedFormat()
+    {
+        var result = PromptBuilder.GetReviewFindingsFilePath("Correctness");
+        result.Should().Be(".kiro/review-findings-correctness.md");
+    }
+
+    [Fact]
+    public void GetReviewFindingsFilePath_SanitizesSpaces()
+    {
+        var result = PromptBuilder.GetReviewFindingsFilePath("DotNet Specialist");
+        result.Should().Be(".kiro/review-findings-dotnet-specialist.md");
+    }
+
+    [Fact]
+    public void GetReviewFindingsFilePath_SanitizesPathSeparators()
+    {
+        var result = PromptBuilder.GetReviewFindingsFilePath("Agent/Sub\\Name");
+        result.Should().Be(".kiro/review-findings-agent-sub-name.md");
+    }
+
+    [Fact]
+    public void GetReviewFindingsFilePath_NullName_Throws()
+    {
+        var act = () => PromptBuilder.GetReviewFindingsFilePath(null!);
         act.Should().Throw<ArgumentNullException>();
     }
 

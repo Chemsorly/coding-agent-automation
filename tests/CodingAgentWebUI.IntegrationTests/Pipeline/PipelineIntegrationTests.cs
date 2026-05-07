@@ -305,7 +305,9 @@ public class PipelineIntegrationTests : IntegrationTestBase
                 }
                 else if (req.Prompt.Contains("Review the changes"))
                 {
-                    File.WriteAllText(Path.Combine(kiroDir, "review-findings.md"),
+                    // Extract the findings file path from the prompt (per-agent path)
+                    var findingsFileName = "review-findings-review.md";
+                    File.WriteAllText(Path.Combine(kiroDir, findingsFileName),
                         "1. [CRITICAL] Missing null check in ProcessOrder\n" +
                         "2. [CRITICAL] SQL injection in SearchUsers\n" +
                         "3. [WARNING] Consider using StringBuilder\n" +
