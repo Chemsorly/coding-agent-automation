@@ -196,6 +196,56 @@ public class PipelineSidebarComponentTests : BunitContext
         Assert.Contains("Preparing for Pull Request", cut.Find("#step-PreparingForPullRequest .step-card-name").TextContent);
     }
 
+    // --- AnalysisRecommendation badge rendering ---
+
+    [Fact]
+    public void AnalyzingCode_NotReady_ShowsNeedsRefinementBadge()
+    {
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        run.AnalysisRecommendation = "not_ready";
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        Assert.Contains("⚠️ Needs refinement", cut.Find("#step-AnalyzingCode").TextContent);
+    }
+
+    [Fact]
+    public void AnalyzingCode_WontDo_ShowsWontDoBadge()
+    {
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        run.AnalysisRecommendation = "wont_do";
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        Assert.Contains("🚫 Won't do", cut.Find("#step-AnalyzingCode").TextContent);
+    }
+
+    [Fact]
+    public void AnalyzingCode_Ready_ShowsNoBadge()
+    {
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        run.AnalysisRecommendation = "ready";
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        var text = cut.Find("#step-AnalyzingCode").TextContent;
+        Assert.DoesNotContain("⚠️", text);
+        Assert.DoesNotContain("🚫", text);
+    }
+
+    [Fact]
+    public void AnalyzingCode_NullRecommendation_ShowsNoBadge()
+    {
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        run.AnalysisRecommendation = null;
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        var text = cut.Find("#step-AnalyzingCode").TextContent;
+        Assert.DoesNotContain("⚠️", text);
+        Assert.DoesNotContain("🚫", text);
+    }
+
     // --- Brain sync step rendering ---
 
     private static PipelineRun CreateBrainRun(
