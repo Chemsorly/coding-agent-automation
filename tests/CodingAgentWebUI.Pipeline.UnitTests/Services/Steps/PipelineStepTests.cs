@@ -7,10 +7,10 @@ using Moq;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services.Steps;
 
-// TODO: [WARNING] Missing dedicated unit tests for AnalyzeCodeStep, ReviewCodeStep, and RunQualityGatesStep.
-// These steps delegate to orchestrator methods that are not virtual (cannot be mocked with Moq).
-// They are tested indirectly through PipelineOrchestrationServiceTests but lack isolated step-level tests.
-// Partial coverage added below for null guards, disabled-review short-circuit, and terminal state detection.
+// Decision (Issue #297): Approach 1 selected — IAgentPhaseExecutor and IQualityGateExecutor interfaces
+// already exist and are fully mockable. Isolated tests for AnalyzeCodeStep, ReviewCodeStep, and
+// RunQualityGatesStep are in dedicated test classes below (AnalyzeCodeStepIsolatedTests,
+// ReviewCodeStepIsolatedTests, RunQualityGatesStepIsolatedTests).
 
 public class PipelineStepTests
 {
