@@ -14,9 +14,8 @@
                     <span class="provider-detail">@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "")</span>
                 </div>
                 <div class="provider-actions">
-                    @* TODO: [GH-06] Button only disables for the current provider — concurrent clicks on different providers race on shared state. Disable all buttons while any initialization is in progress. *@
                     <button class="btn-edit" @onclick="() => InitializeRepository(p)"
-                            disabled="@(_initializingProviderId == p.Id)">
+                            disabled="@(_initializingProviderId != null)">
                         @(_initializingProviderId == p.Id ? "Initializing..." : "Initialize Provider")
                     </button>
                     <button class="btn-edit" @onclick="() => EditProvider(p)">Edit</button>

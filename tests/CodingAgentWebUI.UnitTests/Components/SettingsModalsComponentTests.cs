@@ -332,6 +332,92 @@ public class SettingsModalsComponentTests : BunitContext
         Assert.DoesNotContain("Repository Setup", component.Markup);
     }
 
+    [Fact]
+    public async Task SettingsModals_ConfigureLabels_Failure_KeepsModalOpen()
+    {
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.EnsureAgentLabelsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        mockIssueProvider
+            .Setup(p => p.DisposeAsync())
+            .Returns(ValueTask.CompletedTask);
+
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var component = RenderSettingsModals();
+
+        var config = new ProviderConfig
+        {
+            Id = "ip-1",
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "My Issues",
+            Settings = new Dictionary<string, string> { ["owner"] = "acme", ["repo"] = "webapp" }
+        };
+
+        await component.InvokeAsync(() => component.Instance.ShowConfigureLabels(config));
+
+        // Click "Yes, configure"
+        var confirmButton = component.Find(".btn-save");
+        await confirmButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        // Modal should remain open with error message
+        Assert.Contains("Repository Setup", component.Markup);
+        Assert.Contains("Some labels could not be created", component.Markup);
+
+        // Button should be re-enabled for retry
+        var retryButton = component.Find(".btn-save");
+        Assert.False(retryButton.HasAttribute("disabled"));
+        Assert.Contains("Yes, configure", retryButton.TextContent);
+    }
+
+    [Fact]
+    public async Task SettingsModals_ConfigureLabels_Success_DismissesModal()
+    {
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.EnsureAgentLabelsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        mockIssueProvider
+            .Setup(p => p.DisposeAsync())
+            .Returns(ValueTask.CompletedTask);
+
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var labelsConfiguredFired = false;
+        var component = Render<SettingsModals>(parameters => parameters
+            .Add(p => p.ProviderFactory, _mockProviderFactory.Object)
+            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.IssueProviders, new List<ProviderConfig>())
+            .Add(p => p.RepoProviders, new List<ProviderConfig>())
+            .Add(p => p.PipelineProviders, new List<ProviderConfig>())
+            .Add(p => p.OnLabelsConfigured, EventCallback.Factory.Create(this, () => labelsConfiguredFired = true)));
+
+        var config = new ProviderConfig
+        {
+            Id = "ip-1",
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "My Issues",
+            Settings = new Dictionary<string, string> { ["owner"] = "acme", ["repo"] = "webapp" }
+        };
+
+        await component.InvokeAsync(() => component.Instance.ShowConfigureLabels(config));
+
+        // Click "Yes, configure"
+        var confirmButton = component.Find(".btn-save");
+        await confirmButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        // Modal should be dismissed and callback fired
+        Assert.DoesNotContain("Repository Setup", component.Markup);
+        Assert.True(labelsConfiguredFired);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private IRenderedComponent<SettingsModals> RenderSettingsModals(
