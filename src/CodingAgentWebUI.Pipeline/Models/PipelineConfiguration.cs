@@ -1,4 +1,3 @@
-// TODO: Consider extracting TimeSpan default values (AgentTimeout, ExternalCiTimeout, etc.) into named constants per issue #238.
 using System.Text.Json.Serialization;
 
 namespace CodingAgentWebUI.Pipeline.Models;

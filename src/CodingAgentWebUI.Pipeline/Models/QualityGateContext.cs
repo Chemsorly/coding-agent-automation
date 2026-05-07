@@ -18,8 +18,11 @@ public sealed record QualityGateContext : PipelineContextBase
     public IReadOnlyList<QualityGateConfiguration> QualityGateConfigs { get; init; } = [];
 
     /// <summary>
-    /// True if any QGCs existed in the configuration store at dispatch time.
-    /// Used to distinguish "no QGCs configured" (pre-migration) from "none matched this job".
+    /// True if quality gate configurations existed in the system at dispatch time.
+    /// Normalized across both execution paths: on the orchestrator path, reflects whether
+    /// the config store contains any QGCs; on the agent path, always true (pre-resolved
+    /// configs imply QGCs were configured). Used to distinguish "no QGCs configured"
+    /// (pre-migration) from "none matched this job's labels".
     /// </summary>
     public bool QgcsConfiguredAtDispatch { get; init; }
 }

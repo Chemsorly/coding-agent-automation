@@ -1,6 +1,8 @@
 namespace CodingAgentWebUI.Pipeline.Models;
 
-// TODO: Consider splitting formatting constants (MaxBranchNameLength, MaxCommentLength) into a separate FormattingConstants class to match the domain organization described in issue #238.
+// Evaluated: splitting formatting constants (MaxBranchNameLength, MaxCommentLength) into a
+// separate FormattingConstants class is not warranted — the file contains only 5 domain
+// constants at 25 lines. Revisit if the file grows significantly.
 
 /// <summary>
 /// Centralized domain constants for the pipeline. Avoids scattering magic numbers
@@ -22,4 +24,30 @@ public static class PipelineConstants
 
     /// <summary>Default capacity (line count) for the output ring buffer.</summary>
     public const int DefaultOutputBufferCapacity = 10_000;
+
+    // ── TimeSpan defaults for sub-configurations ────────────────────────
+
+    /// <summary>Default agent execution timeout (30 minutes).</summary>
+    public static readonly TimeSpan DefaultAgentTimeout = TimeSpan.FromMinutes(30);
+
+    /// <summary>Default interval between stall warning checks (2 minutes).</summary>
+    public static readonly TimeSpan DefaultStallWarningInterval = TimeSpan.FromMinutes(2);
+
+    /// <summary>Default poll interval for stall detection (30 seconds).</summary>
+    public static readonly TimeSpan DefaultStallPollInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>Default timeout for external CI checks (15 minutes).</summary>
+    public static readonly TimeSpan DefaultExternalCiTimeout = TimeSpan.FromMinutes(15);
+
+    /// <summary>Default poll interval for external CI status (30 seconds).</summary>
+    public static readonly TimeSpan DefaultExternalCiPollInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>Default poll interval for closed-loop issue polling (60 seconds).</summary>
+    public static readonly TimeSpan DefaultClosedLoopPollInterval = TimeSpan.FromSeconds(60);
+
+    /// <summary>Default maximum backoff interval for closed-loop polling (15 minutes).</summary>
+    public static readonly TimeSpan DefaultClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15);
+
+    /// <summary>Default grace period before marking a disconnected agent as lost (5 minutes).</summary>
+    public static readonly TimeSpan DefaultAgentDisconnectGracePeriod = TimeSpan.FromMinutes(5);
 }

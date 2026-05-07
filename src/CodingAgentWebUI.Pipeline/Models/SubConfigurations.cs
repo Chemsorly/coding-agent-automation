@@ -7,9 +7,9 @@ public sealed record RetryConfiguration
 {
     public int MaxRetries { get; init; } = 3;
     public int MaxAnalysisRetries { get; init; } = 2;
-    public TimeSpan AgentTimeout { get; init; } = TimeSpan.FromMinutes(30);
-    public TimeSpan StallWarningInterval { get; init; } = TimeSpan.FromMinutes(2);
-    public TimeSpan StallPollInterval { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan AgentTimeout { get; init; } = PipelineConstants.DefaultAgentTimeout;
+    public TimeSpan StallWarningInterval { get; init; } = PipelineConstants.DefaultStallWarningInterval;
+    public TimeSpan StallPollInterval { get; init; } = PipelineConstants.DefaultStallPollInterval;
 }
 
 /// <summary>
@@ -27,8 +27,8 @@ public sealed record WorkspaceConfiguration
 public sealed record ExternalCiConfiguration
 {
     public bool ExternalCiEnabled { get; init; } = false;
-    public TimeSpan ExternalCiTimeout { get; init; } = TimeSpan.FromMinutes(15);
-    public TimeSpan ExternalCiPollInterval { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan ExternalCiTimeout { get; init; } = PipelineConstants.DefaultExternalCiTimeout;
+    public TimeSpan ExternalCiPollInterval { get; init; } = PipelineConstants.DefaultExternalCiPollInterval;
 }
 
 /// <summary>
@@ -36,7 +36,7 @@ public sealed record ExternalCiConfiguration
 /// </summary>
 public sealed record ClosedLoopConfiguration
 {
-    public TimeSpan ClosedLoopPollInterval { get; init; } = TimeSpan.FromSeconds(60);
+    public TimeSpan ClosedLoopPollInterval { get; init; } = PipelineConstants.DefaultClosedLoopPollInterval;
     public int ClosedLoopMaxRunsPerCycle { get; init; } = 0;
 
     public int ClosedLoopMaxConsecutivePollFailures
@@ -48,7 +48,7 @@ public sealed record ClosedLoopConfiguration
     }
     private readonly int _closedLoopMaxConsecutivePollFailures = 5;
 
-    public TimeSpan ClosedLoopMaxBackoffInterval { get; init; } = TimeSpan.FromMinutes(15);
+    public TimeSpan ClosedLoopMaxBackoffInterval { get; init; } = PipelineConstants.DefaultClosedLoopMaxBackoffInterval;
 
     public int ClosedLoopMaxPagesToFetch
     {
@@ -66,7 +66,7 @@ public sealed record ClosedLoopConfiguration
 public sealed record AgentConfiguration
 {
     public string? DefaultRequiredAgentLabels { get; init; }
-    public TimeSpan AgentDisconnectGracePeriod { get; init; } = TimeSpan.FromMinutes(5);
+    public TimeSpan AgentDisconnectGracePeriod { get; init; } = PipelineConstants.DefaultAgentDisconnectGracePeriod;
     public int OutputBufferCapacity { get; init; } = PipelineConstants.DefaultOutputBufferCapacity;
     public int BrainPushMaxRetries { get; init; } = 3;
     public bool BrainReadOnly { get; init; } = false;
