@@ -6,6 +6,7 @@
 @using CodingAgentWebUI.Orchestration.Health
 @using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
+@implements IAsyncDisposable
 
 <section class="settings-section">
     <h2>Agent Provider Configs (referenced by Agent Profiles)</h2>
@@ -112,6 +113,7 @@
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
     [Parameter] public ModelFetchService? ModelFetchService { get; set; }
 
+    private CancellationTokenSource _cts = new();
     private bool _showForm;
     private ProviderConfig? _editingProvider;
     private AgentProviderForm _form = new();
@@ -175,17 +177,17 @@
 
         try
         {
-            await ConfigStore.SaveProviderConfigAsync(config, CancellationToken.None);
+            await ConfigStore.SaveProviderConfigAsync(config, _cts.Token);
             _showForm = false;
             await OnSaved.InvokeAsync();
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
         }
     }
 
-    // TODO: [ARC-10] CTS not tied to component lifecycle — process continues after navigation
     private async Task FetchModels()
     {
         if (ModelFetchService is null)
@@ -195,11 +197,11 @@
         }
 
         _loadingModels = true;
-        StateHasChanged();
+        if (!_cts.IsCancellationRequested) StateHasChanged();
 
         try
         {
-            var (models, error) = await ModelFetchService.FetchModelsAsync(CancellationToken.None);
+            var (models, error) = await ModelFetchService.FetchModelsAsync(_cts.Token);
 
             if (error is not null)
             {
@@ -213,6 +215,7 @@
 
             await OnShowStatus.InvokeAsync(($"{models.Count} model(s) loaded.", false));
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             await OnShowStatus.InvokeAsync(($"Failed to fetch models: {ex.Message}", true));
@@ -231,5 +234,11 @@
         public int TimeoutMinutes { get; set; } = 30;
         public string AgentName { get; set; } = "default";
         public string Model { get; set; } = "auto";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
     }
 }

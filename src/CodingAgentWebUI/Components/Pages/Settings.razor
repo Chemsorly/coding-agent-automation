@@ -1,5 +1,6 @@
 @page "/settings"
 @rendermode InteractiveServer
+@implements IAsyncDisposable
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Infrastructure.GitHub
@@ -123,7 +124,7 @@
     OnProvidersCreated="OnRelatedProvidersCreated" />
 
 @code {
-    // TODO: [ARC-10] All ConfigStore/ProviderFactory calls use CancellationToken.None — should use component-scoped CTS
+    private CancellationTokenSource _cts = new();
     private SettingsModals? _modals;
     private string _selectedNode = SettingsNodes.ProvidersIssue;
 
@@ -144,11 +145,12 @@
     {
         try
         {
-            _issueProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
-            _repoProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
-            _agentProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None)).ToList();
-            _pipelineProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
+            _issueProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, _cts.Token)).ToList();
+            _repoProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, _cts.Token)).ToList();
+            _agentProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, _cts.Token)).ToList();
+            _pipelineProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, _cts.Token)).ToList();
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             ShowStatus($"Failed to load settings: {ex.Message}", isError: true);
@@ -164,12 +166,15 @@
         try
         {
             await using var provider = ProviderFactory.CreateIssueProvider(config);
-            hasLabels = await provider.HasAgentLabelsAsync(CancellationToken.None);
+            hasLabels = await provider.HasAgentLabelsAsync(_cts.Token);
         }
+        catch (OperationCanceledException) { return; }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to check agent labels for provider {ProviderId}", config.Id);
         }
+
+        if (_cts.IsCancellationRequested) return;
 
         if (!hasLabels)
             _modals?.ShowConfigureLabels(config);
@@ -200,10 +205,11 @@
     {
         try
         {
-            await ConfigStore.DeleteProviderConfigAsync(id, kind, CancellationToken.None);
+            await ConfigStore.DeleteProviderConfigAsync(id, kind, _cts.Token);
             await LoadAllData();
             ShowStatus($"{kind} provider deleted.");
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             ShowStatus($"Failed to delete: {ex.Message}", isError: true);
@@ -219,5 +225,11 @@
     private void SelectNode(string nodeId)
     {
         _selectedNode = nodeId;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
     }
 }
