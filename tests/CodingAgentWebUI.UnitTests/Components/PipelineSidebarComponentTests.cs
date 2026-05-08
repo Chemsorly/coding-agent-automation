@@ -284,5 +284,51 @@ public class PipelineSidebarComponentTests : BunitContext
 
         Assert.Contains("Brain context unavailable", cut.Find("#step-SyncingBrainRepoPreRun").TextContent);
     }
+
+    // --- Reflecting on Run step rendering ---
+
+    [Fact]
+    public void ReflectingOnRun_WhenActive_ShowsReflecting()
+    {
+        var run = CreateBrainRun(PipelineStep.ReflectingOnRun, PipelineStep.ReflectingOnRun);
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        Assert.Contains("Reflecting on run...", cut.Find("#step-ReflectingOnRun").TextContent);
+    }
+
+    [Fact]
+    public void ReflectingOnRun_WhenCompleted_ShowsComplete()
+    {
+        var run = CreateBrainRun(PipelineStep.Completed, PipelineStep.Completed);
+        run.CompletedAt = DateTime.UtcNow;
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        Assert.Contains("Reflection complete", cut.Find("#step-ReflectingOnRun").TextContent);
+    }
+
+    [Fact]
+    public void ReflectingOnRun_WhenNoBrainProvider_DoesNotExpand()
+    {
+        var run = new PipelineRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAt = DateTime.UtcNow.AddMinutes(-5),
+            CurrentStep = PipelineStep.Completed,
+            HighWaterMark = PipelineStep.Completed,
+            CompletedAt = DateTime.UtcNow,
+            BrainProviderConfigId = null
+        };
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        var stepEl = cut.Find("#step-ReflectingOnRun");
+        Assert.Null(stepEl.QuerySelector(".step-card-details"));
+    }
 }
 
