@@ -12,16 +12,14 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// Supports both local execution (single <see cref="ActiveRun"/>) and multi-agent
 /// dispatch (concurrent runs tracked via <see cref="IOrchestratorRunService"/>).
 /// </summary>
-// TODO: Target ~400 lines post-lifecycle extraction (spec 017). Currently ~678 lines.
-// If this service exceeds 500 lines after lifecycle extraction is complete, evaluate
-// extracting provider lifecycle management (resolution, disposal, active provider tracking)
-// into a dedicated PipelineProviderManager service. See spec 017 for the extraction pattern.
+// Evaluated (MAINT-09): 735 lines, exceeds the 500-line spec 017 threshold.
+// Extraction of provider lifecycle management (resolution, disposal, active provider tracking)
+// into a dedicated PipelineProviderManager is warranted as future work. Not performed here
+// because it is a significant refactor requiring its own issue.
 //
-// TODO: Evaluate IProviderOperationsFacade — a facade grouping SwapAgentLabel,
-// RemoveAllAgentLabels, and PostComment could reduce parameter passing in pipeline steps.
-// However, IPipelineCallbacks already partially serves this role (it exposes SwapAgentLabel,
-// RemoveAllAgentLabels, and CreatePullRequest). A separate facade may introduce unnecessary
-// indirection without meaningful simplification. Revisit if pipeline steps accumulate more
+// IProviderOperationsFacade evaluation: IPipelineCallbacks already covers SwapAgentLabel,
+// RemoveAllAgentLabels, and CreatePullRequest. A separate facade would add indirection
+// without meaningful simplification. Revisit if pipeline steps accumulate more
 // provider-operation parameters beyond what IPipelineCallbacks covers.
 public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 {

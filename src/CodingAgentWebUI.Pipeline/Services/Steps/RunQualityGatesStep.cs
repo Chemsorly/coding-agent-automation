@@ -16,13 +16,19 @@ internal sealed class RunQualityGatesStep : IPipelineStep
         activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
 
         IReadOnlyList<QualityGateConfiguration> allQgcs;
+        bool qgcsConfiguredAtDispatch;
+
         if (context.PreResolvedQualityGateConfigs is not null)
         {
+            // Agent path: pre-resolved configs imply QGCs were configured in the system at dispatch time.
             allQgcs = context.PreResolvedQualityGateConfigs;
+            qgcsConfiguredAtDispatch = true;
         }
         else
         {
+            // Orchestrator path: load all QGCs from the config store.
             allQgcs = await context.ConfigStore.LoadQualityGateConfigsAsync(ct);
+            qgcsConfiguredAtDispatch = allQgcs.Count > 0;
         }
 
         var qualityGateContext = new QualityGateContext
@@ -36,13 +42,10 @@ internal sealed class RunQualityGatesStep : IPipelineStep
             IssueOps = context.IssueOps,
             Callbacks = context.Callbacks,
             QualityGateConfigs = allQgcs,
-            QgcsConfiguredAtDispatch = allQgcs.Count > 0
+            QgcsConfiguredAtDispatch = qgcsConfiguredAtDispatch
         };
 
         await context.QualityGates.ProceedToQualityGatesAsync(qualityGateContext, ct);
-
-        // TODO: [WARNING] QgcsConfiguredAtDispatch has inconsistent semantics between orchestrator and agent paths.
-        // On the orchestrator path, allQgcs represents ALL configured QGCs; on the agent path, it's the pre-resolved subset.
 
         if (context.Run.CurrentStep is PipelineStep.Failed or PipelineStep.Completed or PipelineStep.Cancelled)
             return StepResult.Stop;
