@@ -81,9 +81,6 @@ public sealed class LocalPipelineExecutor
         activity?.SetTag("pipeline.agent_id", Environment.MachineName);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        // TODO: [OBS-01] If provider validation throws before ExecutePipelineStepsAsync,
-        // JobsFailed/JobDuration won't be recorded while JobsDispatched was already incremented.
-        // Move metrics recording to a finally block to ensure consistency.
         PipelineTelemetry.JobsDispatched.Add(1);
 
         var config = job.PipelineConfiguration;
@@ -102,6 +99,7 @@ public sealed class LocalPipelineExecutor
         IAgentProvider? agentProvider = null;
         IRepositoryProvider? brainProvider = null;
         IPipelineProvider? pipelineProvider = null;
+        JobCompletionPayload? result = null;
 
         try
         {
@@ -139,22 +137,22 @@ public sealed class LocalPipelineExecutor
             if (pipelineProvider is not null)
                 await pipelineProvider.ValidateAsync(ct);
 
-            var result = await ExecutePipelineStepsAsync(
+            result = await ExecutePipelineStepsAsync(
                 job, config, repoProvider, agentProvider, brainProvider, pipelineProvider,
                 issueOps, connection, outputBatcher, onStepChanged, ct);
-
-            sw.Stop();
-            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds);
-            if (result.FinalStep == PipelineStep.Completed)
-                PipelineTelemetry.JobsCompleted.Add(1);
-            else
-                PipelineTelemetry.JobsFailed.Add(1);
 
             activity?.SetTag("pipeline.final_step", result.FinalStep.ToString());
             return result;
         }
         finally
         {
+            sw.Stop();
+            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds);
+            if (result is null || result.FinalStep != PipelineStep.Completed)
+                PipelineTelemetry.JobsFailed.Add(1);
+            else
+                PipelineTelemetry.JobsCompleted.Add(1);
+
             if (repoProvider is IAsyncDisposable rd) await rd.DisposeAsync();
             if (agentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
             if (brainProvider is IAsyncDisposable brd) await brd.DisposeAsync();
@@ -203,10 +201,9 @@ public sealed class LocalPipelineExecutor
             ? new BrainSyncOrchestrator(_brainUpdateService, _logger)
             : null;
 
-        // Local helpers for reporting
-        // TODO: [OBS-01] async void local functions risk crashing the process if a fatal exception
-        // escapes the try/catch. Consider converting to Func<..., Task> with a fire-and-forget helper.
-        async void TransitionTo(PipelineStep step)
+        // Local helpers for reporting — use async Task with fire-and-forget discard
+        // to avoid async void crash risk while maintaining non-blocking behavior.
+        async Task TransitionToAsync(PipelineStep step)
         {
             try
             {
@@ -222,7 +219,7 @@ public sealed class LocalPipelineExecutor
             catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", step); }
         }
 
-        async void EmitOutputLine(string line)
+        async Task EmitOutputLineAsync(string line)
         {
             try
             {
@@ -232,11 +229,15 @@ public sealed class LocalPipelineExecutor
             catch (Exception ex) { _logger.Warning(ex, "Failed to batch output line"); }
         }
 
-        async void ReportQualityGateResult(QualityGateReport report)
+        async Task ReportQualityGateResultAsync(QualityGateReport report)
         {
             try { await connection.InvokeAsync("ReportQualityGateResult", job.JobId, report, ct); }
             catch (Exception ex) { _logger.Warning(ex, "Failed to report quality gate result"); }
         }
+
+        void TransitionTo(PipelineStep step) => _ = TransitionToAsync(step);
+        void EmitOutputLine(string line) => _ = EmitOutputLineAsync(line);
+        void ReportQualityGateResult(QualityGateReport report) => _ = ReportQualityGateResultAsync(report);
 
         CancellationTokenSource? localCts = null;
 
