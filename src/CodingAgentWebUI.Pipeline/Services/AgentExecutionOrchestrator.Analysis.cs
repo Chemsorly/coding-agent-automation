@@ -193,7 +193,7 @@ internal partial class AgentExecutionOrchestrator
             }
 
             // Read and evaluate the confidence gate assessment
-            run.AnalysisRecommendation = assessment?.Recommendation;
+            run.AnalysisRecommendation = assessment?.Recommendation?.ToLowerInvariant();
             run.AnalysisConcerns = assessment?.Concerns ?? Array.Empty<string>();
             run.AnalysisBlockingIssues = assessment?.BlockingIssues ?? Array.Empty<string>();
 

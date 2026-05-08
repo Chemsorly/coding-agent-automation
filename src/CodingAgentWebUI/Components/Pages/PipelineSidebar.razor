@@ -71,7 +71,6 @@
                         else if (step == PipelineStep.AnalyzingCode)
                         {
                             <div class="step-detail">@(Run.AnalysisSkipped ? "Skipped (existing)" : "Agent analysis")</div>
-                            @* TODO: [ARC-08a] Use case-insensitive comparison or normalize AnalysisRecommendation to lowercase — gate logic uses OrdinalIgnoreCase but sidebar uses == *@
                             @if (Run.AnalysisRecommendation == "not_ready")
                             {
                                 <div class="step-detail">⚠️ Needs refinement</div>
