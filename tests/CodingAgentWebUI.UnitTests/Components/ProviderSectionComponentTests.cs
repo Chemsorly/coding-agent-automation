@@ -562,4 +562,61 @@ public class ProviderSectionComponentTests : BunitContext
         Assert.Contains("Initialization failed", cut.Markup);
         Assert.Contains("Auth failed", cut.Markup);
     }
+
+    [Fact]
+    public async Task IssueSection_InitializeRepository_DisablesAllButtonsDuringInit()
+    {
+        var tcs = new TaskCompletionSource<bool>();
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
+            .Returns(tcs.Task);
+        mockIssueProvider
+            .Setup(p => p.DisposeAsync())
+            .Returns(ValueTask.CompletedTask);
+
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var providers = new List<ProviderConfig>
+        {
+            new()
+            {
+                Id = "ip-1",
+                Kind = ProviderKind.Issue,
+                ProviderType = "GitHub",
+                DisplayName = "Provider One",
+                Settings = new Dictionary<string, string> { ["owner"] = "org", ["repo"] = "repo1" }
+            },
+            new()
+            {
+                Id = "ip-2",
+                Kind = ProviderKind.Issue,
+                ProviderType = "GitHub",
+                DisplayName = "Provider Two",
+                Settings = new Dictionary<string, string> { ["owner"] = "org", ["repo"] = "repo2" }
+            }
+        };
+
+        var cut = Render<IssueProviderSection>(p => p
+            .Add(s => s.Providers, providers)
+            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.GitHubValidator, _gitHubValidator)
+            .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
+
+        // Click Initialize on the first provider (does not complete yet)
+        var initButtons = cut.FindAll("button").Where(b => b.TextContent.Contains("Initialize Provider")).ToList();
+        Assert.Equal(2, initButtons.Count);
+
+        _ = cut.InvokeAsync(() => initButtons[0].Click());
+
+        // Both Initialize buttons should now be disabled
+        var allInitButtons = cut.FindAll("button").Where(b =>
+            b.TextContent.Contains("Initialize Provider") || b.TextContent.Contains("Initializing...")).ToList();
+        Assert.All(allInitButtons, btn => Assert.True(btn.HasAttribute("disabled")));
+
+        // Complete the operation
+        tcs.SetResult(true);
+    }
 }

@@ -174,12 +174,15 @@
                 : "Some labels could not be created. Check app permissions.";
             _configureLabelsIsError = !success;
 
-            // TODO: [GH-06] When success is false, the modal auto-dismisses after 1200ms hiding the partial failure. Should only auto-dismiss and fire OnLabelsConfigured when success is true; on false, keep modal open for retry.
             StateHasChanged();
-            await Task.Delay(1200);
-            _showConfigureLabelsModal = false;
-            await OnLabelsConfigured.InvokeAsync();
-            ShowRelatedProviders(_configureLabelsProviderConfig);
+
+            if (success)
+            {
+                await Task.Delay(1200);
+                _showConfigureLabelsModal = false;
+                await OnLabelsConfigured.InvokeAsync();
+                ShowRelatedProviders(_configureLabelsProviderConfig);
+            }
         }
         catch (Exception ex)
         {
