@@ -68,11 +68,12 @@ internal partial class AgentExecutionOrchestrator
                     });
                     context.Callbacks.NotifyChange();
 
-                    var findingsFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.ReviewFindingsFilePath);
+                    var agentFindingsRelativePath = PromptBuilder.GetReviewFindingsFilePath(agent.Name);
+                    var findingsFilePath = Path.Combine(run.WorkspacePath!, agentFindingsRelativePath);
                     if (File.Exists(findingsFilePath))
                         File.Delete(findingsFilePath);
 
-                    var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue);
+                    var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue, agentFindingsRelativePath);
                     _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, i + 1, agent.Name, reviewPrompt);
 
                     var reviewResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(

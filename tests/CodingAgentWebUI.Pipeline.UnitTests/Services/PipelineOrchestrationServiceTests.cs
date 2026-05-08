@@ -161,13 +161,16 @@ public class PipelineOrchestrationServiceTests
 
     /// <summary>
     /// Helper: writes a review findings file into the workspace so the orchestrator can read it.
-    /// Used by tests that verify code review severity parsing (file-based, not stdout).
+    /// Extracts the per-agent findings file path from the prompt.
     /// </summary>
-    private static void WriteReviewFindingsFile(string workspacePath, string content)
+    private static void WriteReviewFindingsFile(string workspacePath, string content, string prompt)
     {
-        var findingsDir = Path.Combine(workspacePath, ".kiro");
-        Directory.CreateDirectory(findingsDir);
-        File.WriteAllText(Path.Combine(findingsDir, "review-findings.md"), content);
+        // Extract the findings file path from the prompt (e.g., ".kiro/review-findings-agentname.md")
+        var match = System.Text.RegularExpressions.Regex.Match(prompt, @"Write your findings to the file `([^`]+)`");
+        var relativePath = match.Success ? match.Groups[1].Value : ".kiro/review-findings.md";
+        var findingsPath = Path.Combine(workspacePath, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(findingsPath)!);
+        File.WriteAllText(findingsPath, content);
     }
 
     /// <summary>
@@ -180,7 +183,7 @@ public class PipelineOrchestrationServiceTests
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
-                WriteReviewFindingsFile(req.WorkspacePath, findingsContent);
+                WriteReviewFindingsFile(req.WorkspacePath, findingsContent, req.Prompt);
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
     }
@@ -1083,7 +1086,7 @@ public class PipelineOrchestrationServiceTests
                 var findings = callCount == 1
                     ? "[CRITICAL] Bug\n[WARNING] W1\n[WARNING] W2"
                     : "[SUGGESTION] S1";
-                WriteReviewFindingsFile(req.WorkspacePath, findings);
+                WriteReviewFindingsFile(req.WorkspacePath, findings, req.Prompt);
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
@@ -1116,7 +1119,7 @@ public class PipelineOrchestrationServiceTests
                 var findings = agentCallCount == 1
                     ? "[CRITICAL] Bug found"
                     : "[WARNING] Minor issue";
-                WriteReviewFindingsFile(req.WorkspacePath, findings);
+                WriteReviewFindingsFile(req.WorkspacePath, findings, req.Prompt);
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
@@ -1142,7 +1145,7 @@ public class PipelineOrchestrationServiceTests
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Agent1 prompt") || r.Prompt.Contains("Agent2 prompt")), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
-                WriteReviewFindingsFile(req.WorkspacePath, "[WARNING] Minor");
+                WriteReviewFindingsFile(req.WorkspacePath, "[WARNING] Minor", req.Prompt);
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
@@ -1205,7 +1208,7 @@ public class PipelineOrchestrationServiceTests
             {
                 agentCallCount++;
                 if (agentCallCount == 2) throw new InvalidOperationException("Agent2 crashed");
-                WriteReviewFindingsFile(req.WorkspacePath, "[CRITICAL] Bug\n[WARNING] W1");
+                WriteReviewFindingsFile(req.WorkspacePath, "[CRITICAL] Bug\n[WARNING] W1", req.Prompt);
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 

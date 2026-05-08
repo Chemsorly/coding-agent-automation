@@ -20,9 +20,23 @@ public static class PromptBuilder
     public const string AnalysisAssessmentFilePath = ".kiro/analysis-assessment.json";
 
     /// <summary>
-    /// The file path (relative to workspace) where review agents write their findings.
+    /// The file path (relative to workspace) where the pipeline writes consolidated
+    /// review findings for the fix agent to read.
     /// </summary>
     public const string ReviewFindingsFilePath = ".kiro/review-findings.md";
+
+    /// <summary>
+    /// Returns a per-agent findings file path to prevent sub-agent overwrite conflicts.
+    /// Each review agent writes to its own isolated file.
+    /// </summary>
+    public static string GetReviewFindingsFilePath(string agentName)
+    {
+        ArgumentNullException.ThrowIfNull(agentName);
+        return $".kiro/review-findings-{SanitizeAgentName(agentName)}.md";
+    }
+
+    private static string SanitizeAgentName(string name)
+        => name.ToLowerInvariant().Replace(' ', '-').Replace('/', '-').Replace('\\', '-');
 
     /// <summary>
     /// The directory (relative to workspace) where quality gate output files are written.
@@ -150,17 +164,18 @@ public static class PromptBuilder
     /// details (title, description, requirements, acceptance criteria, and comments).
     /// </summary>
     public static string BuildReviewPrompt(string reviewInstructions, IssueDetail issue,
-        ParsedIssue parsed)
+        ParsedIssue parsed, string findingsFilePath)
     {
         ArgumentNullException.ThrowIfNull(reviewInstructions);
         ArgumentNullException.ThrowIfNull(issue);
         ArgumentNullException.ThrowIfNull(parsed);
+        ArgumentNullException.ThrowIfNull(findingsFilePath);
 
         var sb = new StringBuilder();
 
         sb.AppendLine(reviewInstructions);
         sb.AppendLine();
-        sb.AppendLine($"Write your findings to the file `{ReviewFindingsFilePath}` in the workspace. Do NOT print the findings to stdout — only write them to that file.");
+        sb.AppendLine($"Write your findings to the file `{findingsFilePath}` in the workspace. Do NOT print the findings to stdout — only write them to that file.");
         sb.AppendLine();
         sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). The pipeline handles all version control operations. Read-only git commands are fine.");
         sb.AppendLine();
