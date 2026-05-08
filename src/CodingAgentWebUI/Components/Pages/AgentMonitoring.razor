@@ -109,8 +109,10 @@
                                 <div><strong>Issue:</strong> @(issueConfig?.DisplayName ?? "Unknown") (@(issueConfig?.ProviderType ?? "—"))</div>
                                 @{ var repoConfig = ResolveProvider(modalRun.RepoProviderConfigId); }
                                 <div><strong>Repository:</strong> @(repoConfig?.DisplayName ?? modalRun.RepositoryName ?? "Unknown") (@(repoConfig?.ProviderType ?? "—"))</div>
-                                @* TODO: [UX-24] Add AgentProviderConfigId to PipelineRun to resolve agent display name and type from config store *@
-                                <div><strong>Agent:</strong> @(modalRun.AgentId ?? "local") — Model: @(modalRun.ModelName ?? "—")</div>
+                                @{
+                                    var agentProviderConfig = ResolveProvider(modalRun.AgentProviderConfigId);
+                                }
+                                <div><strong>Agent:</strong> @(agentProviderConfig?.DisplayName ?? modalRun.AgentId ?? "local") (@(agentProviderConfig?.ProviderType ?? "—")) — Model: @(modalRun.ModelName ?? "—")</div>
                                 @if (modalRun.BrainProviderConfigId != null)
                                 {
                                     var brainConfig = ResolveProvider(modalRun.BrainProviderConfigId);
@@ -119,8 +121,8 @@
                                 @if (modalRun.PipelineProviderConfigId != null)
                                 {
                                     var pipelineConfig = ResolveProvider(modalRun.PipelineProviderConfigId);
-                                    @* TODO: [UX-24] Show ExternalCiEnabled status for pipeline provider *@
-                                    <div><strong>Pipeline:</strong> @(pipelineConfig?.DisplayName ?? "Unknown") (@(pipelineConfig?.ProviderType ?? "—"))</div>
+                                    @* TODO: [UX-24] ExternalCiEnabled reflects current global config, not the value at run creation time *@
+                                    <div><strong>Pipeline:</strong> @(pipelineConfig?.DisplayName ?? "Unknown") (@(pipelineConfig?.ProviderType ?? "—")) — External CI: @(_externalCiEnabled ? "Enabled" : "Disabled")</div>
                                 }
                             </div>
 
@@ -447,6 +449,7 @@
                         </span>
                     </div>
                     <div><strong>Duration:</strong> @FormatDuration(_selectedHistoryRun.StartedAt, _selectedHistoryRun.CompletedAt)</div>
+                    @* TODO: [UX-24] Add AgentProviderConfigId to PipelineRunSummary and resolve display name/type here *@
                     <div><strong>Agent:</strong> @(_selectedHistoryRun.AgentId ?? "local")</div>
                     <div><strong>Initiated By:</strong> @_selectedHistoryRun.InitiatedBy</div>
                     @if (_selectedHistoryRun.ModelName != null)
@@ -500,6 +503,7 @@
     private bool _disposed;
     private Timer? _refreshTimer;
     private int _maxRetries = 3;
+    private bool _externalCiEnabled;
     private bool _showDisconnectConfirm;
 
     protected override async Task OnInitializedAsync()
@@ -513,6 +517,7 @@
         {
             var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
             _maxRetries = config.MaxRetries;
+            _externalCiEnabled = config.ExternalCiEnabled;
         }
         catch (Exception ex)
         {

@@ -130,6 +130,9 @@ public sealed class PipelineRun
     /// <summary>Which agent is executing this run, or null for legacy/local runs.</summary>
     public string? AgentId { get; init; }
 
+    /// <summary>Agent provider config ID used for this run, or null for legacy/local runs.</summary>
+    public string? AgentProviderConfigId { get; init; }
+
     /// <summary>Agent Profile Id that was resolved at dispatch time.</summary>
     public string? ResolvedProfileId { get; set; }
 
