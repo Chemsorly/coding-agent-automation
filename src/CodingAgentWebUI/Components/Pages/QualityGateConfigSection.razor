@@ -91,27 +91,31 @@
                 <label>Match Labels <span class="form-hint">(comma-separated, empty = global fallback · ANY match — applies if at least one label overlaps)</span></label>
                 <input type="text" @bind="_form.MatchLabels" placeholder="e.g. dotnet, csharp" />
             </div>
-            <div class="form-group">
-                <div class="label-with-hint">
-                    <label>Compilation Command</label>
-                    <span class="form-hint-icon" aria-hidden="true" title="Commands are executed directly via process start (not through a shell). The Command field is the executable, Arguments are space-separated parameters. Examples: Simple: Command=dotnet, Arguments=build --no-restore · Python: Command=python, Arguments=-m pytest --cov=. · Piped: Command=/bin/sh, Arguments=-c &quot;npm run build &amp;&amp; npm test&quot;">?</span>
+            <div class="form-row">
+                <div class="form-group">
+                    <div class="label-with-hint">
+                        <label>Compilation Command</label>
+                        <span class="form-hint-icon" aria-hidden="true" title="Commands are executed directly via process start (not through a shell). The Command field is the executable, Arguments are space-separated parameters. Examples: Simple: Command=dotnet, Arguments=build --no-restore · Python: Command=python, Arguments=-m pytest --cov=. · Piped: Command=/bin/sh, Arguments=-c &quot;npm run build &amp;&amp; npm test&quot;">?</span>
+                    </div>
+                    <input type="text" @bind="_form.CompilationCommand" placeholder="e.g. dotnet" />
                 </div>
-                <input type="text" @bind="_form.CompilationCommand" placeholder="e.g. dotnet" />
-            </div>
-            <div class="form-group">
-                <label>Compilation Arguments <span class="form-hint">(space-separated)</span></label>
-                <input type="text" @bind="_form.CompilationArguments" placeholder="e.g. build --no-restore" />
-            </div>
-            <div class="form-group">
-                <div class="label-with-hint">
-                    <label>Test Command</label>
-                    <span class="form-hint-icon" aria-hidden="true" title="Commands are executed directly via process start (not through a shell). The Command field is the executable, Arguments are space-separated parameters. Examples: Simple: Command=dotnet, Arguments=test --no-restore · Python: Command=python, Arguments=-m pytest --cov=. · Piped: Command=/bin/sh, Arguments=-c &quot;npm run build &amp;&amp; npm test&quot;">?</span>
+                <div class="form-group form-group-lg">
+                    <label>Compilation Arguments <span class="form-hint">(space-separated)</span></label>
+                    <input type="text" @bind="_form.CompilationArguments" placeholder="e.g. build --no-restore" />
                 </div>
-                <input type="text" @bind="_form.TestCommand" placeholder="e.g. dotnet" />
             </div>
-            <div class="form-group">
-                <label>Test Arguments <span class="form-hint">(space-separated)</span></label>
-                <input type="text" @bind="_form.TestArguments" placeholder="e.g. test --no-restore --no-build" />
+            <div class="form-row">
+                <div class="form-group">
+                    <div class="label-with-hint">
+                        <label>Test Command</label>
+                        <span class="form-hint-icon" aria-hidden="true" title="Commands are executed directly via process start (not through a shell). The Command field is the executable, Arguments are space-separated parameters. Examples: Simple: Command=dotnet, Arguments=test --no-restore · Python: Command=python, Arguments=-m pytest --cov=. · Piped: Command=/bin/sh, Arguments=-c &quot;npm run build &amp;&amp; npm test&quot;">?</span>
+                    </div>
+                    <input type="text" @bind="_form.TestCommand" placeholder="e.g. dotnet" />
+                </div>
+                <div class="form-group form-group-lg">
+                    <label>Test Arguments <span class="form-hint">(space-separated)</span></label>
+                    <input type="text" @bind="_form.TestArguments" placeholder="e.g. test --no-restore --no-build" />
+                </div>
             </div>
             <div class="form-group">
                 <label>Coverage Threshold (%) <span class="form-hint">(leave empty to skip)</span></label>
