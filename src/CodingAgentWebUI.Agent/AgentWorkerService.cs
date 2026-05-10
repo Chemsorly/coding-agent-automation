@@ -532,12 +532,11 @@ public sealed class AgentWorkerService : BackgroundService
             }
 
             _activeJobId = message.JobId;
+            _jobCts = new CancellationTokenSource();
         }
 
         _logger.Information("Accepted consolidation job {JobId} of type {Type}",
             message.JobId, message.Type);
-
-        _jobCts = new CancellationTokenSource();
 
         _activeJobTask = Task.Run(async () =>
         {

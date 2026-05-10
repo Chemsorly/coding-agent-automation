@@ -105,46 +105,51 @@ public sealed class ConsolidationService : IConsolidationService
         // For harness suggestions: prepare feedback data (filtered by last successful run)
         if (type == ConsolidationRunType.HarnessSuggestions)
         {
-            PrepareFeedbackData(run);
+            await PrepareFeedbackDataAsync(run, ct);
         }
 
         // Persist the run record
         await PersistRunAsync(run, ct);
 
-        // CRITICAL 1 fix: Dispatch the job to an idle agent
+        // Dispatch the job to an idle agent (wrapped in try-catch to prevent concurrency state leak)
         if (_dispatcher is not null)
         {
-            var feedbackDataJson = type == ConsolidationRunType.HarnessSuggestions
-                ? GetFeedbackDataForRun(run.RunId)
-                : null;
-            var workspacePath = GetWorkspacePath(run.RunId);
-
-            var dispatched = await _dispatcher.TryDispatchAsync(
-                run, type, templateId, feedbackDataJson, workspacePath, ct);
-
-            if (!dispatched)
+            try
             {
-                // WARNING 7 fix: No idle agent available — reject the run
-                _logger.Warning(
-                    "Consolidation run {RunId} rejected: no idle agent available for {Type}/{TemplateName}",
-                    run.RunId, type, templateName);
+                var feedbackDataJson = type == ConsolidationRunType.HarnessSuggestions
+                    ? GetFeedbackDataForRun(run.RunId)
+                    : null;
+                var workspacePath = GetWorkspacePath(run.RunId);
 
-                _runningRuns.TryRemove(key, out _);
-                DeletePersistedRun(run.RunId);
+                var dispatched = await _dispatcher.TryDispatchAsync(
+                    run, type, templateId, feedbackDataJson, workspacePath, ct);
 
-                // CRITICAL 2 fix: Clean up feedback data cache on rejection
-                if (type == ConsolidationRunType.HarnessSuggestions)
+                if (!dispatched)
                 {
+                    _logger.Warning(
+                        "Consolidation run {RunId} rejected: no idle agent available for {Type}/{TemplateName}",
+                        run.RunId, type, templateName);
+
+                    _runningRuns.TryRemove(key, out _);
+                    DeletePersistedRun(run.RunId);
                     ClearFeedbackDataForRun(run.RunId);
+                    return null;
                 }
 
-                return null;
-            }
-
-            // CRITICAL 2 fix: Clear feedback data cache after successful dispatch
-            if (type == ConsolidationRunType.HarnessSuggestions)
-            {
+                // Clear feedback data cache after successful dispatch
                 ClearFeedbackDataForRun(run.RunId);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex,
+                    "Consolidation run {RunId} dispatch failed with exception for {Type}/{TemplateName}",
+                    run.RunId, type, templateName);
+
+                // Clean up concurrency state and persisted run to prevent permanent blocking
+                _runningRuns.TryRemove(key, out _);
+                DeletePersistedRun(run.RunId);
+                ClearFeedbackDataForRun(run.RunId);
+                return null;
             }
         }
 
@@ -312,12 +317,11 @@ public sealed class ConsolidationService : IConsolidationService
     /// Filters to only feedback collected since the last successful harness suggestion run.
     /// The feedback data is stored on the run record for later use during agent dispatch.
     /// </summary>
-    private void PrepareFeedbackData(ConsolidationRun run)
+    private async Task PrepareFeedbackDataAsync(ConsolidationRun run, CancellationToken ct)
     {
         try
         {
-            // WARNING 8 fix: Determine the "since" timestamp from the last successful harness run
-            var sinceUtc = GetLastSuccessfulHarnessRunTimestamp();
+            var sinceUtc = await GetLastSuccessfulHarnessRunTimestampAsync(ct);
 
             var allRuns = _runHistoryService.GetRunHistory();
             var feedbackEntries = allRuns
@@ -349,7 +353,7 @@ public sealed class ConsolidationService : IConsolidationService
     /// Determines the timestamp of the last successful harness suggestion run by scanning
     /// persisted run files. Returns <see cref="DateTime.MinValue"/> if no prior run exists.
     /// </summary>
-    private DateTime GetLastSuccessfulHarnessRunTimestamp()
+    private async Task<DateTime> GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken ct = default)
     {
         if (!Directory.Exists(_consolidationRunsDirectory))
             return DateTime.MinValue;
@@ -360,7 +364,7 @@ public sealed class ConsolidationService : IConsolidationService
         {
             try
             {
-                var json = File.ReadAllText(file);
+                var json = await File.ReadAllTextAsync(file, ct);
                 var historicRun = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
                 if (historicRun is not null
                     && historicRun.Type == ConsolidationRunType.HarnessSuggestions
@@ -385,6 +389,7 @@ public sealed class ConsolidationService : IConsolidationService
     /// </summary>
     public string? GetFeedbackDataForRun(string runId)
     {
+        ArgumentNullException.ThrowIfNull(runId);
         _feedbackDataCache.TryGetValue(runId, out var data);
         return data;
     }
@@ -394,6 +399,7 @@ public sealed class ConsolidationService : IConsolidationService
     /// </summary>
     public void ClearFeedbackDataForRun(string runId)
     {
+        ArgumentNullException.ThrowIfNull(runId);
         _feedbackDataCache.TryRemove(runId, out _);
     }
 
@@ -419,6 +425,27 @@ public sealed class ConsolidationService : IConsolidationService
     /// <summary>
     /// Deletes a persisted run file (used when dispatch fails and the run must be rolled back).
     /// </summary>
+    private async Task DeletePersistedRunAsync(string runId)
+    {
+        try
+        {
+            var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
+            if (File.Exists(filePath))
+            {
+                // Use async file deletion pattern: open with DeleteOnClose
+                await using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Delete,
+                    bufferSize: 1, FileOptions.DeleteOnClose | FileOptions.Asynchronous);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to delete persisted consolidation run {RunId}", runId);
+        }
+    }
+
+    /// <summary>
+    /// Deletes a persisted run file synchronously (used in fire-and-forget cleanup paths).
+    /// </summary>
     private void DeletePersistedRun(string runId)
     {
         try
@@ -440,22 +467,26 @@ public sealed class ConsolidationService : IConsolidationService
     /// Consolidation workspaces are isolated from regular pipeline workspaces
     /// under <c>{WorkspaceBaseDirectory}/consolidation/{runId}/</c>.
     /// </summary>
-    /// <param name="runId">The consolidation run ID.</param>
+    /// <param name="runId">The consolidation run ID (must be a valid GUID).</param>
     /// <returns>The absolute path to the consolidation workspace directory.</returns>
+    /// <exception cref="ArgumentException">Thrown when runId is not a valid GUID format.</exception>
     public string GetWorkspacePath(string runId)
     {
         ArgumentNullException.ThrowIfNull(runId);
+        if (!Guid.TryParse(runId, out _))
+            throw new ArgumentException($"RunId must be a valid GUID, got: '{runId}'", nameof(runId));
         return Path.Combine(_config.WorkspaceBaseDirectory, "consolidation", runId);
     }
 
     /// <summary>
     /// Creates the workspace directory for a consolidation run.
     /// </summary>
-    /// <param name="runId">The consolidation run ID.</param>
+    /// <param name="runId">The consolidation run ID (must be a valid GUID).</param>
     /// <returns>The absolute path to the created workspace directory.</returns>
+    /// <exception cref="ArgumentException">Thrown when runId is not a valid GUID format.</exception>
     public string CreateWorkspace(string runId)
     {
-        var workspacePath = GetWorkspacePath(runId);
+        var workspacePath = GetWorkspacePath(runId); // validates GUID
 
         if (!Directory.Exists(workspacePath))
             Directory.CreateDirectory(workspacePath);

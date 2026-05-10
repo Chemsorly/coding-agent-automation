@@ -505,6 +505,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// Agent reports consolidation job completion. Updates the consolidation run status,
     /// persists harness suggestions if present, and increments badge count for refactoring issues.
     /// </summary>
+    [RequiresActiveJob]
     public async Task ReportConsolidationComplete(ConsolidationJobResult result)
     {
         ArgumentNullException.ThrowIfNull(result);

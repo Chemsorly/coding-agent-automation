@@ -21,6 +21,13 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatcher
     private readonly ITokenVendingService _tokenVending;
     private readonly PipelineConfiguration _config;
     private readonly ILogger _logger;
+    private readonly string _consolidationRunsDirectory;
+
+    private static readonly System.Text.Json.JsonSerializerOptions s_jsonOptions = new()
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
 
     public ConsolidationDispatchService(
         AgentRegistryService registry,
@@ -29,7 +36,8 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatcher
         IConfigurationStore configStore,
         ITokenVendingService tokenVending,
         PipelineConfiguration config,
-        ILogger logger)
+        ILogger logger,
+        string consolidationRunsDirectory = "config/pipeline/consolidation-runs")
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(jobDispatcher);
@@ -46,6 +54,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatcher
         _tokenVending = tokenVending;
         _config = config;
         _logger = logger;
+        _consolidationRunsDirectory = consolidationRunsDirectory;
     }
 
     /// <inheritdoc />
@@ -76,11 +85,13 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatcher
         try
         {
             // Build provider configs for the consolidation job and vend tokens
+            // Include issues:write permission only for refactoring jobs that create issues
+            var includeIssuePermission = type == ConsolidationRunType.RefactoringDetection;
             var rawConfigs = await BuildProviderConfigsAsync(type, templateId, ct);
             var repoProviderId = templateId is not null
                 ? _config.PipelineJobTemplates.FirstOrDefault(t => t.Id == templateId)?.RepoProviderId ?? ""
                 : "";
-            var providerConfigs = await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct);
+            var providerConfigs = await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct, includeIssuePermission);
 
             // Resolve last successful run timestamp for this type+template
             var lastSuccessfulRunUtc = await GetLastSuccessfulRunUtcAsync(type, templateId, ct);
@@ -207,22 +218,16 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatcher
         string? templateId,
         CancellationToken ct)
     {
-        // Read from the consolidation runs directory
-        var runsDir = "config/pipeline/consolidation-runs";
-        if (!Directory.Exists(runsDir))
+        if (!Directory.Exists(_consolidationRunsDirectory))
             return null;
 
         DateTime? latest = null;
-        foreach (var file in Directory.GetFiles(runsDir, "*.json"))
+        foreach (var file in Directory.GetFiles(_consolidationRunsDirectory, "*.json"))
         {
             try
             {
                 var json = await File.ReadAllTextAsync(file, ct);
-                var historicRun = System.Text.Json.JsonSerializer.Deserialize<ConsolidationRun>(json, new System.Text.Json.JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
-                    Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-                });
+                var historicRun = System.Text.Json.JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
 
                 if (historicRun is not null
                     && historicRun.Type == type

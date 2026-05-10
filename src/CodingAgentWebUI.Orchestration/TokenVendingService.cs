@@ -75,14 +75,17 @@ public sealed partial class TokenVendingService : ITokenVendingService
     /// <summary>
     /// Generates a short-lived GitHub installation access token scoped to the target repository
     /// with <c>contents: write</c>, <c>pull_requests: write</c>, and <c>actions: read</c> permissions.
-    /// No <c>issues: write</c> — all issue operations stay on the orchestrator.
+    /// Optionally includes <c>issues: write</c> when <paramref name="includeIssuePermission"/> is true
+    /// (used for consolidation jobs that create issues directly from the agent).
     /// </summary>
     /// <param name="repoConfig">Repository provider config containing GitHub App credentials.</param>
     /// <param name="ct">Cancellation token.</param>
+    /// <param name="includeIssuePermission">Whether to include issues:write permission (default: false).</param>
     /// <returns>A tuple of the token string and its expiration time.</returns>
     public async Task<(string Token, DateTimeOffset ExpiresAt)> GenerateAgentTokenAsync(
         ProviderConfig repoConfig,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool includeIssuePermission = false)
     {
         ArgumentNullException.ThrowIfNull(repoConfig);
 
@@ -110,7 +113,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
                 Contents = "write",
                 PullRequests = "write",
                 Actions = "read",
-                Issues = "write"
+                Issues = includeIssuePermission ? "write" : null
             }
         };
 
@@ -167,7 +170,8 @@ public sealed partial class TokenVendingService : ITokenVendingService
     public async Task<IReadOnlyList<ProviderConfig>> PrepareAgentConfigsAsync(
         IReadOnlyList<ProviderConfig> configs,
         string repoConfigId,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool includeIssuePermission = false)
     {
         ArgumentNullException.ThrowIfNull(configs);
         ArgumentNullException.ThrowIfNull(repoConfigId);
@@ -182,7 +186,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
             {
                 try
                 {
-                    var (token, expiresAt) = await GenerateAgentTokenAsync(config, ct);
+                    var (token, expiresAt) = await GenerateAgentTokenAsync(config, ct, includeIssuePermission);
 
                     var clonedSettings = new Dictionary<string, string>(config.Settings);
                     clonedSettings.Remove("privateKeyBase64");

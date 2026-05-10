@@ -224,8 +224,9 @@ public sealed class HarnessSuggestionExecutor
     /// </summary>
     private static string? ExtractJsonBlock(string responseText)
     {
-        // Try fenced JSON block first
-        var fencedMatch = Regex.Match(responseText, @"```(?:json)?\s*\n([\s\S]*?)\n\s*```");
+        // Try fenced JSON block first (with timeout to prevent catastrophic backtracking)
+        var fencedMatch = Regex.Match(responseText, @"```(?:json)?\s*\n([\s\S]*?)\n\s*```",
+            RegexOptions.None, TimeSpan.FromSeconds(1));
         if (fencedMatch.Success)
         {
             var candidate = fencedMatch.Groups[1].Value.Trim();
@@ -233,11 +234,14 @@ public sealed class HarnessSuggestionExecutor
                 return candidate;
         }
 
-        // Fall back to bare JSON object (find first { ... } block that looks like suggestions)
-        var braceStart = responseText.IndexOf('{');
-        if (braceStart >= 0)
+        // Fall back to bare JSON object — search all balanced blocks until one matches
+        var searchStart = 0;
+        while (searchStart < responseText.Length)
         {
-            // WARNING 10 fix: Track string literals to avoid counting braces inside strings
+            var braceStart = responseText.IndexOf('{', searchStart);
+            if (braceStart < 0)
+                break;
+
             var depth = 0;
             var inString = false;
             var escaped = false;
@@ -276,9 +280,15 @@ public sealed class HarnessSuggestionExecutor
                     // Validate it looks like a suggestions object
                     if (candidate.Contains("suggestions", StringComparison.OrdinalIgnoreCase))
                         return candidate;
+                    // Not a match — continue searching from after this block
+                    searchStart = i + 1;
                     break;
                 }
             }
+
+            // If we never found a matching close brace, stop searching
+            if (depth != 0)
+                break;
         }
 
         return null;

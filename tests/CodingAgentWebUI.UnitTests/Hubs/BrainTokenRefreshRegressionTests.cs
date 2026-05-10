@@ -105,8 +105,8 @@ public class BrainTokenRefreshRegressionTests
 
         ProviderConfig? capturedConfig = null;
         _mockTokenVending
-            .Setup(t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
-            .Callback<ProviderConfig, CancellationToken>((config, _) => capturedConfig = config)
+            .Setup(t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Callback<ProviderConfig, CancellationToken, bool>((config, _, _) => capturedConfig = config)
             .ReturnsAsync(("ghs_brain_token", DateTimeOffset.UtcNow.AddHours(1)));
 
         var hub = CreateHub();
@@ -162,8 +162,8 @@ public class BrainTokenRefreshRegressionTests
 
         ProviderConfig? capturedConfig = null;
         _mockTokenVending
-            .Setup(t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
-            .Callback<ProviderConfig, CancellationToken>((config, _) => capturedConfig = config)
+            .Setup(t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Callback<ProviderConfig, CancellationToken, bool>((config, _, _) => capturedConfig = config)
             .ReturnsAsync(("ghs_work_token", DateTimeOffset.UtcNow.AddHours(1)));
 
         var hub = CreateHub();
@@ -219,8 +219,8 @@ public class BrainTokenRefreshRegressionTests
 
         ProviderConfig? capturedConfig = null;
         _mockTokenVending
-            .Setup(t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
-            .Callback<ProviderConfig, CancellationToken>((config, _) => capturedConfig = config)
+            .Setup(t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Callback<ProviderConfig, CancellationToken, bool>((config, _, _) => capturedConfig = config)
             .ReturnsAsync(("ghs_fallback_token", DateTimeOffset.UtcNow.AddHours(1)));
 
         var hub = CreateHub();
@@ -273,8 +273,8 @@ public class BrainTokenRefreshRegressionTests
 
         ProviderConfig? capturedConfig = null;
         _mockTokenVending
-            .Setup(t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
-            .Callback<ProviderConfig, CancellationToken>((config, _) => capturedConfig = config)
+            .Setup(t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Callback<ProviderConfig, CancellationToken, bool>((config, _, _) => capturedConfig = config)
             .ReturnsAsync(("ghs_work_token", DateTimeOffset.UtcNow.AddHours(1)));
 
         var hub = CreateHub();
