@@ -817,3 +817,122 @@ select option { background: var(--surface); color: var(--text); }
     gap: 4px;
     margin-top: 4px;
 }
+
+/* ═══ Feedback Section (Run Detail Modal) ═══ */
+.feedback-section {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+}
+
+.feedback-section[open] > .feedback-section-header {
+    border-bottom: 1px solid var(--border);
+}
+
+.feedback-section-header {
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+}
+
+.feedback-section-header::-webkit-details-marker {
+    display: none;
+}
+
+.feedback-section-header::before {
+    content: "▸ ";
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.feedback-section[open] > .feedback-section-header::before {
+    content: "▾ ";
+}
+
+.feedback-section-body {
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.feedback-subsection {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.feedback-subsection-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--accent-light);
+    margin: 0;
+}
+
+.feedback-category-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: rgba(124, 58, 237, 0.15);
+    border: 1px solid rgba(124, 58, 237, 0.3);
+    border-radius: 10px;
+    font-size: 0.72rem;
+    color: var(--accent-light);
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+
+.feedback-stuck-reason {
+    font-size: 0.82rem;
+    color: var(--warning);
+    padding: 6px 10px;
+    background: var(--bg-warning);
+    border-radius: var(--radius);
+    border-left: 3px solid var(--warning);
+}
+
+.feedback-list-section {
+    font-size: 0.82rem;
+    color: var(--text);
+}
+
+.feedback-list-section strong {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.feedback-list-section ul {
+    margin: 4px 0 0 16px;
+    padding: 0;
+    list-style: disc;
+}
+
+.feedback-list-section li {
+    font-size: 0.8rem;
+    color: var(--text);
+    padding: 2px 0;
+    line-height: 1.4;
+}
+
+.feedback-description {
+    font-size: 0.82rem;
+    color: var(--text);
+    line-height: 1.4;
+}
+
+.feedback-action-needed {
+    font-size: 0.82rem;
+    color: var(--text);
+    padding: 6px 10px;
+    background: var(--bg-info);
+    border-radius: var(--radius);
+    border-left: 3px solid var(--accent);
+}
+
+.feedback-action-needed strong {
+    color: var(--text-muted);
+}

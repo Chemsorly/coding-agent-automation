@@ -97,6 +97,9 @@ internal partial class QualityGateOrchestrator
                     var finalErrorSummary = BuildQualityGateErrorSummary(report);
                     run.RetryErrors.Add(finalErrorSummary);
 
+                    // Collect failure feedback before creating draft PR
+                    await CollectFailureFeedbackAsync(context, run, report, linkedCt);
+
                     await callbacks.CreatePullRequest(run, report, true, linkedCt);
                 }
             }
@@ -108,6 +111,9 @@ internal partial class QualityGateOrchestrator
 
                 var errorSummary = BuildQualityGateErrorSummary(report);
                 run.RetryErrors.Add(errorSummary);
+
+                // Collect failure feedback before creating draft PR
+                await CollectFailureFeedbackAsync(context, run, report, linkedCt);
 
                 await callbacks.CreatePullRequest(run, report, true, linkedCt);
             }
@@ -132,6 +138,123 @@ internal partial class QualityGateOrchestrator
             callbacks.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
             callbacks.TransitionTo(PipelineStep.Failed);
             callbacks.AddRunToHistory(run);
+        }
+    }
+
+    /// <summary>
+    /// Collects failure feedback from the agent after max retries are exhausted.
+    /// This is a dedicated agent call that does NOT count against MaxRetries.
+    /// Non-fatal: any exception or timeout produces a fallback feedback record.
+    /// </summary>
+    private async Task CollectFailureFeedbackAsync(
+        QualityGateContext context,
+        PipelineRun run,
+        QualityGateReport latestReport,
+        CancellationToken ct)
+    {
+        try
+        {
+            _logger.Information("Pipeline {RunId} collecting failure feedback from agent", run.RunId);
+            context.Callbacks.EmitOutputLine("📋 Collecting failure feedback...");
+
+            // Load distinct categories from recent run summaries
+            var (harnessCategories, issueCategories) = LoadPreviousCategories();
+
+            // Build the issue detail for the prompt (use context issue or create a minimal one from run data)
+            var issue = context.Issue ?? new IssueDetail
+            {
+                Identifier = run.IssueIdentifier,
+                Title = run.IssueTitle,
+                Description = "(Issue description not available)",
+                Labels = []
+            };
+
+            // Build the failure feedback prompt
+            var feedbackPrompt = FeedbackPromptBuilder.BuildFailureFeedbackPrompt(
+                run, issue, latestReport, harnessCategories, issueCategories);
+
+            // Execute agent with UseResume = true and 60-second timeout
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(FeedbackConstraints.FailureFeedbackTimeoutSeconds));
+
+            var agentResult = await context.AgentProvider.ExecuteAsync(
+                new AgentRequest
+                {
+                    Prompt = feedbackPrompt,
+                    WorkspacePath = run.WorkspacePath!,
+                    Timeout = TimeSpan.FromSeconds(FeedbackConstraints.FailureFeedbackTimeoutSeconds),
+                    UseResume = true
+                },
+                timeoutCts.Token,
+                line =>
+                {
+                    run.OutputLines.Enqueue(line);
+                    context.Callbacks.EmitOutputLine(line);
+                });
+
+            // Parse the response
+            var responseText = string.Join("\n", agentResult.OutputLines);
+            var feedback = _feedbackService.ParseFeedbackFromResponse(responseText, FeedbackOutcome.Failure, DateTime.UtcNow);
+            run.Feedback = feedback;
+
+            _logger.Information("Pipeline {RunId} failure feedback collected successfully. Category: {Category}",
+                run.RunId, feedback.Harness.Category ?? "(none)");
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Timeout on the feedback call itself (not pipeline cancellation)
+            _logger.Warning("Pipeline {RunId} failure feedback collection timed out after {Timeout}s",
+                run.RunId, FeedbackConstraints.FailureFeedbackTimeoutSeconds);
+            run.Feedback = _feedbackService.CreateFallbackFeedback(
+                FeedbackOutcome.Failure, "Feedback collection timed out", DateTime.UtcNow);
+        }
+        catch (OperationCanceledException)
+        {
+            // Pipeline-level cancellation — re-throw to let the outer handler deal with it
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} failure feedback collection failed", run.RunId);
+            run.Feedback = _feedbackService.CreateFallbackFeedback(
+                FeedbackOutcome.Failure, $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
+        }
+    }
+
+    /// <summary>
+    /// Loads distinct harness and issue category labels from the most recent run summaries.
+    /// Returns empty lists if the history service is not available.
+    /// </summary>
+    private (IReadOnlyList<string> HarnessCategories, IReadOnlyList<string> IssueCategories) LoadPreviousCategories()
+    {
+        if (_historyService is null)
+            return ([], []);
+
+        try
+        {
+            var recentSummaries = _historyService.GetRunHistory()
+                .OrderByDescending(s => s.StartedAt)
+                .Take(FeedbackConstraints.MaxRecentRunsForCategories)
+                .ToList();
+
+            var harnessCategories = recentSummaries
+                .Where(s => s.Feedback?.Harness.Category is not null)
+                .Select(s => s.Feedback!.Harness.Category!)
+                .Distinct()
+                .ToList();
+
+            var issueCategories = recentSummaries
+                .Where(s => s.Feedback?.Issue?.Category is not null)
+                .Select(s => s.Feedback!.Issue!.Category!)
+                .Distinct()
+                .ToList();
+
+            return (harnessCategories, issueCategories);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to load previous feedback categories, using empty lists");
+            return ([], []);
         }
     }
 

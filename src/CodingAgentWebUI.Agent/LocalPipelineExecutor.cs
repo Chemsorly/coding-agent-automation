@@ -39,6 +39,7 @@ public sealed class LocalPipelineExecutor
     private readonly PipelineConfiguration _defaultPipelineConfig;
     private readonly IQualityGateValidator _qualityGateValidator;
     private readonly IBrainUpdateService? _brainUpdateService;
+    private readonly FeedbackService _feedbackService;
     private readonly Serilog.ILogger _logger;
 
     public LocalPipelineExecutor(
@@ -57,6 +58,7 @@ public sealed class LocalPipelineExecutor
         _defaultPipelineConfig = defaultPipelineConfig;
         _qualityGateValidator = qualityGateValidator;
         _brainUpdateService = brainUpdateService;
+        _feedbackService = new FeedbackService(logger);
         _logger = logger;
     }
 
@@ -439,7 +441,7 @@ public sealed class LocalPipelineExecutor
                 var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
                     run, run.IssueTitle, run.RepositoryName?.Split('/').LastOrDefault());
 
-                await agentProvider.ExecuteAsync(
+                var reflectionResult = await agentProvider.ExecuteAsync(
                     new AgentRequest
                     {
                         Prompt = reflectionPrompt,
@@ -453,6 +455,20 @@ public sealed class LocalPipelineExecutor
                         run.OutputLines.Enqueue(line);
                         emitOutputLine(line);
                     });
+
+                // Parse feedback from the reflection agent response
+                try
+                {
+                    var responseText = string.Join("\n", reflectionResult.OutputLines);
+                    var feedback = _feedbackService.ParseFeedbackFromResponse(responseText, FeedbackOutcome.Success, DateTime.UtcNow);
+                    run.Feedback = feedback;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Feedback parsing failed for run {RunId}, using fallback", run.RunId);
+                    run.Feedback = _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
+                        $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -496,7 +512,8 @@ public sealed class LocalPipelineExecutor
         CodeReviewAgentsRun = run.CodeReviewAgentsRun,
         CodeReviewCriticalCount = run.CodeReviewCriticalCount,
         CodeReviewWarningCount = run.CodeReviewWarningCount,
-        CodeReviewSuggestionCount = run.CodeReviewSuggestionCount
+        CodeReviewSuggestionCount = run.CodeReviewSuggestionCount,
+        Feedback = run.Feedback
     };
 
     private static JobCompletionPayload BuildFailurePayload(PipelineRun run, string reason) => new()
@@ -515,7 +532,8 @@ public sealed class LocalPipelineExecutor
         CodeReviewAgentsRun = run.CodeReviewAgentsRun,
         CodeReviewCriticalCount = run.CodeReviewCriticalCount,
         CodeReviewWarningCount = run.CodeReviewWarningCount,
-        CodeReviewSuggestionCount = run.CodeReviewSuggestionCount
+        CodeReviewSuggestionCount = run.CodeReviewSuggestionCount,
+        Feedback = run.Feedback
     };
 
     /// <summary>

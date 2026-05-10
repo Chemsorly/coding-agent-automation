@@ -152,7 +152,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// transitions agent to Idle, and signals the drain service for next dispatch.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportJobCompleted(string jobId, JobCompletionPayload payload)
+    public async Task ReportJobCompleted(string jobId, JobCompletionPayload payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
 
@@ -181,6 +181,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
             Interlocked.Exchange(ref run.CodeReviewCriticalCount, payload.CodeReviewCriticalCount);
             Interlocked.Exchange(ref run.CodeReviewWarningCount, payload.CodeReviewWarningCount);
             Interlocked.Exchange(ref run.CodeReviewSuggestionCount, payload.CodeReviewSuggestionCount);
+            run.Feedback = payload.Feedback;
 
             // Persist to history and remove from active runs
             _facade.AddRunToHistory(run);
@@ -191,6 +192,9 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
                 jobId, payload.FinalStep, payload.PullRequestUrl ?? "none");
 
             _orchestration.NotifyChange();
+
+            // Post issue feedback comment if present (non-fatal)
+            await PostIssueFeedbackCommentAsync(run);
         }
 
         // Transition agent to Idle and clear active job
@@ -207,8 +211,6 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
             // Signal the drain service to attempt dispatch for this now-idle agent
             _facade.Signal();
         }
-
-        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -528,6 +530,29 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         return isWontDo
             ? $"## 🚫 Analysis Gate: Won't Do\n\n```json\n{assessmentJson}\n```"
             : $"## ⚠️ Analysis Gate: Needs Refinement\n\n```json\n{assessmentJson}\n```";
+    }
+
+    /// <summary>
+    /// Posts issue-level feedback as a comment on the GitHub issue if present.
+    /// Non-fatal: logs warning on failure and continues.
+    /// </summary>
+    private async Task PostIssueFeedbackCommentAsync(PipelineRun run)
+    {
+        try
+        {
+            var comment = FeedbackCommentFormatter.FormatComment(run.Feedback?.Issue);
+            if (comment is null)
+                return;
+
+            await PostCommentViaIssueProviderAsync(run, comment);
+            _logger.Information("Posted issue feedback comment for run {RunId} on issue {IssueIdentifier}",
+                run.RunId, run.IssueIdentifier);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to post issue feedback comment for run {RunId} on issue {IssueIdentifier}",
+                run.RunId, run.IssueIdentifier);
+        }
     }
 
     /// <summary>

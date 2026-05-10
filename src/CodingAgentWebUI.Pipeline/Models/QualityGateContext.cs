@@ -25,4 +25,10 @@ public sealed record QualityGateContext : PipelineContextBase
     /// (pre-migration) from "none matched this job's labels".
     /// </summary>
     public bool QgcsConfiguredAtDispatch { get; init; }
+
+    /// <summary>
+    /// The issue detail for the current run. Used by failure feedback to include
+    /// issue context in the feedback prompt. May be null if issue was not fetched.
+    /// </summary>
+    public IssueDetail? Issue { get; init; }
 }
