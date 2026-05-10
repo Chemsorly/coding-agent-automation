@@ -344,7 +344,7 @@ public class AgentProviderSectionComponentTests : BunitContext
     {
         var component = RenderSection();
 
-        Assert.Contains("These configurations define how agents connect to the Kiro CLI", component.Markup);
+        Assert.Contains("These configurations define how agents execute", component.Markup);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
