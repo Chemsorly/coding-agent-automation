@@ -3,6 +3,7 @@
 
 <section class="settings-section">
     <h2>Agent Profiles</h2>
+    <p class="section-description">Profiles map agents to their capabilities via labels. When a job is dispatched, the agent's labels are matched against profile labels (ALL must match) to determine MCP servers and provider config.</p>
 
     @if (_profiles.Count == 0)
     {
@@ -15,7 +16,7 @@
                 <thead>
                     <tr>
                         <th>Display Name</th>
-                        <th>Match Labels <span class="th-hint" title="ALL match — profile matches only if ALL its labels exist on the agent">?</span></th>
+                        <th class="th-has-hint">Match Labels <span class="th-hint" tabindex="0" role="img" aria-label="ALL match — profile matches only if ALL its labels exist on the agent" data-tooltip="ALL match — profile matches only if ALL its labels exist on the agent">?</span></th>
                         <th>Agent Provider</th>
                         <th>Enabled</th>
                         <th>Priority</th>

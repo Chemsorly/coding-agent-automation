@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 public static class LabelMatchStrategies
 {
     /// <summary>
-    /// ANY label in common (intersection). Empty match-labels = global fallback (always matches).
+    /// ANY label in common (intersection). Empty match-labels = always applies (unconditional match).
     /// Used by QualityGateResolver and ReviewerResolver.
     /// </summary>
     /// <param name="matchLabels">The configuration's match labels.</param>

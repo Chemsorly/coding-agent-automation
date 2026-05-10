@@ -3,6 +3,7 @@
 
 <section class="settings-section">
     <h2>Quality Gate Configurations</h2>
+    <p class="section-description">Define build and test commands per tech stack. Configs with matching labels apply together — use empty labels for gates that should run on every job.</p>
 
     @if (_configs.Count == 0)
     {
@@ -15,7 +16,7 @@
                 <thead>
                     <tr>
                         <th>Display Name</th>
-                        <th>Match Labels <span class="th-hint" title="ANY match — applies if at least one label overlaps with the job's labels">?</span></th>
+                        <th class="th-has-hint">Match Labels <span class="th-hint" tabindex="0" role="img" aria-label="ANY match — applies if at least one label overlaps with the job's labels" data-tooltip="ANY match — applies if at least one label overlaps with the job's labels">?</span></th>
                         <th style="min-width: 250px;">Commands</th>
                         <th>Coverage</th>
                         <th>Enabled</th>
@@ -88,7 +89,7 @@
                 </label>
             </div>
             <div class="form-group">
-                <label>Match Labels <span class="form-hint">(comma-separated, empty = global fallback · ANY match — applies if at least one label overlaps)</span></label>
+                <label>Match Labels <span class="form-hint">(comma-separated, empty = always applies · ANY match — applies if at least one label overlaps)</span></label>
                 <input type="text" @bind="_form.MatchLabels" placeholder="e.g. dotnet, csharp" />
             </div>
             <div class="form-group">

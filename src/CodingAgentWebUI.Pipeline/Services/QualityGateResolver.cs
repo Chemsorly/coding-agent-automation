@@ -5,7 +5,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// <summary>
 /// Stateless service responsible for resolving which Quality Gate Configurations apply to a job.
 /// Matching uses label intersection with case-insensitive comparison. QGCs with empty MatchLabels
-/// act as global fallbacks and always match.
+/// always apply unconditionally (they match every job).
 /// </summary>
 public sealed class QualityGateResolver
 {

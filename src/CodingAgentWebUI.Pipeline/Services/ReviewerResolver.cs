@@ -5,7 +5,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// <summary>
 /// Stateless service responsible for resolving which Reviewer Configurations apply to a job.
 /// Matching uses label intersection with case-insensitive comparison. Configurations with empty
-/// MatchLabels act as global fallbacks and always match.
+/// MatchLabels always apply unconditionally (they match every job).
 /// </summary>
 public sealed class ReviewerResolver
 {

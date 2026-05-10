@@ -5,7 +5,7 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// <summary>
 /// A named entity that defines a set of specialized review agents keyed by a set of MatchLabels.
 /// Applied to jobs whose required labels intersect with the configuration's match labels.
-/// Configurations with empty MatchLabels act as global fallbacks and always match.
+/// Configurations with empty MatchLabels always apply unconditionally (they match every job).
 /// </summary>
 [MessagePackObject]
 public sealed record ReviewerConfiguration
