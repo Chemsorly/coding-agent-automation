@@ -1,7 +1,9 @@
 @inherits LayoutComponentBase
 @implements IDisposable
 @using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Services
 @inject PipelineLoopService LoopService
+@inject ConsolidationBadgeService BadgeService
 
 <div class="app-layout">
     <nav class="sidebar" role="navigation" aria-label="Main navigation">
@@ -22,6 +24,14 @@
             <span class="sidebar-icon">📊</span>
             <span>Agent Monitoring</span>
         </NavLink>
+        <NavLink href="/consolidation" class="sidebar-link">
+            <span class="sidebar-icon">🔄</span>
+            <span>Consolidation</span>
+            @if (BadgeService.BadgeCount > 0)
+            {
+                <span class="sidebar-badge">@BadgeService.BadgeCount</span>
+            }
+        </NavLink>
         <NavLink href="/settings" class="sidebar-link">
             <span class="sidebar-icon">⚙️</span>
             <span>Settings</span>
@@ -40,6 +50,7 @@
     protected override void OnInitialized()
     {
         LoopService.OnChange += HandleLoopChanged;
+        BadgeService.OnBadgeChanged += HandleBadgeChanged;
     }
 
     private async void HandleLoopChanged()
@@ -48,8 +59,15 @@
         catch (ObjectDisposedException) { }
     }
 
+    private async void HandleBadgeChanged()
+    {
+        try { await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { }
+    }
+
     public void Dispose()
     {
         LoopService.OnChange -= HandleLoopChanged;
+        BadgeService.OnBadgeChanged -= HandleBadgeChanged;
     }
 }

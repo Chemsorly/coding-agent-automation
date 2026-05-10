@@ -40,6 +40,7 @@ public sealed class AgentWorkerService : BackgroundService
 {
     private readonly HubConnectionManager _hubManager;
     private readonly LocalPipelineExecutor _executor;
+    private readonly LocalConsolidationExecutor _consolidationExecutor;
     private readonly IKiroCliOrchestrator _orchestrator;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
@@ -60,16 +61,19 @@ public sealed class AgentWorkerService : BackgroundService
     public AgentWorkerService(
         HubConnectionManager hubManager,
         LocalPipelineExecutor executor,
+        LocalConsolidationExecutor consolidationExecutor,
         IKiroCliOrchestrator orchestrator,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(hubManager);
         ArgumentNullException.ThrowIfNull(executor);
+        ArgumentNullException.ThrowIfNull(consolidationExecutor);
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(logger);
 
         _hubManager = hubManager;
         _executor = executor;
+        _consolidationExecutor = consolidationExecutor;
         _orchestrator = orchestrator;
         _logger = logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
@@ -103,6 +107,7 @@ public sealed class AgentWorkerService : BackgroundService
         _hubManager.OnAssignChatPrompt += HandleChatPromptAsync;
         _hubManager.OnCancelChat += HandleCancelChatAsync;
         _hubManager.OnFetchModels += HandleFetchModelsAsync;
+        _hubManager.OnAssignConsolidationJob += HandleAssignConsolidationJobAsync;
 
         try
         {
@@ -513,6 +518,76 @@ public sealed class AgentWorkerService : BackgroundService
         {
             _logger.Warning(ex, "Failed to report FetchModels error for request {RequestId}", requestId);
         }
+    }
+
+    private async Task HandleAssignConsolidationJobAsync(ConsolidationJobMessage message)
+    {
+        lock (_busyLock)
+        {
+            if (_activeJobId is not null || _activeChatSessionId is not null)
+            {
+                _logger.Warning("Rejecting consolidation job {JobId} — agent is busy with {ActiveJobId}",
+                    message.JobId, _activeJobId ?? $"chat:{_activeChatSessionId}");
+                return;
+            }
+
+            _activeJobId = message.JobId;
+        }
+
+        _logger.Information("Accepted consolidation job {JobId} of type {Type}",
+            message.JobId, message.Type);
+
+        _jobCts = new CancellationTokenSource();
+
+        _activeJobTask = Task.Run(async () =>
+        {
+            try
+            {
+                await _consolidationExecutor.ExecuteAsync(
+                    message, _hubManager.Connection, _jobCts.Token);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Consolidation job {JobId} failed with unhandled error", message.JobId);
+
+                // Attempt to report failure back to orchestrator
+                try
+                {
+                    var failResult = new ConsolidationJobResult
+                    {
+                        JobId = message.JobId,
+                        Success = false,
+                        ErrorMessage = ex.Message
+                    };
+                    await _hubManager.Connection.InvokeAsync("ReportConsolidationComplete", failResult);
+                }
+                catch (Exception reportEx)
+                {
+                    _logger.Error(reportEx, "Failed to report consolidation failure for job {JobId}", message.JobId);
+                }
+            }
+            finally
+            {
+                lock (_busyLock)
+                {
+                    _activeJobId = null;
+                    _currentStep = null;
+                }
+
+                _jobCts?.Dispose();
+                _jobCts = null;
+
+                // Signal ready for next job
+                try
+                {
+                    await _hubManager.Connection.InvokeAsync("AgentReady", _agentId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to send AgentReady signal after consolidation job");
+                }
+            }
+        });
     }
 
     /// <summary>

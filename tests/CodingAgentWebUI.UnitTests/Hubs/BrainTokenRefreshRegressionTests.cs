@@ -34,6 +34,8 @@ public class BrainTokenRefreshRegressionTests
             _mockTokenVending.Object,
             null!,  // PipelineOrchestrationService — not used by RequestTokenRefresh
             null!,  // ModelFetchService — not used by RequestTokenRefresh
+            null!,  // IConsolidationService — not used by RequestTokenRefresh
+            null!,  // ConsolidationBadgeService — not used by RequestTokenRefresh
             _mockLogger.Object);
 
         // Set up a mock HubCallerContext

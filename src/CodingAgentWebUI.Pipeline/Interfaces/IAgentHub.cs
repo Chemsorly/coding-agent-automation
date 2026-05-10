@@ -41,6 +41,9 @@ public interface IAgentHub
 
     // Model fetch
     Task ReportFetchModelsResult(FetchModelsResponse response);
+
+    // Consolidation
+    Task ReportConsolidationComplete(ConsolidationJobResult result);
 }
 
 /// <summary>
@@ -54,4 +57,5 @@ public interface IAgentHubClient
     Task CancelChat(string sessionId);
     Task ForceDisconnect();
     Task RequestFetchModels(FetchModelsRequest request);
+    Task AssignConsolidationJob(string agentId, ConsolidationJobMessage job);
 }

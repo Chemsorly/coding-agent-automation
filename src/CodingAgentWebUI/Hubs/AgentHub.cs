@@ -24,6 +24,8 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly ITokenVendingService _tokenVending;
     private readonly PipelineOrchestrationService _orchestration;
     private readonly ModelFetchService _modelFetchService;
+    private readonly IConsolidationService _consolidationService;
+    private readonly ConsolidationBadgeService _badgeService;
     private readonly ILogger _logger;
 
     public AgentHub(
@@ -31,12 +33,16 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         ITokenVendingService tokenVending,
         PipelineOrchestrationService orchestration,
         ModelFetchService modelFetchService,
+        IConsolidationService consolidationService,
+        ConsolidationBadgeService badgeService,
         ILogger logger)
     {
         _facade = facade;
         _tokenVending = tokenVending;
         _orchestration = orchestration;
         _modelFetchService = modelFetchService;
+        _consolidationService = consolidationService;
+        _badgeService = badgeService;
         _logger = logger;
     }
 
@@ -491,6 +497,75 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         ArgumentNullException.ThrowIfNull(response);
         _modelFetchService.CompleteRequest(response);
         return Task.CompletedTask;
+    }
+
+    // ── Consolidation ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Agent reports consolidation job completion. Updates the consolidation run status,
+    /// persists harness suggestions if present, and increments badge count for refactoring issues.
+    /// </summary>
+    public async Task ReportConsolidationComplete(ConsolidationJobResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+
+        var agent = _facade.GetByConnectionId(Context.ConnectionId);
+        _logger.Information("Consolidation job {JobId} completed by agent {AgentId}: success={Success}",
+            result.JobId, agent?.AgentId, result.Success);
+
+        // Update the consolidation run status
+        try
+        {
+            var status = result.Success
+                ? Pipeline.Models.ConsolidationRunStatus.Succeeded
+                : Pipeline.Models.ConsolidationRunStatus.Failed;
+            var summary = result.Success ? result.Summary : result.ErrorMessage;
+
+            // WARNING 9: CancellationToken.None is intentional here — these are fast file I/O
+            // operations that should complete even if the agent connection drops. The consolidation
+            // run state must be persisted regardless of connection lifecycle.
+            await _consolidationService.UpdateRunAsync(result.JobId, status, summary, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to update consolidation run {JobId} status", result.JobId);
+        }
+
+        // For harness suggestions: persist the suggestions file
+        if (result.HarnessSuggestions is not null)
+        {
+            try
+            {
+                // CancellationToken.None: same rationale as above — suggestions must be persisted
+                await _consolidationService.SaveHarnessSuggestionsAsync(result.HarnessSuggestions, CancellationToken.None);
+                _logger.Information("Persisted harness suggestions from consolidation job {JobId}", result.JobId);
+
+                // Increment badge count for harness suggestions
+                _badgeService.IncrementBy(result.HarnessSuggestions.Suggestions.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to persist harness suggestions for consolidation job {JobId}", result.JobId);
+            }
+        }
+
+        // For refactoring: increment badge count for created issues
+        if (result.CreatedIssues is { Count: > 0 })
+        {
+            _badgeService.IncrementBy(result.CreatedIssues.Count);
+            _logger.Information("Refactoring consolidation job {JobId} created {Count} issue(s)",
+                result.JobId, result.CreatedIssues.Count);
+        }
+
+        // Transition agent back to Idle
+        if (agent is not null)
+        {
+            agent.ActiveJobId = null;
+            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+            _facade.Signal();
+        }
+
+        _orchestration.NotifyChange();
     }
 
     // ── Private helpers ─────────────────────────────────────────────────

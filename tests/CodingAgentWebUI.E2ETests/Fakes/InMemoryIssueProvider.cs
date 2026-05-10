@@ -74,6 +74,20 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         return Task.CompletedTask;
     }
 
+    public List<(string Title, string Body, IReadOnlyList<string>? Labels)> CreatedIssues { get; } = new();
+
+    public Task<CreatedIssueResult> CreateIssueAsync(string title, string body, IReadOnlyList<string>? labels, CancellationToken ct)
+    {
+        if (ShouldFail) throw new HttpRequestException("Fake issue provider failure");
+        CreatedIssues.Add((title, body, labels));
+        var number = (Issues.Count + CreatedIssues.Count).ToString();
+        return Task.FromResult(new CreatedIssueResult
+        {
+            Identifier = number,
+            Url = $"https://github.com/test/repo/issues/{number}"
+        });
+    }
+
     public Task CloseIssueAsync(string identifier, CancellationToken ct) => Task.CompletedTask;
     public Task<bool> HasAgentLabelsAsync(CancellationToken ct) => Task.FromResult(true);
     public Task<bool> EnsureAgentLabelsAsync(CancellationToken ct) => Task.FromResult(true);

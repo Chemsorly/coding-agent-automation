@@ -114,6 +114,21 @@ builder.Services.AddSingleton<ReviewerResolver>();
 builder.Services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
     sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));
 
+// Consolidation services
+builder.Services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationDispatchService(
+    sp.GetRequiredService<AgentRegistryService>(),
+    sp.GetRequiredService<JobDispatcherService>(),
+    sp.GetRequiredService<IAgentCommunication>(),
+    sp.GetRequiredService<IConfigurationStore>(),
+    pipelineConfig,
+    Serilog.Log.Logger));
+builder.Services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
+    Serilog.Log.Logger,
+    pipelineConfig,
+    sp.GetRequiredService<IPipelineRunHistoryService>(),
+    sp.GetRequiredService<IConsolidationDispatcher>()));
+builder.Services.AddSingleton<ConsolidationBadgeService>();
+
 builder.Services.AddSingleton<ModelFetchService>(sp => new ModelFetchService(
     sp.GetRequiredService<AgentRegistryService>(),
     sp.GetRequiredService<IAgentCommunication>(),

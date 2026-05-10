@@ -1,0 +1,212 @@
+using AwesomeAssertions;
+using CodingAgentWebUI.Agent.Executors;
+using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
+using Moq;
+
+namespace CodingAgentWebUI.Agent.UnitTests.Executors;
+
+/// <summary>
+/// Unit tests for <see cref="RefactoringExecutor"/>.
+/// Tests: creates no issues when agent finds nothing, handles malformed JSON.
+/// </summary>
+public class RefactoringExecutorTests : IDisposable
+{
+    private readonly Mock<Serilog.ILogger> _mockLogger = new();
+    private readonly Mock<IRepositoryProvider> _mockRepoProvider = new();
+    private readonly Mock<IIssueProvider> _mockIssueProvider = new();
+    private readonly Mock<IAgentProvider> _mockAgentProvider = new();
+    private readonly string _tempDir;
+
+    public RefactoringExecutorTests()
+    {
+        _tempDir = Path.Combine(Path.GetTempPath(), $"refactoring-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(_tempDir);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_tempDir))
+            Directory.Delete(_tempDir, recursive: true);
+    }
+
+    private RefactoringExecutor CreateExecutor() => new(_mockLogger.Object);
+
+    private ConsolidationJobMessage CreateJob(string? jobId = null)
+    {
+        var id = jobId ?? Guid.NewGuid().ToString();
+        return new ConsolidationJobMessage
+        {
+            JobId = id,
+            Type = ConsolidationRunType.RefactoringDetection,
+            TemplateId = "template-1",
+            TemplateName = "Test Template",
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration()
+        };
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AgentFindsNothing_CreatesNoIssues()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        // Setup clone to create the workspace directory structure
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Agent succeeds but produces no proposals file
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = ["No refactoring opportunities found."]
+            });
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Summary.Should().Contain("No refactoring opportunities identified");
+
+        // Should never call CreateIssueAsync
+        _mockIssueProvider.Verify(
+            x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MalformedJson_ReturnsFailedResult()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        // Setup clone to create workspace and write malformed JSON
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, CancellationToken>((path, _) =>
+            {
+                // Create the .kiro directory and write malformed JSON
+                var kiroDir = Path.Combine(path, ".kiro");
+                Directory.CreateDirectory(kiroDir);
+                File.WriteAllText(Path.Combine(kiroDir, "refactoring-proposals.json"), "{ invalid json [[[");
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = ["Analysis complete."]
+            });
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("parse");
+
+        // Should never call CreateIssueAsync when JSON is malformed
+        _mockIssueProvider.Verify(
+            x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ValidProposals_CreatesIssues()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Extract shared validation logic",
+                    "affectedFiles": ["src/Service.cs", "src/Handler.cs"],
+                    "description": "Both files duplicate input validation.",
+                    "rationale": "DRY principle violation."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, CancellationToken>((path, _) =>
+            {
+                var kiroDir = Path.Combine(path, ".kiro");
+                Directory.CreateDirectory(kiroDir);
+                File.WriteAllText(Path.Combine(kiroDir, "refactoring-proposals.json"), proposalsJson);
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = ["Found 1 refactoring opportunity."]
+            });
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "42", Url = "https://github.com/test/repo/issues/42" });
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.CreatedIssues.Should().HaveCount(1);
+        result.Summary.Should().Contain("1");
+        result.Summary.Should().Contain("42");
+
+        _mockIssueProvider.Verify(
+            x => x.CreateIssueAsync(
+                It.Is<string>(t => t.Contains("Extract shared validation logic")),
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public void FormatRefactoringSummary_NoIssues_ReturnsNoOpportunities()
+    {
+        // Act
+        var summary = RefactoringExecutor.FormatRefactoringSummary([]);
+
+        // Assert
+        summary.Should().Contain("No refactoring opportunities identified");
+    }
+
+    [Fact]
+    public void FormatRefactoringSummary_WithIssues_IncludesCountAndIdentifiers()
+    {
+        // Arrange
+        var issues = new List<CreatedIssueInfo>
+        {
+            new() { Identifier = "10", Title = "Fix duplication", Url = "https://example.com/10" },
+            new() { Identifier = "11", Title = "Rename methods", Url = "https://example.com/11" }
+        };
+
+        // Act
+        var summary = RefactoringExecutor.FormatRefactoringSummary(issues);
+
+        // Assert
+        summary.Should().Contain("2");
+        summary.Should().Contain("#10");
+        summary.Should().Contain("#11");
+    }
+}

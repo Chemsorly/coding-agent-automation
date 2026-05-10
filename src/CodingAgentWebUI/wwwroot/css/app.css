@@ -936,3 +936,41 @@ select option { background: var(--surface); color: var(--text); }
 .feedback-action-needed strong {
     color: var(--text-muted);
 }
+
+/* ===== Consolidation Page ===== */
+.consolidation-page { padding: 0; }
+.consolidation-header { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.consolidation-header h1 { font-size: 1.25rem; font-weight: 600; }
+
+.consolidation-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; }
+.consolidation-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+.consolidation-card-title { font-size: 0.92rem; font-weight: 600; margin: 0 0 10px; color: var(--text); }
+.consolidation-card-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 0.82rem; }
+.consolidation-card-label { color: var(--text-muted); font-weight: 500; min-width: 140px; }
+.consolidation-card-value { color: var(--text); }
+.consolidation-muted { color: var(--text-muted); font-style: italic; }
+.consolidation-card-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+.btn-trigger { padding: 6px 14px; border-radius: var(--radius); border: 1px solid var(--accent); background: transparent; color: var(--accent-light); font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: background 0.15s, color 0.15s; }
+.btn-trigger:hover:not(:disabled) { background: var(--accent); color: white; }
+.btn-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.consolidation-status { font-size: 0.78rem; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
+.consolidation-status-running { background: var(--bg-info); color: var(--accent-light); }
+.consolidation-status-succeeded { background: var(--bg-success); color: var(--success); }
+.consolidation-status-failed { background: var(--bg-error); color: var(--error); }
+
+.consolidation-suggestions-meta { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 12px; }
+.consolidation-suggestions-list { display: flex; flex-direction: column; gap: 10px; }
+.consolidation-suggestion-item { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+.consolidation-suggestion-text { font-size: 0.88rem; color: var(--text); font-weight: 500; margin-bottom: 4px; }
+.consolidation-suggestion-rationale { font-size: 0.8rem; color: var(--text-muted); line-height: 1.4; margin-bottom: 4px; }
+.consolidation-suggestion-frequency { font-size: 0.75rem; color: var(--text-muted); font-style: italic; }
+
+.consolidation-summary-cell { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.consolidation-status-message { margin: 12px 20px; padding: 10px 14px; border-radius: var(--radius); font-size: 0.85rem; }
+.consolidation-status-info { background: var(--bg-info); color: var(--accent-light); border-left: 3px solid var(--accent); }
+.consolidation-status-error { background: var(--bg-error); color: var(--error); border-left: 3px solid var(--error); }
+
+.sidebar-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: white; font-size: 0.65rem; font-weight: 700; margin-left: auto; }

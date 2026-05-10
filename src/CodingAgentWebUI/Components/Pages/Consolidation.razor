@@ -1,0 +1,328 @@
+@page "/consolidation"
+@rendermode InteractiveServer
+@implements IDisposable
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Services
+@using Serilog
+@inject IConsolidationService ConsolidationService
+@inject ConsolidationBadgeService BadgeService
+@inject IConfigurationStore ConfigStore
+
+<div class="consolidation-page">
+    <header class="consolidation-header">
+        <h1>Consolidation</h1>
+    </header>
+
+    <!-- Per-Template Cards -->
+    <section class="settings-section" style="margin: 16px 20px;">
+        <h2>📋 Template Consolidation</h2>
+        @if (_templates.Count == 0)
+        {
+            <div class="monitoring-empty">No enabled templates configured.</div>
+        }
+        else
+        {
+            <div class="consolidation-cards">
+                @foreach (var template in _templates)
+                {
+                    var supportsBrain = ConsolidationTemplateFilter.SupportsBrainConsolidation(template);
+                    var supportsRefactoring = ConsolidationTemplateFilter.SupportsRefactoringDetection(template);
+                    var lastBrain = _lastRuns.GetValueOrDefault((ConsolidationRunType.BrainConsolidation, template.Id));
+                    var lastRefactoring = _lastRuns.GetValueOrDefault((ConsolidationRunType.RefactoringDetection, template.Id));
+
+                    <div class="consolidation-card">
+                        <h3 class="consolidation-card-title">@template.Name</h3>
+
+                        <div class="consolidation-card-row">
+                            <span class="consolidation-card-label">Brain Consolidation:</span>
+                            @if (supportsBrain)
+                            {
+                                @if (lastBrain != null)
+                                {
+                                    <span class="consolidation-card-value">
+                                        @lastBrain.StartedAtUtc.ToString("yyyy-MM-dd HH:mm") UTC —
+                                        <span class="consolidation-status consolidation-status-@lastBrain.Status.ToString().ToLowerInvariant()">@lastBrain.Status</span>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="consolidation-card-value consolidation-muted">Never run</span>
+                                }
+                            }
+                            else
+                            {
+                                <span class="consolidation-card-value consolidation-muted">No brain provider configured</span>
+                            }
+                        </div>
+
+                        <div class="consolidation-card-row">
+                            <span class="consolidation-card-label">Refactoring Scan:</span>
+                            @if (supportsRefactoring)
+                            {
+                                @if (lastRefactoring != null)
+                                {
+                                    <span class="consolidation-card-value">
+                                        @lastRefactoring.StartedAtUtc.ToString("yyyy-MM-dd HH:mm") UTC —
+                                        <span class="consolidation-status consolidation-status-@lastRefactoring.Status.ToString().ToLowerInvariant()">@lastRefactoring.Status</span>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="consolidation-card-value consolidation-muted">Never run</span>
+                                }
+                            }
+                            else
+                            {
+                                <span class="consolidation-card-value consolidation-muted">No repo/issue provider configured</span>
+                            }
+                        </div>
+
+                        <div class="consolidation-card-actions">
+                            @if (supportsBrain)
+                            {
+                                <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.BrainConsolidation, template.Id)"
+                                        @onclick="() => TriggerConsolidation(ConsolidationRunType.BrainConsolidation, template.Id, template.Name)">
+                                    🧠 Brain Consolidation
+                                </button>
+                            }
+                            @if (supportsRefactoring)
+                            {
+                                <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.RefactoringDetection, template.Id)"
+                                        @onclick="() => TriggerConsolidation(ConsolidationRunType.RefactoringDetection, template.Id, template.Name)">
+                                    🔍 Refactoring Scan
+                                </button>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+
+    <!-- Global Harness Suggestions -->
+    <section class="settings-section" style="margin: 16px 20px;">
+        <h2>💡 Harness Suggestions</h2>
+        @if (_harnessSuggestions == null)
+        {
+            <div class="monitoring-empty">No suggestions generated yet.</div>
+        }
+        else
+        {
+            <div class="consolidation-suggestions-meta">
+                Generated: @_harnessSuggestions.GeneratedAtUtc.ToString("yyyy-MM-dd HH:mm") UTC
+                — Based on @_harnessSuggestions.BasedOnRunCount runs
+                — Success rate: @_harnessSuggestions.SuccessRate.ToString("P1")
+            </div>
+            @if (_harnessSuggestions.Suggestions.Count == 0)
+            {
+                <div class="monitoring-empty">No suggestions in the current batch.</div>
+            }
+            else
+            {
+                <div class="consolidation-suggestions-list">
+                    @foreach (var suggestion in _harnessSuggestions.Suggestions)
+                    {
+                        <div class="consolidation-suggestion-item">
+                            <div class="consolidation-suggestion-text">@suggestion.Text</div>
+                            <div class="consolidation-suggestion-rationale">@suggestion.Rationale</div>
+                            <div class="consolidation-suggestion-frequency">Frequency: @suggestion.Frequency runs</div>
+                        </div>
+                    }
+                </div>
+            }
+        }
+        <div class="consolidation-card-actions" style="margin-top: 12px;">
+            <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.HarnessSuggestions, null)"
+                    @onclick="() => TriggerConsolidation(ConsolidationRunType.HarnessSuggestions, null, null)">
+                ✨ Generate Suggestions
+            </button>
+        </div>
+    </section>
+
+    <!-- Run History -->
+    <section class="settings-section" style="margin: 16px 20px;">
+        <h2>📜 Run History (@_runHistory.Count)</h2>
+        @if (_runHistory.Count == 0)
+        {
+            <div class="monitoring-empty">No consolidation runs yet.</div>
+        }
+        else
+        {
+            <div class="monitoring-table-wrap">
+                <table class="monitoring-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Template</th>
+                            <th>Started</th>
+                            <th>Status</th>
+                            <th>Summary</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var run in _runHistory)
+                        {
+                            <tr>
+                                <td>@FormatRunType(run.Type)</td>
+                                <td>@(run.TemplateName ?? "Global")</td>
+                                <td>@run.StartedAtUtc.ToString("yyyy-MM-dd HH:mm") UTC</td>
+                                <td>
+                                    <span class="consolidation-status consolidation-status-@run.Status.ToString().ToLowerInvariant()">
+                                        @run.Status
+                                    </span>
+                                </td>
+                                <td class="consolidation-summary-cell" title="@(run.Summary ?? "—")">@(run.Summary ?? "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
+    @if (!string.IsNullOrEmpty(_statusMessage))
+    {
+        <div class="consolidation-status-message @(_statusIsError ? "consolidation-status-error" : "consolidation-status-info")">
+            @_statusMessage
+        </div>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<PipelineJobTemplate> _templates = [];
+    private Dictionary<(ConsolidationRunType, string?), ConsolidationRun?> _lastRuns = new();
+    private IReadOnlyList<ConsolidationRun> _runHistory = [];
+    private HarnessSuggestions? _harnessSuggestions;
+    private string? _statusMessage;
+    private bool _statusIsError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        BadgeService.Reset();
+        ConsolidationService.OnChange += HandleConsolidationChanged;
+
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        try
+        {
+            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+            _templates = config.PipelineJobTemplates.Where(t => t.Enabled).ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load pipeline config for consolidation page");
+            _templates = [];
+        }
+
+        try
+        {
+            _runHistory = await ConsolidationService.GetRunHistoryAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load consolidation run history");
+            _runHistory = [];
+        }
+
+        try
+        {
+            _harnessSuggestions = await ConsolidationService.GetHarnessSuggestionsAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load harness suggestions");
+            _harnessSuggestions = null;
+        }
+
+        // Load last runs per template per type
+        _lastRuns.Clear();
+        foreach (var template in _templates)
+        {
+            try
+            {
+                var lastBrain = await ConsolidationService.GetLastRunAsync(
+                    ConsolidationRunType.BrainConsolidation, template.Id, CancellationToken.None);
+                _lastRuns[(ConsolidationRunType.BrainConsolidation, template.Id)] = lastBrain;
+
+                var lastRefactoring = await ConsolidationService.GetLastRunAsync(
+                    ConsolidationRunType.RefactoringDetection, template.Id, CancellationToken.None);
+                _lastRuns[(ConsolidationRunType.RefactoringDetection, template.Id)] = lastRefactoring;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to load last runs for template {TemplateId}", template.Id);
+            }
+        }
+    }
+
+    private async Task TriggerConsolidation(ConsolidationRunType type, string? templateId, string? templateName)
+    {
+        _statusMessage = null;
+        _statusIsError = false;
+
+        try
+        {
+            var run = await ConsolidationService.TriggerAsync(type, templateId, CancellationToken.None);
+            if (run == null)
+            {
+                _statusMessage = type switch
+                {
+                    ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — no agents available or already running.",
+                    ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — no agents available or already running.",
+                    ConsolidationRunType.HarnessSuggestions => "Harness suggestions rejected — no agents available or already running.",
+                    _ => "Consolidation rejected."
+                };
+                _statusIsError = true;
+            }
+            else
+            {
+                _statusMessage = $"{FormatRunType(type)} triggered successfully.";
+                await LoadDataAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to trigger consolidation {Type} for template {TemplateId}", type, templateId);
+            _statusMessage = $"Error triggering consolidation: {ex.Message}";
+            _statusIsError = true;
+        }
+    }
+
+    private bool IsRunning(ConsolidationRunType type, string? templateId)
+    {
+        return _runHistory.Any(r => r.Type == type
+            && r.TemplateId == templateId
+            && r.Status == ConsolidationRunStatus.Running);
+    }
+
+    private async void HandleConsolidationChanged()
+    {
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadDataAsync();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private static string FormatRunType(ConsolidationRunType type) => type switch
+    {
+        ConsolidationRunType.BrainConsolidation => "Brain Consolidation",
+        ConsolidationRunType.RefactoringDetection => "Refactoring Detection",
+        ConsolidationRunType.HarnessSuggestions => "Harness Suggestions",
+        _ => type.ToString()
+    };
+
+    public void Dispose()
+    {
+        ConsolidationService.OnChange -= HandleConsolidationChanged;
+    }
+}
