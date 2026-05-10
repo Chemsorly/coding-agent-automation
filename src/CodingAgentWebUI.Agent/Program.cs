@@ -108,7 +108,8 @@ try
         sp.GetRequiredService<PipelineConfiguration>(),
         sp.GetRequiredService<IQualityGateValidator>(),
         Log.Logger,
-        sp.GetRequiredService<IBrainUpdateService>()));
+        sp.GetRequiredService<IBrainUpdateService>(),
+        sp.GetRequiredService<Configuration>().KiroCliPath));
 
     // ── Agent worker service (BackgroundService) ──
     builder.Services.AddSingleton(sp => new AgentWorkerService(

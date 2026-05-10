@@ -6,6 +6,7 @@ public enum PipelineStep
     CloningRepository,
     SyncingBrainRepoPreRun,
     CreatingBranch,
+    VerifyingBaseline,
     AnalyzingCode,
     PostingAnalysis,
     GeneratingCode,

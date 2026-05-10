@@ -57,6 +57,9 @@ public sealed class PipelineRun
     /// <summary>History of quality gate reports across retry attempts.</summary>
     public ConcurrentQueue<QualityGateReport> QualityGateHistory { get; init; } = new();
 
+    /// <summary>Whether the baseline health check passed (null if step was skipped/disabled).</summary>
+    public bool? BaselineHealthPassed { get; set; }
+
     /// <summary>Whether existing analysis was reused (skipped agent analysis).</summary>
     public bool AnalysisSkipped { get; set; }
 

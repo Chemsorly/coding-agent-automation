@@ -39,6 +39,7 @@ public sealed class LocalPipelineExecutor
     private readonly PipelineConfiguration _defaultPipelineConfig;
     private readonly IQualityGateValidator _qualityGateValidator;
     private readonly IBrainUpdateService? _brainUpdateService;
+    private readonly string? _kiroCliPath;
     private readonly Serilog.ILogger _logger;
 
     public LocalPipelineExecutor(
@@ -46,7 +47,8 @@ public sealed class LocalPipelineExecutor
         PipelineConfiguration defaultPipelineConfig,
         IQualityGateValidator qualityGateValidator,
         Serilog.ILogger logger,
-        IBrainUpdateService? brainUpdateService = null)
+        IBrainUpdateService? brainUpdateService = null,
+        string? kiroCliPath = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(defaultPipelineConfig);
@@ -57,6 +59,7 @@ public sealed class LocalPipelineExecutor
         _defaultPipelineConfig = defaultPipelineConfig;
         _qualityGateValidator = qualityGateValidator;
         _brainUpdateService = brainUpdateService;
+        _kiroCliPath = kiroCliPath;
         _logger = logger;
     }
 
@@ -281,6 +284,8 @@ public sealed class LocalPipelineExecutor
                 PreResolvedReviewerConfigs = job.ReviewerConfigs,
                 PreResolvedQualityGateConfigs = job.QualityGateConfigs,
                 Logger = _logger,
+                QualityGateValidator = _qualityGateValidator,
+                KiroCliPath = _kiroCliPath,
                 // Pre-populate issue data from job (no IssueProvider on agent side)
                 Issue = job.IssueDetail,
                 ParsedIssue = job.ParsedIssue,
@@ -358,6 +363,7 @@ public sealed class LocalPipelineExecutor
             new SyncBrainPreRunStep(),
             new DetectReworkStep(),
             new CreateBranchStep(),
+            new VerifyBaselineStep(),
             new AnalyzeCodeStep(),
             new GenerateCodeStep(),
             new BrainPullBeforeWriteStep(),

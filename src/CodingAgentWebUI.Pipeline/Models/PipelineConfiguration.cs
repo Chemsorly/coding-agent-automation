@@ -121,6 +121,12 @@ public sealed record PipelineConfiguration
     public string AnalysisPrompt { get; init; } = DefaultAnalysisPrompt;
     public string ImplementationPrompt { get; init; } = DefaultImplementationPrompt;
 
+    /// <summary>
+    /// When true, the pipeline runs a baseline health check (agent environment + workspace build)
+    /// after branch creation and before code analysis. Default: true.
+    /// </summary>
+    public bool BaselineHealthCheckEnabled { get; init; } = true;
+
     public bool ExternalCiEnabled
     {
         get => ExternalCi.ExternalCiEnabled;

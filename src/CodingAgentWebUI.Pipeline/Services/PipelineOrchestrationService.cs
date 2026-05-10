@@ -32,6 +32,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IAgentPhaseExecutor _agentExecution;
     private readonly IQualityGateExecutor _qualityGates;
+    private readonly Interfaces.IQualityGateValidator? _qualityGateValidator;
     private readonly Serilog.ILogger _logger;
 
     private readonly SemaphoreSlim _startLock = new(1, 1);
@@ -111,7 +112,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         IBrainUpdateService? brainUpdateService = null,
         IPipelineRunHistoryService? historyService = null,
         IOrchestratorRunService? runService = null,
-        PipelineRunLifecycleService? lifecycle = null)
+        PipelineRunLifecycleService? lifecycle = null,
+        Interfaces.IQualityGateValidator? qualityGateValidator = null)
     {
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
@@ -126,6 +128,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         _logger = logger;
         _agentExecution = agentExecution;
         _qualityGates = qualityGates;
+        _qualityGateValidator = qualityGateValidator;
 
         ArgumentNullException.ThrowIfNull(brainUpdateService);
         _brainSync = new BrainSyncOrchestrator(brainUpdateService, logger);
@@ -349,7 +352,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             Callbacks = callbacks,
             IssueOps = issueOps, AgentExecution = _agentExecution,
             QualityGates = _qualityGates, BrainSync = _brainSync,
-            PrOrchestrator = _prOrchestrator, Logger = _logger
+            PrOrchestrator = _prOrchestrator, Logger = _logger,
+            QualityGateValidator = _qualityGateValidator
         };
 
         try
@@ -396,6 +400,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             new Steps.SyncBrainPreRunStep(),
             new Steps.DetectReworkStep(),
             new Steps.CreateBranchStep(),
+            new Steps.VerifyBaselineStep(),
             new Steps.AnalyzeCodeStep(),
             new Steps.GenerateCodeStep(),
             new Steps.BrainPullBeforeWriteStep(),
