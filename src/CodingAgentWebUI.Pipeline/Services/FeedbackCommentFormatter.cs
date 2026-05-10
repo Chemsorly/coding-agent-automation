@@ -28,12 +28,12 @@ public static class FeedbackCommentFormatter
         // Category (if present)
         if (!string.IsNullOrWhiteSpace(feedback.Category))
         {
-            builder.AppendLine($"**Category:** {feedback.Category}");
+            builder.AppendLine($"**Category:** {SanitizeMarkdown(feedback.Category)}");
             builder.AppendLine();
         }
 
         // Description (always present at this point)
-        builder.AppendLine(feedback.Description);
+        builder.AppendLine(SanitizeMarkdown(feedback.Description));
         builder.AppendLine();
 
         // Affected files (if any)
@@ -42,7 +42,7 @@ public static class FeedbackCommentFormatter
             builder.AppendLine("**Affected Files:**");
             foreach (var file in feedback.AffectedFiles)
             {
-                builder.AppendLine($"- {file}");
+                builder.AppendLine($"- `{file}`");
             }
             builder.AppendLine();
         }
@@ -50,10 +50,20 @@ public static class FeedbackCommentFormatter
         // Human action needed (if present)
         if (!string.IsNullOrWhiteSpace(feedback.HumanActionNeeded))
         {
-            builder.AppendLine($"**Action Needed:** {feedback.HumanActionNeeded}");
+            builder.AppendLine($"**Action Needed:** {SanitizeMarkdown(feedback.HumanActionNeeded)}");
             builder.AppendLine();
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    private static string SanitizeMarkdown(string value)
+    {
+        // Escape @mentions to prevent pinging GitHub users
+        // Wrap in a way that prevents markdown interpretation
+        return value
+            .Replace("@", "@\u200B")  // Zero-width space breaks @mention parsing
+            .Replace("<", "&lt;")     // Prevent HTML injection
+            .Replace(">", "&gt;");
     }
 }

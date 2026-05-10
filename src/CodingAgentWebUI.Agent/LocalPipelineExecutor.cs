@@ -477,6 +477,8 @@ public sealed class LocalPipelineExecutor
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.Warning(ex, "Reflection step failed, continuing with brain sync");
+                run.Feedback ??= _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
+                    $"Reflection step failed: {ex.Message}", DateTime.UtcNow);
             }
 
             run.CurrentStep = PipelineStep.SyncingBrainRepoPostRun;

@@ -194,7 +194,8 @@ public static class PromptBuilder
     [
         "## 🤖 Agent Analysis",
         "<!-- agent:gate-rejection -->",
-        "<!-- agent:gate-wont-do -->"
+        "<!-- agent:gate-wont-do -->",
+        "<!-- agent:issue-feedback -->"
     ];
 
     /// <summary>
@@ -420,29 +421,36 @@ public static class PromptBuilder
         // Feedback collection section (when history service is available)
         if (historyService is not null)
         {
-            var elapsed = DateTime.UtcNow - run.StartedAt;
+            try
+            {
+                var elapsed = DateTime.UtcNow - run.StartedAt;
 
-            var recentSummaries = historyService.GetRunHistory()
-                .OrderByDescending(s => s.StartedAt)
-                .Take(FeedbackConstraints.MaxRecentRunsForCategories)
-                .ToList();
+                var recentSummaries = historyService.GetRunHistory()
+                    .OrderByDescending(s => s.StartedAt)
+                    .Take(FeedbackConstraints.MaxRecentRunsForCategories)
+                    .ToList();
 
-            var harnessCategories = recentSummaries
-                .Where(s => s.Feedback?.Harness.Category is not null)
-                .Select(s => s.Feedback!.Harness.Category!)
-                .Distinct()
-                .ToList();
+                var harnessCategories = recentSummaries
+                    .Where(s => s.Feedback?.Harness.Category is not null)
+                    .Select(s => s.Feedback!.Harness.Category!)
+                    .Distinct()
+                    .ToList();
 
-            var issueCategories = recentSummaries
-                .Where(s => s.Feedback?.Issue?.Category is not null)
-                .Select(s => s.Feedback!.Issue!.Category!)
-                .Distinct()
-                .ToList();
+                var issueCategories = recentSummaries
+                    .Where(s => s.Feedback?.Issue?.Category is not null)
+                    .Select(s => s.Feedback!.Issue!.Category!)
+                    .Distinct()
+                    .ToList();
 
-            var feedbackSection = FeedbackPromptBuilder.BuildSuccessFeedbackSection(
-                run, elapsed, harnessCategories, issueCategories);
+                var feedbackSection = FeedbackPromptBuilder.BuildSuccessFeedbackSection(
+                    run, elapsed, harnessCategories, issueCategories);
 
-            sb.Append(feedbackSection);
+                sb.Append(feedbackSection);
+            }
+            catch
+            {
+                // Non-fatal: if history loading fails, skip feedback section
+            }
         }
 
         return sb.ToString().TrimEnd();

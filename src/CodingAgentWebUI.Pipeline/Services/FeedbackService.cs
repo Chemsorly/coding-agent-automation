@@ -22,7 +22,7 @@ public sealed partial class FeedbackService
     };
 
     // Matches a fenced JSON code block: ```json ... ```
-    [GeneratedRegex(@"```json\s*\n([\s\S]*?)\n\s*```", RegexOptions.Multiline)]
+    [GeneratedRegex(@"```json\s*\n([\s\S]*?)\n\s*```", RegexOptions.Multiline, matchTimeoutMilliseconds: 1000)]
     private static partial Regex FencedJsonBlockPattern();
 
     // Greedy match: captures from first { to last } in the response.

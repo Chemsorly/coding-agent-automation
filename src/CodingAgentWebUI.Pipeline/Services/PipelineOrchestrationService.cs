@@ -548,6 +548,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _logger.Warning(ex, "Pipeline {RunId} reflection step failed, continuing with brain sync", run.RunId);
+                    run.Feedback ??= _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
+                        $"Reflection step failed: {ex.Message}", DateTime.UtcNow);
                 }
 
                 _lifecycle.TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
