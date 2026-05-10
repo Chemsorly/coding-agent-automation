@@ -14,6 +14,10 @@ public static class AgentLabels
     public const string Cancelled = "agent:cancelled";
     public const string Done = "agent:done";
 
+    // Consolidation labels (applied to auto-generated refactoring issues)
+    public const string Refactoring = "refactoring";
+    public const string AgentGenerated = "agent-generated";
+
     /// <summary>All agent labels with their display colors (without '#' prefix).</summary>
     public static readonly IReadOnlyList<(string Name, string Color)> Definitions = new[]
     {
@@ -23,7 +27,9 @@ public static class AgentLabels
         (NeedsRefinement, "fbca04"),
         (WontDo, "cfd3d7"),
         (Cancelled, "c5def5"),
-        (Done, "0075ca")
+        (Done, "0075ca"),
+        (Refactoring, "5319e7"),
+        (AgentGenerated, "bfd4f2")
     };
 
     /// <summary>All agent label names.</summary>

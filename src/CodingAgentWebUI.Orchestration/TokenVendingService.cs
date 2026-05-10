@@ -109,8 +109,8 @@ public sealed partial class TokenVendingService : ITokenVendingService
             {
                 Contents = "write",
                 PullRequests = "write",
-                Actions = "read"
-                // Explicitly NO issues permission — all issue ops stay on orchestrator
+                Actions = "read",
+                Issues = "write"
             }
         };
 
@@ -293,6 +293,9 @@ public sealed partial class TokenVendingService : ITokenVendingService
 
         [JsonPropertyName("actions")]
         public string? Actions { get; set; }
+
+        [JsonPropertyName("issues")]
+        public string? Issues { get; set; }
     }
 
     private sealed class TokenResponseBody

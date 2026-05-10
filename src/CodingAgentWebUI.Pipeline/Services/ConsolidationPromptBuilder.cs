@@ -61,6 +61,18 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- Contradictions between different knowledge files");
         sb.AppendLine();
 
+        // Phase 2.5: Research & Verify
+        sb.AppendLine("## Phase 2.5: Research & Verify");
+        sb.AppendLine();
+        sb.AppendLine("For entries that reference specific tools, libraries, versions, or external services:");
+        sb.AppendLine("- **Verify currency:** Check whether referenced library versions are still the latest (e.g., is the noted NuGet package version still current?)");
+        sb.AppendLine("- **Check for better alternatives:** If a workaround or pattern was documented because a tool lacked a feature, verify whether that feature has since been added");
+        sb.AppendLine("- **Validate links and references:** If entries reference external documentation URLs or API endpoints, verify they are still valid");
+        sb.AppendLine("- **Update outdated information:** If you find newer/better approaches to documented problems, update the entry with the current best practice and note the change");
+        sb.AppendLine();
+        sb.AppendLine("Use web search to verify information when uncertain. Only update entries where you have high confidence the information has changed — do not speculate.");
+        sb.AppendLine();
+
         // Phase 3: Consolidate
         sb.AppendLine("## Phase 3: Consolidate");
         sb.AppendLine();

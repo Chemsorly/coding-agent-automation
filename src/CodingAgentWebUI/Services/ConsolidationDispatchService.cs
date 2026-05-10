@@ -18,6 +18,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatcher
     private readonly JobDispatcherService _jobDispatcher;
     private readonly IAgentCommunication _agentComm;
     private readonly IConfigurationStore _configStore;
+    private readonly ITokenVendingService _tokenVending;
     private readonly PipelineConfiguration _config;
     private readonly ILogger _logger;
 
@@ -26,6 +27,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatcher
         JobDispatcherService jobDispatcher,
         IAgentCommunication agentComm,
         IConfigurationStore configStore,
+        ITokenVendingService tokenVending,
         PipelineConfiguration config,
         ILogger logger)
     {
@@ -33,6 +35,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatcher
         ArgumentNullException.ThrowIfNull(jobDispatcher);
         ArgumentNullException.ThrowIfNull(agentComm);
         ArgumentNullException.ThrowIfNull(configStore);
+        ArgumentNullException.ThrowIfNull(tokenVending);
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(logger);
 
@@ -40,6 +43,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatcher
         _jobDispatcher = jobDispatcher;
         _agentComm = agentComm;
         _configStore = configStore;
+        _tokenVending = tokenVending;
         _config = config;
         _logger = logger;
     }
@@ -71,8 +75,12 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatcher
 
         try
         {
-            // Build provider configs for the consolidation job
-            var providerConfigs = await BuildProviderConfigsAsync(type, templateId, ct);
+            // Build provider configs for the consolidation job and vend tokens
+            var rawConfigs = await BuildProviderConfigsAsync(type, templateId, ct);
+            var repoProviderId = templateId is not null
+                ? _config.PipelineJobTemplates.FirstOrDefault(t => t.Id == templateId)?.RepoProviderId ?? ""
+                : "";
+            var providerConfigs = await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct);
 
             // Resolve last successful run timestamp for this type+template
             var lastSuccessfulRunUtc = await GetLastSuccessfulRunUtcAsync(type, templateId, ct);

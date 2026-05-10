@@ -120,6 +120,7 @@ builder.Services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationD
     sp.GetRequiredService<JobDispatcherService>(),
     sp.GetRequiredService<IAgentCommunication>(),
     sp.GetRequiredService<IConfigurationStore>(),
+    sp.GetRequiredService<ITokenVendingService>(),
     pipelineConfig,
     Serilog.Log.Logger));
 builder.Services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
