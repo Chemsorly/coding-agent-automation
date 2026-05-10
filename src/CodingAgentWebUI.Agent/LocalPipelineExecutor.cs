@@ -39,6 +39,7 @@ public sealed class LocalPipelineExecutor
     private readonly PipelineConfiguration _defaultPipelineConfig;
     private readonly IQualityGateValidator _qualityGateValidator;
     private readonly IBrainUpdateService? _brainUpdateService;
+    private readonly IPipelineRunHistoryService? _historyService;
     private readonly FeedbackService _feedbackService;
     private readonly Serilog.ILogger _logger;
 
@@ -47,7 +48,8 @@ public sealed class LocalPipelineExecutor
         PipelineConfiguration defaultPipelineConfig,
         IQualityGateValidator qualityGateValidator,
         Serilog.ILogger logger,
-        IBrainUpdateService? brainUpdateService = null)
+        IBrainUpdateService? brainUpdateService = null,
+        IPipelineRunHistoryService? historyService = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(defaultPipelineConfig);
@@ -58,6 +60,7 @@ public sealed class LocalPipelineExecutor
         _defaultPipelineConfig = defaultPipelineConfig;
         _qualityGateValidator = qualityGateValidator;
         _brainUpdateService = brainUpdateService;
+        _historyService = historyService;
         _feedbackService = new FeedbackService(logger);
         _logger = logger;
     }
@@ -439,7 +442,8 @@ public sealed class LocalPipelineExecutor
             try
             {
                 var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
-                    run, run.IssueTitle, run.RepositoryName?.Split('/').LastOrDefault());
+                    run, run.IssueTitle, run.RepositoryName?.Split('/').LastOrDefault(),
+                    _historyService);
 
                 var reflectionResult = await agentProvider.ExecuteAsync(
                     new AgentRequest

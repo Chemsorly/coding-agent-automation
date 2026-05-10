@@ -25,8 +25,11 @@ public sealed partial class FeedbackService
     [GeneratedRegex(@"```json\s*\n([\s\S]*?)\n\s*```", RegexOptions.Multiline)]
     private static partial Regex FencedJsonBlockPattern();
 
-    // Matches a bare JSON object: outermost { ... }
-    [GeneratedRegex(@"\{[\s\S]*\}", RegexOptions.None)]
+    // Greedy match: captures from first { to last } in the response.
+    // This is intentional — the fenced code block path handles 90%+ of cases.
+    // When this path is used, LooksLikeFeedbackJson validates the candidate,
+    // and AttemptPartialParse provides graceful degradation if it captures too much.
+    [GeneratedRegex(@"\{[\s\S]*\}", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex BareJsonObjectPattern();
 
     public FeedbackService(ILogger logger)

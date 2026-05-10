@@ -13,7 +13,7 @@ internal partial class QualityGateOrchestrator : IQualityGateExecutor
     private readonly IQualityGateValidator _qualityGateValidator;
     private readonly CiLogWriter _ciLogWriter;
     private readonly PullRequestOrchestrator _prOrchestrator;
-    private readonly IPipelineRunHistoryService _historyService;
+    private readonly IPipelineRunHistoryService? _historyService;
     private readonly FeedbackService _feedbackService;
     private readonly Serilog.ILogger _logger;
 
@@ -30,7 +30,7 @@ internal partial class QualityGateOrchestrator : IQualityGateExecutor
         _qualityGateValidator = qualityGateValidator;
         _ciLogWriter = new CiLogWriter(logger);
         _prOrchestrator = prOrchestrator;
-        _historyService = historyService!;
+        _historyService = historyService;
         _feedbackService = new FeedbackService(logger);
         _logger = logger;
     }

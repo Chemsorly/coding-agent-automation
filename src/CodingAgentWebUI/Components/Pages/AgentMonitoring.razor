@@ -233,76 +233,7 @@
                                              OnCancel="() => CancelAgentRun(modalRun)" />
 
                             @* ── Feedback Section ── *@
-                            @if (modalRun.Feedback != null)
-                            {
-                                <details class="feedback-section" open>
-                                    <summary class="feedback-section-header">💬 Feedback</summary>
-                                    <div class="feedback-section-body">
-                                        @* Harness Feedback *@
-                                        <div class="feedback-subsection">
-                                            <h5 class="feedback-subsection-title">Harness Feedback</h5>
-                                            @if (!string.IsNullOrEmpty(modalRun.Feedback.Harness.Category))
-                                            {
-                                                <span class="sidebar-label feedback-category-badge">@modalRun.Feedback.Harness.Category</span>
-                                            }
-                                            @if (!string.IsNullOrEmpty(modalRun.Feedback.Harness.StuckReason))
-                                            {
-                                                <div class="feedback-stuck-reason"><strong>Stuck Reason:</strong> @modalRun.Feedback.Harness.StuckReason</div>
-                                            }
-                                            @if (modalRun.Feedback.Harness.MissingContext.Count > 0)
-                                            {
-                                                <div class="feedback-list-section"><strong>Missing Context:</strong>
-                                                    <ul>@foreach (var item in modalRun.Feedback.Harness.MissingContext) { <li>@item</li> }</ul>
-                                                </div>
-                                            }
-                                            @if (modalRun.Feedback.Harness.MissingCapabilities.Count > 0)
-                                            {
-                                                <div class="feedback-list-section"><strong>Missing Capabilities:</strong>
-                                                    <ul>@foreach (var item in modalRun.Feedback.Harness.MissingCapabilities) { <li>@item</li> }</ul>
-                                                </div>
-                                            }
-                                            @if (modalRun.Feedback.Harness.PromptIssues.Count > 0)
-                                            {
-                                                <div class="feedback-list-section"><strong>Prompt Issues:</strong>
-                                                    <ul>@foreach (var item in modalRun.Feedback.Harness.PromptIssues) { <li>@item</li> }</ul>
-                                                </div>
-                                            }
-                                            @if (modalRun.Feedback.Harness.Suggestions.Count > 0)
-                                            {
-                                                <div class="feedback-list-section"><strong>Suggestions:</strong>
-                                                    <ul>@foreach (var item in modalRun.Feedback.Harness.Suggestions) { <li>@item</li> }</ul>
-                                                </div>
-                                            }
-                                        </div>
-
-                                        @* Issue Feedback (only when present) *@
-                                        @if (modalRun.Feedback.Issue != null)
-                                        {
-                                            <div class="feedback-subsection">
-                                                <h5 class="feedback-subsection-title">Issue Feedback</h5>
-                                                @if (!string.IsNullOrEmpty(modalRun.Feedback.Issue.Category))
-                                                {
-                                                    <span class="sidebar-label feedback-category-badge">@modalRun.Feedback.Issue.Category</span>
-                                                }
-                                                @if (!string.IsNullOrEmpty(modalRun.Feedback.Issue.Description))
-                                                {
-                                                    <div class="feedback-description">@modalRun.Feedback.Issue.Description</div>
-                                                }
-                                                @if (modalRun.Feedback.Issue.AffectedFiles.Count > 0)
-                                                {
-                                                    <div class="feedback-list-section"><strong>Affected Files:</strong>
-                                                        <ul>@foreach (var file in modalRun.Feedback.Issue.AffectedFiles) { <li class="monitoring-mono">@file</li> }</ul>
-                                                    </div>
-                                                }
-                                                @if (!string.IsNullOrEmpty(modalRun.Feedback.Issue.HumanActionNeeded))
-                                                {
-                                                    <div class="feedback-action-needed"><strong>Human Action Needed:</strong> @modalRun.Feedback.Issue.HumanActionNeeded</div>
-                                                }
-                                            </div>
-                                        }
-                                    </div>
-                                </details>
-                            }
+                            <CodingAgentWebUI.Components.Shared.FeedbackSection Feedback="modalRun.Feedback" />
                         </div>
                     </div>
 
@@ -547,76 +478,7 @@
                 </div>
 
                 @* ── Feedback Section ── *@
-                @if (_selectedHistoryRun.Feedback != null)
-                {
-                    <details class="feedback-section" open>
-                        <summary class="feedback-section-header">💬 Feedback</summary>
-                        <div class="feedback-section-body">
-                            @* Harness Feedback *@
-                            <div class="feedback-subsection">
-                                <h5 class="feedback-subsection-title">Harness Feedback</h5>
-                                @if (!string.IsNullOrEmpty(_selectedHistoryRun.Feedback.Harness.Category))
-                                {
-                                    <span class="sidebar-label feedback-category-badge">@_selectedHistoryRun.Feedback.Harness.Category</span>
-                                }
-                                @if (!string.IsNullOrEmpty(_selectedHistoryRun.Feedback.Harness.StuckReason))
-                                {
-                                    <div class="feedback-stuck-reason"><strong>Stuck Reason:</strong> @_selectedHistoryRun.Feedback.Harness.StuckReason</div>
-                                }
-                                @if (_selectedHistoryRun.Feedback.Harness.MissingContext.Count > 0)
-                                {
-                                    <div class="feedback-list-section"><strong>Missing Context:</strong>
-                                        <ul>@foreach (var item in _selectedHistoryRun.Feedback.Harness.MissingContext) { <li>@item</li> }</ul>
-                                    </div>
-                                }
-                                @if (_selectedHistoryRun.Feedback.Harness.MissingCapabilities.Count > 0)
-                                {
-                                    <div class="feedback-list-section"><strong>Missing Capabilities:</strong>
-                                        <ul>@foreach (var item in _selectedHistoryRun.Feedback.Harness.MissingCapabilities) { <li>@item</li> }</ul>
-                                    </div>
-                                }
-                                @if (_selectedHistoryRun.Feedback.Harness.PromptIssues.Count > 0)
-                                {
-                                    <div class="feedback-list-section"><strong>Prompt Issues:</strong>
-                                        <ul>@foreach (var item in _selectedHistoryRun.Feedback.Harness.PromptIssues) { <li>@item</li> }</ul>
-                                    </div>
-                                }
-                                @if (_selectedHistoryRun.Feedback.Harness.Suggestions.Count > 0)
-                                {
-                                    <div class="feedback-list-section"><strong>Suggestions:</strong>
-                                        <ul>@foreach (var item in _selectedHistoryRun.Feedback.Harness.Suggestions) { <li>@item</li> }</ul>
-                                    </div>
-                                }
-                            </div>
-
-                            @* Issue Feedback (only when present) *@
-                            @if (_selectedHistoryRun.Feedback.Issue != null)
-                            {
-                                <div class="feedback-subsection">
-                                    <h5 class="feedback-subsection-title">Issue Feedback</h5>
-                                    @if (!string.IsNullOrEmpty(_selectedHistoryRun.Feedback.Issue.Category))
-                                    {
-                                        <span class="sidebar-label feedback-category-badge">@_selectedHistoryRun.Feedback.Issue.Category</span>
-                                    }
-                                    @if (!string.IsNullOrEmpty(_selectedHistoryRun.Feedback.Issue.Description))
-                                    {
-                                        <div class="feedback-description">@_selectedHistoryRun.Feedback.Issue.Description</div>
-                                    }
-                                    @if (_selectedHistoryRun.Feedback.Issue.AffectedFiles.Count > 0)
-                                    {
-                                        <div class="feedback-list-section"><strong>Affected Files:</strong>
-                                            <ul>@foreach (var file in _selectedHistoryRun.Feedback.Issue.AffectedFiles) { <li class="monitoring-mono">@file</li> }</ul>
-                                        </div>
-                                    }
-                                    @if (!string.IsNullOrEmpty(_selectedHistoryRun.Feedback.Issue.HumanActionNeeded))
-                                    {
-                                        <div class="feedback-action-needed"><strong>Human Action Needed:</strong> @_selectedHistoryRun.Feedback.Issue.HumanActionNeeded</div>
-                                    }
-                                </div>
-                            }
-                        </div>
-                    </details>
-                }
+                <CodingAgentWebUI.Components.Shared.FeedbackSection Feedback="_selectedHistoryRun.Feedback" />
 
                 <div style="margin-top: 12px; text-align: right;">
                     <button class="btn-cancel" @onclick="DismissHistoryDetailModal">Close</button>
