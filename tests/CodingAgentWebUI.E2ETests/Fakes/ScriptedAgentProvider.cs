@@ -85,6 +85,7 @@ public sealed class ScriptedAgentProvider : IAgentProvider
     public AgentHealthStatus GetHealthStatus() => new() { IsExecuting = false };
     public Task KillAsync() => Task.CompletedTask;
     public Task ValidateAsync(CancellationToken ct) => Task.CompletedTask;
+    public Task<string?> GetLatestSessionIdAsync(string workspacePath, CancellationToken ct) => Task.FromResult<string?>("fake-session-id");
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
 

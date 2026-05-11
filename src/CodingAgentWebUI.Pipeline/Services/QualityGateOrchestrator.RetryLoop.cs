@@ -307,7 +307,8 @@ internal partial class QualityGateOrchestrator
                 var agentResult = await AgentExecutionOrchestrator.ExecuteAgentAndRecordAsync(
                     context.AgentProvider, fixPrompt, run, config,
                     $"{retryAgentDescription} (attempt {run.RetryCount})",
-                    callbacks, _logger, ct);
+                    callbacks, _logger, ct,
+                    resumeSessionId: run.CodegenSessionId);
 
                 if (agentResult != null)
                     await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);

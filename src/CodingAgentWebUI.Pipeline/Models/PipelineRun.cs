@@ -78,6 +78,9 @@ public sealed class PipelineRun
     /// <summary>Repository display name (owner/repo).</summary>
     public string? RepositoryName { get; set; }
 
+    /// <summary>Session ID captured from the code generation agent, used for --resume-id in fix prompts.</summary>
+    public string? CodegenSessionId { get; set; }
+
     /// <summary>Number of files changed during code generation, updated after agent execution.</summary>
     public int FilesChangedCount { get; set; }
 

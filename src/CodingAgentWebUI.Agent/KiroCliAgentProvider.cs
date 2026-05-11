@@ -96,7 +96,8 @@ public partial class KiroCliAgentProvider : IAgentProvider
                     var clean = AnsiStripper.Strip(line);
                     outputLines.Add(clean);
                     onOutputLine?.Invoke(clean);
-                });
+                },
+                resumeSessionId: request.ResumeSessionId);
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
@@ -109,6 +110,56 @@ public partial class KiroCliAgentProvider : IAgentProvider
 
     /// <inheritdoc />
     public Task ValidateAsync(CancellationToken ct) => Task.CompletedTask;
+
+    /// <inheritdoc />
+    public async Task<string?> GetLatestSessionIdAsync(string workspacePath, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(workspacePath);
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = _executablePath,
+                Arguments = "chat --list-sessions",
+                WorkingDirectory = workspacePath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process == null) return null;
+
+            var stdout = await process.StandardOutput.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+
+            // Parse the first session ID from the output (most recent session listed first)
+            foreach (var line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var trimmed = line.Trim();
+                // Session IDs are UUIDs or similar identifiers — take the first non-empty token
+                if (trimmed.Length > 0 && !trimmed.StartsWith('#') && !trimmed.StartsWith("Session", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Extract the ID portion (first whitespace-delimited token or the whole line)
+                    var id = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+                    if (id.Length >= 8) // Minimum reasonable session ID length
+                    {
+                        _logger.Debug("Captured latest session ID: {SessionId}", id);
+                        return id;
+                    }
+                }
+            }
+
+            _logger.Debug("No session ID found in --list-sessions output for {WorkspacePath}", workspacePath);
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Failed to retrieve session ID for workspace {WorkspacePath}", workspacePath);
+            return null;
+        }
+    }
 
     /// <inheritdoc />
     public Task KillAsync()

@@ -32,9 +32,9 @@ public class KiroCliAgentProviderPropertyTests
         mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .Callback<string, string, bool, CancellationToken, Action<string>?>(
-                (_, _, _, _, onOutput) =>
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
+            .Callback<string, string, bool, CancellationToken, Action<string>?, string?>(
+                (_, _, _, _, onOutput, _) =>
                 {
                     if (onOutput is not null)
                     {
@@ -86,7 +86,7 @@ public class KiroCliAgentProviderPropertyTests
         mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
             .ReturnsAsync(0);
 
         // Act — call EnsureSessionAsync for each path in sequence
@@ -105,7 +105,7 @@ public class KiroCliAgentProviderPropertyTests
         mockOrchestrator.Verify(
             o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()),
             Times.Exactly(expectedDistinctCount));
     }
 
@@ -127,9 +127,9 @@ public class KiroCliAgentProviderPropertyTests
         mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .Callback<string, string, bool, CancellationToken, Action<string>?>(
-                (_, _, resume, _, _) => capturedUseResume = resume)
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
+            .Callback<string, string, bool, CancellationToken, Action<string>?, string?>(
+                (_, _, resume, _, _, _) => capturedUseResume = resume)
             .ReturnsAsync(0);
 
         var request = new AgentRequest
@@ -166,9 +166,9 @@ public class KiroCliAgentProviderPropertyTests
         mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .Callback<string, string, bool, CancellationToken, Action<string>?>(
-                (_, _, _, _, onOutput) =>
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
+            .Callback<string, string, bool, CancellationToken, Action<string>?, string?>(
+                (_, _, _, _, onOutput, _) =>
                 {
                     onOutput?.Invoke(input.Value);
                 })

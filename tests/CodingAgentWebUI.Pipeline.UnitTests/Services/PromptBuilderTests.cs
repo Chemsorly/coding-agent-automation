@@ -227,6 +227,30 @@ public class PromptBuilderTests
         act.Should().Throw<ArgumentNullException>();
     }
 
+    [Fact]
+    public void BuildReviewPrompt_Isolated_ContainsIndependentReviewerFraming()
+    {
+        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath, isolated: true);
+        result.Should().Contain("reviewing code changes made by another agent");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_Isolated_ContainsGitDiffInstruction()
+    {
+        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath, isolated: true);
+        result.Should().Contain("git diff");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_NotIsolated_NoIsolationFraming()
+    {
+        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath, isolated: false);
+        result.Should().NotContain("reviewing code changes made by another agent");
+    }
+
     #endregion
 
     #region GetReviewFindingsFilePath

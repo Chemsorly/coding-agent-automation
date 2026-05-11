@@ -87,7 +87,8 @@ internal partial class AgentExecutionOrchestrator : IAgentPhaseExecutor
         IPipelineCallbacks callbacks,
         Serilog.ILogger logger,
         CancellationToken ct,
-        bool recordOutputToHistory = true)
+        bool recordOutputToHistory = true,
+        string? resumeSessionId = null)
     {
         try
         {
@@ -98,7 +99,8 @@ internal partial class AgentExecutionOrchestrator : IAgentPhaseExecutor
                     Prompt = prompt,
                     WorkspacePath = run.WorkspacePath!,
                     Timeout = config.AgentTimeout,
-                    UseResume = true
+                    UseResume = resumeSessionId is null,
+                    ResumeSessionId = resumeSessionId
                 },
                 run, config, description, callbacks.NotifyChange, logger, ct,
                 line =>

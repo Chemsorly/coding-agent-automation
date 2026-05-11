@@ -55,6 +55,18 @@ internal partial class AgentExecutionOrchestrator
             _logger.Information("Pipeline {RunId} initial code generation completed with exit code {ExitCode} after {Elapsed}",
                 run.RunId, agentResult.ExitCode, DateTime.UtcNow - run.StartedAt);
 
+            // Capture the codegen session ID for use by fix prompts (--resume-id)
+            try
+            {
+                run.CodegenSessionId = await context.AgentProvider.GetLatestSessionIdAsync(run.WorkspacePath!, ct);
+                if (run.CodegenSessionId is not null)
+                    _logger.Information("Pipeline {RunId} captured codegen session ID: {SessionId}", run.RunId, run.CodegenSessionId);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Pipeline {RunId} failed to capture codegen session ID", run.RunId);
+            }
+
             await context.Callbacks.UpdateFileChangeStats(run);
 
             if (agentResult.ExitCode != ExitCodes.Success)

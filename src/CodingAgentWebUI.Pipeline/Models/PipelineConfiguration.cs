@@ -23,6 +23,19 @@ public sealed record ReviewAgentConfig
     public required string Prompt { get; init; }
 }
 
+/// <summary>
+/// Controls whether review agents share the codegen session or run in isolation.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum ReviewIsolation
+{
+    /// <summary>Review agents share the codegen session (legacy behavior).</summary>
+    Shared,
+
+    /// <summary>Review agents run in fresh sessions with no shared context.</summary>
+    Isolated
+}
+
 public sealed record CodeReviewConfiguration
 {
     public bool Enabled { get; init; } = true;
@@ -35,6 +48,12 @@ public sealed record CodeReviewConfiguration
     /// When null/empty, falls back to single-pass behavior (review prompt does both find and fix).
     /// </summary>
     public string? FixPrompt { get; init; }
+
+    /// <summary>
+    /// Controls whether review agents share the codegen session or run in fresh isolated sessions.
+    /// Default is Isolated to eliminate self-attribution bias.
+    /// </summary>
+    public ReviewIsolation ReviewIsolation { get; init; } = ReviewIsolation.Isolated;
 }
 
 public sealed record PipelineConfiguration

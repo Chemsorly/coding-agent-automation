@@ -35,6 +35,14 @@ public class PipelineModelCoverageTests
     }
 
     [Fact]
+    public void AgentRequest_ResumeSessionId_DefaultsToNull()
+    {
+        var request = new AgentRequest { Prompt = "test", WorkspacePath = "/ws" };
+        request.ResumeSessionId.Should().BeNull();
+        request.UseResume.Should().BeFalse();
+    }
+
+    [Fact]
     public void GenerateBranchName_VeryLongTitle_TruncatesSlug()
     {
         var longTitle = new string('a', 200);

@@ -32,4 +32,10 @@ public interface IAgentProvider : IAsyncDisposable
     /// backing service. Called at pipeline start before any work begins.
     /// </summary>
     Task ValidateAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Retrieves the most recent session ID for the given workspace.
+    /// Returns null if no sessions exist or the operation is not supported.
+    /// </summary>
+    Task<string?> GetLatestSessionIdAsync(string workspacePath, CancellationToken ct);
 }

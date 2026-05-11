@@ -73,7 +73,8 @@ internal partial class AgentExecutionOrchestrator
                     if (File.Exists(findingsFilePath))
                         File.Delete(findingsFilePath);
 
-                    var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue, agentFindingsRelativePath);
+                    var isolated = config.CodeReview.ReviewIsolation == ReviewIsolation.Isolated;
+                    var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue, agentFindingsRelativePath, isolated: isolated);
                     _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, i + 1, agent.Name, reviewPrompt);
 
                     var reviewResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
@@ -83,7 +84,7 @@ internal partial class AgentExecutionOrchestrator
                             Prompt = reviewPrompt,
                             WorkspacePath = run.WorkspacePath!,
                             Timeout = config.AgentTimeout,
-                            UseResume = true
+                            UseResume = !isolated
                         },
                         run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,
                         line =>
@@ -166,7 +167,8 @@ internal partial class AgentExecutionOrchestrator
                         context.AgentProvider, fixPrompt, run, config,
                         $"Code review fix agent (iteration {i + 1})",
                         context.Callbacks, _logger, ct,
-                        recordOutputToHistory: false);
+                        recordOutputToHistory: false,
+                        resumeSessionId: run.CodegenSessionId);
 
                     run.ChatHistory.Enqueue(new ChatEntry
                     {
