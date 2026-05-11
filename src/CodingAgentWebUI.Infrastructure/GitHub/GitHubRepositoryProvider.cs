@@ -557,7 +557,7 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         }, ct);
     }
 
-    public async Task UpdatePullRequestAsync(int pullRequestNumber, string body, CancellationToken ct)
+    public async Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool markReady, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(body);
 
@@ -567,6 +567,34 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                 client => client.PullRequest.Update(Owner, Repo, pullRequestNumber,
                     new PullRequestUpdate { Body = body }),
                 "UpdatePullRequest", ct);
+
+            // Mark as ready for review if requested.
+            // GitHub REST API doesn't support changing draft status — requires GraphQL mutation.
+            if (markReady)
+            {
+                try
+                {
+                    var pr = await ExecuteWithResilienceAsync(
+                        client => client.PullRequest.Get(Owner, Repo, pullRequestNumber),
+                        "GetPullRequestForDraftCheck", ct);
+
+                    if (pr.Draft)
+                    {
+                        var client = await GetClientAsync(ct);
+                        var graphqlBody = $"{{\"query\":\"mutation {{ markPullRequestReadyForReview(input: {{pullRequestId: \\\"{pr.NodeId}\\\"}}) {{ pullRequest {{ isDraft }} }} }}\"}}";
+                        await client.Connection.Post<object>(
+                            new Uri("https://api.github.com/graphql"),
+                            graphqlBody,
+                            "application/json",
+                            "application/json");
+                        Log.Information("Marked PR #{PrNumber} as ready for review", pullRequestNumber);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Log.Warning(ex, "Failed to mark PR #{PrNumber} as ready for review (non-fatal)", pullRequestNumber);
+                }
+            }
         }
         catch (Octokit.NotFoundException ex)
         {

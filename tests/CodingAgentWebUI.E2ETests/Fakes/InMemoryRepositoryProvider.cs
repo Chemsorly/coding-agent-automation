@@ -93,7 +93,7 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
 
     public Task PullAsync(string workspacePath, CancellationToken ct) => Task.CompletedTask;
 
-    public Task UpdatePullRequestAsync(int pullRequestNumber, string body, CancellationToken ct) =>
+    public Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool markReady, CancellationToken ct) =>
         Task.CompletedTask;
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

@@ -116,8 +116,10 @@ internal class PullRequestOrchestrator
             try
             {
                 var prNumber = int.Parse(run.PullRequestNumber!);
-                await repoProvider.UpdatePullRequestAsync(prNumber, prBody, ct);
+                await repoProvider.UpdatePullRequestAsync(prNumber, prBody, !isDraft, ct);
                 onOutputLine?.Invoke($"📝 Updated PR #{run.PullRequestNumber} body");
+                if (!isDraft)
+                    onOutputLine?.Invoke($"✅ PR #{run.PullRequestNumber} marked ready for review");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

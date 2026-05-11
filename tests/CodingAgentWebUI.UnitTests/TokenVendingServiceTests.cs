@@ -315,6 +315,81 @@ public class TokenVendingServiceTests
 
     #endregion
 
+    #region Token request body serialization
+
+    [Fact]
+    public async Task GenerateAgentTokenAsync_WithoutIssuePermission_RequestBodyOmitsIssuesField()
+    {
+        // Regression test: when includeIssuePermission=false, the serialized JSON must NOT
+        // contain "issues": null — GitHub rejects null as an invalid permission value (HTTP 422).
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var config = CreateRepoConfigWithValidKey(privateKeyBase64);
+
+        string? capturedRequestBody = null;
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>(async (req, _) =>
+            {
+                capturedRequestBody = await req.Content!.ReadAsStringAsync();
+                return new HttpResponseMessage(HttpStatusCode.Created)
+                {
+                    Content = new StringContent(
+                        JsonSerializer.Serialize(new { token = "ghs_test", expires_at = "2026-06-01T12:00:00Z" }),
+                        System.Text.Encoding.UTF8,
+                        "application/json")
+                };
+            });
+
+        var httpClient = new HttpClient(mockHandler.Object);
+        var service = new TokenVendingService(_mockLogger.Object, httpClient);
+
+        await service.GenerateAgentTokenAsync(config, CancellationToken.None, includeIssuePermission: false);
+
+        capturedRequestBody.Should().NotBeNull();
+        capturedRequestBody.Should().NotContain("\"issues\"",
+            "null permission fields must be omitted from the request body, not sent as null");
+    }
+
+    [Fact]
+    public async Task GenerateAgentTokenAsync_WithIssuePermission_RequestBodyIncludesIssuesWrite()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var config = CreateRepoConfigWithValidKey(privateKeyBase64);
+
+        string? capturedRequestBody = null;
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>(async (req, _) =>
+            {
+                capturedRequestBody = await req.Content!.ReadAsStringAsync();
+                return new HttpResponseMessage(HttpStatusCode.Created)
+                {
+                    Content = new StringContent(
+                        JsonSerializer.Serialize(new { token = "ghs_test", expires_at = "2026-06-01T12:00:00Z" }),
+                        System.Text.Encoding.UTF8,
+                        "application/json")
+                };
+            });
+
+        var httpClient = new HttpClient(mockHandler.Object);
+        var service = new TokenVendingService(_mockLogger.Object, httpClient);
+
+        await service.GenerateAgentTokenAsync(config, CancellationToken.None, includeIssuePermission: true);
+
+        capturedRequestBody.Should().NotBeNull();
+        capturedRequestBody.Should().Contain("\"issues\":\"write\"");
+    }
+
+    #endregion
+
     #region Property 6: PrepareAgentConfigsAsync strips private keys
 
     /// <summary>

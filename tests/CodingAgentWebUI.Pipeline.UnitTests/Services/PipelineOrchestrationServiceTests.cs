@@ -3044,7 +3044,7 @@ public class PipelineOrchestrationServiceTests
             });
 
         _mockRepoProvider.Setup(p => p.UpdatePullRequestAsync(
-                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }
 
@@ -3114,7 +3114,7 @@ public class PipelineOrchestrationServiceTests
         await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         _mockRepoProvider.Verify(p => p.UpdatePullRequestAsync(
-            42, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+            42, It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -3241,7 +3241,7 @@ public class PipelineOrchestrationServiceTests
         SetupReworkMocks();
 
         _mockRepoProvider.Setup(p => p.UpdatePullRequestAsync(
-                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("PR not found"));
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);

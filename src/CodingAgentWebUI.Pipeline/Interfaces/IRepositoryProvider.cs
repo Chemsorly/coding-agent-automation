@@ -97,9 +97,9 @@ public interface IRepositoryProvider : IAsyncDisposable
             $"{GetType().Name} does not support MergeFromBaseAsync.");
 
     /// <summary>
-    /// Updates the body of an existing pull request, preserving title and other metadata.
+    /// Updates the body of an existing pull request and optionally marks it as ready for review.
     /// </summary>
-    Task UpdatePullRequestAsync(int pullRequestNumber, string body, CancellationToken ct)
+    Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool markReady, CancellationToken ct)
         => throw new NotSupportedException(
             $"{GetType().Name} does not support UpdatePullRequestAsync.");
 }
