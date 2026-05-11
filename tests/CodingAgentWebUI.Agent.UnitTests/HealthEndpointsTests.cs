@@ -59,7 +59,11 @@ public class HealthEndpointsTests : IAsyncDisposable
             mockQualityGateValidator.Object,
             mockLogger.Object);
 
-        var workerService = new AgentWorkerService(hubManager, executor, mockOrchestrator.Object, mockLogger.Object);
+        var consolidationExecutor = new LocalConsolidationExecutor(
+            mockOrchestrator.Object,
+            mockLogger.Object);
+
+        var workerService = new AgentWorkerService(hubManager, executor, consolidationExecutor, mockOrchestrator.Object, mockLogger.Object);
 
         _host = await new HostBuilder()
             .ConfigureWebHost(webBuilder =>

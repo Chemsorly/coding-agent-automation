@@ -1,4 +1,5 @@
 using System.Text;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Services;
@@ -193,7 +194,8 @@ public static class PromptBuilder
     [
         "## 🤖 Agent Analysis",
         "<!-- agent:gate-rejection -->",
-        "<!-- agent:gate-wont-do -->"
+        "<!-- agent:gate-wont-do -->",
+        "<!-- agent:issue-feedback -->"
     ];
 
     /// <summary>
@@ -356,11 +358,14 @@ public static class PromptBuilder
     /// Builds a reflection prompt that asks the agent to review the entire run and
     /// update .brain/ knowledge files with lessons learned, including failures and
     /// review findings. Called after quality gates pass but before brain post-run sync.
+    /// When a history service is provided, appends feedback collection questions grounded
+    /// in retry context, elapsed time, and previously-used category labels.
     /// </summary>
     public static string BuildReflectionPrompt(
         PipelineRun run,
         string? issueTitle = null,
-        string? projectName = null)
+        string? projectName = null,
+        IPipelineRunHistoryService? historyService = null)
     {
         ArgumentNullException.ThrowIfNull(run);
 
@@ -412,6 +417,41 @@ public static class PromptBuilder
         sb.AppendLine();
         sb.AppendLine("Do NOT commit these changes — the orchestrator handles git operations.");
         sb.AppendLine("Do NOT modify any source code files — only update `.brain/` files.");
+
+        // Feedback collection section (when history service is available)
+        if (historyService is not null)
+        {
+            try
+            {
+                var elapsed = DateTime.UtcNow - run.StartedAt;
+
+                var recentSummaries = historyService.GetRunHistory()
+                    .OrderByDescending(s => s.StartedAt)
+                    .Take(FeedbackConstraints.MaxRecentRunsForCategories)
+                    .ToList();
+
+                var harnessCategories = recentSummaries
+                    .Where(s => s.Feedback?.Harness.Category is not null)
+                    .Select(s => s.Feedback!.Harness.Category!)
+                    .Distinct()
+                    .ToList();
+
+                var issueCategories = recentSummaries
+                    .Where(s => s.Feedback?.Issue?.Category is not null)
+                    .Select(s => s.Feedback!.Issue!.Category!)
+                    .Distinct()
+                    .ToList();
+
+                var feedbackSection = FeedbackPromptBuilder.BuildSuccessFeedbackSection(
+                    run, elapsed, harnessCategories, issueCategories);
+
+                sb.Append(feedbackSection);
+            }
+            catch
+            {
+                // Non-fatal: if history loading fails, skip feedback section
+            }
+        }
 
         return sb.ToString().TrimEnd();
     }

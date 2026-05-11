@@ -369,7 +369,12 @@ public class PipelineLoopDispatchPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        await Task.Delay(500);
+        // Wait until the provider has been recreated (evicted after auth error, then recreated on next cycle)
+        // Use polling instead of fixed delay to avoid flakiness on slow CI runners
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (Volatile.Read(ref createCountForAuthFail) < 2 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
         svc.StopLoop();
         await Task.Delay(200);
         cts.Cancel();

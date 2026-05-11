@@ -6,6 +6,7 @@ namespace CodingAgentWebUI.E2ETests.Infrastructure;
 /// <summary>
 /// Fake SignalR agent client that connects to the real AgentHub for multi-agent dispatch tests.
 /// Simulates agent registration, job acceptance, step reporting, and completion.
+/// Also handles consolidation job assignments for consolidation loop e2e tests.
 /// </summary>
 public sealed class FakeAgentClient : IAsyncDisposable
 {
@@ -17,7 +18,9 @@ public sealed class FakeAgentClient : IAsyncDisposable
 
     // Observability
     public TaskCompletionSource<JobAssignmentMessage> JobAssigned { get; private set; } = new();
+    public TaskCompletionSource<ConsolidationJobMessage> ConsolidationJobAssigned { get; private set; } = new();
     public List<string> ReceivedJobIds { get; } = new();
+    public List<string> ReceivedConsolidationJobIds { get; } = new();
     public bool IsConnected => _connection?.State == HubConnectionState.Connected;
 
     public FakeAgentClient(string agentId, params string[] labels)
@@ -41,6 +44,7 @@ public sealed class FakeAgentClient : IAsyncDisposable
         _connection.On<ChatPromptMessage>("AssignChatPrompt", _ => { });
         _connection.On<string>("CancelChat", _ => { });
         _connection.On<FetchModelsRequest>("RequestFetchModels", _ => { });
+        _connection.On<string, ConsolidationJobMessage>("AssignConsolidationJob", OnAssignConsolidationJob);
         _connection.On("ForceDisconnect", async () =>
         {
             if (_connection is not null)
@@ -63,6 +67,12 @@ public sealed class FakeAgentClient : IAsyncDisposable
     {
         ReceivedJobIds.Add(msg.JobId);
         JobAssigned.TrySetResult(msg);
+    }
+
+    private void OnAssignConsolidationJob(string agentId, ConsolidationJobMessage msg)
+    {
+        ReceivedConsolidationJobIds.Add(msg.JobId);
+        ConsolidationJobAssigned.TrySetResult(msg);
     }
 
     /// <summary>
@@ -172,6 +182,23 @@ public sealed class FakeAgentClient : IAsyncDisposable
     public void ResetJobAssigned()
     {
         JobAssigned = new TaskCompletionSource<JobAssignmentMessage>();
+    }
+
+    /// <summary>
+    /// Resets the ConsolidationJobAssigned TaskCompletionSource for reuse across multiple dispatches.
+    /// </summary>
+    public void ResetConsolidationJobAssigned()
+    {
+        ConsolidationJobAssigned = new TaskCompletionSource<ConsolidationJobMessage>();
+    }
+
+    /// <summary>
+    /// Reports consolidation job completion back to the hub.
+    /// </summary>
+    public async Task ReportConsolidationCompleteAsync(ConsolidationJobResult result)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        await _connection.InvokeAsync("ReportConsolidationComplete", result);
     }
 
     public async ValueTask DisposeAsync()

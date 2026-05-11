@@ -257,6 +257,32 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
             "CloseIssue", ct);
     }
 
+    /// <inheritdoc />
+    public async Task<CreatedIssueResult> CreateIssueAsync(
+        string title, string body, IReadOnlyList<string>? labels, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(title);
+        ArgumentNullException.ThrowIfNull(body);
+
+        var newIssue = new NewIssue(title) { Body = body };
+
+        if (labels is { Count: > 0 })
+        {
+            foreach (var label in labels)
+                newIssue.Labels.Add(label);
+        }
+
+        var created = await ExecuteWithResilienceAsync(
+            client => client.Issue.Create(Owner, Repo, newIssue),
+            "CreateIssue", ct);
+
+        return new CreatedIssueResult
+        {
+            Identifier = created.Number.ToString(),
+            Url = created.HtmlUrl?.ToString() ?? string.Empty
+        };
+    }
+
     private static IssueSummary MapToIssueSummary(Issue issue)
     {
         return new IssueSummary

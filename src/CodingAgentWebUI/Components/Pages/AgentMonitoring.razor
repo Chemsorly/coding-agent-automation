@@ -231,6 +231,9 @@
                         <div class="modal-column-right">
                             <PipelineSidebar Run="modalRun" IsRunning="true" MaxRetries="@_maxRetries"
                                              OnCancel="() => CancelAgentRun(modalRun)" />
+
+                            @* ── Feedback Section ── *@
+                            <CodingAgentWebUI.Components.Shared.FeedbackSection Feedback="modalRun.Feedback" />
                         </div>
                     </div>
 
@@ -473,6 +476,9 @@
                         <div><strong>Retries:</strong> @_selectedHistoryRun.RetryCount</div>
                     }
                 </div>
+
+                @* ── Feedback Section ── *@
+                <CodingAgentWebUI.Components.Shared.FeedbackSection Feedback="_selectedHistoryRun.Feedback" />
 
                 <div style="margin-top: 12px; text-align: right;">
                     <button class="btn-cancel" @onclick="DismissHistoryDetailModal">Close</button>

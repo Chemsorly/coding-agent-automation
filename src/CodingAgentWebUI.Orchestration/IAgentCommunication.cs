@@ -28,4 +28,9 @@ public interface IAgentCommunication
     /// Cancels an active job on the agent.
     /// </summary>
     Task CancelJobAsync(string connectionId, string jobId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Sends a consolidation job assignment to the agent identified by <paramref name="connectionId"/>.
+    /// </summary>
+    Task AssignConsolidationJobAsync(string connectionId, string agentId, ConsolidationJobMessage job, CancellationToken ct = default);
 }

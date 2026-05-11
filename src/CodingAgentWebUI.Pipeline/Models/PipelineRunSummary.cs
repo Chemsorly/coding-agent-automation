@@ -34,4 +34,7 @@ public sealed class PipelineRunSummary
 
     /// <summary>Why the run failed, or null if it did not fail.</summary>
     public string? FailureReason { get; init; }
+
+    /// <summary>Structured feedback collected from the agent after this run.</summary>
+    public RunFeedback? Feedback { get; init; }
 }

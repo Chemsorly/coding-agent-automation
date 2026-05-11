@@ -62,6 +62,11 @@ public sealed class HubConnectionManager : IAsyncDisposable
     public event Func<FetchModelsRequest, Task>? OnFetchModels;
 
     /// <summary>
+    /// Fired when the orchestrator assigns a consolidation job to this agent.
+    /// </summary>
+    public event Func<ConsolidationJobMessage, Task>? OnAssignConsolidationJob;
+
+    /// <summary>
     /// The underlying SignalR hub connection for invoking server methods.
     /// </summary>
     public HubConnection Connection => _connection;
@@ -143,6 +148,14 @@ public sealed class HubConnectionManager : IAsyncDisposable
             _logger.Information("Received FetchModels request {RequestId}", request.RequestId);
             if (OnFetchModels is not null)
                 await OnFetchModels(request);
+        });
+
+        _connection.On<string, ConsolidationJobMessage>("AssignConsolidationJob", async (agentId, message) =>
+        {
+            _logger.Information("Received consolidation job assignment {JobId} of type {Type}",
+                message.JobId, message.Type);
+            if (OnAssignConsolidationJob is not null)
+                await OnAssignConsolidationJob(message);
         });
     }
 

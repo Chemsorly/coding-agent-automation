@@ -171,6 +171,9 @@ public sealed record JobCompletionPayload
 
     [Key(19)]
     public int CodeReviewSuggestionCount { get; init; }
+
+    [Key(20)]
+    public RunFeedback? Feedback { get; init; }
 }
 
 /// <summary>

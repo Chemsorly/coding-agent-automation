@@ -111,10 +111,16 @@ try
         sp.GetRequiredService<IBrainUpdateService>(),
         sp.GetRequiredService<Configuration>().KiroCliPath));
 
+    // ── Consolidation executor ──
+    builder.Services.AddSingleton(sp => new LocalConsolidationExecutor(
+        sp.GetRequiredService<IKiroCliOrchestrator>(),
+        Log.Logger));
+
     // ── Agent worker service (BackgroundService) ──
     builder.Services.AddSingleton(sp => new AgentWorkerService(
         sp.GetRequiredService<HubConnectionManager>(),
         sp.GetRequiredService<LocalPipelineExecutor>(),
+        sp.GetRequiredService<LocalConsolidationExecutor>(),
         sp.GetRequiredService<IKiroCliOrchestrator>(),
         Log.Logger));
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
