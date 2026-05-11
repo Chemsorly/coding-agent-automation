@@ -18,7 +18,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
     private readonly OrchestratorRunService _runService;
     private readonly IPipelineRunHistoryService _historyService;
     private readonly JobDispatcherService _dispatcher;
-    private readonly IProviderFactory _providerFactory;
+    private readonly IIssueProviderLabelSwapper _labelSwapper;
     private readonly IConfigurationStore _configStore;
     private readonly ILogger _logger;
 
@@ -30,7 +30,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         OrchestratorRunService runService,
         IPipelineRunHistoryService historyService,
         JobDispatcherService dispatcher,
-        IProviderFactory providerFactory,
+        IIssueProviderLabelSwapper labelSwapper,
         IConfigurationStore configStore,
         ILogger logger)
     {
@@ -38,7 +38,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         ArgumentNullException.ThrowIfNull(runService);
         ArgumentNullException.ThrowIfNull(historyService);
         ArgumentNullException.ThrowIfNull(dispatcher);
-        ArgumentNullException.ThrowIfNull(providerFactory);
+        ArgumentNullException.ThrowIfNull(labelSwapper);
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(logger);
 
@@ -46,7 +46,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         _runService = runService;
         _historyService = historyService;
         _dispatcher = dispatcher;
-        _providerFactory = providerFactory;
+        _labelSwapper = labelSwapper;
         _configStore = configStore;
         _logger = logger;
     }
@@ -157,35 +157,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
     /// Attempts to swap the issue label to <see cref="AgentLabels.Error"/> via the issue provider.
     /// Failures are logged but do not propagate — label swap is best-effort during cleanup.
     /// </summary>
-    private async Task TrySwapLabelToErrorAsync(PipelineRun run, CancellationToken ct)
+    private Task TrySwapLabelToErrorAsync(PipelineRun run, CancellationToken ct)
     {
-        try
-        {
-            var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
-            var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
-            if (issueConfig is null)
-            {
-                _logger.Warning(
-                    "Issue provider config '{ConfigId}' not found for run {RunId}, skipping label swap",
-                    run.IssueProviderConfigId, run.RunId);
-                return;
-            }
-
-            await using var issueProvider = _providerFactory.CreateIssueProvider(issueConfig);
-
-            foreach (var label in AgentLabels.All)
-                await issueProvider.RemoveLabelAsync(run.IssueIdentifier, label, ct);
-            await issueProvider.AddLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
-
-            _logger.Information(
-                "Swapped label to {Label} on issue {IssueIdentifier} for failed run {RunId}",
-                AgentLabels.Error, run.IssueIdentifier, run.RunId);
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex,
-                "Failed to swap label to {Label} on issue {IssueIdentifier} for run {RunId}",
-                AgentLabels.Error, run.IssueIdentifier, run.RunId);
-        }
+        return _labelSwapper.SwapLabelAsync(run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Error, ct);
     }
 }

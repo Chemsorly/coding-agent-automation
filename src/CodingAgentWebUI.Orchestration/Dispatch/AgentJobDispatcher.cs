@@ -53,6 +53,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
     private readonly ITokenVendingService _tokenVending;
     private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
+    private readonly IIssueProviderLabelSwapper _labelSwapper;
     private readonly ProfileResolver _profileResolver;
     private readonly QualityGateResolver _qualityGateResolver;
     private readonly ReviewerResolver _reviewerResolver;
@@ -67,6 +68,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         ITokenVendingService tokenVending,
         IConfigurationStore configStore,
         IProviderFactory providerFactory,
+        IIssueProviderLabelSwapper labelSwapper,
         ProfileResolver profileResolver,
         QualityGateResolver qualityGateResolver,
         ReviewerResolver reviewerResolver,
@@ -80,6 +82,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         ArgumentNullException.ThrowIfNull(tokenVending);
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
+        ArgumentNullException.ThrowIfNull(labelSwapper);
         ArgumentNullException.ThrowIfNull(profileResolver);
         ArgumentNullException.ThrowIfNull(qualityGateResolver);
         ArgumentNullException.ThrowIfNull(reviewerResolver);
@@ -93,6 +96,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         _tokenVending = tokenVending;
         _configStore = configStore;
         _providerFactory = providerFactory;
+        _labelSwapper = labelSwapper;
         _profileResolver = profileResolver;
         _qualityGateResolver = qualityGateResolver;
         _reviewerResolver = reviewerResolver;
@@ -294,19 +298,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
             // Revert label on dispatch failure (REQ-7.7)
-            try
-            {
-                var issueConfigs2 = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
-                var issueConfig2 = issueConfigs2.FirstOrDefault(c => c.Id == issueProviderId);
-                if (issueConfig2 != null)
-                {
-                    await using var revertProvider = _providerFactory.CreateIssueProvider(issueConfig2);
-                    foreach (var label in AgentLabels.All)
-                        await revertProvider.RemoveLabelAsync(issueIdentifier, label, CancellationToken.None);
-                    await revertProvider.AddLabelAsync(issueIdentifier, AgentLabels.Next, CancellationToken.None);
-                }
-            }
-            catch (Exception revertEx) { _logger.Warning(revertEx, "Best-effort label revert failed for issue {IssueIdentifier}", issueIdentifier); }
+            await _labelSwapper.SwapLabelAsync(issueProviderId, issueIdentifier, AgentLabels.Next, CancellationToken.None);
 
             return false;
         }
@@ -338,19 +330,10 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             issueComments = allComments.Count > 50
                 ? allComments.Take(50).ToList().AsReadOnly()
                 : allComments;
-
-            // Swap label to agent:in-progress before dispatch (REQ-7.2)
-            try
-            {
-                foreach (var label in AgentLabels.All)
-                    await issueProvider.RemoveLabelAsync(issueIdentifier, label, ct);
-                await issueProvider.AddLabelAsync(issueIdentifier, AgentLabels.InProgress, ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to swap label to agent:in-progress for issue {IssueIdentifier}", issueIdentifier);
-            }
         }
+
+        // Swap label to agent:in-progress before dispatch (REQ-7.2)
+        await _labelSwapper.SwapLabelAsync(issueProviderId, issueIdentifier, AgentLabels.InProgress, ct);
 
         // Detect existing analysis and rework state from comments
         string? existingAnalysis = null;
