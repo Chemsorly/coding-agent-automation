@@ -112,7 +112,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
         return new KiroCliOrchestrator(config, callbackHandler, logger);
     }
 
-    public async Task<int> ExecutePromptAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken, Action<string>? onOutputLine = null, string? resumeSessionId = null)
+    public async Task<int> ExecutePromptAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken, Func<string, Task>? onOutputLine = null, string? resumeSessionId = null)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(workspaceDirectory);
@@ -124,7 +124,16 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
             var outputParser = _outputParserFactory();
             var fileSystemMonitor = _fileSystemMonitorFactory();
 
-            processWrapper.OutputReceived += (_, line) => { _logger.Information("Kiro: {Line}", AnsiStripper.Strip(line)); outputParser.ProcessLine(line); onOutputLine?.Invoke(line); };
+            var channel = onOutputLine != null
+                ? System.Threading.Channels.Channel.CreateUnbounded<string>(new System.Threading.Channels.UnboundedChannelOptions { SingleReader = true, SingleWriter = true })
+                : null;
+
+            processWrapper.OutputReceived += (_, line) =>
+            {
+                _logger.Information("Kiro: {Line}", AnsiStripper.Strip(line));
+                outputParser.ProcessLine(line);
+                channel?.Writer.TryWrite(line);
+            };
             processWrapper.ErrorReceived += (_, line) => { _logger.Debug("Kiro (stderr): {Line}", AnsiStripper.Strip(line)); outputParser.ProcessLine(line); };
             outputParser.StateChanged += (_, newState) =>
             {
@@ -138,7 +147,25 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
                 try { beforeSnapshot = fileSystemMonitor.ScanWorkspace(workspaceDirectory); }
                 catch (Exception ex) { _logger.Warning(ex, "Failed to scan workspace before execution"); beforeSnapshot = Array.Empty<FileSnapshot>(); }
 
+                // Start a background task to drain the channel and invoke the async callback
+                Task? drainTask = null;
+                if (channel != null && onOutputLine != null)
+                {
+                    drainTask = Task.Run(async () =>
+                    {
+                        await foreach (var line in channel.Reader.ReadAllAsync(cancellationToken))
+                        {
+                            await onOutputLine(line);
+                        }
+                    }, cancellationToken);
+                }
+
                 var exitCode = await processWrapper.StartAsync(prompt, workspaceDirectory, useResume, cancellationToken, resumeSessionId);
+
+                // Signal no more writes and wait for drain to complete
+                channel?.Writer.TryComplete();
+                if (drainTask != null)
+                    await drainTask;
 
                 IReadOnlyList<FileChange> fileChanges;
                 try
@@ -173,6 +200,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
             }
             finally
             {
+                channel?.Writer.TryComplete();
                 _activeProcess = null;
             }
         }

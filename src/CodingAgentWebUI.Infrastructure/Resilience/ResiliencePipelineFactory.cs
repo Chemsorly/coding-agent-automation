@@ -223,10 +223,9 @@ public static class ResiliencePipelineFactory
         if (args.Outcome.Exception is Octokit.RateLimitExceededException rateLimitEx)
         {
             var delay = rateLimitEx.Reset - DateTimeOffset.UtcNow;
-            // TODO: [RES-07] When delay > 5 minutes, falling back to exponential backoff (~1-4s) will
-            // hit the rate limit again immediately, wasting all retry attempts. Consider failing
-            // immediately or raising the cap.
-            if (delay > TimeSpan.Zero && delay < TimeSpan.FromMinutes(5))
+            // Always honour the rate-limit reset delay. If it exceeds the outer pipeline timeout,
+            // the timeout strategy will cancel the wait — which is the correct fail-fast behaviour.
+            if (delay > TimeSpan.Zero)
                 return new ValueTask<TimeSpan?>(delay);
         }
 

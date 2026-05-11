@@ -28,7 +28,7 @@ public class KiroCliAgentProviderTests
             .Setup(o => o.ExecutePromptAsync(
                 KiroCliAgentProvider.WarmUpPrompt,
                 It.IsAny<string>(), false,
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
             .ReturnsAsync(0);
 
         await _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
@@ -36,7 +36,7 @@ public class KiroCliAgentProviderTests
         _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
             KiroCliAgentProvider.WarmUpPrompt,
             "/workspace", false,
-            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()), Times.Once);
+            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -45,7 +45,7 @@ public class KiroCliAgentProviderTests
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
             .ReturnsAsync(0);
 
         await _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
@@ -53,7 +53,7 @@ public class KiroCliAgentProviderTests
 
         _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()), Times.Once);
+            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -62,7 +62,7 @@ public class KiroCliAgentProviderTests
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
             .ReturnsAsync(0);
 
         await _provider.EnsureSessionAsync("/workspace-a", CancellationToken.None);
@@ -70,7 +70,7 @@ public class KiroCliAgentProviderTests
 
         _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()), Times.Exactly(2));
+            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Exactly(2));
     }
 
     [Fact]
@@ -79,7 +79,7 @@ public class KiroCliAgentProviderTests
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
             .ThrowsAsync(new InvalidOperationException("agent crashed"));
 
         var act = () => _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
@@ -97,7 +97,7 @@ public class KiroCliAgentProviderTests
         _mockOrchestrator
             .SetupSequence(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
             .ThrowsAsync(new InvalidOperationException("agent crashed"))
             .ReturnsAsync(0);
 
@@ -106,7 +106,7 @@ public class KiroCliAgentProviderTests
 
         _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()), Times.Exactly(2));
+            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Exactly(2));
     }
 
     [Fact]
@@ -115,7 +115,7 @@ public class KiroCliAgentProviderTests
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
             .ThrowsAsync(new OperationCanceledException());
 
         var act = () => _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
@@ -131,7 +131,7 @@ public class KiroCliAgentProviderTests
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 "test prompt", "/workspace", false,
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
             .ReturnsAsync(0);
 
         var request = new AgentRequest { Prompt = "test prompt", WorkspacePath = "/workspace" };
@@ -141,7 +141,7 @@ public class KiroCliAgentProviderTests
         result.Success.Should().BeTrue();
         _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
             "test prompt", "/workspace", false,
-            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()), Times.Once);
+            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -150,7 +150,7 @@ public class KiroCliAgentProviderTests
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 "follow up", "/workspace", true,
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
             .ReturnsAsync(0);
 
         var request = new AgentRequest { Prompt = "follow up", WorkspacePath = "/workspace", UseResume = true };
@@ -159,7 +159,7 @@ public class KiroCliAgentProviderTests
         result.ExitCode.Should().Be(0);
         _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
             "follow up", "/workspace", true,
-            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()), Times.Once);
+            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -168,7 +168,7 @@ public class KiroCliAgentProviderTests
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
             .ReturnsAsync(0);
 
         var request = new AgentRequest { Prompt = "fix", WorkspacePath = "/workspace", UseResume = false, ResumeSessionId = "session-abc" };
@@ -176,7 +176,7 @@ public class KiroCliAgentProviderTests
 
         _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
             "fix", "/workspace", false,
-            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), "session-abc"), Times.Once);
+            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), "session-abc"), Times.Once);
     }
 
     [Fact]
@@ -185,8 +185,8 @@ public class KiroCliAgentProviderTests
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
-            .Callback<string, string, bool, CancellationToken, Action<string>?, string?>(
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
                 (_, _, _, _, onOutput, _) =>
                 {
                     onOutput?.Invoke("line 1");
@@ -209,7 +209,7 @@ public class KiroCliAgentProviderTests
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
             .ReturnsAsync(1);
 
         var request = new AgentRequest { Prompt = "fail", WorkspacePath = "/ws" };
@@ -303,8 +303,8 @@ public class KiroCliAgentProviderTests
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
-            .Returns<string, string, bool, CancellationToken, Action<string>?, string?>(
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
                 async (_, _, _, ct, _, _) =>
                 {
                     // Simulate a long-running operation that exceeds the timeout
@@ -333,8 +333,8 @@ public class KiroCliAgentProviderTests
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>(), It.IsAny<string?>()))
-            .Callback<string, string, bool, CancellationToken, Action<string>?, string?>(
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
                 (_, _, _, _, onOutput, _) =>
                 {
                     onOutput?.Invoke("\x1b[31mError:\x1b[0m something failed");

@@ -96,6 +96,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
                     var clean = AnsiStripper.Strip(line);
                     outputLines.Add(clean);
                     onOutputLine?.Invoke(clean);
+                    return Task.CompletedTask;
                 },
                 resumeSessionId: request.ResumeSessionId);
         }
