@@ -4,6 +4,18 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 public enum IssueProviderType { GitHub }
 
+/// <summary>
+/// Result of creating a new issue via <see cref="IIssueProvider.CreateIssueAsync"/>.
+/// </summary>
+public sealed record CreatedIssueResult
+{
+    /// <summary>Issue identifier (e.g., "123").</summary>
+    public required string Identifier { get; init; }
+
+    /// <summary>URL to the created issue.</summary>
+    public required string Url { get; init; }
+}
+
 public interface IIssueProvider : IAsyncDisposable
 {
     IssueProviderType ProviderType { get; }
@@ -77,4 +89,11 @@ public interface IIssueProvider : IAsyncDisposable
         await ValidateAsync(ct);
         return await EnsureAgentLabelsAsync(ct);
     }
+
+    /// <summary>
+    /// Creates a new issue with the given title, body, and optional labels.
+    /// Returns the created issue's identifier and URL.
+    /// </summary>
+    Task<CreatedIssueResult> CreateIssueAsync(
+        string title, string body, IReadOnlyList<string>? labels, CancellationToken ct);
 }

@@ -39,6 +39,8 @@ public sealed class LocalPipelineExecutor
     private readonly PipelineConfiguration _defaultPipelineConfig;
     private readonly IQualityGateValidator _qualityGateValidator;
     private readonly IBrainUpdateService? _brainUpdateService;
+    private readonly IPipelineRunHistoryService? _historyService;
+    private readonly FeedbackService _feedbackService;
     private readonly Serilog.ILogger _logger;
 
     public LocalPipelineExecutor(
@@ -46,7 +48,8 @@ public sealed class LocalPipelineExecutor
         PipelineConfiguration defaultPipelineConfig,
         IQualityGateValidator qualityGateValidator,
         Serilog.ILogger logger,
-        IBrainUpdateService? brainUpdateService = null)
+        IBrainUpdateService? brainUpdateService = null,
+        IPipelineRunHistoryService? historyService = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(defaultPipelineConfig);
@@ -57,6 +60,8 @@ public sealed class LocalPipelineExecutor
         _defaultPipelineConfig = defaultPipelineConfig;
         _qualityGateValidator = qualityGateValidator;
         _brainUpdateService = brainUpdateService;
+        _historyService = historyService;
+        _feedbackService = new FeedbackService(logger);
         _logger = logger;
     }
 
@@ -196,7 +201,7 @@ public sealed class LocalPipelineExecutor
         // Orchestrators
         var agentExecution = new AgentExecutionOrchestrator(_logger);
         var prOrchestrator = new PullRequestOrchestrator(_logger);
-        var qualityGates = new QualityGateOrchestrator(_qualityGateValidator, prOrchestrator, _logger);
+        var qualityGates = new QualityGateOrchestrator(_qualityGateValidator, prOrchestrator, _logger, _historyService);
         BrainSyncOrchestrator? brainSync = _brainUpdateService is not null
             ? new BrainSyncOrchestrator(_brainUpdateService, _logger)
             : null;
@@ -437,9 +442,10 @@ public sealed class LocalPipelineExecutor
             try
             {
                 var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
-                    run, run.IssueTitle, run.RepositoryName?.Split('/').LastOrDefault());
+                    run, run.IssueTitle, run.RepositoryName?.Split('/').LastOrDefault(),
+                    _historyService);
 
-                await agentProvider.ExecuteAsync(
+                var reflectionResult = await agentProvider.ExecuteAsync(
                     new AgentRequest
                     {
                         Prompt = reflectionPrompt,
@@ -453,10 +459,26 @@ public sealed class LocalPipelineExecutor
                         run.OutputLines.Enqueue(line);
                         emitOutputLine(line);
                     });
+
+                // Parse feedback from the reflection agent response
+                try
+                {
+                    var responseText = string.Join("\n", reflectionResult.OutputLines);
+                    var feedback = _feedbackService.ParseFeedbackFromResponse(responseText, FeedbackOutcome.Success, DateTime.UtcNow);
+                    run.Feedback = feedback;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Feedback parsing failed for run {RunId}, using fallback", run.RunId);
+                    run.Feedback = _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
+                        $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.Warning(ex, "Reflection step failed, continuing with brain sync");
+                run.Feedback ??= _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
+                    $"Reflection step failed: {ex.Message}", DateTime.UtcNow);
             }
 
             run.CurrentStep = PipelineStep.SyncingBrainRepoPostRun;
@@ -496,7 +518,8 @@ public sealed class LocalPipelineExecutor
         CodeReviewAgentsRun = run.CodeReviewAgentsRun,
         CodeReviewCriticalCount = run.CodeReviewCriticalCount,
         CodeReviewWarningCount = run.CodeReviewWarningCount,
-        CodeReviewSuggestionCount = run.CodeReviewSuggestionCount
+        CodeReviewSuggestionCount = run.CodeReviewSuggestionCount,
+        Feedback = run.Feedback
     };
 
     private static JobCompletionPayload BuildFailurePayload(PipelineRun run, string reason) => new()
@@ -515,7 +538,8 @@ public sealed class LocalPipelineExecutor
         CodeReviewAgentsRun = run.CodeReviewAgentsRun,
         CodeReviewCriticalCount = run.CodeReviewCriticalCount,
         CodeReviewWarningCount = run.CodeReviewWarningCount,
-        CodeReviewSuggestionCount = run.CodeReviewSuggestionCount
+        CodeReviewSuggestionCount = run.CodeReviewSuggestionCount,
+        Feedback = run.Feedback
     };
 
     /// <summary>

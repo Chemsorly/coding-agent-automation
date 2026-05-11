@@ -32,6 +32,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IAgentPhaseExecutor _agentExecution;
     private readonly IQualityGateExecutor _qualityGates;
+    private readonly FeedbackService _feedbackService;
     private readonly Serilog.ILogger _logger;
 
     private readonly SemaphoreSlim _startLock = new(1, 1);
@@ -126,6 +127,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         _logger = logger;
         _agentExecution = agentExecution;
         _qualityGates = qualityGates;
+        _feedbackService = new FeedbackService(logger);
 
         ArgumentNullException.ThrowIfNull(brainUpdateService);
         _brainSync = new BrainSyncOrchestrator(brainUpdateService, logger);
@@ -508,10 +510,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 try
                 {
                     var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
-                        run, _activeIssue?.Title, run.RepositoryName?.Split('/').LastOrDefault());
+                        run, _activeIssue?.Title, run.RepositoryName?.Split('/').LastOrDefault(),
+                        _historyService);
                     _logger.Debug("Pipeline {RunId} reflection prompt:\n{Prompt}", run.RunId, reflectionPrompt);
 
-                    await _activeAgentProvider!.ExecuteAsync(
+                    var reflectionResult = await _activeAgentProvider!.ExecuteAsync(
                         new AgentRequest
                         {
                             Prompt = reflectionPrompt,
@@ -527,10 +530,26 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                         });
 
                     _logger.Information("Pipeline {RunId} reflection step completed", run.RunId);
+
+                    // Parse feedback from the reflection agent response
+                    try
+                    {
+                        var responseText = string.Join("\n", reflectionResult.OutputLines);
+                        var feedback = _feedbackService.ParseFeedbackFromResponse(responseText, FeedbackOutcome.Success, DateTime.UtcNow);
+                        run.Feedback = feedback;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex, "Feedback parsing failed for run {RunId}, using fallback", run.RunId);
+                        run.Feedback = _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
+                            $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
+                    }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _logger.Warning(ex, "Pipeline {RunId} reflection step failed, continuing with brain sync", run.RunId);
+                    run.Feedback ??= _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
+                        $"Reflection step failed: {ex.Message}", DateTime.UtcNow);
                 }
 
                 _lifecycle.TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);

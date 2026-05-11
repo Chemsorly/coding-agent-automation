@@ -1,0 +1,106 @@
+@using CodingAgentWebUI.Pipeline.Models
+
+@if (Feedback != null)
+{
+    <details class="feedback-section">
+        <summary class="feedback-section-header">💬 Feedback (@FeedbackItemCount)</summary>
+        <div class="feedback-section-body">
+            @* Harness Feedback *@
+            @if (Feedback.Harness != null)
+            {
+                <div class="feedback-subsection">
+                    <h5 class="feedback-subsection-title">Harness Feedback</h5>
+                    @if (!string.IsNullOrEmpty(Feedback.Harness.Category))
+                    {
+                        <span class="sidebar-label feedback-category-badge">@Feedback.Harness.Category</span>
+                    }
+                    @if (!string.IsNullOrEmpty(Feedback.Harness.StuckReason))
+                    {
+                        <div class="feedback-stuck-reason"><strong>Stuck Reason:</strong> @Feedback.Harness.StuckReason</div>
+                    }
+                    @if (Feedback.Harness.MissingContext.Count > 0)
+                    {
+                        <div class="feedback-list-section"><strong>Missing Context:</strong>
+                            <ul>@foreach (var item in Feedback.Harness.MissingContext) { <li>@item</li> }</ul>
+                        </div>
+                    }
+                    @if (Feedback.Harness.MissingCapabilities.Count > 0)
+                    {
+                        <div class="feedback-list-section"><strong>Missing Capabilities:</strong>
+                            <ul>@foreach (var item in Feedback.Harness.MissingCapabilities) { <li>@item</li> }</ul>
+                        </div>
+                    }
+                    @if (Feedback.Harness.PromptIssues.Count > 0)
+                    {
+                        <div class="feedback-list-section"><strong>Prompt Issues:</strong>
+                            <ul>@foreach (var item in Feedback.Harness.PromptIssues) { <li>@item</li> }</ul>
+                        </div>
+                    }
+                    @if (Feedback.Harness.Suggestions.Count > 0)
+                    {
+                        <div class="feedback-list-section"><strong>Suggestions:</strong>
+                            <ul>@foreach (var item in Feedback.Harness.Suggestions) { <li>@item</li> }</ul>
+                        </div>
+                    }
+                </div>
+            }
+
+            @* Issue Feedback (only when present) *@
+            @if (Feedback.Issue != null)
+            {
+                <div class="feedback-subsection">
+                    <h5 class="feedback-subsection-title">Issue Feedback</h5>
+                    @if (!string.IsNullOrEmpty(Feedback.Issue.Category))
+                    {
+                        <span class="sidebar-label feedback-category-badge">@Feedback.Issue.Category</span>
+                    }
+                    @if (!string.IsNullOrEmpty(Feedback.Issue.Description))
+                    {
+                        <div class="feedback-description">@Feedback.Issue.Description</div>
+                    }
+                    @if (Feedback.Issue.AffectedFiles.Count > 0)
+                    {
+                        <div class="feedback-list-section"><strong>Affected Files:</strong>
+                            <ul>@foreach (var file in Feedback.Issue.AffectedFiles) { <li class="monitoring-mono">@file</li> }</ul>
+                        </div>
+                    }
+                    @if (!string.IsNullOrEmpty(Feedback.Issue.HumanActionNeeded))
+                    {
+                        <div class="feedback-action-needed"><strong>Human Action Needed:</strong> @Feedback.Issue.HumanActionNeeded</div>
+                    }
+                </div>
+            }
+        </div>
+    </details>
+}
+
+@code {
+    [Parameter]
+    public RunFeedback? Feedback { get; set; }
+
+    private int FeedbackItemCount
+    {
+        get
+        {
+            if (Feedback is null) return 0;
+            var count = 0;
+            if (Feedback.Harness is not null)
+            {
+                if (!string.IsNullOrEmpty(Feedback.Harness.Category)) count++;
+                if (!string.IsNullOrEmpty(Feedback.Harness.StuckReason)) count++;
+                count += Feedback.Harness.MissingContext.Count;
+                count += Feedback.Harness.MissingCapabilities.Count;
+                count += Feedback.Harness.PromptIssues.Count;
+                count += Feedback.Harness.Suggestions.Count;
+            }
+            if (Feedback.Issue is not null)
+            {
+                if (!string.IsNullOrEmpty(Feedback.Issue.Category)) count++;
+                if (!string.IsNullOrEmpty(Feedback.Issue.Description)) count++;
+                count += Feedback.Issue.AffectedFiles.Count;
+                if (!string.IsNullOrEmpty(Feedback.Issue.HumanActionNeeded)) count++;
+            }
+            return count;
+        }
+    }
+}

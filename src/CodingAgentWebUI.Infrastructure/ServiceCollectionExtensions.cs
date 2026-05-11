@@ -39,7 +39,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IQualityGateExecutor>(sp => new QualityGateOrchestrator(
             sp.GetRequiredService<IQualityGateValidator>(),
             new PullRequestOrchestrator(logger),
-            logger));
+            logger,
+            sp.GetService<IPipelineRunHistoryService>()));
 
         return services;
     }

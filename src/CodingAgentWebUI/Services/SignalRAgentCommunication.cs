@@ -54,4 +54,13 @@ public sealed class SignalRAgentCommunication : IAgentCommunication
         ArgumentNullException.ThrowIfNull(jobId);
         return _hubContext.Clients.Client(connectionId).CancelJob(jobId);
     }
+
+    /// <inheritdoc />
+    public Task AssignConsolidationJobAsync(string connectionId, string agentId, ConsolidationJobMessage job, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(connectionId);
+        ArgumentNullException.ThrowIfNull(agentId);
+        ArgumentNullException.ThrowIfNull(job);
+        return _hubContext.Clients.Client(connectionId).AssignConsolidationJob(agentId, job);
+    }
 }

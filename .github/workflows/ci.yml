@@ -27,7 +27,7 @@ jobs:
         run: dotnet build --no-restore --configuration Release
 
       - name: Test
-        run: dotnet test --no-build --configuration Release --verbosity normal --logger trx --results-directory TestResults --filter "Category!=E2E"
+        run: dotnet test --no-build --configuration Release --verbosity minimal --logger trx --results-directory TestResults --filter "Category!=E2E"
 
       - name: Upload test results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
