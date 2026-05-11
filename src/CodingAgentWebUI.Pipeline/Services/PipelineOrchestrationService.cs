@@ -127,7 +127,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 
         _configStore = configStore;
         _providerFactory = providerFactory;
-        _labelSwapper = labelSwapper ?? new DefaultIssueProviderLabelSwapper(configStore, providerFactory, logger);
+        _labelSwapper = labelSwapper ?? NoOpLabelSwapper.Instance;
         _issueParser = issueParser;
         _logger = logger;
         _agentExecution = agentExecution;
@@ -784,4 +784,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     /// Called by AgentHub for agent-dispatched run state updates.
     /// </summary>
     internal void NotifyChange() => _lifecycle.NotifyChange();
+
+    private sealed class NoOpLabelSwapper : IIssueProviderLabelSwapper
+    {
+        internal static readonly NoOpLabelSwapper Instance = new();
+        public Task SwapLabelAsync(string issueProviderConfigId, string issueIdentifier, string newLabel, CancellationToken ct) => Task.CompletedTask;
+    }
 }
