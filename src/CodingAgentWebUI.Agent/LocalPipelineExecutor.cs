@@ -103,6 +103,12 @@ public sealed class LocalPipelineExecutor
         var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.AgentProviderConfigId)
             ?? throw new InvalidOperationException($"Agent provider config '{job.AgentProviderConfigId}' not found in job assignment");
 
+        // Override blacklist settings from repo provider config (per-repo takes precedence)
+        if (repoConfig.BlacklistedPaths is { Count: > 0 })
+            config = config with { BlacklistedPaths = repoConfig.BlacklistedPaths };
+        if (repoConfig.BlacklistMode is { } repoBlacklistMode)
+            config = config with { BlacklistMode = repoBlacklistMode };
+
         IRepositoryProvider? repoProvider = null;
         IAgentProvider? agentProvider = null;
         IRepositoryProvider? brainProvider = null;

@@ -246,6 +246,19 @@ public sealed class AgentJobDispatcher : IJobDispatcher
 
             var config = await _configStore.LoadPipelineConfigAsync(ct);
 
+            // Override BrainReadOnly from the matching template (per-template setting)
+            var matchingTemplate = config.PipelineJobTemplates.FirstOrDefault(t =>
+                t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
+            if (matchingTemplate is { BrainReadOnly: true })
+                config = config with { BrainReadOnly = true };
+
+            // Override blacklist settings from repo provider config (per-repo takes precedence)
+            var repoProviderForBlacklist = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId);
+            if (repoProviderForBlacklist?.BlacklistedPaths is { Count: > 0 })
+                config = config with { BlacklistedPaths = repoProviderForBlacklist.BlacklistedPaths };
+            if (repoProviderForBlacklist?.BlacklistMode is { } dispatchBlacklistMode)
+                config = config with { BlacklistMode = dispatchBlacklistMode };
+
             var message = new JobAssignmentMessage
             {
                 JobId = run.RunId,

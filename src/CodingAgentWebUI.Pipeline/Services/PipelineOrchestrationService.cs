@@ -183,6 +183,12 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             var repoProviderConfig = await ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, linkedCt);
             var agentProviderConfig = await ResolveProviderConfigAsync(agentProviderId, ProviderKind.Agent, linkedCt);
 
+            // Override blacklist settings from repo provider config (per-repo takes precedence)
+            if (repoProviderConfig.BlacklistedPaths is { Count: > 0 })
+                _activeConfig = _activeConfig with { BlacklistedPaths = repoProviderConfig.BlacklistedPaths };
+            if (repoProviderConfig.BlacklistMode is { } repoBlacklistMode)
+                _activeConfig = _activeConfig with { BlacklistMode = repoBlacklistMode };
+
             await DisposePreviousProvidersAsync();
             _activeIssueProvider = _providerFactory.CreateIssueProvider(issueProviderConfig);
             var issueProvider = _activeIssueProvider;

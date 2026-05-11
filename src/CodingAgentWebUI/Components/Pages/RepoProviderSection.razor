@@ -70,6 +70,21 @@
                         <label>Required Agent Labels <span class="form-hint">(comma-separated — determines agent routing and quality gates)</span></label>
                         <input type="text" @bind="_form.RequiredLabels" placeholder="e.g. kiro, dotnet, dotnet10" />
                     </div>
+                    <div class="form-group">
+                        <div class="label-with-hint">
+                            <label>Blacklisted Paths</label>
+                            <span class="form-hint-icon" aria-hidden="true" title="Comma-separated path prefixes excluded from agent commits (e.g. .kiro, .github). Leave empty to use global defaults.">?</span>
+                        </div>
+                        <input type="text" @bind="_form.BlacklistedPaths" placeholder=".kiro, .github, .brain" />
+                    </div>
+                    <div class="form-group">
+                        <label>Blacklist Mode</label>
+                        <select @bind="_form.BlacklistMode">
+                            <option value="">— Use Global Default —</option>
+                            <option value="WarnAndExclude">Warn &amp; Exclude (unstage and continue)</option>
+                            <option value="Fail">Fail (stop pipeline on violation)</option>
+                        </select>
+                    </div>
                 }
             </AdditionalFields>
             <HelpContent>
@@ -141,7 +156,9 @@
             Repo = p.Settings.GetValueOrDefault("repo", ""),
             BaseBranch = p.Settings.GetValueOrDefault("baseBranch", "main"),
             RepositoryRole = p.RepositoryRole.ToString(),
-            RequiredLabels = p.RequiredLabels != null ? string.Join(", ", p.RequiredLabels) : p.Settings.GetValueOrDefault("requiredAgentLabels", "")
+            RequiredLabels = p.RequiredLabels != null ? string.Join(", ", p.RequiredLabels) : p.Settings.GetValueOrDefault("requiredAgentLabels", ""),
+            BlacklistedPaths = p.BlacklistedPaths != null ? string.Join(", ", p.BlacklistedPaths) : "",
+            BlacklistMode = p.BlacklistMode?.ToString() ?? ""
         };
         _showForm = true;
     }
@@ -205,6 +222,8 @@
             DisplayName = _form.DisplayName,
             RepositoryRole = Enum.TryParse<RepositoryRole>(_form.RepositoryRole, out var role) ? role : RepositoryRole.Work,
             RequiredLabels = ParseLabels(_form.RequiredLabels),
+            BlacklistedPaths = ParseBlacklistedPaths(_form.BlacklistedPaths),
+            BlacklistMode = Enum.TryParse<BlacklistMode>(_form.BlacklistMode, out var mode) ? mode : null,
             Settings = new Dictionary<string, string>
             {
                 ["apiUrl"] = _form.ApiUrl,
@@ -295,6 +314,8 @@
         public string BaseBranch { get; set; } = "main";
         public string RepositoryRole { get; set; } = "Work";
         public string RequiredLabels { get; set; } = "";
+        public string BlacklistedPaths { get; set; } = "";
+        public string BlacklistMode { get; set; } = "";
     }
 
     private static IReadOnlyList<string>? ParseLabels(string? input)
@@ -304,5 +325,14 @@
             .Where(l => !string.IsNullOrWhiteSpace(l))
             .ToList();
         return labels.Count > 0 ? labels : null;
+    }
+
+    private static IReadOnlyList<string>? ParseBlacklistedPaths(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return null;
+        var paths = input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .ToList();
+        return paths.Count > 0 ? paths : null;
     }
 }

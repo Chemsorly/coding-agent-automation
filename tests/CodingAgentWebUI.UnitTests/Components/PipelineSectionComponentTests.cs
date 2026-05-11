@@ -9,7 +9,7 @@ namespace CodingAgentWebUI.UnitTests.Components;
 
 /// <summary>
 /// bUnit component tests for the pipeline settings section components:
-/// PipelineGeneralSection, PipelineLoopSection, PipelinePromptsSection, PipelineSecuritySection.
+/// PipelineGeneralSection, PipelineLoopSection, PipelinePromptsSection.
 /// These are simple form components that load/save PipelineConfiguration fields.
 /// </summary>
 public class PipelineSectionComponentTests : BunitContext
@@ -218,77 +218,43 @@ public class PipelineSectionComponentTests : BunitContext
         _mockStore.Verify(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ═══ PipelineSecuritySection ═══
+    // ═══ PipelineGeneralSection — Relocated Settings ═══
 
     [Fact]
-    public void SecuritySection_RendersHeader()
+    public void GeneralSection_RendersFailedWorkspaceRetention()
     {
-        var cut = Render<PipelineSecuritySection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
-        Assert.Contains("Security", cut.Markup);
-    }
-
-    [Fact]
-    public void SecuritySection_RendersAllFields()
-    {
-        var cut = Render<PipelineSecuritySection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
-        Assert.Contains("Blacklisted Paths", cut.Markup);
-        Assert.Contains("Blacklist Mode", cut.Markup);
+        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
         Assert.Contains("Failed Run Workspace Retention", cut.Markup);
-        Assert.Contains("Brain Repository Read-Only", cut.Markup);
     }
 
     [Fact]
-    public void SecuritySection_LoadsConfigValues()
+    public void GeneralSection_LoadsRetentionValue()
     {
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration
+            .ReturnsAsync(new PipelineConfiguration { FailedWorkspaceRetentionDays = 14 });
+
+        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var inputs = cut.FindAll("input[type='number']");
+        Assert.Contains(inputs, i => i.GetAttribute("value") == "14");
+    }
+
+    [Fact]
+    public async Task GeneralSection_Save_IncludesRetentionDays()
+    {
+        PipelineConfiguration? saved = null;
+        _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+            .Returns<Func<PipelineConfiguration, PipelineConfiguration>, CancellationToken>((transform, _) =>
             {
-                BlacklistedPaths = new[] { ".secret", ".env" },
-                BlacklistMode = BlacklistMode.Fail,
-                FailedWorkspaceRetentionDays = 14,
-                BrainReadOnly = true
+                saved = transform(new PipelineConfiguration());
+                return Task.CompletedTask;
             });
 
-        var cut = Render<PipelineSecuritySection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
-        Assert.Contains(".secret, .env", cut.Markup);
-    }
+        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
 
-    [Fact]
-    public void SecuritySection_RendersBlacklistModeDropdown()
-    {
-        var cut = Render<PipelineSecuritySection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
-        var select = cut.Find("select");
-        Assert.NotNull(select);
-        Assert.Contains("Warn", cut.Markup);
-        Assert.Contains("Fail", cut.Markup);
-    }
-
-    [Fact]
-    public async Task SecuritySection_Save_CallsUpdatePipelineConfig()
-    {
-        var cut = Render<PipelineSecuritySection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
-
-        var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Security"));
+        var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save General"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
-        _mockStore.Verify(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task SecuritySection_SaveFails_ShowsError()
-    {
-        _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("permission denied"));
-
-        (string Message, bool IsError) status = default;
-        var cut = Render<PipelineSecuritySection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
-             .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => status = v)));
-
-        var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Security"));
-        await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
-
-        Assert.Contains("permission denied", status.Message);
-        Assert.True(status.IsError);
+        Assert.NotNull(saved);
+        Assert.Equal(7, saved!.FailedWorkspaceRetentionDays); // default value
     }
 }
