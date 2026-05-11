@@ -585,7 +585,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         mockDispatcher.Setup(d => d.TryDispatchAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .ReturnsAsync(true);
         mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>()))
             .Returns(false);

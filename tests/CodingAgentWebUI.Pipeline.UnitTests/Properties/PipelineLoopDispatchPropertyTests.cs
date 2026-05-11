@@ -62,8 +62,8 @@ public class PipelineLoopDispatchPropertyTests
         mockDispatcher.Setup(d => d.TryDispatchAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<string, string, string, string?, string?, string, CancellationToken>((issue, ip, rp, bp, pp, _, _) =>
+                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .Returns<string, string, string, string?, string?, string, CancellationToken, string?>((issue, ip, rp, bp, pp, _, _, _) =>
             {
                 lock (dispatchCalls) { dispatchCalls.Add((issue, ip, rp, bp, pp)); }
                 return Task.FromResult(true);
@@ -148,8 +148,8 @@ public class PipelineLoopDispatchPropertyTests
         mockDispatcher.Setup(d => d.TryDispatchAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<string, string, string, string?, string?, string, CancellationToken>((_, ip, _, _, _, _, _) =>
+                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .Returns<string, string, string, string?, string?, string, CancellationToken, string?>((_, ip, _, _, _, _, _, _) =>
             {
                 lock (dispatchCountPerTemplate)
                 {

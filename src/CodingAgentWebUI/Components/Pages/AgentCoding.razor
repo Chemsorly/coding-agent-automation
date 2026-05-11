@@ -969,7 +969,8 @@
                 _drawerTemplate.BrainProviderId,
                 _drawerTemplate.PipelineProviderId,
                 initiatedBy: "manual",
-                CancellationToken.None);
+                CancellationToken.None,
+                issueTitle: _selectedDrawerIssue.Title);
 
             if (dispatched)
             {

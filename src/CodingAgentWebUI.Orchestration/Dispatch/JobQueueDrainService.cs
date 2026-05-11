@@ -142,7 +142,8 @@ public sealed class JobQueueDrainService : BackgroundService
                     pendingJob.BrainProviderId,
                     pendingJob.PipelineProviderId,
                     pendingJob.InitiatedBy,
-                    ct);
+                    ct,
+                    issueTitle: pendingJob.IssueTitle);
 
                 if (!dispatched)
                 {
