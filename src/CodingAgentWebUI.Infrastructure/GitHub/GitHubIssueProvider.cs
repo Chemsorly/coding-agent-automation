@@ -224,8 +224,6 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     public async Task<bool> EnsureAgentLabelsAsync(CancellationToken ct)
     {
         var allSucceeded = true;
-        // TODO: [RES-07] Remove unused GetClientAsync call — ExecuteWithResilienceAsync acquires its own client internally.
-        var client = await GetClientAsync(ct);
         foreach (var (name, color) in AgentLabels.Definitions)
         {
             try

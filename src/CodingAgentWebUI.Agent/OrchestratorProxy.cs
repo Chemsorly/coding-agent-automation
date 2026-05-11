@@ -32,46 +32,59 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     /// <summary>
     /// Posts an analysis comment on the issue via the orchestrator.
     /// </summary>
-    // TODO: [RES-07] Add ArgumentNullException.ThrowIfNull for public method parameters (issueIdentifier, body, newLabel, assessmentJson) per project convention.
     public Task PostCommentAsync(string issueIdentifier, string body, CancellationToken ct)
-        => _signalRPipeline.ExecuteAsync(async token =>
+    {
+        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(body);
+        return _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync(
                 "RequestPostComment",
                 _jobId,
                 CommentType.Analysis,
                 new CommentPayload { AnalysisMarkdown = body },
                 token), ct).AsTask();
+    }
 
     /// <summary>
     /// Swaps the agent label on the issue via the orchestrator.
     /// </summary>
     public Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct)
-        => _signalRPipeline.ExecuteAsync(async token =>
+    {
+        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(newLabel);
+        return _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync("RequestLabelChange", _jobId, newLabel, token), ct).AsTask();
+    }
 
     /// <summary>
     /// Posts a gate rejection comment (not_ready assessment) via the orchestrator.
     /// </summary>
     public Task PostGateRejectionAsync(string assessmentJson, CancellationToken ct)
-        => _signalRPipeline.ExecuteAsync(async token =>
+    {
+        ArgumentNullException.ThrowIfNull(assessmentJson);
+        return _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync(
                 "RequestPostComment",
                 _jobId,
                 CommentType.GateRejection,
                 new CommentPayload { AssessmentJson = assessmentJson },
                 token), ct).AsTask();
+    }
 
     /// <summary>
     /// Posts a gate wont-do comment via the orchestrator.
     /// </summary>
     public Task PostGateWontDoAsync(string assessmentJson, CancellationToken ct)
-        => _signalRPipeline.ExecuteAsync(async token =>
+    {
+        ArgumentNullException.ThrowIfNull(assessmentJson);
+        return _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync(
                 "RequestPostComment",
                 _jobId,
                 CommentType.GateWontDo,
                 new CommentPayload { AssessmentJson = assessmentJson },
                 token), ct).AsTask();
+    }
 
     /// <summary>
     /// Requests a fresh short-lived token from the orchestrator when the current one expires.

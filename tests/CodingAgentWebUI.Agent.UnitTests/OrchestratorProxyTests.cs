@@ -111,6 +111,65 @@ public class OrchestratorProxyTests
         await act.Should().ThrowAsync<InvalidOperationException>();
     }
 
+    [Fact]
+    public async Task PostCommentAsync_ThrowsOnNullIssueIdentifier()
+    {
+        var proxy = CreateProxy();
+        var act = () => proxy.PostCommentAsync(null!, "body", CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("issueIdentifier");
+    }
+
+    [Fact]
+    public async Task PostCommentAsync_ThrowsOnNullBody()
+    {
+        var proxy = CreateProxy();
+        var act = () => proxy.PostCommentAsync("issue-1", null!, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("body");
+    }
+
+    [Fact]
+    public async Task SwapLabelAsync_ThrowsOnNullIssueIdentifier()
+    {
+        var proxy = CreateProxy();
+        var act = () => proxy.SwapLabelAsync(null!, "label", CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("issueIdentifier");
+    }
+
+    [Fact]
+    public async Task SwapLabelAsync_ThrowsOnNullNewLabel()
+    {
+        var proxy = CreateProxy();
+        var act = () => proxy.SwapLabelAsync("issue-1", null!, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("newLabel");
+    }
+
+    [Fact]
+    public async Task PostGateRejectionAsync_ThrowsOnNullAssessmentJson()
+    {
+        var proxy = CreateProxy();
+        var act = () => proxy.PostGateRejectionAsync(null!, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("assessmentJson");
+    }
+
+    [Fact]
+    public async Task PostGateWontDoAsync_ThrowsOnNullAssessmentJson()
+    {
+        var proxy = CreateProxy();
+        var act = () => proxy.PostGateWontDoAsync(null!, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("assessmentJson");
+    }
+
+    private static OrchestratorProxy CreateProxy()
+    {
+        var connection = new HubConnectionBuilder()
+            .WithUrl("http://localhost/hubs/agent", options =>
+            {
+                options.HttpMessageHandlerFactory = _ => new NoOpHandler();
+            })
+            .Build();
+        return new OrchestratorProxy(connection, "job-1");
+    }
+
     /// <summary>
     /// A no-op HTTP handler that returns 200 OK for connection building purposes.
     /// The connection won't actually be started in these tests.
