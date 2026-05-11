@@ -112,7 +112,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
         return new KiroCliOrchestrator(config, callbackHandler, logger);
     }
 
-    public async Task<int> ExecutePromptAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken, Action<string>? onOutputLine = null)
+    public async Task<int> ExecutePromptAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken, Action<string>? onOutputLine = null, string? resumeSessionId = null)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(workspaceDirectory);
@@ -138,7 +138,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
                 try { beforeSnapshot = fileSystemMonitor.ScanWorkspace(workspaceDirectory); }
                 catch (Exception ex) { _logger.Warning(ex, "Failed to scan workspace before execution"); beforeSnapshot = Array.Empty<FileSnapshot>(); }
 
-                var exitCode = await processWrapper.StartAsync(prompt, workspaceDirectory, useResume, cancellationToken);
+                var exitCode = await processWrapper.StartAsync(prompt, workspaceDirectory, useResume, cancellationToken, resumeSessionId);
 
                 IReadOnlyList<FileChange> fileChanges;
                 try

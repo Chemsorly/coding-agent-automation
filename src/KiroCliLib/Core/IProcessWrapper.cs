@@ -27,8 +27,9 @@ public interface IProcessWrapper : IDisposable
     /// <param name="workspaceDirectory">The workspace directory for the CLI process.</param>
     /// <param name="useResume">Whether to use the --resume flag for conversation continuity.</param>
     /// <param name="cancellationToken">Token to cancel the operation.</param>
+    /// <param name="resumeSessionId">Optional explicit session ID to resume via --resume-id flag. Takes precedence over useResume.</param>
     /// <returns>The process exit code.</returns>
-    Task<int> StartAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken);
+    Task<int> StartAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken, string? resumeSessionId = null);
 
     /// <summary>
     /// Forcefully terminates the running process and its process tree.

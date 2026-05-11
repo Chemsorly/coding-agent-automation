@@ -120,6 +120,8 @@ public class PipelineOrchestrationServiceTests
             .Returns(Task.CompletedTask);
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = false });
+        _mockAgentProvider.Setup(p => p.GetLatestSessionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
 
         _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
@@ -179,7 +181,7 @@ public class PipelineOrchestrationServiceTests
     private void SetupReviewAgentWithFindings(string promptMatch, string findingsContent)
     {
         _mockAgentProvider.Setup(p => p.ExecuteAsync(
-                It.Is<AgentRequest>(r => r.Prompt.Contains(promptMatch) && r.UseResume),
+                It.Is<AgentRequest>(r => r.Prompt.Contains(promptMatch) && !r.UseResume),
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
@@ -504,7 +506,7 @@ public class PipelineOrchestrationServiceTests
 
         var callCount = 0;
         _mockAgentProvider.Setup(p => p.ExecuteAsync(
-                It.Is<AgentRequest>(r => r.Prompt.Contains("Review the changes") && r.UseResume),
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Review the changes") && !r.UseResume),
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
@@ -539,7 +541,7 @@ public class PipelineOrchestrationServiceTests
 
         _mockAgentProvider.Verify(
             p => p.ExecuteAsync(
-                It.Is<AgentRequest>(r => r.Prompt.Contains(customPrompt) && r.Prompt.Contains("Test Issue") && r.UseResume),
+                It.Is<AgentRequest>(r => r.Prompt.Contains(customPrompt) && r.Prompt.Contains("Test Issue") && !r.UseResume),
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
             Times.Once);
     }
@@ -553,6 +555,7 @@ public class PipelineOrchestrationServiceTests
         config.CodeReview.Prompt.Should().Contain("sub-agent");
         config.CodeReview.Prompt.Should().Contain("[CRITICAL]");
         config.CodeReview.FixPrompt.Should().BeNull();
+        config.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
         PipelineConfiguration.DefaultReviewAgents.Should().NotBeNull();
         PipelineConfiguration.DefaultReviewAgents.Count.Should().Be(4);
         PipelineConfiguration.DefaultReviewAgents[0].Name.Should().Be("Correctness");
@@ -1059,8 +1062,8 @@ public class PipelineOrchestrationServiceTests
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CodeReviewIterationsCompleted.Should().Be(1);
-        _mockAgentProvider.Verify(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Check correctness.") && r.UseResume), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
-        _mockAgentProvider.Verify(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Check .NET issues.") && r.UseResume), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
+        _mockAgentProvider.Verify(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Check correctness.") && !r.UseResume), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
+        _mockAgentProvider.Verify(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Check .NET issues.") && !r.UseResume), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
     }
 
     [Fact]

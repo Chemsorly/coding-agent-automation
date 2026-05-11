@@ -165,7 +165,7 @@ public static class PromptBuilder
     /// details (title, description, requirements, acceptance criteria, and comments).
     /// </summary>
     public static string BuildReviewPrompt(string reviewInstructions, IssueDetail issue,
-        ParsedIssue parsed, string findingsFilePath)
+        ParsedIssue parsed, string findingsFilePath, bool isolated = false)
     {
         ArgumentNullException.ThrowIfNull(reviewInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -173,6 +173,14 @@ public static class PromptBuilder
         ArgumentNullException.ThrowIfNull(findingsFilePath);
 
         var sb = new StringBuilder();
+
+        if (isolated)
+        {
+            sb.AppendLine("You are reviewing code changes made by another agent. You have no prior context about how or why these changes were made — judge purely on correctness, security, and adherence to requirements.");
+            sb.AppendLine();
+            sb.AppendLine("Run `git diff origin/main...HEAD` to see what was changed. Use read-only git commands to explore the changes.");
+            sb.AppendLine();
+        }
 
         sb.AppendLine(reviewInstructions);
         sb.AppendLine();

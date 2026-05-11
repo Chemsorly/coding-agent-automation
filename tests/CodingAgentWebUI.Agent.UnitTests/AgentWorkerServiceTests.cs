@@ -341,9 +341,10 @@ public class AgentWorkerServiceTests
                 It.IsAny<string>(),
                 It.IsAny<bool>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<Action<string>?>()))
-            .Returns<string, string, bool, CancellationToken, Action<string>?>(
-                (prompt, _, _, _, _) =>
+                It.IsAny<Action<string>?>(),
+                It.IsAny<string?>()))
+            .Returns<string, string, bool, CancellationToken, Action<string>?, string?>(
+                (prompt, _, _, _, _, _) =>
                 {
                     if (prompt == "Hello, world!")
                         invoked.TrySetResult();
@@ -392,7 +393,8 @@ public class AgentWorkerServiceTests
                 It.IsAny<string>(),
                 true,
                 It.IsAny<CancellationToken>(),
-                It.IsAny<Action<string>?>()),
+                It.IsAny<Action<string>?>(),
+                It.IsAny<string?>()),
             Times.AtLeastOnce());
     }
 

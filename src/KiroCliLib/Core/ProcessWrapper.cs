@@ -33,7 +33,7 @@ public class ProcessWrapper : IProcessWrapper
         _useWsl = config.UseWsl && OperatingSystem.IsWindows();
     }
 
-    public async Task<int> StartAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken)
+    public async Task<int> StartAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken, string? resumeSessionId = null)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(workspaceDirectory);
@@ -53,8 +53,11 @@ public class ProcessWrapper : IProcessWrapper
         // The @path syntax expands file contents inline before sending (per Kiro docs).
         // Use explicit relative path (@./path) to avoid prompt name collision.
         var inlinePrompt = "@.kiro/prompt-input.md";
-        var kiroArgs = useResume
-            ? $"chat --no-interactive --resume --trust-all-tools \"{inlinePrompt}\""
+        var resumeFlag = resumeSessionId is not null
+            ? $"--resume-id {resumeSessionId}"
+            : useResume ? "--resume" : null;
+        var kiroArgs = resumeFlag is not null
+            ? $"chat --no-interactive {resumeFlag} --trust-all-tools \"{inlinePrompt}\""
             : $"chat --no-interactive --trust-all-tools \"{inlinePrompt}\"";
 
         var startInfo = new ProcessStartInfo
