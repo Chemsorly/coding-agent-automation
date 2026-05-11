@@ -178,7 +178,12 @@ public static class PromptBuilder
         {
             sb.AppendLine("You are reviewing code changes made by another agent. You have no prior context about how or why these changes were made — judge purely on correctness, security, and adherence to requirements.");
             sb.AppendLine();
-            sb.AppendLine("Run `git diff origin/main...HEAD` to see what was changed. Use read-only git commands to explore the changes.");
+            sb.AppendLine("To see ALL changes (both committed and uncommitted), run these commands:");
+            sb.AppendLine("- `git diff origin/main` — shows the full diff between origin/main and the working tree (includes both committed and uncommitted changes)");
+            sb.AppendLine("- `git status` — shows uncommitted/unstaged files in the working tree");
+            sb.AppendLine("- `git log origin/main..HEAD --oneline` — shows commits already on the branch (may be empty if changes are uncommitted)");
+            sb.AppendLine();
+            sb.AppendLine("IMPORTANT: Do NOT use `git diff origin/main...HEAD` (three dots) — that only compares commits and will miss uncommitted working tree changes.");
             sb.AppendLine();
         }
 
