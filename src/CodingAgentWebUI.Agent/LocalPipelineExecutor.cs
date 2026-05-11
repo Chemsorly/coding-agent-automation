@@ -436,10 +436,9 @@ public sealed class LocalPipelineExecutor
             try
             {
                 var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
-                    run, run.IssueTitle, run.RepositoryName?.Split('/').LastOrDefault(),
-                    _historyService);
+                    run, run.IssueTitle, run.RepositoryName?.Split('/').LastOrDefault());
 
-                var reflectionResult = await agentProvider.ExecuteAsync(
+                await agentProvider.ExecuteAsync(
                     new AgentRequest
                     {
                         Prompt = reflectionPrompt,
@@ -453,26 +452,10 @@ public sealed class LocalPipelineExecutor
                         run.OutputLines.Enqueue(line);
                         emitOutputLine(line);
                     });
-
-                // Parse feedback from the reflection agent response
-                try
-                {
-                    var responseText = string.Join("\n", reflectionResult.OutputLines);
-                    var feedback = _feedbackService.ParseFeedbackFromResponse(responseText, FeedbackOutcome.Success, DateTime.UtcNow);
-                    run.Feedback = feedback;
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Feedback parsing failed for run {RunId}, using fallback", run.RunId);
-                    run.Feedback = _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
-                        $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
-                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.Warning(ex, "Reflection step failed, continuing with brain sync");
-                run.Feedback ??= _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
-                    $"Reflection step failed: {ex.Message}", DateTime.UtcNow);
             }
 
             run.CurrentStep = PipelineStep.SyncingBrainRepoPostRun;
@@ -484,6 +467,59 @@ public sealed class LocalPipelineExecutor
             {
                 _logger.Warning(ex, "Brain post-run sync failed");
                 run.BrainUpdatesPushed = false;
+            }
+        }
+
+        // ── Feedback collection: separate agent call, runs regardless of brain provider ──
+        if (!isDraft)
+        {
+            emitOutputLine("📋 Collecting run feedback...");
+            try
+            {
+                var elapsed = DateTime.UtcNow - run.StartedAt;
+                var recentSummaries = (_historyService?.GetRunHistory() ?? [])
+                    .OrderByDescending(s => s.StartedAt)
+                    .Take(FeedbackConstraints.MaxRecentRunsForCategories)
+                    .ToList();
+
+                var harnessCategories = recentSummaries
+                    .Where(s => s.Feedback?.Harness.Category is not null)
+                    .Select(s => s.Feedback!.Harness.Category!)
+                    .Distinct()
+                    .ToList();
+
+                var issueCategories = recentSummaries
+                    .Where(s => s.Feedback?.Issue?.Category is not null)
+                    .Select(s => s.Feedback!.Issue!.Category!)
+                    .Distinct()
+                    .ToList();
+
+                var feedbackPrompt = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
+                    run, elapsed, harnessCategories, issueCategories);
+
+                var feedbackResult = await agentProvider.ExecuteAsync(
+                    new AgentRequest
+                    {
+                        Prompt = feedbackPrompt,
+                        WorkspacePath = run.WorkspacePath!,
+                        Timeout = TimeSpan.FromSeconds(FeedbackConstraints.FailureFeedbackTimeoutSeconds),
+                        UseResume = true
+                    },
+                    ct,
+                    line =>
+                    {
+                        run.OutputLines.Enqueue(line);
+                        emitOutputLine(line);
+                    });
+
+                var responseText = string.Join("\n", feedbackResult.OutputLines);
+                run.Feedback = _feedbackService.ParseFeedbackFromResponse(responseText, FeedbackOutcome.Success, DateTime.UtcNow);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Feedback collection failed, using fallback");
+                run.Feedback = _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
+                    $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
             }
         }
 
