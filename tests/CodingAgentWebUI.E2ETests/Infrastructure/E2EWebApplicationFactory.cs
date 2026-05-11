@@ -130,6 +130,10 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
         _registry?.Reset();
         _runService?.Reset();
         _dispatcher?.Reset();
+
+        // Reset consolidation badge service
+        var badgeService = Services.GetRequiredService<ConsolidationBadgeService>();
+        badgeService.Reset();
     }
 
     private static void ReplaceService<T>(IServiceCollection services, T implementation) where T : class
