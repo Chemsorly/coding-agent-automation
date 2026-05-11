@@ -48,14 +48,21 @@ public class TokenVendingServiceTests
     [Fact]
     public void Constructor_NullLogger_Throws()
     {
-        var act = () => new TokenVendingService(null!);
+        var act = () => new TokenVendingService(null!, new HttpClient());
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Constructor_NullHttpClientFactory_Throws()
+    {
+        var act = () => new TokenVendingService(_mockLogger.Object, (IHttpClientFactory)null!);
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public async Task GenerateAgentTokenAsync_NullConfig_Throws()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         var act = () => service.GenerateAgentTokenAsync(null!, CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
@@ -66,7 +73,7 @@ public class TokenVendingServiceTests
     [InlineData("installationId", new[] { "privateKeyBase64", "clientId" })]
     public async Task GenerateAgentTokenAsync_MissingSetting_Throws(string missingKey, string[] presentKeys)
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         var settings = new Dictionary<string, string>();
         foreach (var key in presentKeys)
             settings[key] = key == "privateKeyBase64" ? "dGVzdA==" : "value-123";
@@ -88,7 +95,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task PrepareAgentConfigsAsync_NullConfigs_Throws()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         var act = () => service.PrepareAgentConfigsAsync(null!, "repo-1", CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
@@ -96,7 +103,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task PrepareAgentConfigsAsync_NullRepoConfigId_Throws()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         var act = () => service.PrepareAgentConfigsAsync(Array.Empty<ProviderConfig>(), null!, CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
@@ -104,7 +111,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task PrepareAgentConfigsAsync_ConfigWithoutPrivateKey_PassedThrough()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         var configs = new List<ProviderConfig>
         {
             new()
@@ -134,7 +141,7 @@ public class TokenVendingServiceTests
     {
         // Use a real HttpClient that will fail (no mock handler needed — the JWT generation
         // will fail because the private key is not a valid PEM)
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         var configs = new List<ProviderConfig>
         {
             new()
@@ -164,7 +171,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task PrepareAgentConfigsAsync_PreservesOtherSettings()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         var configs = new List<ProviderConfig>
         {
             new()
@@ -192,7 +199,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task PrepareAgentConfigsAsync_PreservesProviderMetadata()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         var configs = new List<ProviderConfig>
         {
             new()
@@ -305,7 +312,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task PrepareAgentConfigsAsync_WithEmptyConfigList_ReturnsEmptyList()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
 
         var result = await service.PrepareAgentConfigsAsync(
             Array.Empty<ProviderConfig>(), "repo-1", CancellationToken.None);
@@ -422,7 +429,7 @@ public class TokenVendingServiceTests
             }
         };
 
-        var service = new TokenVendingService(new Mock<ILogger>().Object);
+        var service = new TokenVendingService(new Mock<ILogger>().Object, new HttpClient());
 
         // Act: PrepareAgentConfigsAsync will fail token generation (invalid key)
         // but should still strip the privateKeyBase64 setting

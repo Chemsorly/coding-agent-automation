@@ -37,7 +37,7 @@ public class AgentJobDispatcherTests
         _mockProviderFactory = new Mock<IProviderFactory>();
         _mockLabelSwapper = new Mock<IIssueProviderLabelSwapper>();
         _mockAgentComm = new Mock<IAgentCommunication>();
-        _tokenVending = new TokenVendingService(_mockLogger.Object);
+        _tokenVending = new TokenVendingService(_mockLogger.Object, new HttpClient());
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
     }
 
