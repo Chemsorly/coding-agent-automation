@@ -174,7 +174,7 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
     public async Task UpdateRunAsync_CleanupFailure_IsNonFatal_RunStillMarkedSucceeded()
     {
         // Validates: Requirement 9.4 — cleanup failure is non-fatal (logged warning)
-        // We simulate a cleanup failure by holding a file handle open to prevent deletion
+        // We simulate a cleanup failure by making the workspace path point to a read-only directory
         var collectingSink = new CollectingSink();
         var logger = new LoggerConfiguration()
             .WriteTo.Sink(collectingSink)
@@ -187,15 +187,48 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
 
-        // Create workspace and hold a file handle open to prevent deletion
+        // Create workspace and make it undeletable by placing a read-only subdirectory
+        // On Linux: remove write permission from parent to prevent child deletion
+        // On Windows: file locks prevent deletion
         var workspacePath = sut.CreateWorkspace(run!.RunId);
-        var lockedFilePath = Path.Combine(workspacePath, "locked.txt");
-        using var lockedFile = new FileStream(
-            lockedFilePath, FileMode.Create, FileAccess.Write, FileShare.None);
+        var subDir = Path.Combine(workspacePath, "subdir");
+        Directory.CreateDirectory(subDir);
+        var lockedFilePath = Path.Combine(subDir, "locked.txt");
+        File.WriteAllText(lockedFilePath, "test");
 
-        // Mark as succeeded — cleanup will fail because directory can't be deleted
-        await sut.UpdateRunAsync(
-            run.RunId, ConsolidationRunStatus.Succeeded, "Done", CancellationToken.None);
+        // Platform-specific: make deletion fail
+        if (OperatingSystem.IsWindows())
+        {
+            // On Windows, hold a file handle open to prevent deletion
+            var lockedFile = new FileStream(
+                lockedFilePath, FileMode.Open, FileAccess.Write, FileShare.None);
+            try
+            {
+                await sut.UpdateRunAsync(
+                    run.RunId, ConsolidationRunStatus.Succeeded, "Done", CancellationToken.None);
+            }
+            finally
+            {
+                lockedFile.Dispose();
+            }
+        }
+        else
+        {
+            // On Linux, remove write permission from the workspace directory
+            // This prevents Directory.Delete from removing contents
+            File.SetUnixFileMode(workspacePath, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+            try
+            {
+                await sut.UpdateRunAsync(
+                    run.RunId, ConsolidationRunStatus.Succeeded, "Done", CancellationToken.None);
+            }
+            finally
+            {
+                // Restore permissions for cleanup in Dispose()
+                File.SetUnixFileMode(workspacePath,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+        }
 
         // The run should still be marked as succeeded despite cleanup failure
         var history = await sut.GetRunHistoryAsync(CancellationToken.None);
