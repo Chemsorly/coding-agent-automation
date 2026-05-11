@@ -209,7 +209,6 @@ public class PipelineStateTransitionPropertyTests
             {
                 MaxRetries = maxRetries,
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = false }
             });
 
         var mockValidator = new Mock<IQualityGateValidator>();

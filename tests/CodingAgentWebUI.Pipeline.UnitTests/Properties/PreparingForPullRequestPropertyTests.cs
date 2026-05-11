@@ -199,7 +199,6 @@ public class PreparingForPullRequestPropertyTests
             IssuePageSize = config.IssuePageSize,
             AgentTimeout = config.AgentTimeout,
             WorkspaceBaseDirectory = config.WorkspaceBaseDirectory,
-            CodeReview = new CodeReviewConfiguration { Enabled = false },
             ExternalCiEnabled = externalCiEnabled,
             ExternalCiTimeout = config.ExternalCiTimeout,
             ExternalCiPollInterval = config.ExternalCiPollInterval,
@@ -290,7 +289,6 @@ public class PreparingForPullRequestPropertyTests
             {
                 MaxRetries = maxRetries,
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = false }
             });
 
         var mockValidator = new Mock<IQualityGateValidator>();

@@ -32,38 +32,21 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
     }
 
     [Fact]
-    public void RendersCodeReviewCheckbox()
+    public void RendersReviewFields_Always()
     {
         var cut = Render<PipelineQualityGatesSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
-        Assert.Contains("Agent Code Review Enabled", cut.Markup);
-    }
-
-    [Fact]
-    public void WhenCodeReviewEnabled_ShowsReviewFields()
-    {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { CodeReview = new CodeReviewConfiguration { Enabled = true } });
-
-        var cut = Render<PipelineQualityGatesSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
-
         Assert.Contains("Max Review Iterations", cut.Markup);
         Assert.Contains("Review Prompt", cut.Markup);
         Assert.Contains("Fix Prompt", cut.Markup);
     }
 
     [Fact]
-    public void WhenCodeReviewDisabled_HidesReviewFields()
+    public void DoesNotRenderCodeReviewCheckbox()
     {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { CodeReview = new CodeReviewConfiguration { Enabled = false } });
-
         var cut = Render<PipelineQualityGatesSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
-
-        Assert.DoesNotContain("Max Review Iterations", cut.Markup);
-        Assert.DoesNotContain("Review Prompt", cut.Markup);
+        Assert.DoesNotContain("Agent Code Review Enabled", cut.Markup);
     }
 
     [Fact]
@@ -74,7 +57,7 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
              .Add(s => s.PipelineProviderCount, 0));
 
         var checkboxes = cut.FindAll("input[type='checkbox']");
-        var ciCheckbox = checkboxes.Last(); // External CI is the second checkbox
+        var ciCheckbox = checkboxes.First(); // External CI is the only checkbox
         Assert.True(ciCheckbox.HasAttribute("disabled"));
     }
 
@@ -86,7 +69,7 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
              .Add(s => s.PipelineProviderCount, 2));
 
         var checkboxes = cut.FindAll("input[type='checkbox']");
-        var ciCheckbox = checkboxes.Last();
+        var ciCheckbox = checkboxes.First();
         Assert.False(ciCheckbox.HasAttribute("disabled"));
     }
 
@@ -107,9 +90,6 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
     [Fact]
     public void RendersResetButtons_ForPrompts()
     {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { CodeReview = new CodeReviewConfiguration { Enabled = true } });
-
         var cut = Render<PipelineQualityGatesSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
 
@@ -120,9 +100,6 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
     [Fact]
     public void RendersReviewerConfigHint()
     {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { CodeReview = new CodeReviewConfiguration { Enabled = true } });
-
         var cut = Render<PipelineQualityGatesSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
 

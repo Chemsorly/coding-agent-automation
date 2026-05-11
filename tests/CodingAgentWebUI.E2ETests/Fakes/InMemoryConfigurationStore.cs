@@ -15,7 +15,6 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         MaxRetries = 3,
         AgentTimeout = TimeSpan.FromMinutes(2),
         ExternalCiEnabled = false,
-        CodeReview = new CodeReviewConfiguration { Enabled = false }
     };
 
     private readonly List<ProviderConfig> _providerConfigs = new();
@@ -32,7 +31,6 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
             MaxRetries = 3,
             AgentTimeout = TimeSpan.FromMinutes(2),
             ExternalCiEnabled = false,
-            CodeReview = new CodeReviewConfiguration { Enabled = false }
         };
         _providerConfigs.Clear();
         _agentProfiles.Clear();
