@@ -228,21 +228,19 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             _lifecycle.ActiveRun = run;
             _logger.Information("Pipeline {RunId} using model {Model}", run.RunId, configuredModel);
             _activePipelineProvider = null;
+            ProviderConfig? pipelineProviderConfig = null;
+            if (!string.IsNullOrEmpty(pipelineProviderId))
+                pipelineProviderConfig = await ResolveProviderConfigAsync(pipelineProviderId, ProviderKind.Pipeline, linkedCt);
+            else
             {
-                ProviderConfig? pipelineProviderConfig = null;
-                if (!string.IsNullOrEmpty(pipelineProviderId))
-                    pipelineProviderConfig = await ResolveProviderConfigAsync(pipelineProviderId, ProviderKind.Pipeline, linkedCt);
-                else
-                {
-                    var pipelineConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, linkedCt);
-                    if (pipelineConfigs is { Count: > 0 }) pipelineProviderConfig = pipelineConfigs[0];
-                }
-                if (pipelineProviderConfig is not null)
-                {
-                    _activePipelineProvider = _providerFactory.CreatePipelineProvider(pipelineProviderConfig);
-                    run.PipelineProviderConfigId = pipelineProviderConfig.Id;
-                    _logger.Information("Pipeline {RunId} external CI provider configured", run.RunId);
-                }
+                var pipelineConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, linkedCt);
+                if (pipelineConfigs is { Count: > 0 }) pipelineProviderConfig = pipelineConfigs[0];
+            }
+            if (pipelineProviderConfig is not null)
+            {
+                _activePipelineProvider = _providerFactory.CreatePipelineProvider(pipelineProviderConfig);
+                run.PipelineProviderConfigId = pipelineProviderConfig.Id;
+                _logger.Information("Pipeline {RunId} external CI provider configured", run.RunId);
             }
             await ValidateProvidersAsync(_activeRepoProvider, repoProviderConfig,
                 _activeAgentProvider, agentProviderConfig, _activePipelineProvider, linkedCt);
