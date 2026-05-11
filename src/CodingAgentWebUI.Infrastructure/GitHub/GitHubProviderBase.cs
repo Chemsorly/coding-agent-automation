@@ -105,18 +105,17 @@ public abstract class GitHubProviderBase : IAsyncDisposable
     /// Executes an Octokit API call with resilience (retry on transient errors) and rate limit handling.
     /// Acquires a fresh client inside the retry loop to ensure token freshness on retry.
     /// </summary>
-    // TODO: [RES-07] operationName is accepted but not wired to ResilienceContext.OperationKey,
-    // so OnRetry logs always show the fallback "GitHubApi" instead of the actual operation name.
     protected async Task<T> ExecuteWithResilienceAsync<T>(
         Func<IGitHubClient, Task<T>> operation, string operationName, CancellationToken ct)
     {
+        var context = ResilienceContextPool.Shared.Get(operationName, ct);
         try
         {
-            return await _resiliencePipeline.ExecuteAsync(async token =>
+            return await _resiliencePipeline.ExecuteAsync(async ctx =>
             {
-                var client = await GetClientAsync(token);
+                var client = await GetClientAsync(ctx.CancellationToken);
                 return await operation(client);
-            }, ct);
+            }, context);
         }
         catch (Octokit.RateLimitExceededException ex)
         {
@@ -128,6 +127,10 @@ public abstract class GitHubProviderBase : IAsyncDisposable
                 ? DateTimeOffset.UtcNow.AddSeconds(ex.RetryAfterSeconds.Value)
                 : DateTimeOffset.UtcNow.Add(DefaultRateLimitWait);
             throw new PipelineRateLimitExceededException(resetAt, ex);
+        }
+        finally
+        {
+            ResilienceContextPool.Shared.Return(context);
         }
     }
 
