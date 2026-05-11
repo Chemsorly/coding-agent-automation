@@ -26,8 +26,10 @@ public sealed class ConsolidationPage
         // Wait for the page header to render
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
 
-        // Allow time for the Blazor Server circuit to connect and data to load
-        await _page.WaitForTimeoutAsync(3000);
+        // Allow time for the Blazor Server circuit to connect and data to load.
+        // The consolidation page loads data in OnInitializedAsync which requires
+        // the SignalR circuit to be established first.
+        await _page.WaitForTimeoutAsync(4000);
     }
 
     /// <summary>Gets the page title text.</summary>
@@ -187,6 +189,15 @@ public sealed class ConsolidationPage
     public async Task<bool> IsGenerateSuggestionsDisabledAsync()
     {
         var button = await _page.QuerySelectorAsync("button:has-text('Generate Suggestions')");
+        if (button is null) return false;
+        return await button.IsDisabledAsync();
+    }
+
+    /// <summary>Checks if the Refactoring Scan button is disabled for a template.</summary>
+    public async Task<bool> IsRefactoringButtonDisabledAsync(string templateName)
+    {
+        var button = await _page.QuerySelectorAsync(
+            $".consolidation-card:has(.consolidation-card-title:has-text('{templateName}')) button:has-text('Refactoring Scan')");
         if (button is null) return false;
         return await button.IsDisabledAsync();
     }
