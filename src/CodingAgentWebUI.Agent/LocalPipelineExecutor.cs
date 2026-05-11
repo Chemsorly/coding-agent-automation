@@ -303,10 +303,6 @@ public sealed class LocalPipelineExecutor
         {
             run.CompletedAt = DateTime.UtcNow;
 
-            // Set agent:cancelled label (matching monolith behavior)
-            try { await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None); }
-            catch (Exception labelEx) { _logger.Warning(labelEx, "Failed to set cancelled label"); }
-
             TransitionTo(PipelineStep.Cancelled);
             EmitOutputLine("🚫 Pipeline cancelled");
 
@@ -321,10 +317,6 @@ public sealed class LocalPipelineExecutor
         catch (Exception ex)
         {
             _logger.Error(ex, "Pipeline execution failed with unhandled error");
-
-            // Set agent:error label (best-effort)
-            try { await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None); }
-            catch (Exception labelEx) { _logger.Warning(labelEx, "Failed to set error label"); }
 
             return BuildFailurePayload(run, ex.Message);
         }
@@ -424,12 +416,8 @@ public sealed class LocalPipelineExecutor
         if (isDraft)
         {
             run.FailureReason = "Quality gates failed after max retries; draft PR created.";
-            await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
         }
-        else
-        {
-            await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Done, ct);
-        }
+        // Label swap (agent:done / agent:error) is handled by the orchestrator in ReportJobCompleted.
 
         // ── Reflection + brain post-run sync ──
         if (!isDraft && brainProvider is not null && brainSync is not null && !config.BrainReadOnly)

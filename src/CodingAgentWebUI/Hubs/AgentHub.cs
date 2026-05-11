@@ -199,6 +199,23 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
             _orchestration.NotifyChange();
 
+            // Swap label based on final outcome (non-fatal).
+            // The agent may also attempt a label swap via RequestLabelChange during its own
+            // error handling, but that call can race with this handler (run already removed).
+            // This is the authoritative swap that guarantees correctness.
+            if (payload.FinalStep == PipelineStep.Failed)
+            {
+                await SwapLabelViaIssueProviderAsync(run, AgentLabels.Error);
+            }
+            else if (payload.FinalStep == PipelineStep.Completed)
+            {
+                await SwapLabelViaIssueProviderAsync(run, AgentLabels.Done);
+            }
+            else if (payload.FinalStep == PipelineStep.Cancelled)
+            {
+                await SwapLabelViaIssueProviderAsync(run, AgentLabels.Cancelled);
+            }
+
             // Post issue feedback comment if present (non-fatal)
             await PostIssueFeedbackCommentAsync(run);
         }
