@@ -108,7 +108,8 @@ try
         sp.GetRequiredService<PipelineConfiguration>(),
         sp.GetRequiredService<IQualityGateValidator>(),
         Log.Logger,
-        sp.GetRequiredService<IBrainUpdateService>()));
+        sp.GetRequiredService<IBrainUpdateService>(),
+        sp.GetRequiredService<Configuration>().KiroCliPath));
 
     // ── Consolidation executor ──
     builder.Services.AddSingleton(sp => new LocalConsolidationExecutor(

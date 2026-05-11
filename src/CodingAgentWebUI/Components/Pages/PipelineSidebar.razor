@@ -68,6 +68,10 @@
                         {
                             <div class="step-detail step-detail-mono">@Truncate(Run.BranchName, 36)</div>
                         }
+                        else if (step == PipelineStep.VerifyingBaseline && Run.BaselineHealthPassed.HasValue)
+                        {
+                            <div class="step-detail">@(Run.BaselineHealthPassed.Value ? "✅ Baseline healthy" : "⚠️ Pre-existing issues")</div>
+                        }
                         else if (step == PipelineStep.AnalyzingCode)
                         {
                             <div class="step-detail">@(Run.AnalysisSkipped ? "Skipped (existing)" : "Agent analysis")</div>
@@ -302,6 +306,7 @@
         PipelineStep.CloningRepository,
         PipelineStep.SyncingBrainRepoPreRun,
         PipelineStep.CreatingBranch,
+        PipelineStep.VerifyingBaseline,
         PipelineStep.AnalyzingCode,
         PipelineStep.PostingAnalysis,
         PipelineStep.GeneratingCode,
@@ -367,6 +372,7 @@
         PipelineStep.CloningRepository => "Cloning Repository",
         PipelineStep.SyncingBrainRepoPreRun => "Loading Brain Context",
         PipelineStep.CreatingBranch => "Creating Branch",
+        PipelineStep.VerifyingBaseline => "Verifying Baseline",
         PipelineStep.AnalyzingCode => "Analyzing Code",
         PipelineStep.PostingAnalysis => "Posting Analysis",
         PipelineStep.GeneratingCode => "Generating Code",
@@ -396,6 +402,7 @@
         PipelineStep.CloningRepository => !string.IsNullOrEmpty(Run.RepositoryName),
         PipelineStep.SyncingBrainRepoPreRun => Run.BrainProviderConfigId != null,
         PipelineStep.CreatingBranch => !string.IsNullOrEmpty(Run.BranchName),
+        PipelineStep.VerifyingBaseline => Run.BaselineHealthPassed.HasValue,
         PipelineStep.AnalyzingCode => true,
         PipelineStep.GeneratingCode => Run.FilesChangedCount > 0 || Run.LinesAdded > 0 || Run.LinesRemoved > 0,
         PipelineStep.ReviewingCode => Run.CodeReviewIterationsCompleted > 0,

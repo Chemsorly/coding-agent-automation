@@ -62,7 +62,8 @@ builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
     sp.GetRequiredService<IBrainUpdateService>(),
     sp.GetRequiredService<IPipelineRunHistoryService>(),
     sp.GetRequiredService<OrchestratorRunService>(),
-    sp.GetRequiredService<PipelineRunLifecycleService>()));
+    sp.GetRequiredService<PipelineRunLifecycleService>(),
+    sp.GetRequiredService<IQualityGateValidator>()));
 
 // Pipeline — Loop Service (background service, starts dormant)
 builder.Services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(
