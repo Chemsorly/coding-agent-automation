@@ -26,13 +26,13 @@ public class TokenVendingServiceTests
     [Fact]
     public void Constructor_NullLogger_ThrowsArgumentNull()
     {
-        Assert.Throws<ArgumentNullException>(() => new TokenVendingService(null!));
+        Assert.Throws<ArgumentNullException>(() => new TokenVendingService(null!, new HttpClient()));
     }
 
     [Fact]
     public async Task GenerateAgentTokenAsync_NullConfig_ThrowsArgumentNull()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
 
         await Assert.ThrowsAsync<ArgumentNullException>(() =>
             service.GenerateAgentTokenAsync(null!, CancellationToken.None));
@@ -41,7 +41,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task GenerateAgentTokenAsync_MissingPrivateKey_ThrowsInvalidOperation()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         var config = new ProviderConfig
         {
             Id = "rp-1",
@@ -65,7 +65,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task GenerateAgentTokenAsync_MissingClientId_ThrowsInvalidOperation()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         var config = new ProviderConfig
         {
             Id = "rp-1",
@@ -89,7 +89,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task GenerateAgentTokenAsync_MissingInstallationId_ThrowsInvalidOperation()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         var config = new ProviderConfig
         {
             Id = "rp-1",
@@ -113,7 +113,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task GenerateAgentTokenAsync_InvalidInstallationId_ThrowsInvalidOperation()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         var config = new ProviderConfig
         {
             Id = "rp-1",
@@ -137,7 +137,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task GenerateAgentTokenAsync_InvalidPemContent_ThrowsInvalidOperation()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         // Base64 of "not a pem key"
         var notPemBase64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("not a pem key"));
         var config = new ProviderConfig
@@ -163,7 +163,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task PrepareAgentConfigsAsync_NullConfigs_ThrowsArgumentNull()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
 
         await Assert.ThrowsAsync<ArgumentNullException>(() =>
             service.PrepareAgentConfigsAsync(null!, "rp-1", CancellationToken.None));
@@ -172,7 +172,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task PrepareAgentConfigsAsync_NullRepoConfigId_ThrowsArgumentNull()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
 
         await Assert.ThrowsAsync<ArgumentNullException>(() =>
             service.PrepareAgentConfigsAsync(new List<ProviderConfig>(), null!, CancellationToken.None));
@@ -181,7 +181,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task PrepareAgentConfigsAsync_ConfigWithoutPrivateKey_PassedThrough()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         var configs = new List<ProviderConfig>
         {
             new()
@@ -209,7 +209,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task PrepareAgentConfigsAsync_ConfigWithPrivateKey_StripsKeyOnFailure()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         // This config has a privateKeyBase64 but it's invalid, so token generation will fail
         var notPemBase64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("not a pem key"));
         var configs = new List<ProviderConfig>
@@ -242,7 +242,7 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task PrepareAgentConfigsAsync_EmptyList_ReturnsEmpty()
     {
-        var service = new TokenVendingService(_mockLogger.Object);
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
 
         var result = await service.PrepareAgentConfigsAsync(new List<ProviderConfig>(), "rp-1", CancellationToken.None);
 

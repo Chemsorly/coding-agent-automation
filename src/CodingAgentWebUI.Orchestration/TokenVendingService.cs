@@ -23,25 +23,24 @@ namespace CodingAgentWebUI.Orchestration;
 public sealed partial class TokenVendingService : ITokenVendingService
 {
     private readonly ILogger _logger;
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ResiliencePipeline _httpPipeline;
 
-    // TODO: [RES-07] Singleton owns HttpClient but does not implement IDisposable — DI container cannot clean it up on shutdown.
-    public TokenVendingService(ILogger logger)
-        : this(logger, new HttpClient())
+    public TokenVendingService(ILogger logger, IHttpClientFactory httpClientFactory)
     {
+        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(httpClientFactory);
+        _logger = logger;
+        _httpClientFactory = httpClientFactory;
+        _httpPipeline = CreateHttpPipeline(logger);
     }
 
     /// <summary>
     /// Internal constructor that accepts an <see cref="HttpClient"/> for testing.
     /// </summary>
     internal TokenVendingService(ILogger logger, HttpClient httpClient)
+        : this(logger, new DelegatingHttpClientFactory(httpClient))
     {
-        ArgumentNullException.ThrowIfNull(logger);
-        ArgumentNullException.ThrowIfNull(httpClient);
-        _logger = logger;
-        _httpClient = httpClient;
-        _httpPipeline = CreateHttpPipeline(logger);
     }
 
     private static ResiliencePipeline CreateHttpPipeline(ILogger logger)
@@ -134,7 +133,8 @@ public sealed partial class TokenVendingService : ITokenVendingService
             request.Headers.UserAgent.Add(new ProductInfoHeaderValue("CodingAgentWebUI-TokenVending", "1.0"));
             request.Content = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
-            using var response = await _httpClient.SendAsync(request, token);
+            using var httpClient = _httpClientFactory.CreateClient("TokenVending");
+            using var response = await httpClient.SendAsync(request, token);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -317,4 +317,12 @@ public sealed partial class TokenVendingService : ITokenVendingService
 
     [JsonSerializable(typeof(TokenResponseBody))]
     private sealed partial class TokenResponseJsonContext : JsonSerializerContext;
+
+    /// <summary>
+    /// Wraps a pre-existing <see cref="HttpClient"/> as an <see cref="IHttpClientFactory"/> for testing.
+    /// </summary>
+    private sealed class DelegatingHttpClientFactory(HttpClient client) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => client;
+    }
 }

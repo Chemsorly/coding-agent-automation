@@ -84,7 +84,8 @@ builder.Services.AddSingleton(sp => new AgentRegistryService(Serilog.Log.Logger)
 builder.Services.AddSingleton(sp => new JobDispatcherService(
     sp.GetRequiredService<AgentRegistryService>(),
     Serilog.Log.Logger));
-builder.Services.AddSingleton<ITokenVendingService>(sp => new TokenVendingService(Serilog.Log.Logger));
+builder.Services.AddHttpClient("TokenVending");
+builder.Services.AddSingleton<ITokenVendingService>(sp => new TokenVendingService(Serilog.Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
 builder.Services.AddSingleton(sp => new OrchestratorRunService(
     Serilog.Log.Logger,
     pipelineConfig.OutputBufferCapacity));
