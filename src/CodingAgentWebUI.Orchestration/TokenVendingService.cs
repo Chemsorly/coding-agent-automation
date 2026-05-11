@@ -311,6 +311,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
         public string ExpiresAt { get; set; } = "";
     }
 
+    [JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonSerializable(typeof(TokenRequestBody))]
     private sealed partial class TokenRequestJsonContext : JsonSerializerContext;
 
