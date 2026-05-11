@@ -63,7 +63,8 @@ builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
     sp.GetRequiredService<IPipelineRunHistoryService>(),
     sp.GetRequiredService<OrchestratorRunService>(),
     sp.GetRequiredService<PipelineRunLifecycleService>(),
-    sp.GetRequiredService<IQualityGateValidator>()));
+    sp.GetRequiredService<IQualityGateValidator>(),
+    sp.GetRequiredService<IIssueProviderLabelSwapper>()));
 
 // Pipeline — Loop Service (background service, starts dormant)
 builder.Services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(
@@ -89,12 +90,16 @@ builder.Services.AddSingleton(sp => new OrchestratorRunService(
     Serilog.Log.Logger,
     pipelineConfig.OutputBufferCapacity));
 builder.Services.AddSingleton<IOrchestratorRunService>(sp => sp.GetRequiredService<OrchestratorRunService>());
+builder.Services.AddSingleton<IIssueProviderLabelSwapper>(sp => new IssueProviderLabelSwapper(
+    sp.GetRequiredService<IConfigurationStore>(),
+    sp.GetRequiredService<IProviderFactory>(),
+    Serilog.Log.Logger));
 builder.Services.AddHostedService(sp => new HeartbeatMonitorService(
     sp.GetRequiredService<AgentRegistryService>(),
     sp.GetRequiredService<OrchestratorRunService>(),
     sp.GetRequiredService<IPipelineRunHistoryService>(),
     sp.GetRequiredService<JobDispatcherService>(),
-    sp.GetRequiredService<IProviderFactory>(),
+    sp.GetRequiredService<IIssueProviderLabelSwapper>(),
     sp.GetRequiredService<IConfigurationStore>(),
     Serilog.Log.Logger));
 
@@ -143,6 +148,7 @@ builder.Services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
     sp.GetRequiredService<ITokenVendingService>(),
     sp.GetRequiredService<IConfigurationStore>(),
     sp.GetRequiredService<IProviderFactory>(),
+    sp.GetRequiredService<IIssueProviderLabelSwapper>(),
     sp.GetRequiredService<ProfileResolver>(),
     sp.GetRequiredService<QualityGateResolver>(),
     sp.GetRequiredService<ReviewerResolver>(),

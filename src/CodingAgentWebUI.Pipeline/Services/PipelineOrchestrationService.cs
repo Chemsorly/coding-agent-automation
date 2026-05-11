@@ -26,6 +26,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     private readonly PipelineRunLifecycleService _lifecycle;
     private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
+    private readonly IIssueProviderLabelSwapper _labelSwapper;
     private readonly IssueDescriptionParser _issueParser;
     private readonly BrainSyncOrchestrator _brainSync;
     private readonly PullRequestOrchestrator _prOrchestrator;
@@ -114,7 +115,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         IPipelineRunHistoryService? historyService = null,
         IOrchestratorRunService? runService = null,
         PipelineRunLifecycleService? lifecycle = null,
-        Interfaces.IQualityGateValidator? qualityGateValidator = null)
+        Interfaces.IQualityGateValidator? qualityGateValidator = null,
+        IIssueProviderLabelSwapper? labelSwapper = null)
     {
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
@@ -125,6 +127,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 
         _configStore = configStore;
         _providerFactory = providerFactory;
+        _labelSwapper = labelSwapper ?? new DefaultIssueProviderLabelSwapper(configStore, providerFactory, logger);
         _issueParser = issueParser;
         _logger = logger;
         _agentExecution = agentExecution;
@@ -442,22 +445,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 
         foreach (var run in allRuns)
         {
-            try
-            {
-                var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
-                var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
-                if (issueConfig is null) continue;
-
-                await using var issueProvider = _providerFactory.CreateIssueProvider(issueConfig);
-                foreach (var label in AgentLabels.All)
-                    await issueProvider.RemoveLabelAsync(run.IssueIdentifier, label, CancellationToken.None);
-                await issueProvider.AddLabelAsync(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Best-effort label swap to agent:cancelled failed for run {RunId} on issue {Issue}",
-                    run.RunId, run.IssueIdentifier);
-            }
+            await _labelSwapper.SwapLabelAsync(
+                run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
         }
 
         // Delegate state changes to lifecycle

@@ -22,6 +22,7 @@ public class HeartbeatMonitorServiceTests
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
     private readonly Mock<IConfigurationStore> _mockConfigStore;
+    private readonly Mock<IIssueProviderLabelSwapper> _mockLabelSwapper;
     private readonly Mock<ILogger> _mockLogger;
     private readonly HeartbeatMonitorService _monitor;
 
@@ -33,6 +34,7 @@ public class HeartbeatMonitorServiceTests
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
         _mockProviderFactory = new Mock<IProviderFactory>();
         _mockConfigStore = new Mock<IConfigurationStore>();
+        _mockLabelSwapper = new Mock<IIssueProviderLabelSwapper>();
 
         _mockConfigStore
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -45,7 +47,7 @@ public class HeartbeatMonitorServiceTests
             _runService,
             _mockHistoryService.Object,
             dispatcher,
-            _mockProviderFactory.Object,
+            _mockLabelSwapper.Object,
             _mockConfigStore.Object,
             _mockLogger.Object);
     }

@@ -26,6 +26,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly ModelFetchService _modelFetchService;
     private readonly IConsolidationService _consolidationService;
     private readonly ConsolidationBadgeService _badgeService;
+    private readonly IIssueProviderLabelSwapper _labelSwapper;
     private readonly ILogger _logger;
 
     public AgentHub(
@@ -35,6 +36,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         ModelFetchService modelFetchService,
         IConsolidationService consolidationService,
         ConsolidationBadgeService badgeService,
+        IIssueProviderLabelSwapper labelSwapper,
         ILogger logger)
     {
         _facade = facade;
@@ -43,6 +45,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         _modelFetchService = modelFetchService;
         _consolidationService = consolidationService;
         _badgeService = badgeService;
+        _labelSwapper = labelSwapper;
         _logger = logger;
     }
 
@@ -675,31 +678,9 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// <summary>
     /// Swaps the agent label on the issue using the issue provider from the run's config.
     /// </summary>
-    private async Task SwapLabelViaIssueProviderAsync(PipelineRun run, string newLabel)
+    private Task SwapLabelViaIssueProviderAsync(PipelineRun run, string newLabel)
     {
-        try
-        {
-            var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
-            var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
-            if (issueConfig is null)
-            {
-                _logger.Warning("Issue provider config '{ConfigId}' not found for run {RunId}", run.IssueProviderConfigId, run.RunId);
-                return;
-            }
-
-            await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
-
-            // Remove all existing agent labels, then add the new one (if non-empty)
-            foreach (var label in AgentLabels.All)
-                await issueProvider.RemoveLabelAsync(run.IssueIdentifier, label, CancellationToken.None);
-
-            if (!string.IsNullOrEmpty(newLabel))
-                await issueProvider.AddLabelAsync(run.IssueIdentifier, newLabel, CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Failed to swap label to {Label} on issue {IssueIdentifier} for run {RunId}", newLabel, run.IssueIdentifier, run.RunId);
-        }
+        return _labelSwapper.SwapLabelAsync(run.IssueProviderConfigId, run.IssueIdentifier, newLabel, CancellationToken.None);
     }
 
 }
