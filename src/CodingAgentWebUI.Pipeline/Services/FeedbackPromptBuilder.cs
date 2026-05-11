@@ -4,9 +4,8 @@ using CodingAgentWebUI.Pipeline.Models;
 namespace CodingAgentWebUI.Pipeline.Services;
 
 /// <summary>
-/// Builds feedback-specific prompt sections for agent feedback collection.
-/// Success feedback is appended to the existing reflection prompt.
-/// Failure feedback is a standalone prompt sent as a dedicated agent call.
+/// Builds feedback-specific prompts for agent feedback collection.
+/// Both success and failure feedback are standalone prompts sent as dedicated agent calls.
 /// </summary>
 public static class FeedbackPromptBuilder
 {
@@ -104,6 +103,74 @@ public static class FeedbackPromptBuilder
         sb.AppendLine("### Response Format");
         sb.AppendLine();
         sb.AppendLine("Produce a JSON block with the following structure. Reuse an existing category label if the root cause matches, or create a new short label (2-4 words) if it's genuinely novel.");
+        sb.AppendLine();
+        sb.AppendLine(JsonSchemaExample);
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds a standalone success feedback prompt for a dedicated agent call.
+    /// Includes run context, elapsed time, retry errors, and previously-used categories.
+    /// The agent is instructed to output ONLY a JSON block.
+    /// </summary>
+    public static string BuildStandaloneFeedbackPrompt(
+        PipelineRun run,
+        TimeSpan elapsed,
+        IReadOnlyList<string> previousHarnessCategories,
+        IReadOnlyList<string> previousIssueCategories)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(previousHarnessCategories);
+        ArgumentNullException.ThrowIfNull(previousIssueCategories);
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine("# Pipeline Success Feedback");
+        sb.AppendLine();
+        sb.AppendLine("The pipeline completed successfully. Please provide structured feedback about this run.");
+        sb.AppendLine("Output ONLY a JSON block — no prose, no explanation, no markdown outside the JSON fence.");
+        sb.AppendLine();
+
+        // Run context
+        sb.AppendLine("## Run Context");
+        sb.AppendLine();
+        sb.AppendLine($"- **Elapsed time:** {FormatElapsed(elapsed)}");
+        sb.AppendLine($"- **Retry count:** {run.RetryCount}");
+
+        var retryErrors = run.RetryErrors.ToList();
+        if (retryErrors.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("**Errors encountered during retries:**");
+            foreach (var error in retryErrors)
+            {
+                sb.AppendLine($"- {error}");
+            }
+        }
+
+        sb.AppendLine();
+
+        // Feedback instructions
+        sb.AppendLine("## Feedback Instructions");
+        sb.AppendLine();
+        sb.AppendLine("Based on your experience during this run, provide structured feedback.");
+        sb.AppendLine("Ground your answers in concrete evidence — reference specific file names, error messages, or tool names.");
+        sb.AppendLine();
+        sb.AppendLine("**Distinguish between:**");
+        sb.AppendLine("- **Harness feedback** — things about the pipeline, tools, or prompts that the pipeline team can fix");
+        sb.AppendLine("- **Issue feedback** — things about the issue description or repository that the issue author needs to fix");
+        sb.AppendLine();
+        sb.AppendLine("If the issue was well-written and the repo was clean, set the `issue` section to null.");
+        sb.AppendLine();
+
+        // Previous categories for reuse
+        AppendPreviousCategories(sb, previousHarnessCategories, previousIssueCategories);
+
+        // JSON schema instruction
+        sb.AppendLine("## Response Format");
+        sb.AppendLine();
+        sb.AppendLine("Output ONLY the following JSON block. Reuse an existing category label if the root cause matches, or create a new short label (2-4 words) if it's genuinely novel.");
         sb.AppendLine();
         sb.AppendLine(JsonSchemaExample);
 

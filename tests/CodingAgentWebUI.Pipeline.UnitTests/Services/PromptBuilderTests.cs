@@ -611,6 +611,15 @@ public class PromptBuilderTests
         result.Should().Contain("Do NOT modify any source code files");
     }
 
+    [Fact]
+    public void BuildReflectionPrompt_DoesNotContainFeedbackSection()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildReflectionPrompt(run);
+        result.Should().NotContain("Feedback Collection");
+        result.Should().NotContain("Feedback Questions");
+    }
+
     #endregion
 
     #region BuildBrainWriteInstructions

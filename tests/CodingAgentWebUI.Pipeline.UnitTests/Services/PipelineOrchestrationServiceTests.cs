@@ -3321,8 +3321,9 @@ public class PipelineOrchestrationServiceTests
 
         await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        // Code generation agent should NOT be called — only the cleanup agent
-        capturedPrompts.Should().AllSatisfy(p => p.Should().Contain("Pre-Pull Request Cleanup"));
+        // Code generation agent should NOT be called — only the cleanup agent and feedback collection
+        var nonFeedbackPrompts = capturedPrompts.Where(p => !p.Contains("Pipeline Success Feedback")).ToList();
+        nonFeedbackPrompts.Should().AllSatisfy(p => p.Should().Contain("Pre-Pull Request Cleanup"));
     }
 
     // ── Integration tests: OrchestratorCallbacks routing to lifecycle service ──

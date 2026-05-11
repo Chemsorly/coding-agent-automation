@@ -504,11 +504,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 try
                 {
                     var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
-                        run, _activeIssue?.Title, run.RepositoryName?.Split('/').LastOrDefault(),
-                        _historyService);
+                        run, _activeIssue?.Title, run.RepositoryName?.Split('/').LastOrDefault());
                     _logger.Debug("Pipeline {RunId} reflection prompt:\n{Prompt}", run.RunId, reflectionPrompt);
 
-                    var reflectionResult = await _activeAgentProvider!.ExecuteAsync(
+                    await _activeAgentProvider!.ExecuteAsync(
                         new AgentRequest
                         {
                             Prompt = reflectionPrompt,
@@ -524,32 +523,69 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                         });
 
                     _logger.Information("Pipeline {RunId} reflection step completed", run.RunId);
-
-                    // Parse feedback from the reflection agent response
-                    try
-                    {
-                        var responseText = string.Join("\n", reflectionResult.OutputLines);
-                        var feedback = _feedbackService.ParseFeedbackFromResponse(responseText, FeedbackOutcome.Success, DateTime.UtcNow);
-                        run.Feedback = feedback;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Warning(ex, "Feedback parsing failed for run {RunId}, using fallback", run.RunId);
-                        run.Feedback = _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
-                            $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
-                    }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _logger.Warning(ex, "Pipeline {RunId} reflection step failed, continuing with brain sync", run.RunId);
-                    run.Feedback ??= _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
-                        $"Reflection step failed: {ex.Message}", DateTime.UtcNow);
                 }
 
                 _lifecycle.TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
                 try { await _brainSync.SyncPostRunAsync(run, _activeBrainProvider, ct, line => _lifecycle.EmitOutputLine(line), _activeConfig!.BrainPushMaxRetries); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 { _logger.Warning(ex, "Pipeline {RunId} brain post-run sync failed", run.RunId); run.BrainUpdatesPushed = false; }
+            }
+
+            // Feedback collection: separate agent call, runs regardless of brain provider
+            if (!isDraft)
+            {
+                _lifecycle.EmitOutputLine("📋 Collecting run feedback...");
+                try
+                {
+                    var elapsed = DateTime.UtcNow - run.StartedAt;
+                    var recentSummaries = _historyService.GetRunHistory()
+                        .OrderByDescending(s => s.StartedAt)
+                        .Take(FeedbackConstraints.MaxRecentRunsForCategories)
+                        .ToList();
+
+                    var harnessCategories = recentSummaries
+                        .Where(s => s.Feedback?.Harness.Category is not null)
+                        .Select(s => s.Feedback!.Harness.Category!)
+                        .Distinct()
+                        .ToList();
+
+                    var issueCategories = recentSummaries
+                        .Where(s => s.Feedback?.Issue?.Category is not null)
+                        .Select(s => s.Feedback!.Issue!.Category!)
+                        .Distinct()
+                        .ToList();
+
+                    var feedbackPrompt = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
+                        run, elapsed, harnessCategories, issueCategories);
+
+                    var feedbackResult = await _activeAgentProvider!.ExecuteAsync(
+                        new AgentRequest
+                        {
+                            Prompt = feedbackPrompt,
+                            WorkspacePath = run.WorkspacePath!,
+                            Timeout = TimeSpan.FromSeconds(FeedbackConstraints.FailureFeedbackTimeoutSeconds),
+                            UseResume = true
+                        },
+                        ct,
+                        line =>
+                        {
+                            run.OutputLines.Enqueue(line);
+                            _lifecycle.EmitOutputLine(line);
+                        });
+
+                    var responseText = string.Join("\n", feedbackResult.OutputLines);
+                    run.Feedback = _feedbackService.ParseFeedbackFromResponse(responseText, FeedbackOutcome.Success, DateTime.UtcNow);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex, "Pipeline {RunId} feedback collection failed, using fallback", run.RunId);
+                    run.Feedback = _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
+                        $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
+                }
             }
 
             _lifecycle.TransitionTo(run, finalStep);

@@ -402,4 +402,71 @@ public class FeedbackPromptBuilderContentTests
         result.Should().Contain("prompt instruction gap");
         result.Should().Contain("missing component");
     }
+
+    // ── BuildStandaloneFeedbackPrompt tests ──
+
+    [Fact]
+    public void BuildStandaloneFeedbackPrompt_IsStandalonePrompt()
+    {
+        var run = CreateTestRun(retryCount: 1, "Compilation failed");
+        var elapsed = TimeSpan.FromMinutes(7) + TimeSpan.FromSeconds(15);
+
+        var result = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
+            run, elapsed, previousHarnessCategories: [], previousIssueCategories: []);
+
+        result.Should().Contain("Pipeline Success Feedback");
+        result.Should().Contain("Output ONLY a JSON block");
+        result.Should().Contain("7m 15s");
+    }
+
+    [Fact]
+    public void BuildStandaloneFeedbackPrompt_IncludesRetryContext()
+    {
+        var run = CreateTestRun(retryCount: 2, "Build failed", "Tests failed");
+        var elapsed = TimeSpan.FromMinutes(4);
+
+        var result = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
+            run, elapsed, previousHarnessCategories: [], previousIssueCategories: []);
+
+        result.Should().Contain("2");
+        result.Should().Contain("Build failed");
+        result.Should().Contain("Tests failed");
+    }
+
+    [Fact]
+    public void BuildStandaloneFeedbackPrompt_IncludesPreviousCategories()
+    {
+        var run = CreateTestRun(retryCount: 0);
+        var elapsed = TimeSpan.FromMinutes(3);
+        var harnessCategories = new List<string> { "missing file context" };
+        var issueCategories = new List<string> { "contradictory acceptance criteria" };
+
+        var result = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
+            run, elapsed, harnessCategories, issueCategories);
+
+        result.Should().Contain("missing file context");
+        result.Should().Contain("contradictory acceptance criteria");
+    }
+
+    [Fact]
+    public void BuildStandaloneFeedbackPrompt_IncludesJsonSchema()
+    {
+        var run = CreateTestRun(retryCount: 0);
+        var elapsed = TimeSpan.FromMinutes(2);
+
+        var result = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
+            run, elapsed, previousHarnessCategories: [], previousIssueCategories: []);
+
+        result.Should().Contain("\"harness\"");
+        result.Should().Contain("\"category\"");
+        result.Should().Contain("\"issue\"");
+    }
+
+    [Fact]
+    public void BuildStandaloneFeedbackPrompt_NullRun_Throws()
+    {
+        var act = () => FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
+            null!, TimeSpan.FromMinutes(1), [], []);
+        act.Should().Throw<ArgumentNullException>();
+    }
 }
