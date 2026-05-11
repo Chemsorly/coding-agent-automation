@@ -23,10 +23,8 @@ public static class TestPipelineConfig
         {
             Enabled = false,
             MaxIterations = 2,
-            Prompt = PipelineConfiguration.DefaultCodeReviewPrompt,
             FixPrompt = null,
         },
-        ExternalCiEnabled = false,
         ExternalCiTimeout = TimeSpan.FromMinutes(15),
         ExternalCiPollInterval = TimeSpan.FromSeconds(30),
         StallWarningInterval = TimeSpan.FromMinutes(2),
@@ -56,10 +54,8 @@ public static class TestPipelineConfig
         {
             Enabled = true,
             MaxIterations = 2,
-            Prompt = PipelineConfiguration.DefaultCodeReviewPrompt,
             FixPrompt = null,
         },
-        ExternalCiEnabled = false,
         ExternalCiTimeout = TimeSpan.FromMinutes(15),
         ExternalCiPollInterval = TimeSpan.FromSeconds(30),
         StallWarningInterval = TimeSpan.FromMinutes(2),

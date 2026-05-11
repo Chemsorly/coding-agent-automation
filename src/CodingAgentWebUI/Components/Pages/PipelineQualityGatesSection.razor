@@ -22,40 +22,26 @@
                     <input type="number" @bind="_codeReviewMaxIterations" min="1" max="5" />
                 </div>
                 <div class="form-group">
-                    <label>Review Prompt</label>
-                    <textarea @bind="_codeReviewPrompt" rows="4"></textarea>
-                    <button type="button" class="btn-revert" disabled="@(_codeReviewPrompt == PipelineConfiguration.DefaultCodeReviewPrompt)" @onclick="() => _codeReviewPrompt = PipelineConfiguration.DefaultCodeReviewPrompt">Reset to default</button>
-                </div>
-                <div class="form-group">
                     <label>Fix Prompt <span class="form-hint">(leave empty for single-pass review)</span></label>
                     <textarea @bind="_codeReviewFixPrompt" rows="3"></textarea>
                     <button type="button" class="btn-revert" disabled="@(_codeReviewFixPrompt == PipelineConfiguration.DefaultFixPrompt)" @onclick="() => _codeReviewFixPrompt = PipelineConfiguration.DefaultFixPrompt">Reset to default</button>
                 </div>
             </div>
         }
-        <div class="form-group form-checkbox">
-            <label class="@(PipelineProviderCount == 0 ? "disabled-label" : "")">
-                <input type="checkbox" @bind="_externalCiEnabled" disabled="@(PipelineProviderCount == 0)" />
-                External CI Quality Gate
-                @if (PipelineProviderCount == 0)
-                {
-                    <span class="form-hint-icon" aria-hidden="true" title="Configure a Pipeline Provider first to enable this option">?</span>
-                }
-            </label>
-        </div>
-        @if (_externalCiEnabled)
-        {
-            <div class="config-sub-fields">
-                <div class="form-group">
-                    <label>CI Timeout (minutes)</label>
-                    <input type="number" @bind="_externalCiTimeoutMinutes" min="1" max="60" />
-                </div>
-                <div class="form-group">
-                    <label>CI Poll Interval (seconds)</label>
-                    <input type="number" @bind="_externalCiPollIntervalSeconds" min="10" max="300" />
-                </div>
+        <div class="config-sub-fields" style="margin-top: 1rem;">
+            <h3 style="margin-bottom: 0.5rem;">External CI Settings</h3>
+            <div class="form-hint" style="margin-bottom: 0.75rem;">
+                ℹ️ External CI runs automatically when a Pipeline Provider is configured on the job template.
             </div>
-        }
+            <div class="form-group">
+                <label>CI Timeout (minutes)</label>
+                <input type="number" @bind="_externalCiTimeoutMinutes" min="1" max="60" />
+            </div>
+            <div class="form-group">
+                <label>CI Poll Interval (seconds)</label>
+                <input type="number" @bind="_externalCiPollIntervalSeconds" min="10" max="300" />
+            </div>
+        </div>
         <div class="pipeline-form-actions">
             <button class="btn-save" @onclick="SaveAsync">Save Quality Gate Settings</button>
         </div>
@@ -69,9 +55,7 @@
 
     private bool _codeReviewEnabled = true;
     private int _codeReviewMaxIterations = 1;
-    private string _codeReviewPrompt = PipelineConfiguration.DefaultCodeReviewPrompt;
     private string? _codeReviewFixPrompt;
-    private bool _externalCiEnabled = false;
     private int _externalCiTimeoutMinutes = 15;
     private int _externalCiPollIntervalSeconds = 30;
 
@@ -80,9 +64,7 @@
         var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         _codeReviewEnabled = config.CodeReview.Enabled;
         _codeReviewMaxIterations = config.CodeReview.MaxIterations;
-        _codeReviewPrompt = config.CodeReview.Prompt;
         _codeReviewFixPrompt = config.CodeReview.FixPrompt;
-        _externalCiEnabled = config.ExternalCiEnabled;
         _externalCiTimeoutMinutes = (int)config.ExternalCiTimeout.TotalMinutes;
         _externalCiPollIntervalSeconds = (int)config.ExternalCiPollInterval.TotalSeconds;
     }
@@ -98,10 +80,8 @@
                     {
                         Enabled = _codeReviewEnabled,
                         MaxIterations = _codeReviewMaxIterations,
-                        Prompt = _codeReviewPrompt,
                         FixPrompt = _codeReviewFixPrompt,
                     },
-                    ExternalCiEnabled = _externalCiEnabled,
                     ExternalCiTimeout = TimeSpan.FromMinutes(_externalCiTimeoutMinutes),
                     ExternalCiPollInterval = TimeSpan.FromSeconds(_externalCiPollIntervalSeconds)
                 },

@@ -228,7 +228,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             _lifecycle.ActiveRun = run;
             _logger.Information("Pipeline {RunId} using model {Model}", run.RunId, configuredModel);
             _activePipelineProvider = null;
-            if (_activeConfig.ExternalCiEnabled)
             {
                 ProviderConfig? pipelineProviderConfig = null;
                 if (!string.IsNullOrEmpty(pipelineProviderId))
@@ -236,7 +235,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 else
                 {
                     var pipelineConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, linkedCt);
-                    if (pipelineConfigs.Count > 0) pipelineProviderConfig = pipelineConfigs[0];
+                    if (pipelineConfigs is { Count: > 0 }) pipelineProviderConfig = pipelineConfigs[0];
                 }
                 if (pipelineProviderConfig is not null)
                 {
@@ -244,8 +243,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                     run.PipelineProviderConfigId = pipelineProviderConfig.Id;
                     _logger.Information("Pipeline {RunId} external CI provider configured", run.RunId);
                 }
-                else
-                    _logger.Warning("Pipeline {RunId} external CI enabled but no pipeline provider configured", run.RunId);
             }
             await ValidateProvidersAsync(_activeRepoProvider, repoProviderConfig,
                 _activeAgentProvider, agentProviderConfig, _activePipelineProvider, linkedCt);

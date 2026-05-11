@@ -40,7 +40,6 @@ public sealed record CodeReviewConfiguration
 {
     public bool Enabled { get; init; } = true;
     public int MaxIterations { get; init; } = 2;
-    public string Prompt { get; init; } = PipelineConfiguration.DefaultCodeReviewPrompt;
 
     /// <summary>
     /// When set, the review step splits into find-then-fix: the review prompt reports findings
@@ -58,7 +57,6 @@ public sealed record CodeReviewConfiguration
 
 public sealed record PipelineConfiguration
 {
-    public const string DefaultCodeReviewPrompt = DefaultPrompts.CodeReview;
     public const string DefaultFixPrompt = DefaultPrompts.Fix;
     public const string DefaultCorrectnessReviewPrompt = DefaultPrompts.CorrectnessReview;
     public const string DefaultDotNetSpecialistReviewPrompt = DefaultPrompts.DotNetSpecialistReview;
@@ -145,12 +143,6 @@ public sealed record PipelineConfiguration
     /// after branch creation and before code analysis. Default: true.
     /// </summary>
     public bool BaselineHealthCheckEnabled { get; init; } = true;
-
-    public bool ExternalCiEnabled
-    {
-        get => ExternalCi.ExternalCiEnabled;
-        init => ExternalCi = ExternalCi with { ExternalCiEnabled = value };
-    }
 
     public TimeSpan ExternalCiTimeout
     {

@@ -200,7 +200,6 @@ public class PreparingForPullRequestPropertyTests
             AgentTimeout = config.AgentTimeout,
             WorkspaceBaseDirectory = config.WorkspaceBaseDirectory,
             CodeReview = new CodeReviewConfiguration { Enabled = false },
-            ExternalCiEnabled = externalCiEnabled,
             ExternalCiTimeout = config.ExternalCiTimeout,
             ExternalCiPollInterval = config.ExternalCiPollInterval,
             StallWarningInterval = config.StallWarningInterval,
