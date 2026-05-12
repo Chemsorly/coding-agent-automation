@@ -38,7 +38,6 @@ public enum ReviewIsolation
 
 public sealed record CodeReviewConfiguration
 {
-    public bool Enabled { get; init; } = true;
     public int MaxIterations { get; init; } = 2;
 
     /// <summary>

@@ -21,7 +21,8 @@ public interface IJobDispatcher
         string? brainProviderId,
         string? pipelineProviderId,
         string initiatedBy,
-        CancellationToken ct);
+        CancellationToken ct,
+        string? issueTitle = null);
 
     /// <summary>
     /// Whether any agents are registered and available for dispatch.

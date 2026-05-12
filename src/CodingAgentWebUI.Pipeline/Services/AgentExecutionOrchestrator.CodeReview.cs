@@ -16,7 +16,21 @@ internal partial class AgentExecutionOrchestrator
         ArgumentNullException.ThrowIfNull(context);
         var run = context.Run;
         var config = context.Config;
-        if (!config.CodeReview.Enabled || config.CodeReview.MaxIterations <= 0)
+        if (config.CodeReview.MaxIterations <= 0)
+            return;
+
+        // Determine which agents to run — skip review entirely if none resolved (Option B)
+        IReadOnlyList<ReviewAgentConfig> agents;
+        if (resolvedReviewerConfigs is { Count: > 0 })
+        {
+            agents = ReviewerResolver.FlattenAgents(resolvedReviewerConfigs);
+        }
+        else
+        {
+            return;
+        }
+
+        if (agents.Count == 0)
             return;
 
         run.CodeReviewIterationsTotal = config.CodeReview.MaxIterations;
@@ -26,19 +40,6 @@ internal partial class AgentExecutionOrchestrator
             context.Callbacks.TransitionTo(PipelineStep.ReviewingCode);
             _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
                 run.RunId, i + 1, config.CodeReview.MaxIterations);
-
-            // Determine which agents to run:
-            // 1. resolvedReviewerConfigs (entity-based routing)
-            // 2. DefaultReviewAgents fallback
-            IReadOnlyList<ReviewAgentConfig> agents;
-            if (resolvedReviewerConfigs is { Count: > 0 })
-            {
-                agents = ReviewerResolver.FlattenAgents(resolvedReviewerConfigs);
-            }
-            else
-            {
-                agents = PipelineConfiguration.DefaultReviewAgents;
-            }
 
             context.Callbacks.EmitOutputLine($"🔍 Starting code review iteration {i + 1}/{config.CodeReview.MaxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
 

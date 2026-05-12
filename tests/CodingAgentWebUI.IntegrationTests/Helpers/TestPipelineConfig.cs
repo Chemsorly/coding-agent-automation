@@ -21,7 +21,6 @@ public static class TestPipelineConfig
         WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
         CodeReview = new CodeReviewConfiguration
         {
-            Enabled = false,
             MaxIterations = 2,
             FixPrompt = null,
         },
@@ -52,7 +51,6 @@ public static class TestPipelineConfig
         WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
         CodeReview = new CodeReviewConfiguration
         {
-            Enabled = true,
             MaxIterations = 2,
             FixPrompt = null,
         },

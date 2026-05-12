@@ -32,7 +32,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
             WorkspaceBaseDirectory = "/tmp/custom-workspaces",
             CodeReview = new CodeReviewConfiguration
             {
-                Enabled = true,
                 MaxIterations = 3,
                 FixPrompt = "Custom fix prompt"
             },
@@ -83,7 +82,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
         loaded.ClosedLoopMaxPagesToFetch.Should().Be(original.ClosedLoopMaxPagesToFetch);
 
         // Nested CodeReviewConfiguration
-        loaded.CodeReview.Enabled.Should().Be(true);
         loaded.CodeReview.MaxIterations.Should().Be(3);
         loaded.CodeReview.FixPrompt.Should().Be("Custom fix prompt");
     }
@@ -96,7 +94,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
             WorkspaceBaseDirectory = WorkspaceBase,
             CodeReview = new CodeReviewConfiguration
             {
-                Enabled = false,
                 FixPrompt = null
             },
             LastUsedProviderIds = new Dictionary<string, string>()
@@ -272,7 +269,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
             WorkspaceBaseDirectory = WorkspaceBase,
             CodeReview = new CodeReviewConfiguration
             {
-                Enabled = true,
                 MaxIterations = 1,
                 FixPrompt = PipelineConfiguration.DefaultFixPrompt
             }

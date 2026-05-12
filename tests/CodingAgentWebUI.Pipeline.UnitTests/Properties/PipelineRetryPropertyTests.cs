@@ -65,7 +65,6 @@ public class PipelineRetryPropertyTests
             {
                 MaxRetries = maxRetries,
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = false }
             });
         mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>

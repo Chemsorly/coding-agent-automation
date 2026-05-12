@@ -62,7 +62,7 @@ public class JobQueueDrainServiceTests
         _mockJobDispatcher.Verify(
             d => d.TryDispatchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()),
+                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()),
             Times.Never);
     }
 
@@ -77,7 +77,7 @@ public class JobQueueDrainServiceTests
         _mockJobDispatcher.Verify(
             d => d.TryDispatchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()),
+                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()),
             Times.Never);
     }
 
@@ -88,13 +88,13 @@ public class JobQueueDrainServiceTests
         _dispatcher.EnqueueJob(CreateJob("issue-42"));
 
         _mockJobDispatcher
-            .Setup(d => d.TryDispatchAsync("issue-42", "ip", "rp", null, null, "test", It.IsAny<CancellationToken>()))
+            .Setup(d => d.TryDispatchAsync("issue-42", "ip", "rp", null, null, "test", It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .ReturnsAsync(true);
 
         await _service.DrainAsync(CancellationToken.None);
 
         _mockJobDispatcher.Verify(
-            d => d.TryDispatchAsync("issue-42", "ip", "rp", null, null, "test", It.IsAny<CancellationToken>()),
+            d => d.TryDispatchAsync("issue-42", "ip", "rp", null, null, "test", It.IsAny<CancellationToken>(), It.IsAny<string?>()),
             Times.Once);
     }
 
@@ -107,7 +107,7 @@ public class JobQueueDrainServiceTests
         _mockJobDispatcher
             .Setup(d => d.TryDispatchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .ReturnsAsync(false);
 
         await _service.DrainAsync(CancellationToken.None);
@@ -125,7 +125,7 @@ public class JobQueueDrainServiceTests
         _mockJobDispatcher
             .Setup(d => d.TryDispatchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .ThrowsAsync(new InvalidOperationException("Provider error"));
 
         await _service.DrainAsync(CancellationToken.None);
@@ -151,7 +151,7 @@ public class JobQueueDrainServiceTests
         _mockJobDispatcher.Verify(
             d => d.TryDispatchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()),
+                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()),
             Times.Never);
     }
 

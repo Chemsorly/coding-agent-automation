@@ -335,7 +335,7 @@
                             var waitTime = DateTimeOffset.UtcNow - job.EnqueuedAt;
                             <tr>
                                 <td>@position</td>
-                                <td title="#@job.IssueIdentifier">#@job.IssueIdentifier</td>
+                                <td title="#@job.IssueIdentifier @job.IssueTitle">#@job.IssueIdentifier @job.IssueTitle</td>
                                 <td title="@job.InitiatedBy">@job.InitiatedBy</td>
                                 <td>@job.EnqueuedAt.ToString("HH:mm:ss")</td>
                                 <td>@waitTime.ToString(@"hh\:mm\:ss")</td>

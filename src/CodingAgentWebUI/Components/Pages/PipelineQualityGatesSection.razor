@@ -3,7 +3,7 @@
 
 <section class="settings-section">
     <h2>Quality Gates</h2>
-    <p class="section-description">Pipeline-level quality settings — code review toggle, external CI integration, and stall detection. Per-stack build/test commands are in Quality Gate Configurations.</p>
+    <p class="section-description">Pipeline-level quality settings — code review, external CI integration, and stall detection. Per-stack build/test commands are in Quality Gate Configurations.</p>
     <div class="provider-form">
         <div class="form-group form-checkbox">
             <label>
@@ -62,7 +62,7 @@
     protected override async Task OnInitializedAsync()
     {
         var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        _codeReviewEnabled = config.CodeReview.Enabled;
+        _codeReviewEnabled = config.CodeReview.MaxIterations > 0;
         _codeReviewMaxIterations = config.CodeReview.MaxIterations;
         _codeReviewFixPrompt = config.CodeReview.FixPrompt;
         _externalCiTimeoutMinutes = (int)config.ExternalCiTimeout.TotalMinutes;
@@ -78,7 +78,6 @@
                 {
                     CodeReview = new CodeReviewConfiguration
                     {
-                        Enabled = _codeReviewEnabled,
                         MaxIterations = _codeReviewMaxIterations,
                         FixPrompt = _codeReviewFixPrompt,
                     },
