@@ -231,7 +231,8 @@ public class PipelineLoopPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        await Task.Delay(300);
+        // Wait long enough for at least one full poll cycle on slow CI runners
+        await Task.Delay(1000);
         svc.StopLoop();
         await Task.Delay(200);
         cts.Cancel();
