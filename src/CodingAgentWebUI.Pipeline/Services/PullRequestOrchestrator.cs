@@ -88,7 +88,7 @@ internal class PullRequestOrchestrator
 
         var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, run.IssueIdentifier);
 
-        var codeReviewSummary = config.CodeReview.Enabled
+        var codeReviewSummary = run.CodeReviewAgentsRun is { Count: > 0 }
             ? new CodeReviewSummary(
                 run.CodeReviewAgentsRun,
                 run.CodeReviewCriticalCount,

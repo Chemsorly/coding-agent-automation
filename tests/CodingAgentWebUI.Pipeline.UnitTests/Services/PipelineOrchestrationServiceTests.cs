@@ -452,21 +452,27 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1 }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Default", Agents = new[] { new ReviewAgent { Name = "Correctness", Prompt = "Review the changes as a sub-agent." } } }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.CodeReviewIterationsCompleted.Should().Be(1);
-        _mockAgentProvider.Verify(
-            p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("sub-agent") && r.UseResume), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.AtLeastOnce);
     }
 
     [Fact]
     public async Task StartPipeline_WithCodeReviewDisabled_SkipsReview()
     {
+        // No reviewer configs resolved → review is skipped
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>());
+
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
@@ -480,7 +486,12 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 3 }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 3 }
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Default", Agents = new[] { new ReviewAgent { Name = "Correctness", Prompt = "Review the changes." } } }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -496,7 +507,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 3 }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 3 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -529,7 +540,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -550,7 +561,6 @@ public class PipelineOrchestrationServiceTests
     public void CodeReviewDefaults_AreCorrect()
     {
         var config = new PipelineConfiguration();
-        config.CodeReview.Enabled.Should().BeTrue();
         config.CodeReview.MaxIterations.Should().Be(2);
         config.CodeReview.Prompt.Should().Contain("sub-agent");
         config.CodeReview.Prompt.Should().Contain("[CRITICAL]");
@@ -573,7 +583,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -599,7 +609,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -624,7 +634,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = null }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -649,7 +659,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -776,7 +786,6 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = false },
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
                 AgentTimeout = TimeSpan.FromMinutes(5)
@@ -820,7 +829,6 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = false },
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
                 AgentTimeout = TimeSpan.FromMinutes(5)
@@ -864,7 +872,6 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = false },
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
                 AgentTimeout = TimeSpan.FromHours(1)
@@ -1052,7 +1059,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -1073,7 +1080,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -1106,7 +1113,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -1137,7 +1144,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -1157,18 +1164,17 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task StartPipeline_WithNoReviewerConfigs_FallsBackToDefaultAgents()
+    public async Task StartPipeline_WithNoReviewerConfigs_SkipsReview()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1 }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        run.CodeReviewIterationsCompleted.Should().Be(1);
-        run.CodeReviewAgentsRun.Should().Contain("Correctness");
+        run.CodeReviewIterationsCompleted.Should().Be(0);
     }
 
     [Fact]
@@ -1178,7 +1184,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -1197,7 +1203,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -1229,7 +1235,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 2 }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 2 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -1255,17 +1261,17 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task StartPipeline_WithNoReviewerConfigs_TracksDefaultAgentNames()
+    public async Task StartPipeline_WithNoReviewerConfigs_TracksNoReview()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { Enabled = true, MaxIterations = 1 }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1 }
             });
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        run.CodeReviewAgentsRun.Should().Contain("Correctness");
+        run.CodeReviewIterationsCompleted.Should().Be(0);
     }
 
     [Fact]
@@ -1943,6 +1949,11 @@ public class PipelineOrchestrationServiceTests
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestPipelineConfig.WithCodeReview());
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new() { DisplayName = "Default", Agents = new[] { new ReviewAgent { Name = "Correctness", Prompt = "Review the following changes." } } }
+            });
 
         SetupReviewAgentWithFindings("Review the following", "[CRITICAL] Test finding\n[WARNING] Another finding");
 
@@ -3414,7 +3425,8 @@ public class PipelineOrchestrationServiceTests
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: mockHistoryService.Object,
             runService: mockRunService.Object,
-            lifecycle: lifecycle);
+            lifecycle: lifecycle,
+            labelSwapper: new Orchestration.IssueProviderLabelSwapper(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object));
 
         await service.CancelActiveAgentRunsAsync();
 

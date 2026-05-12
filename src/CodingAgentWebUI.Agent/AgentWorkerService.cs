@@ -361,14 +361,10 @@ public sealed class AgentWorkerService : BackgroundService
                     chatWorkspace,
                     useResume: true,
                     _chatCts.Token,
-                    onOutputLine: line =>
+                    onOutputLine: async line =>
                     {
                         var clean = KiroCliLib.Core.AnsiStripper.Strip(line);
-                        // TODO: [RES-07] sync-over-async — onOutputLine callback is Action<string> (synchronous),
-                        // but AddLineAsync acquires a semaphore and may flush via SignalR. This can cause
-                        // thread-pool starvation under high output volume. Fix requires changing
-                        // IKiroCliOrchestrator.ExecutePromptAsync to accept Func<string, Task> callback.
-                        outputBatcher.AddLineAsync(clean).GetAwaiter().GetResult();
+                        await outputBatcher.AddLineAsync(clean);
                     });
 
                 exitCode = exitCode2;

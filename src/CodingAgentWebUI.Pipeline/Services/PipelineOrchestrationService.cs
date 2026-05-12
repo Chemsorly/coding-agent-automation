@@ -12,10 +12,8 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// Supports both local execution (single <see cref="ActiveRun"/>) and multi-agent
 /// dispatch (concurrent runs tracked via <see cref="IOrchestratorRunService"/>).
 /// </summary>
-// Evaluated (MAINT-09): 735 lines, exceeds the 500-line spec 017 threshold.
-// Extraction of provider lifecycle management (resolution, disposal, active provider tracking)
-// into a dedicated PipelineProviderManager is warranted as future work. Not performed here
-// because it is a significant refactor requiring its own issue.
+// Provider lifecycle management (resolution, disposal, active provider tracking) is delegated
+// to PipelineProviderManager, extracted per spec 017 / MAINT-09.
 //
 // IProviderOperationsFacade evaluation: IPipelineCallbacks already covers SwapAgentLabel,
 // RemoveAllAgentLabels, and CreatePullRequest. A separate facade would add indirection
@@ -38,11 +36,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     private readonly Serilog.ILogger _logger;
 
     private readonly SemaphoreSlim _startLock = new(1, 1);
-    protected IAgentProvider? _activeAgentProvider;
-    protected IRepositoryProvider? _activeRepoProvider;
-    protected IRepositoryProvider? _activeBrainProvider;
-    protected IIssueProvider? _activeIssueProvider;
-    protected IPipelineProvider? _activePipelineProvider;
+    protected readonly PipelineProviderManager _providerManager;
     protected PipelineConfiguration? _activeConfig;
 
     protected IssueDetail? _activeIssue;
@@ -127,13 +121,14 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 
         _configStore = configStore;
         _providerFactory = providerFactory;
-        _labelSwapper = labelSwapper ?? new DefaultIssueProviderLabelSwapper(configStore, providerFactory, logger);
+        _labelSwapper = labelSwapper ?? NoOpLabelSwapper.Instance;
         _issueParser = issueParser;
         _logger = logger;
         _agentExecution = agentExecution;
         _qualityGates = qualityGates;
         _qualityGateValidator = qualityGateValidator;
         _feedbackService = new FeedbackService(logger);
+        _providerManager = new PipelineProviderManager(configStore, providerFactory, logger);
 
         ArgumentNullException.ThrowIfNull(brainUpdateService);
         _brainSync = new BrainSyncOrchestrator(brainUpdateService, logger);
@@ -179,9 +174,13 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             _activeConfig = await _configStore.LoadPipelineConfigAsync(linkedCt);
             _historyService.CleanupExpiredWorkspaces(_activeConfig, ActiveRun?.RunId);
 
-            var issueProviderConfig = await ResolveProviderConfigAsync(issueProviderId, ProviderKind.Issue, linkedCt);
-            var repoProviderConfig = await ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, linkedCt);
-            var agentProviderConfig = await ResolveProviderConfigAsync(agentProviderId, ProviderKind.Agent, linkedCt);
+            var issueProviderConfig = await _providerManager.ResolveProviderConfigAsync(issueProviderId, ProviderKind.Issue, linkedCt);
+            var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, linkedCt);
+            var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId, ProviderKind.Agent, linkedCt);
+
+            // TODO: Override BrainReadOnly from the matching PipelineJobTemplate here (same as AgentJobDispatcher does).
+            // Currently the per-template BrainReadOnly setting is only applied in the dispatched-job path,
+            // not in this local execution path. See review finding #2.
 
             // Override blacklist settings from repo provider config (per-repo takes precedence)
             if (repoProviderConfig.BlacklistedPaths is { Count: > 0 })
@@ -189,32 +188,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             if (repoProviderConfig.BlacklistMode is { } repoBlacklistMode)
                 _activeConfig = _activeConfig with { BlacklistMode = repoBlacklistMode };
 
-            await DisposePreviousProvidersAsync();
-            _activeIssueProvider = _providerFactory.CreateIssueProvider(issueProviderConfig);
-            var issueProvider = _activeIssueProvider;
-            _activeRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
-            _activeAgentProvider = _providerFactory.CreateAgentProvider(agentProviderConfig);
-            _activeBrainProvider = null;
+            await _providerManager.CreateCoreProvidersAsync(issueProviderConfig, repoProviderConfig, agentProviderConfig, linkedCt);
+            var issueProvider = _providerManager.ActiveIssueProvider!;
             if (!string.IsNullOrEmpty(brainProviderId))
-            {
-                try
-                {
-                    var brainProviderConfig = await ResolveProviderConfigAsync(brainProviderId, ProviderKind.Repository, linkedCt);
-                    _activeBrainProvider = _providerFactory.CreateRepositoryProvider(brainProviderConfig);
-                    try { await _activeBrainProvider.ValidateAsync(linkedCt); }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        _logger.Warning(ex, "Brain provider validation failed, disabling brain sync for this run");
-                        if (_activeBrainProvider is IAsyncDisposable disposable) await disposable.DisposeAsync();
-                        _activeBrainProvider = null;
-                    }
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Failed to resolve brain provider {BrainProviderId}, continuing without brain", brainProviderId);
-                    _activeBrainProvider = null;
-                }
-            }
+                await _providerManager.CreateBrainProviderAsync(brainProviderId, linkedCt);
             var configuredModel = agentProviderConfig.Settings.GetValueOrDefault("model", "auto");
             var run = new PipelineRun
             {
@@ -225,36 +202,26 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 RepoProviderConfigId = repoProviderId,
                 StartedAt = DateTime.UtcNow,
                 CurrentStep = PipelineStep.Created,
-                RepositoryName = _activeRepoProvider.RepositoryFullName,
+                RepositoryName = _providerManager.ActiveRepoProvider!.RepositoryFullName,
                 ModelName = configuredModel,
-                BrainProviderConfigId = _activeBrainProvider != null ? brainProviderId : null,
+                BrainProviderConfigId = _providerManager.ActiveBrainProvider != null ? brainProviderId : null,
                 InitiatedBy = initiatedBy,
                 AgentProviderConfigId = agentProviderId
             };
             _lifecycle.ActiveRun = run;
             _logger.Information("Pipeline {RunId} using model {Model}", run.RunId, configuredModel);
-            _activePipelineProvider = null;
             if (_activeConfig.ExternalCiEnabled)
             {
-                ProviderConfig? pipelineProviderConfig = null;
-                if (!string.IsNullOrEmpty(pipelineProviderId))
-                    pipelineProviderConfig = await ResolveProviderConfigAsync(pipelineProviderId, ProviderKind.Pipeline, linkedCt);
-                else
+                var pipelineConfigId = await _providerManager.CreatePipelineProviderAsync(pipelineProviderId, _activeConfig, linkedCt);
+                if (pipelineConfigId is not null)
                 {
-                    var pipelineConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, linkedCt);
-                    if (pipelineConfigs.Count > 0) pipelineProviderConfig = pipelineConfigs[0];
-                }
-                if (pipelineProviderConfig is not null)
-                {
-                    _activePipelineProvider = _providerFactory.CreatePipelineProvider(pipelineProviderConfig);
-                    run.PipelineProviderConfigId = pipelineProviderConfig.Id;
+                    run.PipelineProviderConfigId = pipelineConfigId;
                     _logger.Information("Pipeline {RunId} external CI provider configured", run.RunId);
                 }
                 else
                     _logger.Warning("Pipeline {RunId} external CI enabled but no pipeline provider configured", run.RunId);
             }
-            await ValidateProvidersAsync(_activeRepoProvider, repoProviderConfig,
-                _activeAgentProvider, agentProviderConfig, _activePipelineProvider, linkedCt);
+            await _providerManager.ValidateProvidersAsync(repoProviderConfig, agentProviderConfig, linkedCt);
             _logger.Information("Pipeline {RunId} created for issue {IssueIdentifier}", run.RunId, issueIdentifier);
             _lifecycle.NotifyChange();
             try
@@ -305,9 +272,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         var config = await _configStore.LoadPipelineConfigAsync(ct);
 
         // Resolve repo provider config to get repository name
-        var repoProviderConfig = await ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, ct);
+        var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, ct);
         await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
-        var agentProviderConfig = await ResolveProviderConfigAsync(agentProviderId, ProviderKind.Agent, ct);
+        var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId, ProviderKind.Agent, ct);
         var configuredModel = agentProviderConfig.Settings.GetValueOrDefault("model", "auto");
 
         var run = new PipelineRun
@@ -356,9 +323,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         var callbacks = new OrchestratorCallbacks(this, run, () => ctx);
         ctx = new Steps.PipelineStepContext
         {
-            Run = run, Config = _activeConfig!, RepoProvider = _activeRepoProvider!,
-            AgentProvider = _activeAgentProvider!, BrainProvider = _activeBrainProvider,
-            PipelineProvider = _activePipelineProvider, Cts = _lifecycle.CancellationTokenSource,
+            Run = run, Config = _activeConfig!, RepoProvider = _providerManager.ActiveRepoProvider!,
+            AgentProvider = _providerManager.ActiveAgentProvider!, BrainProvider = _providerManager.ActiveBrainProvider,
+            PipelineProvider = _providerManager.ActivePipelineProvider, Cts = _lifecycle.CancellationTokenSource,
             ConfigStore = _configStore, IssueProvider = issueProvider,
             Callbacks = callbacks,
             IssueOps = issueOps, AgentExecution = _agentExecution,
@@ -428,7 +395,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
 
         // Label swap requires the active issue provider (orchestration concern)
-        if (_activeIssueProvider != null)
+        if (_providerManager.ActiveIssueProvider != null)
             await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
 
         // Delegate state transitions to lifecycle
@@ -482,7 +449,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             }
 
             var prUrl = await _prOrchestrator.CreatePullRequestAsync(
-                run, report, isDraft, _activeRepoProvider!, _activeIssue,
+                run, report, isDraft, _providerManager.ActiveRepoProvider!, _activeIssue,
                 _activeIssueComments, _activeConfig!, ct, line => _lifecycle.EmitOutputLine(line),
                 isRework: run.LinkedPullRequest != null);
 
@@ -502,7 +469,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             else
                 await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Done, ct);
 
-            if (!isDraft && _activeBrainProvider != null && !_activeConfig!.BrainReadOnly)
+            if (!isDraft && _providerManager.ActiveBrainProvider != null && !_activeConfig!.BrainReadOnly)
             {
                 // Reflection step: ask the agent to review the entire run and enrich .brain/ knowledge
                 _lifecycle.TransitionTo(run, PipelineStep.ReflectingOnRun);
@@ -513,7 +480,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                         run, _activeIssue?.Title, run.RepositoryName?.Split('/').LastOrDefault());
                     _logger.Debug("Pipeline {RunId} reflection prompt:\n{Prompt}", run.RunId, reflectionPrompt);
 
-                    await _activeAgentProvider!.ExecuteAsync(
+                    await _providerManager.ActiveAgentProvider!.ExecuteAsync(
                         new AgentRequest
                         {
                             Prompt = reflectionPrompt,
@@ -536,7 +503,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 }
 
                 _lifecycle.TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
-                try { await _brainSync.SyncPostRunAsync(run, _activeBrainProvider, ct, line => _lifecycle.EmitOutputLine(line), _activeConfig!.BrainPushMaxRetries); }
+                try { await _brainSync.SyncPostRunAsync(run, _providerManager.ActiveBrainProvider, ct, line => _lifecycle.EmitOutputLine(line), _activeConfig!.BrainPushMaxRetries); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 { _logger.Warning(ex, "Pipeline {RunId} brain post-run sync failed", run.RunId); run.BrainUpdatesPushed = false; }
             }
@@ -568,7 +535,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                     var feedbackPrompt = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
                         run, elapsed, harnessCategories, issueCategories);
 
-                    var feedbackResult = await _activeAgentProvider!.ExecuteAsync(
+                    var feedbackResult = await _providerManager.ActiveAgentProvider!.ExecuteAsync(
                         new AgentRequest
                         {
                             Prompt = feedbackPrompt,
@@ -611,38 +578,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         catch (Exception ex) when (ex is not OperationCanceledException)
         { _logger.Error(ex, "Pipeline {RunId} failed to create pull request", run.RunId); await FailRunAsync(run, $"PR creation failed: {ex.Message}"); }
     }
-    private async Task DisposePreviousProvidersAsync()
-    {
-        await DisposeProviderAsync(_activeAgentProvider, "Agent");
-        await DisposeProviderAsync(_activeIssueProvider, "Issue");
-        await DisposeProviderAsync(_activeRepoProvider, "Repository");
-        await DisposeProviderAsync(_activeBrainProvider, "Brain");
-        await DisposeProviderAsync(_activePipelineProvider, "Pipeline");
-    }
-    private async Task DisposeProviderAsync(IAsyncDisposable? provider, string providerKind)
-    {
-        if (provider is null) return;
-        try { await provider.DisposeAsync(); }
-        catch (Exception ex) { _logger.Warning(ex, "Failed to dispose previous {ProviderKind} provider", providerKind); }
-    }
-    private async Task ValidateProvidersAsync(
-        IRepositoryProvider repoProvider, ProviderConfig repoConfig,
-        IAgentProvider agentProvider, ProviderConfig agentConfig,
-        IPipelineProvider? pipelineProvider, CancellationToken ct)
-    {
-        try { await repoProvider.ValidateAsync(ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        { throw new InvalidOperationException($"Repository provider ({repoConfig.ProviderType}) validation failed: {ex.Message}", ex); }
-        try { await agentProvider.ValidateAsync(ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        { throw new InvalidOperationException($"Agent provider ({agentConfig.ProviderType}) validation failed: {ex.Message}", ex); }
-        if (pipelineProvider != null)
-        {
-            try { await pipelineProvider.ValidateAsync(ct); }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            { throw new InvalidOperationException($"Pipeline provider validation failed: {ex.Message}", ex); }
-        }
-    }
+    private Task UpdateFileChangeStatsAsync(PipelineRun run)
+        => _prOrchestrator.UpdateFileChangeStatsAsync(run, _providerManager.ActiveRepoProvider!);
     private async Task PersistLastUsedProviderIdsAsync(
         string issueId, string repoId, string agentId,
         string? brainId, string? pipelineId, CancellationToken ct)
@@ -661,15 +598,13 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         catch (Exception ex) when (ex is not OperationCanceledException)
         { _logger.Warning(ex, "Pipeline {RunId} failed to persist last-used provider IDs", ActiveRun?.RunId); }
     }
-    private Task UpdateFileChangeStatsAsync(PipelineRun run)
-        => _prOrchestrator.UpdateFileChangeStatsAsync(run, _activeRepoProvider!);
     private async Task SwapAgentLabelAsync(string issueId, string newLabel, CancellationToken ct)
     {
         try
         {
             foreach (var label in AgentLabels.All)
-                await _activeIssueProvider!.RemoveLabelAsync(issueId, label, ct);
-            await _activeIssueProvider!.AddLabelAsync(issueId, newLabel, ct);
+                await _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, ct);
+            await _providerManager.ActiveIssueProvider!.AddLabelAsync(issueId, newLabel, ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on issue {Issue}", newLabel, issueId); }
     }
@@ -678,7 +613,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         try
         {
             foreach (var label in AgentLabels.All)
-                await _activeIssueProvider!.RemoveLabelAsync(issueId, label, ct);
+                await _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from issue {Issue}", issueId); }
     }
@@ -700,7 +635,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _startLock.Dispose();
-        await DisposePreviousProvidersAsync();
+        await _providerManager.DisposeAsync();
         GC.SuppressFinalize(this);
     }
     public void Dispose()
@@ -764,13 +699,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         }
     }
 
-    private async Task<ProviderConfig> ResolveProviderConfigAsync(string providerId, ProviderKind kind, CancellationToken ct)
-    {
-        var configs = await _configStore.LoadProviderConfigsAsync(kind, ct);
-        return configs.FirstOrDefault(c => c.Id == providerId)
-            ?? throw new InvalidOperationException($"Provider config '{providerId}' of kind '{kind}' not found.");
-    }
-
     /// <summary>
     /// Notifies subscribers that chat response lines were received for a session.
     /// Delegates to lifecycle service.
@@ -790,4 +718,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     /// Called by AgentHub for agent-dispatched run state updates.
     /// </summary>
     internal void NotifyChange() => _lifecycle.NotifyChange();
+
+    private sealed class NoOpLabelSwapper : IIssueProviderLabelSwapper
+    {
+        internal static readonly NoOpLabelSwapper Instance = new();
+        public Task SwapLabelAsync(string issueProviderConfigId, string issueIdentifier, string newLabel, CancellationToken ct) => Task.CompletedTask;
+    }
 }

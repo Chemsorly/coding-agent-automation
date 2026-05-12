@@ -22,7 +22,7 @@ public interface IKiroCliOrchestrator : IDisposable
         string workspaceDirectory,
         bool useResume,
         CancellationToken cancellationToken,
-        Action<string>? onOutputLine = null,
+        Func<string, Task>? onOutputLine = null,
         string? resumeSessionId = null);
 
     /// <summary>

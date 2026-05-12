@@ -95,6 +95,8 @@ public sealed class LocalPipelineExecutor
         var issueOps = new OrchestratorProxy(connection, job.JobId);
 
         // Construct a per-job provider factory with the OrchestratorProxy for token refresh
+        // TODO: Factory captures config before blacklist override below. Move construction after
+        // the override block if AgentProviderFactory ever needs blacklist settings.
         var providerFactory = new AgentProviderFactory(_orchestrator, config, issueOps);
 
         // Resolve provider configs from the job assignment
