@@ -200,7 +200,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             };
             _lifecycle.ActiveRun = run;
             _logger.Information("Pipeline {RunId} using model {Model}", run.RunId, configuredModel);
-            var pipelineConfigId = await _providerManager.CreatePipelineProviderAsync(pipelineProviderId, _activeConfig, linkedCt);
+            var pipelineConfigId = await _providerManager.CreatePipelineProviderAsync(pipelineProviderId, linkedCt);
             if (pipelineConfigId is not null)
             {
                 run.PipelineProviderConfigId = pipelineConfigId;

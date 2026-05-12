@@ -90,9 +90,8 @@ public class PipelineProviderManager : IAsyncDisposable
     /// CI runs automatically when a Pipeline Provider is configured on the job template.
     /// Returns the provider config ID if one was created, otherwise null.
     /// </summary>
-    // TODO: Remove unused 'config' parameter — it became dead after ExternalCiEnabled removal (Issue #326)
     public async Task<string?> CreatePipelineProviderAsync(
-        string? pipelineProviderId, PipelineConfiguration config, CancellationToken ct)
+        string? pipelineProviderId, CancellationToken ct)
     {
         ProviderConfig? pipelineProviderConfig = null;
         if (!string.IsNullOrEmpty(pipelineProviderId))
