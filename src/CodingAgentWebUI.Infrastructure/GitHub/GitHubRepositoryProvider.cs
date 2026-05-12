@@ -315,29 +315,29 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     }
 
     /// <inheritdoc />
-    // TODO: [RES-07] HasCommitsAheadAsync (divergence check) is not wrapped with _gitPipeline.
-    // FindMergeBase is a local operation on already-fetched data, but the acceptance criteria
-    // names it as one of the 5 LibGit2Sharp network operations to wrap.
-    public Task<bool> HasCommitsAheadAsync(string workspacePath, CancellationToken ct)
+    public async Task<bool> HasCommitsAheadAsync(string workspacePath, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(workspacePath);
 
-        return Task.Run(() =>
+        return await _gitPipeline.ExecuteAsync(async _ =>
         {
-            try
+            return await Task.Run(() =>
             {
-                using var repo = new Repository(workspacePath);
-                var head = repo.Head.Tip;
-                var baseBranchRef = repo.Branches[$"origin/{_baseBranch}"]
-                    ?? repo.Branches[_baseBranch];
-                if (baseBranchRef == null) return true;
-                var mergeBase = repo.ObjectDatabase.FindMergeBase(head, baseBranchRef.Tip);
-                return mergeBase == null || mergeBase.Sha != head.Sha;
-            }
-            catch
-            {
-                return true; // On error, assume there are changes and let PR creation decide
-            }
+                try
+                {
+                    using var repo = new Repository(workspacePath);
+                    var head = repo.Head.Tip;
+                    var baseBranchRef = repo.Branches[$"origin/{_baseBranch}"]
+                        ?? repo.Branches[_baseBranch];
+                    if (baseBranchRef == null) return true;
+                    var mergeBase = repo.ObjectDatabase.FindMergeBase(head, baseBranchRef.Tip);
+                    return mergeBase == null || mergeBase.Sha != head.Sha;
+                }
+                catch
+                {
+                    return true; // On error, assume there are changes and let PR creation decide
+                }
+            }, ct);
         }, ct);
     }
 
