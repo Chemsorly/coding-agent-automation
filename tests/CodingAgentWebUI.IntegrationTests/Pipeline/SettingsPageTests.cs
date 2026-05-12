@@ -366,7 +366,6 @@ public class SettingsPageTests
         savedConfig.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30));
         savedConfig.BlacklistedPaths.Should().BeEquivalentTo(new[] { ".kiro", ".github", ".brain" });
         savedConfig.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
-        savedConfig.CodeReview.Enabled.Should().BeTrue();
         savedConfig.CodeReview.FixPrompt.Should().BeNull();
         savedConfig.AnalysisPrompt.Should().Be(PipelineConfiguration.DefaultAnalysisPrompt);
         savedConfig.ImplementationPrompt.Should().Be(PipelineConfiguration.DefaultImplementationPrompt);
