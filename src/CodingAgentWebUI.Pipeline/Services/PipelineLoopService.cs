@@ -486,7 +486,8 @@ public sealed class PipelineLoopService : BackgroundService
                                 template.IssueProviderId, template.RepoProviderId,
                                 template.BrainProviderId, template.PipelineProviderId,
                                 initiatedBy: "loop",
-                                stoppingToken);
+                                stoppingToken,
+                                issueTitle: issue.Title);
 
                             if (dispatched)
                             {

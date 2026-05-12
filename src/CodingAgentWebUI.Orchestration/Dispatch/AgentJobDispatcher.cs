@@ -123,7 +123,8 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         string? brainProviderId,
         string? pipelineProviderId,
         string initiatedBy,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? issueTitle = null)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(issueProviderId);
@@ -158,6 +159,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         var enqueued = _dispatcher.EnqueueJob(new PendingJob
         {
             IssueIdentifier = issueIdentifier,
+            IssueTitle = issueTitle,
             IssueProviderId = issueProviderId,
             RepoProviderId = repoProviderId,
             BrainProviderId = brainProviderId,

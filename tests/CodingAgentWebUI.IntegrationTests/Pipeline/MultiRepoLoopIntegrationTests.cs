@@ -93,9 +93,9 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         var mockDispatcher = new Mock<IJobDispatcher>();
         var dispatchedIssues = new List<string>();
         mockDispatcher.Setup(d => d.TryDispatchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, string?, string?, string, CancellationToken>(
-                (issueId, _, _, _, _, _, _) => dispatchedIssues.Add(issueId))
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .Callback<string, string, string, string?, string?, string, CancellationToken, string?>(
+                (issueId, _, _, _, _, _, _, _) => dispatchedIssues.Add(issueId))
             .ReturnsAsync(true);
 
         var orchestration = new PipelineOrchestrationService(
