@@ -178,6 +178,16 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, linkedCt);
             var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId, ProviderKind.Agent, linkedCt);
 
+            // TODO: Override BrainReadOnly from the matching PipelineJobTemplate here (same as AgentJobDispatcher does).
+            // Currently the per-template BrainReadOnly setting is only applied in the dispatched-job path,
+            // not in this local execution path. See review finding #2.
+
+            // Override blacklist settings from repo provider config (per-repo takes precedence)
+            if (repoProviderConfig.BlacklistedPaths is { Count: > 0 })
+                _activeConfig = _activeConfig with { BlacklistedPaths = repoProviderConfig.BlacklistedPaths };
+            if (repoProviderConfig.BlacklistMode is { } repoBlacklistMode)
+                _activeConfig = _activeConfig with { BlacklistMode = repoBlacklistMode };
+
             await _providerManager.CreateCoreProvidersAsync(issueProviderConfig, repoProviderConfig, agentProviderConfig, linkedCt);
             var issueProvider = _providerManager.ActiveIssueProvider!;
             if (!string.IsNullOrEmpty(brainProviderId))

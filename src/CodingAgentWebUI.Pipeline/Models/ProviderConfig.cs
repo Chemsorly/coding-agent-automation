@@ -40,4 +40,18 @@ public sealed class ProviderConfig
     /// Null means fall back to Settings dictionary lookup.
     /// </summary>
     public IReadOnlyList<string>? RequiredLabels { get; init; }
+
+    /// <summary>
+    /// Path prefixes excluded from agent commits for this repository.
+    /// Only meaningful when Kind == Repository. Null means fall back to
+    /// <see cref="PipelineConfiguration.BlacklistedPaths"/> global default.
+    /// </summary>
+    public IReadOnlyList<string>? BlacklistedPaths { get; init; }
+
+    /// <summary>
+    /// Blacklist enforcement mode for this repository.
+    /// Only meaningful when Kind == Repository. Null means fall back to
+    /// <see cref="PipelineConfiguration.BlacklistMode"/> global default.
+    /// </summary>
+    public BlacklistMode? BlacklistMode { get; init; }
 }

@@ -95,6 +95,8 @@ public sealed class LocalPipelineExecutor
         var issueOps = new OrchestratorProxy(connection, job.JobId);
 
         // Construct a per-job provider factory with the OrchestratorProxy for token refresh
+        // TODO: Factory captures config before blacklist override below. Move construction after
+        // the override block if AgentProviderFactory ever needs blacklist settings.
         var providerFactory = new AgentProviderFactory(_orchestrator, config, issueOps);
 
         // Resolve provider configs from the job assignment
@@ -102,6 +104,12 @@ public sealed class LocalPipelineExecutor
             ?? throw new InvalidOperationException($"Repository provider config '{job.RepoProviderConfigId}' not found in job assignment");
         var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.AgentProviderConfigId)
             ?? throw new InvalidOperationException($"Agent provider config '{job.AgentProviderConfigId}' not found in job assignment");
+
+        // Override blacklist settings from repo provider config (per-repo takes precedence)
+        if (repoConfig.BlacklistedPaths is { Count: > 0 })
+            config = config with { BlacklistedPaths = repoConfig.BlacklistedPaths };
+        if (repoConfig.BlacklistMode is { } repoBlacklistMode)
+            config = config with { BlacklistMode = repoBlacklistMode };
 
         IRepositoryProvider? repoProvider = null;
         IAgentProvider? agentProvider = null;

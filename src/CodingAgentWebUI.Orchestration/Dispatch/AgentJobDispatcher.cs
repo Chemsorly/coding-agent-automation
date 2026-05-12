@@ -248,6 +248,26 @@ public sealed class AgentJobDispatcher : IJobDispatcher
 
             var config = await _configStore.LoadPipelineConfigAsync(ct);
 
+            // Override BrainReadOnly from the matching template (per-template setting)
+            // TODO: Template matching uses RepoProviderId + BrainProviderId which may be ambiguous
+            // if multiple templates share the same combination. Consider passing template ID through
+            // the dispatch chain. See review finding #4.
+            var matchingTemplate = config.PipelineJobTemplates.FirstOrDefault(t =>
+                t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
+            // TODO: This override is one-directional (can only enable BrainReadOnly, never disable).
+            // If global config has BrainReadOnly=true, a template with BrainReadOnly=false cannot
+            // override it. Consider: if (matchingTemplate is not null) config = config with { BrainReadOnly = matchingTemplate.BrainReadOnly };
+            // See review finding #3.
+            if (matchingTemplate is { BrainReadOnly: true })
+                config = config with { BrainReadOnly = true };
+
+            // Override blacklist settings from repo provider config (per-repo takes precedence)
+            var repoProviderForBlacklist = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId);
+            if (repoProviderForBlacklist?.BlacklistedPaths is { Count: > 0 })
+                config = config with { BlacklistedPaths = repoProviderForBlacklist.BlacklistedPaths };
+            if (repoProviderForBlacklist?.BlacklistMode is { } dispatchBlacklistMode)
+                config = config with { BlacklistMode = dispatchBlacklistMode };
+
             var message = new JobAssignmentMessage
             {
                 JobId = run.RunId,

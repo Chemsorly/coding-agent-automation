@@ -13,6 +13,13 @@
             <label>Agent Timeout (minutes)</label>
             <input type="number" @bind="_agentTimeoutMinutes" min="1" />
         </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Failed Run Workspace Retention (days)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Days to keep workspaces for failed/cancelled runs. 0 = delete immediately, -1 = keep forever">?</span>
+            </div>
+            <input type="number" @bind="_failedWorkspaceRetentionDays" min="-1" />
+        </div>
         <div class="pipeline-form-actions">
             <button class="btn-save" @onclick="SaveAsync">Save General Settings</button>
         </div>
@@ -25,12 +32,14 @@
 
     private int _maxRetries = 3;
     private int _agentTimeoutMinutes = 30;
+    private int _failedWorkspaceRetentionDays = 7;
 
     protected override async Task OnInitializedAsync()
     {
         var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         _maxRetries = config.MaxRetries;
         _agentTimeoutMinutes = (int)config.AgentTimeout.TotalMinutes;
+        _failedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays;
     }
 
     private async Task SaveAsync()
@@ -41,7 +50,8 @@
                 current => current with
                 {
                     MaxRetries = _maxRetries,
-                    AgentTimeout = TimeSpan.FromMinutes(_agentTimeoutMinutes)
+                    AgentTimeout = TimeSpan.FromMinutes(_agentTimeoutMinutes),
+                    FailedWorkspaceRetentionDays = _failedWorkspaceRetentionDays
                 },
                 CancellationToken.None);
             await OnShowStatus.InvokeAsync(("General settings saved.", false));
