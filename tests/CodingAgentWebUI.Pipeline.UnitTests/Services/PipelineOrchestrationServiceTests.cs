@@ -3425,7 +3425,8 @@ public class PipelineOrchestrationServiceTests
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: mockHistoryService.Object,
             runService: mockRunService.Object,
-            lifecycle: lifecycle);
+            lifecycle: lifecycle,
+            labelSwapper: new Orchestration.IssueProviderLabelSwapper(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object));
 
         await service.CancelActiveAgentRunsAsync();
 
