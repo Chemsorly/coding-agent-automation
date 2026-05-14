@@ -88,11 +88,6 @@
                         PipelineProviderCount="_pipelineProviders.Count"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
-                case SettingsNodes.PipelineSecurity:
-                    <PipelineSecuritySection
-                        ConfigStore="ConfigStore"
-                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
-                    break;
                 case SettingsNodes.AgentProfiles:
                     <AgentProfileSection
                         ConfigStore="ConfigStore"

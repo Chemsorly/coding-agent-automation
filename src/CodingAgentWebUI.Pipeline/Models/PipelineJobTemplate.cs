@@ -25,6 +25,12 @@ public sealed record PipelineJobTemplate
     /// <summary>Optional CI/pipeline provider config ID.</summary>
     public string? PipelineProviderId { get; init; }
 
+    /// <summary>
+    /// When true, the brain repository is read-only for this template — context is
+    /// injected but no write-back occurs. Default false.
+    /// </summary>
+    public bool BrainReadOnly { get; init; } = false;
+
     /// <summary>Whether this template is active for round-robin polling. Default true.</summary>
     public bool Enabled { get; init; } = true;
 }

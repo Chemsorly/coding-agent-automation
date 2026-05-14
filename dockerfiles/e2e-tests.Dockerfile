@@ -8,11 +8,13 @@
 #   docker run --rm --ipc=host e2e-tests
 # =============================================================================
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0.203 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
 WORKDIR /src
 
 # Copy solution and project files for restore layer caching
 COPY CodingAgentAutomation.sln ./
+COPY Directory.Build.props ./
+COPY Directory.Packages.props ./
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
 COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAgentWebUI.Pipeline/
 COPY src/CodingAgentWebUI.Infrastructure/CodingAgentWebUI.Infrastructure.csproj src/CodingAgentWebUI.Infrastructure/

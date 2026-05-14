@@ -8,10 +8,12 @@
 # Stage 1: Build (compiles the .NET Agent Worker)
 # --platform=linux/arm64: Forces native ARM execution on ARM CI runners (avoids .NET QEMU crash)
 # Cross-compiles to linux-x64 via RID so the output runs in the amd64 runtime stage.
-FROM --platform=linux/arm64 mcr.microsoft.com/dotnet/sdk:10.0.203 AS build
+FROM --platform=linux/arm64 mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
 WORKDIR /src
 
 # Copy only the project files needed for the Agent and its dependencies (not test projects)
+COPY Directory.Build.props ./
+COPY Directory.Packages.props ./
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
 COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAgentWebUI.Pipeline/
 COPY src/CodingAgentWebUI.Infrastructure/CodingAgentWebUI.Infrastructure.csproj src/CodingAgentWebUI.Infrastructure/
@@ -24,7 +26,7 @@ COPY . .
 RUN dotnet publish src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -c Release -r linux-x64 --self-contained false -o /app/publish
 
 # Stage 2: Runtime (JDK 21 + Maven for Java quality gates)
-FROM mcr.microsoft.com/dotnet/sdk:10.0.203 AS runtime
+FROM mcr.microsoft.com/dotnet/sdk:10.0.300 AS runtime
 
 # Only install what this agent type needs: JDK 21, Maven, git, and curl/unzip for Kiro CLI
 RUN apt-get update && \

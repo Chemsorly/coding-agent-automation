@@ -376,6 +376,16 @@
                                             }
                                         </select>
                                     </div>
+                                    @if (!string.IsNullOrEmpty(_addForm.BrainProviderId))
+                                    {
+                                        <div class="form-group form-checkbox">
+                                            <label>
+                                                <input type="checkbox" @bind="_addForm.BrainReadOnly" />
+                                                Brain Repository Read-Only
+                                                <span class="form-hint-icon" aria-hidden="true" title="When enabled, the brain repo is cloned and read by the agent but no changes are written back.">?</span>
+                                            </label>
+                                        </div>
+                                    }
                                     <div class="form-group">
                                         <label>Pipeline/CI Provider (optional)</label>
                                         <select @bind="_addForm.PipelineProviderId">
@@ -737,6 +747,7 @@
             RepoProviderId = _addForm.RepoProviderId,
             BrainProviderId = string.IsNullOrEmpty(_addForm.BrainProviderId) ? null : _addForm.BrainProviderId,
             PipelineProviderId = string.IsNullOrEmpty(_addForm.PipelineProviderId) ? null : _addForm.PipelineProviderId,
+            BrainReadOnly = _addForm.BrainReadOnly,
             Enabled = true
         };
 
@@ -1195,5 +1206,6 @@
         public string RepoProviderId { get; set; } = "";
         public string BrainProviderId { get; set; } = "";
         public string PipelineProviderId { get; set; } = "";
+        public bool BrainReadOnly { get; set; }
     }
 }
