@@ -71,7 +71,7 @@
                 <div class="form-group">
                     <label>Model</label>
                     <div class="input-with-action">
-                        @if (_availableModels.Count > 0)
+                        @if (_form.ProviderType == "KiroCli" && _availableModels.Count > 0)
                         {
                             <select @bind="_form.Model">
                                 <option value="auto">auto — Use CLI default (1.0x)</option>
@@ -83,13 +83,25 @@
                         }
                         else
                         {
-                            <input type="text" @bind="_form.Model" placeholder="auto" />
+                            <input type="text" @bind="_form.Model" placeholder="@(_form.ProviderType == "OpenCode" ? "azure-foundry/Kimi-2.6" : "auto")" />
                         }
-                        <button class="btn-edit" @onclick="FetchModels" disabled="@_loadingModels">
-                            @(_loadingModels ? "Loading..." : "Fetch Models")
-                        </button>
+                        @if (_form.ProviderType == "KiroCli")
+                        {
+                            <button class="btn-edit" @onclick="FetchModels" disabled="@_loadingModels">
+                                @(_loadingModels ? "Loading..." : "Fetch Models")
+                            </button>
+                        }
                     </div>
-                    <span class="form-hint">Select a model or leave as "auto" for default. Click "Fetch Models" to query available models from the CLI.</span>
+                    <span class="form-hint">
+                        @if (_form.ProviderType == "OpenCode")
+                        {
+                            @:Enter model in <code>provider/model</code> format (e.g. <code>anthropic/claude-sonnet-4-20250514</code>, <code>azure-foundry/Kimi-2.6</code>). Use <code>opencode models</code> in the container to list available models.
+                        }
+                        else
+                        {
+                            @:Select a model or leave as "auto" for default. Click "Fetch Models" to query available models from the CLI.
+                        }
+                    </span>
                 </div>
                 <div class="form-buttons">
                     <button class="btn-save" @onclick="SaveProvider">Save</button>
