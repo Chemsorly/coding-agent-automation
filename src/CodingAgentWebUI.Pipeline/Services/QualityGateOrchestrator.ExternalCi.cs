@@ -53,7 +53,7 @@ internal partial class QualityGateOrchestrator
 
         if (!report.Compilation.Passed || !report.Tests.Passed
             || !(report.Coverage?.Passed ?? true) || !(report.SecurityScan?.Passed ?? true)
-            || !config.ExternalCiEnabled || context.PipelineProvider == null)
+            || context.PipelineProvider == null)
             return report;
 
         GateResult? ciGate = null;

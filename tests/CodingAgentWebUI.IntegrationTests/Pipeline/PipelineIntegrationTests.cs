@@ -33,12 +33,10 @@ public class PipelineIntegrationTests : IntegrationTestBase
             CodeReview = new CodeReviewConfiguration
             {
                 MaxIterations = 3,
-                Prompt = "Custom review prompt",
                 FixPrompt = "Custom fix prompt"
             },
             AnalysisPrompt = "Custom analysis",
             ImplementationPrompt = "Custom implementation",
-            ExternalCiEnabled = true,
             ExternalCiTimeout = TimeSpan.FromMinutes(20),
             ExternalCiPollInterval = TimeSpan.FromSeconds(45),
             StallWarningInterval = TimeSpan.FromMinutes(5),
@@ -70,7 +68,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
         loaded.WorkspaceBaseDirectory.Should().Be(original.WorkspaceBaseDirectory);
         loaded.AnalysisPrompt.Should().Be(original.AnalysisPrompt);
         loaded.ImplementationPrompt.Should().Be(original.ImplementationPrompt);
-        loaded.ExternalCiEnabled.Should().Be(original.ExternalCiEnabled);
         loaded.ExternalCiTimeout.Should().Be(original.ExternalCiTimeout);
         loaded.ExternalCiPollInterval.Should().Be(original.ExternalCiPollInterval);
         loaded.StallWarningInterval.Should().Be(original.StallWarningInterval);
@@ -86,7 +83,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
 
         // Nested CodeReviewConfiguration
         loaded.CodeReview.MaxIterations.Should().Be(3);
-        loaded.CodeReview.Prompt.Should().Be("Custom review prompt");
         loaded.CodeReview.FixPrompt.Should().Be("Custom fix prompt");
     }
 

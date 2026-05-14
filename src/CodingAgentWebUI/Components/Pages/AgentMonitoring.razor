@@ -121,8 +121,7 @@
                                 @if (modalRun.PipelineProviderConfigId != null)
                                 {
                                     var pipelineConfig = ResolveProvider(modalRun.PipelineProviderConfigId);
-                                    @* TODO: [UX-24] ExternalCiEnabled reflects current global config, not the value at run creation time *@
-                                    <div><strong>Pipeline:</strong> @(pipelineConfig?.DisplayName ?? "Unknown") (@(pipelineConfig?.ProviderType ?? "—")) — External CI: @(_externalCiEnabled ? "Enabled" : "Disabled")</div>
+                                    <div><strong>Pipeline:</strong> @(pipelineConfig?.DisplayName ?? "Unknown") (@(pipelineConfig?.ProviderType ?? "—"))</div>
                                 }
                             </div>
 
@@ -509,7 +508,6 @@
     private bool _disposed;
     private Timer? _refreshTimer;
     private int _maxRetries = 3;
-    private bool _externalCiEnabled;
     private bool _showDisconnectConfirm;
 
     protected override async Task OnInitializedAsync()
@@ -523,7 +521,6 @@
         {
             var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
             _maxRetries = config.MaxRetries;
-            _externalCiEnabled = config.ExternalCiEnabled;
         }
         catch (Exception ex)
         {

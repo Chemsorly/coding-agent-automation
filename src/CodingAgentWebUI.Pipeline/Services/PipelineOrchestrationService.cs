@@ -210,16 +210,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             };
             _lifecycle.ActiveRun = run;
             _logger.Information("Pipeline {RunId} using model {Model}", run.RunId, configuredModel);
-            if (_activeConfig.ExternalCiEnabled)
+            var pipelineConfigId = await _providerManager.CreatePipelineProviderAsync(pipelineProviderId, linkedCt);
+            if (pipelineConfigId is not null)
             {
-                var pipelineConfigId = await _providerManager.CreatePipelineProviderAsync(pipelineProviderId, _activeConfig, linkedCt);
-                if (pipelineConfigId is not null)
-                {
-                    run.PipelineProviderConfigId = pipelineConfigId;
-                    _logger.Information("Pipeline {RunId} external CI provider configured", run.RunId);
-                }
-                else
-                    _logger.Warning("Pipeline {RunId} external CI enabled but no pipeline provider configured", run.RunId);
+                run.PipelineProviderConfigId = pipelineConfigId;
+                _logger.Information("Pipeline {RunId} external CI provider configured", run.RunId);
             }
             await _providerManager.ValidateProvidersAsync(repoProviderConfig, agentProviderConfig, linkedCt);
             _logger.Information("Pipeline {RunId} created for issue {IssueIdentifier}", run.RunId, issueIdentifier);

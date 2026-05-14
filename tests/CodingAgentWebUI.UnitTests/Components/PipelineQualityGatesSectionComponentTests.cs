@@ -37,52 +37,25 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
         var cut = Render<PipelineQualityGatesSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
         Assert.Contains("Max Review Iterations", cut.Markup);
-        Assert.Contains("Review Prompt", cut.Markup);
         Assert.Contains("Fix Prompt", cut.Markup);
     }
 
     [Fact]
-    public void DoesNotRenderCodeReviewCheckbox()
+    public void DoesNotRenderExternalCiCheckbox()
     {
         var cut = Render<PipelineQualityGatesSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
-        Assert.DoesNotContain("Agent Code Review Enabled", cut.Markup);
+        Assert.DoesNotContain("External CI Quality Gate", cut.Markup);
     }
 
     [Fact]
-    public void ExternalCiCheckbox_DisabledWhenNoPipelineProviders()
+    public void RendersCiSettingsWithInfoHint()
     {
         var cut = Render<PipelineQualityGatesSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
-             .Add(s => s.PipelineProviderCount, 0));
+            p.Add(s => s.ConfigStore, _mockStore.Object));
 
-        var checkboxes = cut.FindAll("input[type='checkbox']");
-        var ciCheckbox = checkboxes.First(); // External CI is the only checkbox
-        Assert.True(ciCheckbox.HasAttribute("disabled"));
-    }
-
-    [Fact]
-    public void ExternalCiCheckbox_EnabledWhenPipelineProvidersExist()
-    {
-        var cut = Render<PipelineQualityGatesSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
-             .Add(s => s.PipelineProviderCount, 2));
-
-        var checkboxes = cut.FindAll("input[type='checkbox']");
-        var ciCheckbox = checkboxes.First();
-        Assert.False(ciCheckbox.HasAttribute("disabled"));
-    }
-
-    [Fact]
-    public void WhenExternalCiEnabled_ShowsCiFields()
-    {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { ExternalCiEnabled = true });
-
-        var cut = Render<PipelineQualityGatesSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
-             .Add(s => s.PipelineProviderCount, 1));
-
+        Assert.Contains("External CI Settings", cut.Markup);
+        Assert.Contains("Pipeline Provider is configured", cut.Markup);
         Assert.Contains("CI Timeout", cut.Markup);
         Assert.Contains("CI Poll Interval", cut.Markup);
     }
@@ -94,7 +67,7 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
             p.Add(s => s.ConfigStore, _mockStore.Object));
 
         var resetButtons = cut.FindAll(".btn-revert");
-        Assert.True(resetButtons.Count >= 2);
+        Assert.True(resetButtons.Count >= 1);
     }
 
     [Fact]

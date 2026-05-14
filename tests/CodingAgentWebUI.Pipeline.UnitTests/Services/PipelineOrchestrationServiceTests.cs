@@ -562,8 +562,6 @@ public class PipelineOrchestrationServiceTests
     {
         var config = new PipelineConfiguration();
         config.CodeReview.MaxIterations.Should().Be(2);
-        config.CodeReview.Prompt.Should().Contain("sub-agent");
-        config.CodeReview.Prompt.Should().Contain("[CRITICAL]");
         config.CodeReview.FixPrompt.Should().BeNull();
         config.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
         PipelineConfiguration.DefaultReviewAgents.Should().NotBeNull();
@@ -950,10 +948,12 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task StartPipeline_WhenExternalCiDisabled_SkipsPipelineProviderValidation()
+    public async Task StartPipeline_WhenNoPipelineProviderConfigured_SkipsPipelineProviderCreation()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), ExternalCiEnabled = false });
+            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() });
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
 
         var mockPipelineProvider = new Mock<IPipelineProvider>();
         _mockFactory.Setup(f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>())).Returns(mockPipelineProvider.Object);
@@ -964,10 +964,10 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task StartPipeline_WhenExternalCiEnabled_ValidatesPipelineProvider()
+    public async Task StartPipeline_WhenPipelineProviderConfigured_ValidatesPipelineProvider()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), ExternalCiEnabled = true });
+            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() });
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { new() { Id = "pipeline-1", Kind = ProviderKind.Pipeline, ProviderType = "GitHubActions", DisplayName = "CI" } });
 
@@ -986,7 +986,7 @@ public class PipelineOrchestrationServiceTests
     public async Task StartPipeline_WhenPipelineProviderValidationFails_FailsWithClearError()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), ExternalCiEnabled = true });
+            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() });
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { new() { Id = "pipeline-1", Kind = ProviderKind.Pipeline, ProviderType = "GitHubActions", DisplayName = "CI" } });
 
@@ -2521,9 +2521,9 @@ public class PipelineOrchestrationServiceTests
                 transitions.Add(_service.ActiveRun.CurrentStep);
         };
 
-        // Configure ExternalCiEnabled = true and MaxRetries = 0
+        // Configure MaxRetries = 0 (pipeline provider will be auto-resolved)
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestPipelineConfig.Default() with { ExternalCiEnabled = true, MaxRetries = 0 });
+            .ReturnsAsync(TestPipelineConfig.Default() with { MaxRetries = 0 });
 
         // Add pipeline provider config to config store
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
@@ -2953,9 +2953,9 @@ public class PipelineOrchestrationServiceTests
     [Fact]
     public async Task StartPipeline_NoChangesAfterCleanup_WithExternalCi_SkipsCiAndCompletes()
     {
-        // Configure ExternalCiEnabled = true
+        // Configure pipeline (provider will be auto-resolved)
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestPipelineConfig.Default() with { ExternalCiEnabled = true });
+            .ReturnsAsync(TestPipelineConfig.Default());
 
         // Add pipeline provider config
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))

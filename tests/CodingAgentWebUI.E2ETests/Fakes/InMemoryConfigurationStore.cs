@@ -14,7 +14,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         WorkspaceBaseDirectory = Path.Combine(Path.GetTempPath(), "e2e-workspaces"),
         MaxRetries = 3,
         AgentTimeout = TimeSpan.FromMinutes(2),
-        ExternalCiEnabled = false,
+        CodeReview = new CodeReviewConfiguration { }
     };
 
     private readonly List<ProviderConfig> _providerConfigs = new();
@@ -30,7 +30,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
             WorkspaceBaseDirectory = Path.Combine(Path.GetTempPath(), "e2e-workspaces"),
             MaxRetries = 3,
             AgentTimeout = TimeSpan.FromMinutes(2),
-            ExternalCiEnabled = false,
+            CodeReview = new CodeReviewConfiguration { }
         };
         _providerConfigs.Clear();
         _agentProfiles.Clear();

@@ -86,21 +86,20 @@ public class PipelineProviderManager : IAsyncDisposable
     }
 
     /// <summary>
-    /// Creates the pipeline (CI) provider if external CI is enabled and a config is available.
+    /// Creates the pipeline (CI) provider if a config is available.
+    /// CI runs automatically when a Pipeline Provider is configured on the job template.
     /// Returns the provider config ID if one was created, otherwise null.
     /// </summary>
     public async Task<string?> CreatePipelineProviderAsync(
-        string? pipelineProviderId, PipelineConfiguration config, CancellationToken ct)
+        string? pipelineProviderId, CancellationToken ct)
     {
-        if (!config.ExternalCiEnabled) return null;
-
         ProviderConfig? pipelineProviderConfig = null;
         if (!string.IsNullOrEmpty(pipelineProviderId))
             pipelineProviderConfig = await ResolveProviderConfigAsync(pipelineProviderId, ProviderKind.Pipeline, ct);
         else
         {
             var pipelineConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
-            if (pipelineConfigs.Count > 0) pipelineProviderConfig = pipelineConfigs[0];
+            if (pipelineConfigs is { Count: > 0 }) pipelineProviderConfig = pipelineConfigs[0];
         }
 
         if (pipelineProviderConfig is not null)
@@ -109,7 +108,6 @@ public class PipelineProviderManager : IAsyncDisposable
             return pipelineProviderConfig.Id;
         }
 
-        _logger.Warning("External CI enabled but no pipeline provider configured");
         return null;
     }
 
