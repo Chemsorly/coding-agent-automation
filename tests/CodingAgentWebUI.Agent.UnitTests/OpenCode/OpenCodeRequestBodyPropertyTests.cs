@@ -85,9 +85,9 @@ public class OpenCodeRequestBodyPropertyTests
     /// **Validates: Requirements 1.2, 3.4**
     /// </summary>
     [Property(Arbitrary = [typeof(PromptStringArbitrary)], MaxTest = 100)]
-    public async void RequestBody_IncludesModelWhenConfigured(PromptInput input)
+    public async void RequestBody_OmitsModelField(PromptInput input)
     {
-        // Arrange — create context WITH a model configured
+        // Arrange — create context WITH a model configured (model is server-side only, not sent in request)
         var modelName = "anthropic/claude-sonnet-4-20250514";
         var ctx = OpenCodeTestHelpers.CreateTestContext(model: modelName);
 
@@ -112,12 +112,11 @@ public class OpenCodeRequestBodyPropertyTests
 
         var body = JsonSerializer.Deserialize<JsonElement>(messageRequest.Body);
 
-        // Verify model field is present and matches
-        Assert.True(body.TryGetProperty("model", out var modelElement),
-            "Request body must contain 'model' property when model is configured");
-        Assert.Equal(modelName, modelElement.GetString());
+        // Model field should NOT be present in the request body (configured server-side via OPENCODE_CONFIG_CONTENT)
+        Assert.False(body.TryGetProperty("model", out _),
+            "Request body must NOT contain 'model' property — model is configured server-side");
 
-        // Also verify the prompt is still correct
+        // Verify the prompt is still correct
         var partsElement = body.GetProperty("parts");
         Assert.Equal(1, partsElement.GetArrayLength());
         Assert.Equal(input.Prompt, partsElement[0].GetProperty("text").GetString());

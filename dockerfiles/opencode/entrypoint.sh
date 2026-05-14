@@ -33,6 +33,15 @@ fi
 echo "Generated OPENCODE_SERVER_PASSWORD (${#OPENCODE_SERVER_PASSWORD} chars)"
 
 # -----------------------------------------------------------------------------
+# 1b. Write OPENCODE_CONFIG_CONTENT to config file (if provided)
+# -----------------------------------------------------------------------------
+if [ -n "$OPENCODE_CONFIG_CONTENT" ]; then
+    mkdir -p /home/ubuntu/.config/opencode
+    echo "$OPENCODE_CONFIG_CONTENT" > /home/ubuntu/.config/opencode/opencode.json
+    echo "Wrote OPENCODE_CONFIG_CONTENT to /home/ubuntu/.config/opencode/opencode.json"
+fi
+
+# -----------------------------------------------------------------------------
 # 2. Start OpenCode server in background
 # -----------------------------------------------------------------------------
 # Bind exclusively to 127.0.0.1 so the API is not accessible from outside the
