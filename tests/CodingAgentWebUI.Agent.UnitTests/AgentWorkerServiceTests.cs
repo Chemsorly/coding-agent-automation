@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
@@ -28,7 +29,7 @@ public class AgentWorkerServiceTests
         var mockConsolidationExecutor = CreateMockConsolidationExecutor();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
-        var act = () => new AgentWorkerService(null!, mockExecutor, mockConsolidationExecutor, mockOrchestrator.Object, mockLogger.Object);
+        var act = () => new AgentWorkerService(null!, mockExecutor, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("hubManager");
     }
 
@@ -40,7 +41,7 @@ public class AgentWorkerServiceTests
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
         var act = () => new AgentWorkerService(
-            CreateTestHubManager(), null!, mockConsolidationExecutor, mockOrchestrator.Object, mockLogger.Object);
+            CreateTestHubManager(), null!, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("executor");
     }
 
@@ -49,7 +50,7 @@ public class AgentWorkerServiceTests
     {
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var act = () => new AgentWorkerService(
-            CreateTestHubManager(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, null!);
+            CreateTestHubManager(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), null!);
         act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
     }
 
@@ -96,7 +97,7 @@ public class AgentWorkerServiceTests
             var mockLogger = new Mock<Serilog.ILogger>();
             var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
             var act = () => new AgentWorkerService(
-                CreateTestHubManager(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, mockLogger.Object);
+                CreateTestHubManager(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), mockLogger.Object);
             act.Should().Throw<InvalidOperationException>()
                 .WithMessage("*AGENT_TYPE*");
         }
@@ -471,6 +472,7 @@ public class AgentWorkerServiceTests
             CreateMockExecutor(),
             CreateMockConsolidationExecutor(),
             mockOrchestrator.Object,
+            Mock.Of<IHttpClientFactory>(),
             mockLogger.Object);
     }
 
@@ -485,6 +487,7 @@ public class AgentWorkerServiceTests
             CreateMockExecutor(),
             CreateMockConsolidationExecutor(),
             orchestrator,
+            Mock.Of<IHttpClientFactory>(),
             mockLogger.Object);
     }
 
