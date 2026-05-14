@@ -28,7 +28,7 @@ public class VerifyBaselineStepTests
 
     private PipelineStepContext BuildContext(
         bool baselineEnabled = true,
-        string? kiroCliPath = null,
+        Mock<IAgentProvider>? agentProviderMock = null,
         IReadOnlyList<QualityGateConfiguration>? preResolvedQgcs = null)
     {
         var run = new PipelineRun
@@ -50,12 +50,14 @@ public class VerifyBaselineStepTests
             BaselineHealthCheckEnabled = baselineEnabled
         };
 
+        var agentProvider = agentProviderMock?.Object ?? Mock.Of<IAgentProvider>();
+
         return new PipelineStepContext
         {
             Run = run,
             Config = config,
             RepoProvider = Mock.Of<IRepositoryProvider>(),
-            AgentProvider = Mock.Of<IAgentProvider>(),
+            AgentProvider = agentProvider,
             BrainProvider = null,
             PipelineProvider = null,
             Cts = new CancellationTokenSource(),
@@ -68,7 +70,6 @@ public class VerifyBaselineStepTests
             PrOrchestrator = new PullRequestOrchestrator(_logger),
             Logger = _logger,
             QualityGateValidator = _validator.Object,
-            KiroCliPath = kiroCliPath,
             PreResolvedQualityGateConfigs = preResolvedQgcs
         };
     }
@@ -246,8 +247,7 @@ public class VerifyBaselineStepTests
             BrainSync = null,
             PrOrchestrator = new PullRequestOrchestrator(_logger),
             Logger = _logger,
-            QualityGateValidator = null,
-            KiroCliPath = null
+            QualityGateValidator = null
         };
 
         var step = new VerifyBaselineStep();
@@ -258,10 +258,13 @@ public class VerifyBaselineStepTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_DoctorFails_ReturnsStopWithClearError()
+    public async Task ExecuteAsync_AgentValidateFails_ReturnsStopWithClearError()
     {
-        // Use a non-existent path to simulate doctor failure
-        var context = BuildContext(kiroCliPath: "/nonexistent/kiro-cli", preResolvedQgcs: [CreateQgc()]);
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.ValidateAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("An error occurred trying to start process '/home/ubuntu/.local/bin/kiro-cli' with working directory '/app'. No such file or directory"));
+
+        var context = BuildContext(agentProviderMock: mockAgent, preResolvedQgcs: [CreateQgc()]);
 
         var step = new VerifyBaselineStep();
         var result = await step.ExecuteAsync(context, CancellationToken.None);

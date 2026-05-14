@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
@@ -42,8 +43,10 @@ public sealed class AgentWorkerService : BackgroundService
     private readonly LocalPipelineExecutor _executor;
     private readonly LocalConsolidationExecutor _consolidationExecutor;
     private readonly IKiroCliOrchestrator _orchestrator;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
+    private readonly bool _isOpenCodeProvider;
 
     private readonly string _agentId;
     private readonly string _agentType;
@@ -63,20 +66,25 @@ public sealed class AgentWorkerService : BackgroundService
         LocalPipelineExecutor executor,
         LocalConsolidationExecutor consolidationExecutor,
         IKiroCliOrchestrator orchestrator,
+        IHttpClientFactory httpClientFactory,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(hubManager);
         ArgumentNullException.ThrowIfNull(executor);
         ArgumentNullException.ThrowIfNull(consolidationExecutor);
         ArgumentNullException.ThrowIfNull(orchestrator);
+        ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(logger);
 
         _hubManager = hubManager;
         _executor = executor;
         _consolidationExecutor = consolidationExecutor;
         _orchestrator = orchestrator;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
+        _isOpenCodeProvider = (Environment.GetEnvironmentVariable("AGENT_PROVIDER_TYPE") ?? "")
+            .Equals("OpenCode", StringComparison.OrdinalIgnoreCase);
 
         _agentId = Environment.GetEnvironmentVariable("AGENT_ID")
             ?? Environment.MachineName;
@@ -342,32 +350,57 @@ public sealed class AgentWorkerService : BackgroundService
                         $"🔌 Wrote MCP config with {message.McpServers.Count} server(s) to {message.McpConfigPath}");
                 }
 
-                // On the first prompt (no --resume), Kiro CLI suppresses response text because
-                // tool trust isn't established yet. Send a lightweight warm-up prompt first to
-                // establish the session, then send the real prompt with --resume.
-                if (!message.UseResume)
+                if (_isOpenCodeProvider)
                 {
-                    _logger.Information("Sending warm-up prompt to establish chat session");
-                    await _orchestrator.ExecutePromptAsync(
-                        "hello, how are you?",
-                        chatWorkspace,
-                        useResume: false,
-                        _chatCts.Token);
+                    // OpenCode path: use HTTP API via OpenCodeAgentProvider
+                    await using var provider = new OpenCodeAgentProvider(_httpClientFactory, _logger);
+                    await provider.EnsureSessionAsync(chatWorkspace, _chatCts.Token);
+
+                    var result = await provider.ExecuteAsync(
+                        new AgentRequest
+                        {
+                            Prompt = message.Prompt,
+                            WorkspacePath = chatWorkspace,
+                            UseResume = message.UseResume,
+                            Timeout = TimeSpan.FromMinutes(30)
+                        },
+                        _chatCts.Token,
+                        onOutputLine: async line => await outputBatcher.AddLineAsync(line));
+
+                    exitCode = result.ExitCode;
+                    if (exitCode != ExitCodes.Success)
+                        error = string.Join("\n", result.OutputLines.TakeLast(3));
                 }
-
-                // Execute the actual user prompt (always with --resume after warm-up)
-                var exitCode2 = await _orchestrator.ExecutePromptAsync(
-                    message.Prompt,
-                    chatWorkspace,
-                    useResume: true,
-                    _chatCts.Token,
-                    onOutputLine: async line =>
+                else
+                {
+                    // KiroCli path: use process-based orchestrator
+                    // On the first prompt (no --resume), Kiro CLI suppresses response text because
+                    // tool trust isn't established yet. Send a lightweight warm-up prompt first to
+                    // establish the session, then send the real prompt with --resume.
+                    if (!message.UseResume)
                     {
-                        var clean = KiroCliLib.Core.AnsiStripper.Strip(line);
-                        await outputBatcher.AddLineAsync(clean);
-                    });
+                        _logger.Information("Sending warm-up prompt to establish chat session");
+                        await _orchestrator.ExecutePromptAsync(
+                            "hello, how are you?",
+                            chatWorkspace,
+                            useResume: false,
+                            _chatCts.Token);
+                    }
 
-                exitCode = exitCode2;
+                    // Execute the actual user prompt (always with --resume after warm-up)
+                    var exitCode2 = await _orchestrator.ExecutePromptAsync(
+                        message.Prompt,
+                        chatWorkspace,
+                        useResume: true,
+                        _chatCts.Token,
+                        onOutputLine: async line =>
+                        {
+                            var clean = KiroCliLib.Core.AnsiStripper.Strip(line);
+                            await outputBatcher.AddLineAsync(clean);
+                        });
+
+                    exitCode = exitCode2;
+                }
             }
             catch (OperationCanceledException)
             {

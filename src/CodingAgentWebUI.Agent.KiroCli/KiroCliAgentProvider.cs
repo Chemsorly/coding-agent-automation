@@ -110,7 +110,34 @@ public partial class KiroCliAgentProvider : IAgentProvider
     }
 
     /// <inheritdoc />
-    public Task ValidateAsync(CancellationToken ct) => Task.CompletedTask;
+    public async Task ValidateAsync(CancellationToken ct)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = _executablePath,
+            Arguments = "doctor --all --strict",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = System.Diagnostics.Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to start kiro-cli doctor process");
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct);
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+
+        if (process.ExitCode != 0)
+        {
+            var details = !string.IsNullOrWhiteSpace(stderr) ? stderr.Trim() : stdout.Trim();
+            throw new InvalidOperationException(
+                $"kiro-cli doctor exited with code {process.ExitCode}. {details}");
+        }
+    }
 
     /// <inheritdoc />
     public async Task<string?> GetLatestSessionIdAsync(string workspacePath, CancellationToken ct)

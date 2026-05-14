@@ -39,6 +39,8 @@ Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Is(logLevel)
     // Suppress noisy ASP.NET Core request logging (health checks every 10s)
     .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+    // Suppress noisy HttpClient logging (OpenCode health monitor polls every 5s)
+    .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .Enrich.WithProperty("AgentId", agentId)
     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{AgentId}] {Message:lj}{NewLine}{Exception}")
@@ -136,8 +138,7 @@ try
         sp.GetRequiredService<PipelineConfiguration>(),
         sp.GetRequiredService<IQualityGateValidator>(),
         Log.Logger,
-        sp.GetRequiredService<IBrainUpdateService>(),
-        sp.GetRequiredService<Configuration>().KiroCliPath));
+        sp.GetRequiredService<IBrainUpdateService>()));
 
     // ── Consolidation executor ──
     builder.Services.AddSingleton(sp => new LocalConsolidationExecutor(
@@ -151,6 +152,7 @@ try
         sp.GetRequiredService<LocalPipelineExecutor>(),
         sp.GetRequiredService<LocalConsolidationExecutor>(),
         sp.GetRequiredService<IKiroCliOrchestrator>(),
+        sp.GetRequiredService<IHttpClientFactory>(),
         Log.Logger));
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
 

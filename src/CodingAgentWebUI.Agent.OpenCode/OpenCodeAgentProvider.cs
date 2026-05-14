@@ -154,7 +154,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 var messageRequest = new SendMessageRequest
                 {
                     Parts = [new MessagePart { Type = "text", Text = request.Prompt }],
-                    Model = _model
+                    Model = null // Model is configured server-side via OPENCODE_CONFIG_CONTENT
                 };
 
                 _logger.Debug("POST /session/{SessionId}/message", sessionId);

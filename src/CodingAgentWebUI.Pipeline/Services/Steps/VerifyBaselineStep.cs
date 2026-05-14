@@ -1,11 +1,11 @@
-using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
 /// <summary>
-/// Verifies agent environment health (kiro-cli doctor) and workspace baseline (quality gates)
-/// before code generation begins. Agent environment failure is fatal; workspace failure is non-fatal.
+/// Verifies agent environment health (via IAgentProvider.ValidateAsync) and workspace baseline
+/// (quality gates) before code generation begins. Agent environment failure is fatal; workspace
+/// failure is non-fatal.
 /// </summary>
 internal sealed class VerifyBaselineStep : IPipelineStep
 {
@@ -20,12 +20,9 @@ internal sealed class VerifyBaselineStep : IPipelineStep
         context.Callbacks.TransitionTo(PipelineStep.VerifyingBaseline);
 
         // Phase 1: Agent environment health (fatal)
-        if (context.KiroCliPath is not null)
-        {
-            var doctorResult = await RunDoctorCheckAsync(context, ct);
-            if (!doctorResult)
-                return StepResult.Stop;
-        }
+        var doctorResult = await RunAgentHealthCheckAsync(context, ct);
+        if (!doctorResult)
+            return StepResult.Stop;
 
         // Phase 2: Workspace baseline (non-fatal)
         await RunWorkspaceBaselineAsync(context, ct);
@@ -33,45 +30,13 @@ internal sealed class VerifyBaselineStep : IPipelineStep
         return StepResult.Continue;
     }
 
-    private static async Task<bool> RunDoctorCheckAsync(PipelineStepContext context, CancellationToken ct)
+    private static async Task<bool> RunAgentHealthCheckAsync(PipelineStepContext context, CancellationToken ct)
     {
         context.Callbacks.EmitOutputLine("🩺 Running agent environment health check...");
 
         try
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = context.KiroCliPath!,
-                Arguments = "doctor --all --strict",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            // TODO: Register ct callback to kill process tree on cancellation to avoid orphaned child process
-            using var process = Process.Start(psi);
-            if (process is null)
-            {
-                context.Run.BaselineHealthPassed = false;
-                await context.FailRunAsync("Agent environment unhealthy: failed to start kiro-cli doctor process");
-                return false;
-            }
-
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-            var stderrTask = process.StandardError.ReadToEndAsync(ct);
-            await process.WaitForExitAsync(ct);
-            var stdout = await stdoutTask;
-            var stderr = await stderrTask;
-
-            if (process.ExitCode != 0)
-            {
-                var details = !string.IsNullOrWhiteSpace(stderr) ? stderr.Trim() : stdout.Trim();
-                context.Run.BaselineHealthPassed = false;
-                await context.FailRunAsync($"Agent environment unhealthy: kiro-cli doctor exited with code {process.ExitCode}. {details}");
-                return false;
-            }
-
+            await context.AgentProvider.ValidateAsync(ct);
             context.Callbacks.EmitOutputLine("✅ Agent environment healthy");
             return true;
         }
