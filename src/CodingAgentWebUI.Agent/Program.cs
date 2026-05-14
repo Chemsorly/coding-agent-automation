@@ -1,4 +1,7 @@
+using System.Net.Http.Headers;
+using System.Text;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -91,12 +94,36 @@ try
     builder.Services.AddSingleton<IProviderFactory>(sp =>
     {
         var orchestrator = sp.GetRequiredService<IKiroCliOrchestrator>();
+        var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
         var pipelineConfig = sp.GetRequiredService<PipelineConfiguration>();
-        return new AgentProviderFactory(orchestrator, pipelineConfig);
+        return new AgentProviderFactory(orchestrator, httpClientFactory, pipelineConfig);
     });
 
     // ── Shared pipeline services (IQualityGateValidator, IBrainUpdateService, IAgentPhaseExecutor, IQualityGateExecutor) ──
     builder.Services.AddPipelineServices(Log.Logger);
+
+    // ── OpenCode named HttpClient (always registered — safe when OPENCODE_SERVER_PASSWORD is absent) ──
+    var agentProviderType = Environment.GetEnvironmentVariable("AGENT_PROVIDER_TYPE") ?? "";
+    builder.Services.AddHttpClient("OpenCode", (sp, client) =>
+    {
+        var baseUrl = Environment.GetEnvironmentVariable("OPENCODE_BASE_URL") ?? "http://127.0.0.1:4096";
+        client.BaseAddress = new Uri(baseUrl);
+
+        var password = Environment.GetEnvironmentVariable("OPENCODE_SERVER_PASSWORD");
+        if (!string.IsNullOrEmpty(password))
+        {
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Basic",
+                    Convert.ToBase64String(Encoding.UTF8.GetBytes($"opencode:{password}")));
+        }
+    });
+
+    // ── OpenCode health monitor (only when provider type is OpenCode) ──
+    if (agentProviderType.Equals("OpenCode", StringComparison.OrdinalIgnoreCase))
+    {
+        builder.Services.AddHostedService<OpenCodeHealthMonitor>(sp =>
+            new OpenCodeHealthMonitor(sp.GetRequiredService<IHttpClientFactory>(), Log.Logger));
+    }
 
     // ── Hub connection manager ──
     builder.Services.AddSingleton(sp =>
@@ -105,6 +132,7 @@ try
     // ── Pipeline executor ──
     builder.Services.AddSingleton(sp => new LocalPipelineExecutor(
         sp.GetRequiredService<IKiroCliOrchestrator>(),
+        sp.GetRequiredService<IHttpClientFactory>(),
         sp.GetRequiredService<PipelineConfiguration>(),
         sp.GetRequiredService<IQualityGateValidator>(),
         Log.Logger,
@@ -114,6 +142,7 @@ try
     // ── Consolidation executor ──
     builder.Services.AddSingleton(sp => new LocalConsolidationExecutor(
         sp.GetRequiredService<IKiroCliOrchestrator>(),
+        sp.GetRequiredService<IHttpClientFactory>(),
         Log.Logger));
 
     // ── Agent worker service (BackgroundService) ──

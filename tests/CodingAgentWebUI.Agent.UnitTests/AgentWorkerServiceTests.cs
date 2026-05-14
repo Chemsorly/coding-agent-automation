@@ -436,10 +436,12 @@ public class AgentWorkerServiceTests
     private static LocalPipelineExecutor CreateMockExecutor()
     {
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
+        var mockHttpClientFactory = new Mock<System.Net.Http.IHttpClientFactory>();
         var mockQualityGateValidator = new Mock<Pipeline.Interfaces.IQualityGateValidator>();
         var mockLogger = new Mock<Serilog.ILogger>();
         return new LocalPipelineExecutor(
             mockOrchestrator.Object,
+            mockHttpClientFactory.Object,
             new Pipeline.Models.PipelineConfiguration(),
             mockQualityGateValidator.Object,
             mockLogger.Object);
@@ -448,9 +450,11 @@ public class AgentWorkerServiceTests
     private static LocalConsolidationExecutor CreateMockConsolidationExecutor()
     {
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
+        var mockHttpClientFactory = new Mock<System.Net.Http.IHttpClientFactory>();
         var mockLogger = new Mock<Serilog.ILogger>();
         return new LocalConsolidationExecutor(
             mockOrchestrator.Object,
+            mockHttpClientFactory.Object,
             mockLogger.Object);
     }
 

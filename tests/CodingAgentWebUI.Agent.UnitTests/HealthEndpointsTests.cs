@@ -55,12 +55,14 @@ public class HealthEndpointsTests : IAsyncDisposable
 
         var executor = new LocalPipelineExecutor(
             mockOrchestrator.Object,
+            new Mock<IHttpClientFactory>().Object,
             new PipelineConfiguration(),
             mockQualityGateValidator.Object,
             mockLogger.Object);
 
         var consolidationExecutor = new LocalConsolidationExecutor(
             mockOrchestrator.Object,
+            new Mock<IHttpClientFactory>().Object,
             mockLogger.Object);
 
         var workerService = new AgentWorkerService(hubManager, executor, consolidationExecutor, mockOrchestrator.Object, mockLogger.Object);

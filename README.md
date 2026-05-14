@@ -107,11 +107,17 @@ tests/
   CodingAgentWebUI.E2ETests/               — End-to-end tests
   KiroCliLib.UnitTests/                    — KiroCliLib unit tests
 dockerfiles/
-  webui.Dockerfile           — Orchestrator (web UI)
-  agent-dotnet10.Dockerfile  — .NET 10 agent container
-  agent-python312.Dockerfile — Python 3.12 agent container
-  agent-java21.Dockerfile    — Java 21 agent container
-  e2e-tests.Dockerfile       — E2E test runner
+  webui.Dockerfile                    — Orchestrator (web UI)
+  kiro/
+    agent-kiro-dotnet10.Dockerfile      — Kiro CLI .NET 10 agent container
+    agent-kiro-python312.Dockerfile     — Kiro CLI Python 3.12 agent container
+    agent-kiro-java21.Dockerfile        — Kiro CLI Java 21 agent container
+  opencode/
+    agent-opencode-dotnet10.Dockerfile  — OpenCode .NET 10 agent container
+    agent-opencode-java21.Dockerfile    — OpenCode Java 21 agent container
+    agent-opencode-python312.Dockerfile — OpenCode Python 3.12 agent container
+    entrypoint.sh                       — OpenCode agent entrypoint script
+  e2e-tests.Dockerfile                — E2E test runner
 config/
   pipeline/          — Provider configs, quality gates, profiles, run history
   appsettings.json   — Application configuration

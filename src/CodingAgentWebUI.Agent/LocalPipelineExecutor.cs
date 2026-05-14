@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Agent.KiroCli;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -36,6 +37,7 @@ namespace CodingAgentWebUI.Agent;
 public sealed class LocalPipelineExecutor
 {
     private readonly IKiroCliOrchestrator _orchestrator;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly PipelineConfiguration _defaultPipelineConfig;
     private readonly IQualityGateValidator _qualityGateValidator;
     private readonly IBrainUpdateService? _brainUpdateService;
@@ -46,6 +48,7 @@ public sealed class LocalPipelineExecutor
 
     public LocalPipelineExecutor(
         IKiroCliOrchestrator orchestrator,
+        IHttpClientFactory httpClientFactory,
         PipelineConfiguration defaultPipelineConfig,
         IQualityGateValidator qualityGateValidator,
         Serilog.ILogger logger,
@@ -54,11 +57,13 @@ public sealed class LocalPipelineExecutor
         IPipelineRunHistoryService? historyService = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
+        ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(defaultPipelineConfig);
         ArgumentNullException.ThrowIfNull(qualityGateValidator);
         ArgumentNullException.ThrowIfNull(logger);
 
         _orchestrator = orchestrator;
+        _httpClientFactory = httpClientFactory;
         _defaultPipelineConfig = defaultPipelineConfig;
         _qualityGateValidator = qualityGateValidator;
         _brainUpdateService = brainUpdateService;
@@ -97,7 +102,7 @@ public sealed class LocalPipelineExecutor
         // Construct a per-job provider factory with the OrchestratorProxy for token refresh
         // TODO: Factory captures config before blacklist override below. Move construction after
         // the override block if AgentProviderFactory ever needs blacklist settings.
-        var providerFactory = new AgentProviderFactory(_orchestrator, config, issueOps);
+        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
 
         // Resolve provider configs from the job assignment
         var repoConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.RepoProviderConfigId)

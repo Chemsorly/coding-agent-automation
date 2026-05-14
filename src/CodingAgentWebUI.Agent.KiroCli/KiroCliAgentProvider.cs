@@ -4,7 +4,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Agent;
+namespace CodingAgentWebUI.Agent.KiroCli;
 
 /// <summary>
 /// Agent provider that delegates to the existing KiroCliLib via IKiroCliOrchestrator.

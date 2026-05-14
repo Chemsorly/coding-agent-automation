@@ -3,6 +3,7 @@ using Moq;
 using KiroCliLib.Core;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Agent.KiroCli;
 
 namespace CodingAgentWebUI.Agent.UnitTests;
 

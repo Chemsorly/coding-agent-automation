@@ -52,12 +52,18 @@ jobs:
         include:
           - dockerfile: dockerfiles/webui.Dockerfile
             tag: coding-agent-webui
-          - dockerfile: dockerfiles/agent-dotnet10.Dockerfile
+          - dockerfile: dockerfiles/kiro/agent-kiro-dotnet10.Dockerfile
             tag: coding-agent-kiro-dotnet10
-          - dockerfile: dockerfiles/agent-python312.Dockerfile
+          - dockerfile: dockerfiles/kiro/agent-kiro-python312.Dockerfile
             tag: coding-agent-kiro-python312
-          - dockerfile: dockerfiles/agent-java21.Dockerfile
+          - dockerfile: dockerfiles/kiro/agent-kiro-java21.Dockerfile
             tag: coding-agent-kiro-java21
+          - dockerfile: dockerfiles/opencode/agent-opencode-dotnet10.Dockerfile
+            tag: coding-agent-opencode-dotnet10
+          - dockerfile: dockerfiles/opencode/agent-opencode-java21.Dockerfile
+            tag: coding-agent-opencode-java21
+          - dockerfile: dockerfiles/opencode/agent-opencode-python312.Dockerfile
+            tag: coding-agent-opencode-python312
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

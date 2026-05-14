@@ -15,11 +15,13 @@ public class AgentProviderFactoryTests
 {
     private static AgentProviderFactory CreateFactory(
         IKiroCliOrchestrator? orchestrator = null,
+        IHttpClientFactory? httpClientFactory = null,
         PipelineConfiguration? config = null,
         OrchestratorProxy? orchestratorProxy = null)
     {
         return new AgentProviderFactory(
             orchestrator ?? new Mock<IKiroCliOrchestrator>().Object,
+            httpClientFactory ?? new Mock<IHttpClientFactory>().Object,
             config ?? new PipelineConfiguration(),
             orchestratorProxy);
     }
@@ -38,14 +40,21 @@ public class AgentProviderFactoryTests
     [Fact]
     public void Constructor_NullOrchestrator_Throws()
     {
-        var act = () => new AgentProviderFactory(null!, new PipelineConfiguration());
+        var act = () => new AgentProviderFactory(null!, new Mock<IHttpClientFactory>().Object, new PipelineConfiguration());
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Constructor_NullHttpClientFactory_Throws()
+    {
+        var act = () => new AgentProviderFactory(new Mock<IKiroCliOrchestrator>().Object, null!, new PipelineConfiguration());
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Constructor_NullConfig_Throws()
     {
-        var act = () => new AgentProviderFactory(new Mock<IKiroCliOrchestrator>().Object, null!);
+        var act = () => new AgentProviderFactory(new Mock<IKiroCliOrchestrator>().Object, new Mock<IHttpClientFactory>().Object, null!);
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -54,6 +63,7 @@ public class AgentProviderFactoryTests
     {
         var act = () => new AgentProviderFactory(
             new Mock<IKiroCliOrchestrator>().Object,
+            new Mock<IHttpClientFactory>().Object,
             new PipelineConfiguration(),
             orchestratorProxy: null);
         act.Should().NotThrow();

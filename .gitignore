@@ -69,6 +69,7 @@ tests/**/Fixtures/**/obj/
 # Pipeline provider configs (contain tokens/credentials at runtime)
 config/pipeline/
 config/kiro-cli-data*
+config/opencode/
 
 # GitHub App credentials (private key)
 config/github-app-credentials.json
