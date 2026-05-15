@@ -143,7 +143,7 @@ public sealed class LocalPipelineExecutor
                 }
             }
 
-            if (config.ExternalCiEnabled && !string.IsNullOrEmpty(job.PipelineProviderConfigId))
+            if (!string.IsNullOrEmpty(job.PipelineProviderConfigId))
             {
                 var pipelineConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.PipelineProviderConfigId);
                 if (pipelineConfig is not null)

@@ -186,6 +186,7 @@ public class PreparingForPullRequestPropertyTests
 
     // --- Factory methods ---
 
+    // TODO: Rename 'externalCiEnabled' parameter — it now controls pipeline provider mock registration, not a config toggle (issue #326 refactor)
     private static PipelineOrchestrationService CreateService(
         bool allGatesPass, bool externalCiEnabled = false, bool cleanupProducesChanges = true)
     {
@@ -199,7 +200,7 @@ public class PreparingForPullRequestPropertyTests
             IssuePageSize = config.IssuePageSize,
             AgentTimeout = config.AgentTimeout,
             WorkspaceBaseDirectory = config.WorkspaceBaseDirectory,
-            ExternalCiEnabled = externalCiEnabled,
+            CodeReview = new CodeReviewConfiguration { },
             ExternalCiTimeout = config.ExternalCiTimeout,
             ExternalCiPollInterval = config.ExternalCiPollInterval,
             StallWarningInterval = config.StallWarningInterval,

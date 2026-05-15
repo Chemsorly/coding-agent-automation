@@ -26,7 +26,6 @@ public sealed record WorkspaceConfiguration
 /// </summary>
 public sealed record ExternalCiConfiguration
 {
-    public bool ExternalCiEnabled { get; init; } = false;
     public TimeSpan ExternalCiTimeout { get; init; } = PipelineConstants.DefaultExternalCiTimeout;
     public TimeSpan ExternalCiPollInterval { get; init; } = PipelineConstants.DefaultExternalCiPollInterval;
 }

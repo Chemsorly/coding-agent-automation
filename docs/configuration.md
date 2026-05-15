@@ -13,8 +13,7 @@ See also: [Pipeline Orchestration](pipeline-orchestration.md) for how these sett
 | `agentTimeout` | 00:30:00 | Maximum time for a single agent invocation |
 | `codeReview.enabled` | true | Enable multi-agent code review |
 | `codeReview.maxIterations` | 2 | Max review → fix cycles |
-| `externalCiEnabled` | false | Wait for external CI to pass before creating the final PR |
-| `externalCiTimeout` | 00:15:00 | Max wait time for external CI completion |
+| `externalCiTimeout` | 00:15:00 | Max wait time for external CI completion (CI runs automatically when a Pipeline Provider is configured on the job template) |
 | `externalCiPollInterval` | 00:01:00 | How often to poll external CI for status updates |
 | `blacklistedPaths` | .kiro, .github, .brain | Paths excluded from agent commits |
 | `blacklistMode` | WarnAndExclude | How to handle blacklisted files. `WarnAndExclude` silently excludes them from commits. `Fail` aborts the run if the agent touches blacklisted paths. |
