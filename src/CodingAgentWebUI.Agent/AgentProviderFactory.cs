@@ -1,4 +1,6 @@
 using KiroCliLib.Core;
+using CodingAgentWebUI.Agent.KiroCli;
+using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -17,18 +19,22 @@ namespace CodingAgentWebUI.Agent;
 public sealed class AgentProviderFactory : IProviderFactory
 {
     private readonly IKiroCliOrchestrator _orchestrator;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly PipelineConfiguration _pipelineConfig;
     private readonly OrchestratorProxy? _orchestratorProxy;
 
     public AgentProviderFactory(
         IKiroCliOrchestrator orchestrator,
+        IHttpClientFactory httpClientFactory,
         PipelineConfiguration pipelineConfig,
         OrchestratorProxy? orchestratorProxy = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
+        ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(pipelineConfig);
 
         _orchestrator = orchestrator;
+        _httpClientFactory = httpClientFactory;
         _pipelineConfig = pipelineConfig;
         _orchestratorProxy = orchestratorProxy;
     }
@@ -55,10 +61,14 @@ public sealed class AgentProviderFactory : IProviderFactory
     {
         ArgumentNullException.ThrowIfNull(config);
 
-        return config.ProviderType.Equals("KiroCli", StringComparison.OrdinalIgnoreCase)
-            ? CreateKiroCliAgentProvider(config)
-            : throw new NotSupportedException(
-                $"Unsupported agent provider type: '{config.ProviderType}'");
+        if (config.ProviderType.Equals("KiroCli", StringComparison.OrdinalIgnoreCase))
+            return CreateKiroCliAgentProvider(config);
+
+        if (config.ProviderType.Equals("OpenCode", StringComparison.OrdinalIgnoreCase))
+            return CreateOpenCodeAgentProvider(config);
+
+        throw new NotSupportedException(
+            $"Unsupported agent provider type: '{config.ProviderType}'");
     }
 
     public IPipelineProvider CreatePipelineProvider(ProviderConfig config)
@@ -100,6 +110,26 @@ public sealed class AgentProviderFactory : IProviderFactory
         var model = config.Settings.GetValueOrDefault("model");
         var executablePath = config.Settings.GetValueOrDefault("executablePath", "/home/ubuntu/.local/bin/kiro-cli");
         return new KiroCliAgentProvider(_orchestrator, Serilog.Log.Logger, model, executablePath);
+    }
+
+    private OpenCodeAgentProvider CreateOpenCodeAgentProvider(ProviderConfig config)
+    {
+        var baseUrl = config.Settings.GetValueOrDefault("baseUrl", "http://127.0.0.1:4096");
+
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != "http" && uri.Scheme != "https"))
+        {
+            throw new ArgumentException(
+                $"Provider '{config.DisplayName}' has invalid baseUrl: '{baseUrl}'.",
+                nameof(config));
+        }
+
+        // Validate password is available at construction time
+        _ = Environment.GetEnvironmentVariable("OPENCODE_SERVER_PASSWORD")
+            ?? throw new InvalidOperationException("OPENCODE_SERVER_PASSWORD not set.");
+
+        var model = config.Settings.GetValueOrDefault("model");
+        return new OpenCodeAgentProvider(_httpClientFactory, Serilog.Log.Logger, model);
     }
 
     private GitHubActionsPipelineProvider CreateGitHubPipelineProvider(ProviderConfig config)

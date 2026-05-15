@@ -30,19 +30,122 @@ services:
     networks:
       - coding-agent-net
 
-  agent-dotnet-1:
+  # agent-dotnet-1:
+  #   build:
+  #     context: .
+  #     dockerfile: dockerfiles/kiro/agent-kiro-dotnet10.Dockerfile
+  #   volumes:
+  #     - ./config/kiro-cli-data-1:/home/ubuntu/.local/share/kiro-cli
+  #     - ~/.aws:/home/ubuntu/.aws:ro
+  #   environment:
+  #     - ORCHESTRATOR_URL=http://orchestrator:8080
+  #     - AGENT_ID=agent-1
+  #     - AGENT_TYPE=kiro-dotnet10
+  #     - AGENT_LABELS=kiro,dotnet,dotnet10
+  #     - AGENT_API_KEY=${AGENT_API_KEY}
+  #     - LOG_LEVEL=${LOG_LEVEL:-Information}
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 30s
+  #   depends_on:
+  #     orchestrator:
+  #       condition: service_healthy
+  #   networks:
+  #     - coding-agent-net
+
+  # agent-dotnet-2:
+  #   build:
+  #     context: .
+  #     dockerfile: dockerfiles/kiro/agent-kiro-dotnet10.Dockerfile
+  #   volumes:
+  #     - ./config/kiro-cli-data-2:/home/ubuntu/.local/share/kiro-cli
+  #     - ~/.aws:/home/ubuntu/.aws:ro
+  #   environment:
+  #     - ORCHESTRATOR_URL=http://orchestrator:8080
+  #     - AGENT_ID=agent-2
+  #     - AGENT_TYPE=kiro-dotnet10
+  #     - AGENT_LABELS=kiro,dotnet,dotnet10
+  #     - AGENT_API_KEY=${AGENT_API_KEY}
+  #     - LOG_LEVEL=${LOG_LEVEL:-Information}
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 30s
+  #   depends_on:
+  #     orchestrator:
+  #       condition: service_healthy
+  #   networks:
+  #     - coding-agent-net
+
+  # agent-python:
+  #   build:
+  #     context: .
+  #     dockerfile: dockerfiles/kiro/agent-kiro-python312.Dockerfile
+  #   volumes:
+  #     - ./config/kiro-cli-data-3:/home/ubuntu/.local/share/kiro-cli
+  #     - ~/.aws:/home/ubuntu/.aws:ro
+  #   environment:
+  #     - ORCHESTRATOR_URL=http://orchestrator:8080
+  #     - AGENT_ID=agent-python
+  #     - AGENT_TYPE=kiro-python312
+  #     - AGENT_LABELS=kiro,python,python312
+  #     - AGENT_API_KEY=${AGENT_API_KEY}
+  #     - LOG_LEVEL=${LOG_LEVEL:-Information}
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 30s
+  #   depends_on:
+  #     orchestrator:
+  #       condition: service_healthy
+  #   networks:
+  #     - coding-agent-net
+
+  # agent-java:
+  #   build:
+  #     context: .
+  #     dockerfile: dockerfiles/kiro/agent-kiro-java21.Dockerfile
+  #   volumes:
+  #     - ./config/kiro-cli-data-4:/home/ubuntu/.local/share/kiro-cli
+  #     - ~/.aws:/home/ubuntu/.aws:ro
+  #   environment:
+  #     - ORCHESTRATOR_URL=http://orchestrator:8080
+  #     - AGENT_ID=agent-java
+  #     - AGENT_TYPE=kiro-java21
+  #     - AGENT_LABELS=kiro,java,java21
+  #     - AGENT_API_KEY=${AGENT_API_KEY}
+  #     - LOG_LEVEL=${LOG_LEVEL:-Information}
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 30s
+  #   depends_on:
+  #     orchestrator:
+  #       condition: service_healthy
+  #   networks:
+  #     - coding-agent-net
+
+  agent-opencode-dotnet:
     build:
       context: .
-      dockerfile: dockerfiles/agent-dotnet10.Dockerfile
-    volumes:
-      - ./config/kiro-cli-data-1:/home/ubuntu/.local/share/kiro-cli
-      - ~/.aws:/home/ubuntu/.aws:ro
+      dockerfile: dockerfiles/opencode/agent-opencode-dotnet10.Dockerfile
     environment:
       - ORCHESTRATOR_URL=http://orchestrator:8080
-      - AGENT_ID=agent-1
-      - AGENT_TYPE=kiro-dotnet10
-      - AGENT_LABELS=kiro,dotnet,dotnet10
+      - AGENT_ID=agent-opencode-dotnet
+      - AGENT_TYPE=opencode-dotnet10
+      - AGENT_PROVIDER_TYPE=OpenCode
+      - AGENT_LABELS=opencode,dotnet,dotnet10
       - AGENT_API_KEY=${AGENT_API_KEY}
+      - OPENCODE_CONFIG_CONTENT=${OPENCODE_CONFIG_CONTENT}
       - LOG_LEVEL=${LOG_LEVEL:-Information}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
@@ -56,83 +159,53 @@ services:
     networks:
       - coding-agent-net
 
-  agent-dotnet-2:
-    build:
-      context: .
-      dockerfile: dockerfiles/agent-dotnet10.Dockerfile
-    volumes:
-      - ./config/kiro-cli-data-2:/home/ubuntu/.local/share/kiro-cli
-      - ~/.aws:/home/ubuntu/.aws:ro
-    environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8080
-      - AGENT_ID=agent-2
-      - AGENT_TYPE=kiro-dotnet10
-      - AGENT_LABELS=kiro,dotnet,dotnet10
-      - AGENT_API_KEY=${AGENT_API_KEY}
-      - LOG_LEVEL=${LOG_LEVEL:-Information}
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    depends_on:
-      orchestrator:
-        condition: service_healthy
-    networks:
-      - coding-agent-net
+  # agent-opencode-python:
+  #   build:
+  #     context: .
+  #     dockerfile: dockerfiles/opencode/agent-opencode-python312.Dockerfile
+  #   environment:
+  #     - ORCHESTRATOR_URL=http://orchestrator:8080
+  #     - AGENT_ID=agent-opencode-python
+  #     - AGENT_TYPE=opencode-python312
+  #     - AGENT_LABELS=opencode,python,python312
+  #     - AGENT_API_KEY=${AGENT_API_KEY}
+  #     - OPENCODE_CONFIG_CONTENT=${OPENCODE_CONFIG_CONTENT}
+  #     - LOG_LEVEL=${LOG_LEVEL:-Information}
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 30s
+  #   depends_on:
+  #     orchestrator:
+  #       condition: service_healthy
+  #   networks:
+  #     - coding-agent-net
 
-  agent-python:
-    build:
-      context: .
-      dockerfile: dockerfiles/agent-python312.Dockerfile
-    volumes:
-      - ./config/kiro-cli-data-3:/home/ubuntu/.local/share/kiro-cli
-      - ~/.aws:/home/ubuntu/.aws:ro
-    environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8080
-      - AGENT_ID=agent-python
-      - AGENT_TYPE=kiro-python312
-      - AGENT_LABELS=kiro,python,python312
-      - AGENT_API_KEY=${AGENT_API_KEY}
-      - LOG_LEVEL=${LOG_LEVEL:-Information}
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    depends_on:
-      orchestrator:
-        condition: service_healthy
-    networks:
-      - coding-agent-net
-
-  agent-java:
-    build:
-      context: .
-      dockerfile: dockerfiles/agent-java21.Dockerfile
-    volumes:
-      - ./config/kiro-cli-data-4:/home/ubuntu/.local/share/kiro-cli
-      - ~/.aws:/home/ubuntu/.aws:ro
-    environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8080
-      - AGENT_ID=agent-java
-      - AGENT_TYPE=kiro-java21
-      - AGENT_LABELS=kiro,java,java21
-      - AGENT_API_KEY=${AGENT_API_KEY}
-      - LOG_LEVEL=${LOG_LEVEL:-Information}
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    depends_on:
-      orchestrator:
-        condition: service_healthy
-    networks:
-      - coding-agent-net
+  # agent-opencode-java:
+  #   build:
+  #     context: .
+  #     dockerfile: dockerfiles/opencode/agent-opencode-java21.Dockerfile
+  #   environment:
+  #     - ORCHESTRATOR_URL=http://orchestrator:8080
+  #     - AGENT_ID=agent-opencode-java
+  #     - AGENT_TYPE=opencode-java21
+  #     - AGENT_LABELS=opencode,java,java21
+  #     - AGENT_API_KEY=${AGENT_API_KEY}
+  #     - OPENCODE_CONFIG_CONTENT=${OPENCODE_CONFIG_CONTENT}
+  #     - LOG_LEVEL=${LOG_LEVEL:-Information}
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 30s
+  #   depends_on:
+  #     orchestrator:
+  #       condition: service_healthy
+  #   networks:
+  #     - coding-agent-net
 
 networks:
   coding-agent-net:

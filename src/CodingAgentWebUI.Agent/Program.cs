@@ -1,4 +1,7 @@
+using System.Net.Http.Headers;
+using System.Text;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -36,6 +39,10 @@ Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Is(logLevel)
     // Suppress noisy ASP.NET Core request logging (health checks every 10s)
     .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+    // Suppress noisy HttpClient logging (OpenCode health monitor polls every 5s)
+    .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
+    // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every 10s)
+    .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .Enrich.WithProperty("AgentId", agentId)
     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{AgentId}] {Message:lj}{NewLine}{Exception}")
@@ -91,12 +98,38 @@ try
     builder.Services.AddSingleton<IProviderFactory>(sp =>
     {
         var orchestrator = sp.GetRequiredService<IKiroCliOrchestrator>();
+        var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
         var pipelineConfig = sp.GetRequiredService<PipelineConfiguration>();
-        return new AgentProviderFactory(orchestrator, pipelineConfig);
+        return new AgentProviderFactory(orchestrator, httpClientFactory, pipelineConfig);
     });
 
     // ── Shared pipeline services (IQualityGateValidator, IBrainUpdateService, IAgentPhaseExecutor, IQualityGateExecutor) ──
     builder.Services.AddPipelineServices(Log.Logger);
+
+    // ── OpenCode named HttpClient (always registered — safe when OPENCODE_SERVER_PASSWORD is absent) ──
+    var agentProviderType = Environment.GetEnvironmentVariable("AGENT_PROVIDER_TYPE") ?? "";
+    builder.Services.AddHttpClient("OpenCode", (sp, client) =>
+    {
+        var baseUrl = Environment.GetEnvironmentVariable("OPENCODE_BASE_URL") ?? "http://127.0.0.1:4096";
+        client.BaseAddress = new Uri(baseUrl);
+        // OpenCode message API blocks until the agent finishes — can take minutes for complex tasks
+        client.Timeout = TimeSpan.FromMinutes(30);
+
+        var password = Environment.GetEnvironmentVariable("OPENCODE_SERVER_PASSWORD");
+        if (!string.IsNullOrEmpty(password))
+        {
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Basic",
+                    Convert.ToBase64String(Encoding.UTF8.GetBytes($"opencode:{password}")));
+        }
+    });
+
+    // ── OpenCode health monitor (only when provider type is OpenCode) ──
+    if (agentProviderType.Equals("OpenCode", StringComparison.OrdinalIgnoreCase))
+    {
+        builder.Services.AddHostedService<OpenCodeHealthMonitor>(sp =>
+            new OpenCodeHealthMonitor(sp.GetRequiredService<IHttpClientFactory>(), Log.Logger));
+    }
 
     // ── Hub connection manager ──
     builder.Services.AddSingleton(sp =>
@@ -105,15 +138,16 @@ try
     // ── Pipeline executor ──
     builder.Services.AddSingleton(sp => new LocalPipelineExecutor(
         sp.GetRequiredService<IKiroCliOrchestrator>(),
+        sp.GetRequiredService<IHttpClientFactory>(),
         sp.GetRequiredService<PipelineConfiguration>(),
         sp.GetRequiredService<IQualityGateValidator>(),
         Log.Logger,
-        sp.GetRequiredService<IBrainUpdateService>(),
-        sp.GetRequiredService<Configuration>().KiroCliPath));
+        sp.GetRequiredService<IBrainUpdateService>()));
 
     // ── Consolidation executor ──
     builder.Services.AddSingleton(sp => new LocalConsolidationExecutor(
         sp.GetRequiredService<IKiroCliOrchestrator>(),
+        sp.GetRequiredService<IHttpClientFactory>(),
         Log.Logger));
 
     // ── Agent worker service (BackgroundService) ──
@@ -122,6 +156,7 @@ try
         sp.GetRequiredService<LocalPipelineExecutor>(),
         sp.GetRequiredService<LocalConsolidationExecutor>(),
         sp.GetRequiredService<IKiroCliOrchestrator>(),
+        sp.GetRequiredService<IHttpClientFactory>(),
         Log.Logger));
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
 

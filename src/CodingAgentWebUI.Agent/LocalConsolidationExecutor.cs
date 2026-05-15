@@ -27,16 +27,20 @@ namespace CodingAgentWebUI.Agent;
 public sealed class LocalConsolidationExecutor
 {
     private readonly IKiroCliOrchestrator _orchestrator;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly Serilog.ILogger _logger;
 
     public LocalConsolidationExecutor(
         IKiroCliOrchestrator orchestrator,
+        IHttpClientFactory httpClientFactory,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
+        ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(logger);
 
         _orchestrator = orchestrator;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -129,7 +133,7 @@ public sealed class LocalConsolidationExecutor
         ConsolidationJobMessage job, CancellationToken ct)
     {
         var config = job.PipelineConfiguration;
-        var providerFactory = new AgentProviderFactory(_orchestrator, config);
+        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config);
 
         // Resolve brain provider (repository provider with Brain role)
         var brainConfig = job.ProviderConfigs.FirstOrDefault(c =>
@@ -182,7 +186,7 @@ public sealed class LocalConsolidationExecutor
         ConsolidationJobMessage job, CancellationToken ct)
     {
         var config = job.PipelineConfiguration;
-        var providerFactory = new AgentProviderFactory(_orchestrator, config);
+        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config);
 
         // Resolve code repo provider (repository provider with Work role)
         var repoConfig = job.ProviderConfigs.FirstOrDefault(c =>
@@ -275,7 +279,7 @@ public sealed class LocalConsolidationExecutor
         ConsolidationJobMessage job, CancellationToken ct)
     {
         var config = job.PipelineConfiguration;
-        var providerFactory = new AgentProviderFactory(_orchestrator, config);
+        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config);
 
         // Resolve agent provider
         var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Kind == ProviderKind.Agent);

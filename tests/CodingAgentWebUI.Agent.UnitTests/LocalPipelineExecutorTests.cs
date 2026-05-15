@@ -17,6 +17,7 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 public class LocalPipelineExecutorTests : IDisposable
 {
     private readonly Mock<IKiroCliOrchestrator> _mockOrchestrator = new();
+    private readonly Mock<IHttpClientFactory> _mockHttpClientFactory = new();
     private readonly Mock<IQualityGateValidator> _mockQualityGateValidator = new();
     private readonly Mock<Serilog.ILogger> _mockLogger = new();
     private readonly PipelineConfiguration _defaultConfig = new();
@@ -40,16 +41,25 @@ public class LocalPipelineExecutorTests : IDisposable
     public void Constructor_NullOrchestrator_ThrowsArgumentNullException()
     {
         var act = () => new LocalPipelineExecutor(
-            null!, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object);
+            null!, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("orchestrator");
+    }
+
+    [Fact]
+    public void Constructor_NullHttpClientFactory_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(
+            _mockOrchestrator.Object, null!, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("httpClientFactory");
     }
 
     [Fact]
     public void Constructor_NullDefaultPipelineConfig_ThrowsArgumentNullException()
     {
         var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, null!, _mockQualityGateValidator.Object, _mockLogger.Object);
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, null!, _mockQualityGateValidator.Object, _mockLogger.Object);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("defaultPipelineConfig");
     }
@@ -58,7 +68,7 @@ public class LocalPipelineExecutorTests : IDisposable
     public void Constructor_NullQualityGateValidator_ThrowsArgumentNullException()
     {
         var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _defaultConfig, null!, _mockLogger.Object);
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, null!, _mockLogger.Object);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("qualityGateValidator");
     }
@@ -67,7 +77,7 @@ public class LocalPipelineExecutorTests : IDisposable
     public void Constructor_NullLogger_ThrowsArgumentNullException()
     {
         var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _defaultConfig, _mockQualityGateValidator.Object, null!);
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, null!);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
     }
@@ -76,7 +86,7 @@ public class LocalPipelineExecutorTests : IDisposable
     public void Constructor_ValidParameters_DoesNotThrow()
     {
         var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object);
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object);
 
         act.Should().NotThrow();
     }
@@ -85,7 +95,7 @@ public class LocalPipelineExecutorTests : IDisposable
     public void Constructor_NullBrainUpdateService_DoesNotThrow()
     {
         var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, null);
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, null);
 
         act.Should().NotThrow();
     }
@@ -224,7 +234,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         // Arrange
         var executor = new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object);
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object);
 
         // Act
         var act = () => executor.ExecuteAsync(null!, null!, null!, null, CancellationToken.None);
@@ -238,7 +248,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         // Arrange
         var executor = new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object);
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object);
         var job = CreateMinimalJobAssignment();
 
         // Act
@@ -253,7 +263,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         // Arrange — job references a provider config ID that doesn't exist in the list
         var executor = new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object);
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object);
 
         var job = new JobAssignmentMessage
         {
@@ -288,7 +298,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         // Arrange — repo config exists but agent config doesn't
         var executor = new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object);
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object);
 
         var repoConfig = new ProviderConfig
         {

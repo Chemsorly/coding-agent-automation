@@ -51,12 +51,6 @@ internal sealed class PipelineStepContext
     public IQualityGateValidator? QualityGateValidator { get; init; }
 
     /// <summary>
-    /// Path to the kiro-cli executable. Used by <see cref="VerifyBaselineStep"/> for doctor checks.
-    /// Null on the orchestrator side (doctor check is skipped).
-    /// </summary>
-    public string? KiroCliPath { get; init; }
-
-    /// <summary>
     /// Pre-resolved reviewer configurations. When non-null, <see cref="ReviewCodeStep"/>
     /// uses these directly instead of resolving from the config store.
     /// </summary>

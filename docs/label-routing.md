@@ -33,9 +33,12 @@ Agent labels:              ["kiro", "dotnet", "dotnet10"]
 
 | Agent Type | Labels | Docker Image | SDK |
 |-----------|--------|--------------|-----|
-| `kiro-dotnet10` | `kiro, dotnet, dotnet10` | `dockerfiles/agent-dotnet10.Dockerfile` | .NET 10 |
-| `kiro-python312` | `kiro, python, python312` | `dockerfiles/agent-python312.Dockerfile` | Python 3.12 |
-| `kiro-java21` | `kiro, java, java21` | `dockerfiles/agent-java21.Dockerfile` | Java 21 |
+| `kiro-dotnet10` | `kiro, dotnet, dotnet10` | `dockerfiles/kiro/agent-kiro-dotnet10.Dockerfile` | .NET 10 |
+| `kiro-python312` | `kiro, python, python312` | `dockerfiles/kiro/agent-kiro-python312.Dockerfile` | Python 3.12 |
+| `kiro-java21` | `kiro, java, java21` | `dockerfiles/kiro/agent-kiro-java21.Dockerfile` | Java 21 |
+| `opencode-dotnet10` | `opencode, dotnet, dotnet10` | `dockerfiles/opencode/agent-opencode-dotnet10.Dockerfile` | .NET 10 |
+| `opencode-python312` | `opencode, python, python312` | `dockerfiles/opencode/agent-opencode-python312.Dockerfile` | Python 3.12 |
+| `opencode-java21` | `opencode, java, java21` | `dockerfiles/opencode/agent-opencode-java21.Dockerfile` | Java 21 |
 
 ## Agent Profiles
 

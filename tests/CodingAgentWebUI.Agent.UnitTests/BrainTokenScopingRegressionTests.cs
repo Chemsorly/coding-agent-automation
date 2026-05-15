@@ -47,6 +47,7 @@ public class BrainTokenScopingRegressionTests
         var proxy = CreateTestProxy();
         var factory = new AgentProviderFactory(
             new Mock<IKiroCliOrchestrator>().Object,
+            new Mock<IHttpClientFactory>().Object,
             new PipelineConfiguration(),
             proxy);
 
@@ -83,6 +84,7 @@ public class BrainTokenScopingRegressionTests
         var proxy = CreateTestProxy();
         var factory = new AgentProviderFactory(
             new Mock<IKiroCliOrchestrator>().Object,
+            new Mock<IHttpClientFactory>().Object,
             new PipelineConfiguration(),
             proxy);
 
@@ -119,6 +121,7 @@ public class BrainTokenScopingRegressionTests
         var proxy = CreateTestProxy();
         var factory = new AgentProviderFactory(
             new Mock<IKiroCliOrchestrator>().Object,
+            new Mock<IHttpClientFactory>().Object,
             new PipelineConfiguration(),
             proxy);
 
@@ -154,6 +157,7 @@ public class BrainTokenScopingRegressionTests
     {
         var factory = new AgentProviderFactory(
             new Mock<IKiroCliOrchestrator>().Object,
+            new Mock<IHttpClientFactory>().Object,
             new PipelineConfiguration(),
             orchestratorProxy: null);
 

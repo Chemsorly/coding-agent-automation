@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Agent.KiroCli;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -36,33 +37,34 @@ namespace CodingAgentWebUI.Agent;
 public sealed class LocalPipelineExecutor
 {
     private readonly IKiroCliOrchestrator _orchestrator;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly PipelineConfiguration _defaultPipelineConfig;
     private readonly IQualityGateValidator _qualityGateValidator;
     private readonly IBrainUpdateService? _brainUpdateService;
-    private readonly string? _kiroCliPath;
     private readonly IPipelineRunHistoryService? _historyService;
     private readonly FeedbackService _feedbackService;
     private readonly Serilog.ILogger _logger;
 
     public LocalPipelineExecutor(
         IKiroCliOrchestrator orchestrator,
+        IHttpClientFactory httpClientFactory,
         PipelineConfiguration defaultPipelineConfig,
         IQualityGateValidator qualityGateValidator,
         Serilog.ILogger logger,
         IBrainUpdateService? brainUpdateService = null,
-        string? kiroCliPath = null,
         IPipelineRunHistoryService? historyService = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
+        ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(defaultPipelineConfig);
         ArgumentNullException.ThrowIfNull(qualityGateValidator);
         ArgumentNullException.ThrowIfNull(logger);
 
         _orchestrator = orchestrator;
+        _httpClientFactory = httpClientFactory;
         _defaultPipelineConfig = defaultPipelineConfig;
         _qualityGateValidator = qualityGateValidator;
         _brainUpdateService = brainUpdateService;
-        _kiroCliPath = kiroCliPath;
         _historyService = historyService;
         _feedbackService = new FeedbackService(logger);
         _logger = logger;
@@ -97,7 +99,7 @@ public sealed class LocalPipelineExecutor
         // Construct a per-job provider factory with the OrchestratorProxy for token refresh
         // TODO: Factory captures config before blacklist override below. Move construction after
         // the override block if AgentProviderFactory ever needs blacklist settings.
-        var providerFactory = new AgentProviderFactory(_orchestrator, config, issueOps);
+        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
 
         // Resolve provider configs from the job assignment
         var repoConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.RepoProviderConfigId)
@@ -298,7 +300,6 @@ public sealed class LocalPipelineExecutor
                 PreResolvedQualityGateConfigs = job.QualityGateConfigs,
                 Logger = _logger,
                 QualityGateValidator = _qualityGateValidator,
-                KiroCliPath = _kiroCliPath,
                 // Pre-populate issue data from job (no IssueProvider on agent side)
                 Issue = job.IssueDetail,
                 ParsedIssue = job.ParsedIssue,

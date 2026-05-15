@@ -34,28 +34,44 @@
                 <h3>@(_editingProvider != null ? "Edit" : "Add") Agent Provider</h3>
                 <div class="form-group">
                     <label>Provider Type</label>
-                    <select @bind="_form.ProviderType"><option value="KiroCli">KiroCli</option></select>
+                    <select @bind="_form.ProviderType">
+                        <option value="KiroCli">KiroCli</option>
+                        <option value="OpenCode">OpenCode</option>
+                    </select>
                 </div>
                 <div class="form-group">
                     <label>Display Name</label>
-                    <input type="text" @bind="_form.DisplayName" placeholder="Kiro CLI Agent" />
+                    <input type="text" @bind="_form.DisplayName" placeholder="@(_form.ProviderType == "OpenCode" ? "OpenCode Agent" : "Kiro CLI Agent")" />
                 </div>
-                <div class="form-group">
-                    <label>Executable Path</label>
-                    <input type="text" @bind="_form.ExecutablePath" placeholder="/root/.local/bin/kiro-cli" />
-                </div>
+                @if (_form.ProviderType == "KiroCli")
+                {
+                    <div class="form-group">
+                        <label>Executable Path</label>
+                        <input type="text" @bind="_form.ExecutablePath" placeholder="/root/.local/bin/kiro-cli" />
+                    </div>
+                }
+                else
+                {
+                    <div class="form-group">
+                        <label>Base URL</label>
+                        <input type="text" @bind="_form.BaseUrl" placeholder="http://127.0.0.1:4096" />
+                    </div>
+                }
                 <div class="form-group">
                     <label>Timeout (minutes)</label>
                     <input type="number" @bind="_form.TimeoutMinutes" min="1" />
                 </div>
-                <div class="form-group">
-                    <label>Agent Name</label>
-                    <input type="text" @bind="_form.AgentName" placeholder="default" />
-                </div>
+                @if (_form.ProviderType == "KiroCli")
+                {
+                    <div class="form-group">
+                        <label>Agent Name</label>
+                        <input type="text" @bind="_form.AgentName" placeholder="default" />
+                    </div>
+                }
                 <div class="form-group">
                     <label>Model</label>
                     <div class="input-with-action">
-                        @if (_availableModels.Count > 0)
+                        @if (_form.ProviderType == "KiroCli" && _availableModels.Count > 0)
                         {
                             <select @bind="_form.Model">
                                 <option value="auto">auto — Use CLI default (1.0x)</option>
@@ -67,13 +83,25 @@
                         }
                         else
                         {
-                            <input type="text" @bind="_form.Model" placeholder="auto" />
+                            <input type="text" @bind="_form.Model" placeholder="@(_form.ProviderType == "OpenCode" ? "azure-foundry/Kimi-2.6" : "auto")" />
                         }
-                        <button class="btn-edit" @onclick="FetchModels" disabled="@_loadingModels">
-                            @(_loadingModels ? "Loading..." : "Fetch Models")
-                        </button>
+                        @if (_form.ProviderType == "KiroCli")
+                        {
+                            <button class="btn-edit" @onclick="FetchModels" disabled="@_loadingModels">
+                                @(_loadingModels ? "Loading..." : "Fetch Models")
+                            </button>
+                        }
                     </div>
-                    <span class="form-hint">Select a model or leave as "auto" for default. Click "Fetch Models" to query available models from the CLI.</span>
+                    <span class="form-hint">
+                        @if (_form.ProviderType == "OpenCode")
+                        {
+                            @:Enter model in <code>provider/model</code> format (e.g. <code>anthropic/claude-sonnet-4-20250514</code>, <code>azure-foundry/Kimi-2.6</code>). Use <code>opencode models</code> in the container to list available models.
+                        }
+                        else
+                        {
+                            @:Select a model or leave as "auto" for default. Click "Fetch Models" to query available models from the CLI.
+                        }
+                    </span>
                 </div>
                 <div class="form-buttons">
                     <button class="btn-save" @onclick="SaveProvider">Save</button>
@@ -81,21 +109,42 @@
                 </div>
             </div>
             <div class="provider-help">
-                <h4>🤖 Kiro CLI Setup</h4>
-                <p>The agent provider runs the Kiro CLI to generate code. Kiro CLI must be installed and authenticated separately.</p>
-                <p class="help-heading">Prerequisites:</p>
-                <ul>
-                    <li>Install Kiro CLI — it's bundled with the Docker image, or install manually</li>
-                    <li>Run <code>kiro-cli login</code> once to authenticate (device code flow)</li>
-                </ul>
-                <p class="help-heading">Fields:</p>
-                <ul>
-                    <li><strong>Executable Path</strong> — full path to the kiro-cli binary (e.g. <code>/home/ubuntu/.local/bin/kiro-cli</code>)</li>
-                    <li><strong>Timeout</strong> — max minutes per agent invocation before it's killed</li>
-                    <li><strong>Agent Name</strong> — leave as <code>default</code> unless you have a custom agent configured</li>
-                    <li><strong>Model</strong> — the LLM model to use. <code>auto</code> uses the CLI default. Click "Fetch Models" to see available options with cost multipliers</li>
-                </ul>
-                <p class="help-tip">💡 Auth tokens are stored in <code>~/.local/share/kiro-cli/</code> and persist across runs when using a Docker volume.</p>
+                @if (_form.ProviderType == "KiroCli")
+                {
+                    <h4>🤖 Kiro CLI Setup</h4>
+                    <p>The agent provider runs the Kiro CLI to generate code. Kiro CLI must be installed and authenticated separately.</p>
+                    <p class="help-heading">Prerequisites:</p>
+                    <ul>
+                        <li>Install Kiro CLI — it's bundled with the Docker image, or install manually</li>
+                        <li>Run <code>kiro-cli login</code> once to authenticate (device code flow)</li>
+                    </ul>
+                    <p class="help-heading">Fields:</p>
+                    <ul>
+                        <li><strong>Executable Path</strong> — full path to the kiro-cli binary (e.g. <code>/home/ubuntu/.local/bin/kiro-cli</code>)</li>
+                        <li><strong>Timeout</strong> — max minutes per agent invocation before it's killed</li>
+                        <li><strong>Agent Name</strong> — leave as <code>default</code> unless you have a custom agent configured</li>
+                        <li><strong>Model</strong> — the LLM model to use. <code>auto</code> uses the CLI default. Click "Fetch Models" to see available options with cost multipliers</li>
+                    </ul>
+                    <p class="help-tip">💡 Auth tokens are stored in <code>~/.local/share/kiro-cli/</code> and persist across runs when using a Docker volume.</p>
+                }
+                else
+                {
+                    <h4>🌐 OpenCode Setup</h4>
+                    <p>The agent provider communicates with an OpenCode server via HTTP API. OpenCode runs as a sidecar within the agent container.</p>
+                    <p class="help-heading">Fields:</p>
+                    <ul>
+                        <li><strong>Base URL</strong> — the OpenCode server URL (default: <code>http://127.0.0.1:4096</code>, container-internal)</li>
+                        <li><strong>Timeout</strong> — max minutes per agent invocation before it's aborted</li>
+                        <li><strong>Model</strong> — in <code>provider/model</code> format (e.g. <code>anthropic/claude-sonnet-4-20250514</code>, <code>azure-foundry/Kimi-2.6</code>)</li>
+                    </ul>
+                    <p class="help-heading">Configuration:</p>
+                    <ul>
+                        <li>Set <code>OPENCODE_CONFIG_CONTENT</code> env var with provider JSON config</li>
+                        <li>Or mount config to <code>~/.config/opencode/opencode.json</code></li>
+                        <li>LLM API keys: <code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code>, or <code>OPENROUTER_API_KEY</code></li>
+                    </ul>
+                    <p class="help-tip">💡 The OpenCode server password is auto-generated per container run — no manual auth needed.</p>
+                }
             </div>
         </div>
     }
@@ -136,6 +185,7 @@
             ProviderType = p.ProviderType,
             DisplayName = p.DisplayName,
             ExecutablePath = p.Settings.GetValueOrDefault("executablePath", ""),
+            BaseUrl = p.Settings.GetValueOrDefault("baseUrl", "http://127.0.0.1:4096"),
             TimeoutMinutes = int.TryParse(p.Settings.GetValueOrDefault("timeout", "30"), out var t) ? t : 30,
             AgentName = p.Settings.GetValueOrDefault("agentName", ""),
             Model = p.Settings.GetValueOrDefault("model", "auto")
@@ -154,10 +204,26 @@
 
         var model = string.IsNullOrWhiteSpace(_form.Model) ? "auto" : _form.Model.Trim();
         if (!model.Equals("auto", StringComparison.OrdinalIgnoreCase)
-            && !System.Text.RegularExpressions.Regex.IsMatch(model, @"^[a-zA-Z0-9._-]+$"))
+            && !System.Text.RegularExpressions.Regex.IsMatch(model, @"^[a-zA-Z0-9._\-/]+$"))
         {
-            await OnShowStatus.InvokeAsync(("Model name contains invalid characters. Only letters, numbers, dots, hyphens, and underscores are allowed.", true));
+            await OnShowStatus.InvokeAsync(("Model name contains invalid characters. Only letters, numbers, dots, hyphens, underscores, and slashes are allowed.", true));
             return;
+        }
+
+        var settings = new Dictionary<string, string>
+        {
+            ["timeout"] = _form.TimeoutMinutes.ToString(),
+            ["model"] = model
+        };
+
+        if (_form.ProviderType == "KiroCli")
+        {
+            settings["executablePath"] = _form.ExecutablePath;
+            settings["agentName"] = _form.AgentName;
+        }
+        else
+        {
+            settings["baseUrl"] = string.IsNullOrWhiteSpace(_form.BaseUrl) ? "http://127.0.0.1:4096" : _form.BaseUrl.Trim();
         }
 
         var config = new ProviderConfig
@@ -166,13 +232,7 @@
             Kind = ProviderKind.Agent,
             ProviderType = _form.ProviderType,
             DisplayName = _form.DisplayName,
-            Settings = new Dictionary<string, string>
-            {
-                ["executablePath"] = _form.ExecutablePath,
-                ["timeout"] = _form.TimeoutMinutes.ToString(),
-                ["agentName"] = _form.AgentName,
-                ["model"] = model
-            }
+            Settings = settings
         };
 
         try
@@ -231,6 +291,7 @@
         public string ProviderType { get; set; } = "KiroCli";
         public string DisplayName { get; set; } = "";
         public string ExecutablePath { get; set; } = "/home/ubuntu/.local/bin/kiro-cli";
+        public string BaseUrl { get; set; } = "http://127.0.0.1:4096";
         public int TimeoutMinutes { get; set; } = 30;
         public string AgentName { get; set; } = "default";
         public string Model { get; set; } = "auto";
