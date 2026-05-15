@@ -251,7 +251,7 @@ public class AgentMonitoringPageComponentTests : BunitContext
         var cut = Render<AgentMonitoring>();
 
         var headerCells = cut.FindAll(".monitoring-table:last-of-type thead th");
-        Assert.Equal(7, headerCells.Count);
+        Assert.Equal(8, headerCells.Count);
     }
 
     [Fact]

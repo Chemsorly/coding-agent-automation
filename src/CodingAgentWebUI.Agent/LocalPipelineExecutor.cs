@@ -558,7 +558,9 @@ public sealed class LocalPipelineExecutor
         CodeReviewCriticalCount = run.CodeReviewCriticalCount,
         CodeReviewWarningCount = run.CodeReviewWarningCount,
         CodeReviewSuggestionCount = run.CodeReviewSuggestionCount,
-        Feedback = run.Feedback
+        Feedback = run.Feedback,
+        TotalTokens = run.TotalTokens,
+        TotalCost = run.TotalCost
     };
 
     private static JobCompletionPayload BuildFailurePayload(PipelineRun run, string reason) => new()
@@ -578,7 +580,9 @@ public sealed class LocalPipelineExecutor
         CodeReviewCriticalCount = run.CodeReviewCriticalCount,
         CodeReviewWarningCount = run.CodeReviewWarningCount,
         CodeReviewSuggestionCount = run.CodeReviewSuggestionCount,
-        Feedback = run.Feedback
+        Feedback = run.Feedback,
+        TotalTokens = run.TotalTokens,
+        TotalCost = run.TotalCost
     };
 
     /// <summary>

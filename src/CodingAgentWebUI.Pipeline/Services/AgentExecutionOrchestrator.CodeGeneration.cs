@@ -46,6 +46,8 @@ internal partial class AgentExecutionOrchestrator
                     context.Callbacks.EmitOutputLine(line);
                 });
 
+            run.AccumulateTokenUsage(agentResult);
+
             var outputSummary = agentResult.OutputLines.Count > 0
                 ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
                 : "(no output)";

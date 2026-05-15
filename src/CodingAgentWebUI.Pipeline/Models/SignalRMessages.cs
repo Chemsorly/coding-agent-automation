@@ -174,6 +174,12 @@ public sealed record JobCompletionPayload
 
     [Key(20)]
     public RunFeedback? Feedback { get; init; }
+
+    [Key(21)]
+    public long TotalTokens { get; init; }
+
+    [Key(22)]
+    public decimal? TotalCost { get; init; }
 }
 
 /// <summary>

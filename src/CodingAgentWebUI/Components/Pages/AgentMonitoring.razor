@@ -127,6 +127,11 @@
 
                             <div class="monitoring-detail-grid">
                                 <div><strong>Retries:</strong> @modalRun.RetryCount</div>
+                                @if (modalRun.TotalTokens > 0 || modalRun.TotalCost is not null)
+                                {
+                                    <div><strong>Cost:</strong> @CostFormatter.FormatBadge(modalRun.TotalTokens, modalRun.TotalCost)</div>
+                                    <div><strong>Tokens:</strong> @CostFormatter.FormatTokens(modalRun.TotalTokens)</div>
+                                }
                                 @if (modalRun.BranchName != null)
                                 {
                                     <div><strong>Branch:</strong> @modalRun.BranchName</div>
@@ -390,6 +395,7 @@
                                 <th>Agent</th>
                                 <th>Final Step</th>
                                 <th>Duration</th>
+                                <th>Cost</th>
                                 <th>PR</th>
                                 <th>Initiated By</th>
                             </tr>
@@ -408,6 +414,7 @@
                                         </span>
                                     </td>
                                     <td>@FormatDuration(run.StartedAt, run.CompletedAt)</td>
+                                    <td><span class="cost-badge">@CostFormatter.FormatBadge(run.TotalTokens, run.TotalCost)</span></td>
                                     <td>
                                         @if (!string.IsNullOrEmpty(run.PullRequestUrl))
                                         {
@@ -454,6 +461,11 @@
                     @* TODO: [UX-24] Add AgentProviderConfigId to PipelineRunSummary and resolve display name/type here *@
                     <div><strong>Agent:</strong> @(_selectedHistoryRun.AgentId ?? "local")</div>
                     <div><strong>Initiated By:</strong> @_selectedHistoryRun.InitiatedBy</div>
+                    @if (_selectedHistoryRun.TotalTokens > 0 || _selectedHistoryRun.TotalCost is not null)
+                    {
+                        <div><strong>Cost:</strong> @CostFormatter.FormatBadge(_selectedHistoryRun.TotalTokens, _selectedHistoryRun.TotalCost)</div>
+                        <div><strong>Tokens:</strong> @CostFormatter.FormatTokens(_selectedHistoryRun.TotalTokens)</div>
+                    }
                     @if (_selectedHistoryRun.ModelName != null)
                     {
                         <div><strong>Model:</strong> @_selectedHistoryRun.ModelName</div>
