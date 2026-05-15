@@ -2,8 +2,6 @@ using System.Security.Cryptography;
 using System.Text;
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.GitHub;
-using WireMock.RequestBuilders;
-using WireMock.ResponseBuilders;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.GitHub;
 
