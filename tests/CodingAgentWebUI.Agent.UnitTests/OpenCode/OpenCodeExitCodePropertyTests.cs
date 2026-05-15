@@ -290,18 +290,18 @@ public static class ExitCodeArbitrary
     }
 
     /// <summary>
-    /// Generates timeout outcomes with short timeouts and longer delays.
-    /// TimeoutMs is 100-500ms (enough for CTS to fire reliably on slow CI), DelayMs is always at least 2000ms more.
+    /// Generates timeout outcomes with realistic timeout values.
+    /// The delay is infinite (handler blocks forever) — the CancellationTokenSource in
+    /// production code fires deterministically after TimeoutMs.
     /// </summary>
     public static Arbitrary<TimeoutOutcome> TimeoutOutcomeArb()
     {
         var gen =
-            from timeoutMs in Gen.Choose(100, 500)
-            from extraDelay in Gen.Choose(2000, 5000)
+            from timeoutMs in Gen.Choose(50, 500)
             select new TimeoutOutcome
             {
                 TimeoutMs = timeoutMs,
-                DelayMs = timeoutMs + extraDelay
+                DelayMs = Timeout.Infinite // Handler blocks forever; timeout CTS cancels it
             };
 
         return gen.ToArbitrary();
