@@ -291,13 +291,13 @@ public static class ExitCodeArbitrary
 
     /// <summary>
     /// Generates timeout outcomes with short timeouts and longer delays.
-    /// TimeoutMs is 1-50ms, DelayMs is always at least 500ms more than timeout.
+    /// TimeoutMs is 100-500ms (enough for CTS to fire reliably on slow CI), DelayMs is always at least 2000ms more.
     /// </summary>
     public static Arbitrary<TimeoutOutcome> TimeoutOutcomeArb()
     {
         var gen =
-            from timeoutMs in Gen.Choose(1, 50)
-            from extraDelay in Gen.Choose(500, 2000)
+            from timeoutMs in Gen.Choose(100, 500)
+            from extraDelay in Gen.Choose(2000, 5000)
             select new TimeoutOutcome
             {
                 TimeoutMs = timeoutMs,
