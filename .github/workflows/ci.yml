@@ -21,13 +21,13 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore --verbosity quiet
 
       - name: Build
-        run: dotnet build --no-restore --configuration Release
+        run: dotnet build --no-restore --configuration Release --verbosity quiet
 
       - name: Test
-        run: dotnet test --no-build --configuration Release --verbosity normal --logger trx --results-directory TestResults --filter "Category!=E2E"
+        run: dotnet test --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category!=E2E"
 
       - name: Upload test results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
