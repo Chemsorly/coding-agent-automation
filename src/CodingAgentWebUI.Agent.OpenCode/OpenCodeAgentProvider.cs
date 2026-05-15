@@ -20,7 +20,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     private volatile string? _currentSessionId;
     private volatile bool _isExecuting;
     private long _lastOutputTimeTicks; // Interlocked access for DateTime
-    // TODO: [REVIEW] _lastSessionTokens is never pruned — unbounded growth over long-lived instances (memory leak / resource exhaustion)
     private readonly Dictionary<string, (long Input, long Output, long Reasoning, long CacheRead, long CacheWrite, double Cost)> _lastSessionTokens = new();
 
     public AgentProviderType ProviderType => AgentProviderType.OpenCode;
@@ -221,8 +220,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 await AbortBestEffortAsync(sessionId);
-                // TODO: [REVIEW] Token delta result discarded on caller cancellation — tokens consumed by this call are not counted in run total
-                // TODO: [REVIEW] Unused variable removed; _lastSessionTokens state update is lost since provider is disposed after exception unwinds
                 _ = await CaptureSessionTokenDeltaAsync(sessionId);
                 throw; // finally block handles SSE cleanup
             }
@@ -259,7 +256,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             }
 
             CaptureTokens:
-            // TODO: [REVIEW] goto CaptureTokens crosses try-finally boundary — fragile control flow, consider refactoring
             // Capture token usage delta on all paths (success, timeout, error)
             var (usage, cost) = await CaptureSessionTokenDeltaAsync(sessionId);
             return new AgentResult
