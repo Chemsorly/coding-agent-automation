@@ -20,6 +20,9 @@ internal static class OpenCodeJson
 public sealed record CreateSessionRequest
 {
     public required string Title { get; init; }
+
+    /// <summary>Working directory for the session. OpenCode uses this as the project root.</summary>
+    public string? Path { get; init; }
 }
 
 /// <summary>Response from POST /session.</summary>
@@ -104,4 +107,28 @@ public sealed record SseEvent
     public string? ToolName { get; init; }
     public string? ToolArgs { get; init; }
     public string? ToolResult { get; init; }
+}
+
+/// <summary>Token usage from GET /session/:id. Tracks input/output/reasoning tokens and cache hits.</summary>
+public sealed record SessionTokenUsage
+{
+    public long Input { get; init; }
+    public long Output { get; init; }
+    public long Reasoning { get; init; }
+    public SessionCacheUsage? Cache { get; init; }
+}
+
+/// <summary>Cache token usage (prompt caching).</summary>
+public sealed record SessionCacheUsage
+{
+    public long Read { get; init; }
+    public long Write { get; init; }
+}
+
+/// <summary>Response from GET /session/:id with token usage and cost.</summary>
+public sealed record SessionDetailResponse
+{
+    public required string Id { get; init; }
+    public double Cost { get; init; }
+    public SessionTokenUsage? Tokens { get; init; }
 }

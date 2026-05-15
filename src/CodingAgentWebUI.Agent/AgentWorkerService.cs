@@ -368,6 +368,14 @@ public sealed class AgentWorkerService : BackgroundService
                         onOutputLine: async line => await outputBatcher.AddLineAsync(line));
 
                     exitCode = result.ExitCode;
+
+                    // Send the response text to the UI (HTTP response body contains the final answer)
+                    foreach (var line in result.OutputLines)
+                    {
+                        if (!string.IsNullOrWhiteSpace(line))
+                            await outputBatcher.AddLineAsync(line);
+                    }
+
                     if (exitCode != ExitCodes.Success)
                         error = string.Join("\n", result.OutputLines.TakeLast(3));
                 }

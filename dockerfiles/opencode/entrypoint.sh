@@ -52,6 +52,10 @@ OPENCODE_PID=$!
 
 echo "OpenCode server started (PID: $OPENCODE_PID)"
 
+# Tail OpenCode logs to stdout (debug visibility via docker compose logs)
+# Wait briefly for the log file to be created, then tail in background
+(sleep 2 && tail -F /home/ubuntu/.local/share/opencode/log/*.log 2>/dev/null | sed 's/^/[opencode] /' &) &
+
 # -----------------------------------------------------------------------------
 # Signal handling — graceful shutdown (set up early, before health check loop)
 # -----------------------------------------------------------------------------

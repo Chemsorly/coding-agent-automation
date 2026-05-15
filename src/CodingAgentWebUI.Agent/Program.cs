@@ -41,6 +41,8 @@ Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
     // Suppress noisy HttpClient logging (OpenCode health monitor polls every 5s)
     .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
+    // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every 10s)
+    .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .Enrich.WithProperty("AgentId", agentId)
     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{AgentId}] {Message:lj}{NewLine}{Exception}")
@@ -110,6 +112,8 @@ try
     {
         var baseUrl = Environment.GetEnvironmentVariable("OPENCODE_BASE_URL") ?? "http://127.0.0.1:4096";
         client.BaseAddress = new Uri(baseUrl);
+        // OpenCode message API blocks until the agent finishes — can take minutes for complex tasks
+        client.Timeout = TimeSpan.FromMinutes(30);
 
         var password = Environment.GetEnvironmentVariable("OPENCODE_SERVER_PASSWORD");
         if (!string.IsNullOrEmpty(password))

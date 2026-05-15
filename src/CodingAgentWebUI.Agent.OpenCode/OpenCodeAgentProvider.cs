@@ -111,7 +111,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         using var client = _httpClientFactory.CreateClient("OpenCode");
 
         var title = Path.GetFileName(workspacePath) ?? workspacePath;
-        var request = new CreateSessionRequest { Title = title };
+        var request = new CreateSessionRequest { Title = title, Path = workspacePath };
 
         var response = await client.PostAsJsonAsync("/session", request, OpenCodeJson.JsonOptions, ct);
         response.EnsureSuccessStatusCode();
@@ -196,6 +196,9 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 var outputLines = combinedText.Split('\n')
                     .Select(line => StripAnsiEscapes(line))
                     .ToList();
+
+                // Log token usage for the session
+                await LogSessionTokenUsageAsync(sessionId, ct);
 
                 return new AgentResult
                 {
@@ -420,6 +423,35 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         catch (Exception ex)
         {
             _logger.Warning(ex, "Best-effort abort failed for session {SessionId}", sessionId);
+        }
+    }
+
+    /// <summary>
+    /// Queries the session for token usage and logs it at Information level.
+    /// Best-effort — failures are logged as warnings and do not affect execution.
+    /// </summary>
+    private async Task LogSessionTokenUsageAsync(string sessionId, CancellationToken ct)
+    {
+        try
+        {
+            using var client = _httpClientFactory.CreateClient("OpenCode");
+            var response = await client.GetAsync($"/session/{sessionId}", ct);
+            if (!response.IsSuccessStatusCode) return;
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            var session = System.Text.Json.JsonSerializer.Deserialize<SessionDetailResponse>(json, OpenCodeJson.JsonOptions);
+            if (session?.Tokens is null) return;
+
+            var t = session.Tokens;
+            var total = t.Input + t.Output + t.Reasoning;
+            _logger.Information(
+                "Session {SessionId} token usage: input={Input}, output={Output}, reasoning={Reasoning}, cache_read={CacheRead}, cache_write={CacheWrite}, total={Total}, cost=${Cost:F4}",
+                sessionId, t.Input, t.Output, t.Reasoning,
+                t.Cache?.Read ?? 0, t.Cache?.Write ?? 0, total, session.Cost);
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Failed to retrieve token usage for session {SessionId}", sessionId);
         }
     }
 
