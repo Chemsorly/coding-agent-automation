@@ -369,4 +369,103 @@ public sealed class ConsolidationServiceTests : IDisposable
     }
 
     #endregion
+
+    // --- DeletePersistedRunAsync tests ---
+
+    [Fact]
+    public async Task DeletePersistedRunAsync_FileExists_DeletesFile()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var run = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+        run.Should().NotBeNull();
+        var filePath = Path.Combine(_runsDir, $"{run!.RunId}.json");
+        File.Exists(filePath).Should().BeTrue();
+
+        // Act
+        await sut.DeletePersistedRunAsync(run.RunId);
+
+        // Assert
+        File.Exists(filePath).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task DeletePersistedRunAsync_FileDoesNotExist_DoesNotThrow()
+    {
+        // Arrange
+        var sut = CreateSut();
+        Directory.CreateDirectory(_runsDir);
+
+        // Act & Assert — no exception
+        await sut.DeletePersistedRunAsync(Guid.NewGuid().ToString());
+    }
+
+    // --- GetLastSuccessfulHarnessRunTimestampAsync tests ---
+
+    [Fact]
+    public async Task GetLastSuccessfulHarnessRunTimestampAsync_WithSuccessfulRuns_ReturnsLatestTimestamp()
+    {
+        // Arrange
+        var sut = CreateSut();
+        Directory.CreateDirectory(_runsDir);
+
+        var olderTimestamp = new DateTime(2026, 1, 10, 12, 0, 0, DateTimeKind.Utc);
+        var newerTimestamp = new DateTime(2026, 3, 15, 8, 30, 0, DateTimeKind.Utc);
+
+        WriteConsolidationRunFile("run-1", ConsolidationRunType.HarnessSuggestions, ConsolidationRunStatus.Succeeded, olderTimestamp);
+        WriteConsolidationRunFile("run-2", ConsolidationRunType.HarnessSuggestions, ConsolidationRunStatus.Succeeded, newerTimestamp);
+        WriteConsolidationRunFile("run-3", ConsolidationRunType.BrainConsolidation, ConsolidationRunStatus.Succeeded, newerTimestamp.AddDays(1));
+
+        // Act
+        var result = await sut.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
+
+        // Assert — returns the latest HarnessSuggestions succeeded timestamp, not the brain one
+        result.Should().Be(newerTimestamp);
+    }
+
+    [Fact]
+    public async Task GetLastSuccessfulHarnessRunTimestampAsync_NoRuns_ReturnsMinValue()
+    {
+        // Arrange
+        var sut = CreateSut();
+        // Don't create the directory — simulates first run
+
+        // Act
+        var result = await sut.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
+
+        // Assert
+        result.Should().Be(DateTime.MinValue);
+    }
+
+    [Fact]
+    public async Task GetLastSuccessfulHarnessRunTimestampAsync_OnlyFailedRuns_ReturnsMinValue()
+    {
+        // Arrange
+        var sut = CreateSut();
+        Directory.CreateDirectory(_runsDir);
+        WriteConsolidationRunFile("run-1", ConsolidationRunType.HarnessSuggestions, ConsolidationRunStatus.Failed, DateTime.UtcNow);
+
+        // Act
+        var result = await sut.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
+
+        // Assert
+        result.Should().Be(DateTime.MinValue);
+    }
+
+    private void WriteConsolidationRunFile(string runId, ConsolidationRunType type, ConsolidationRunStatus status, DateTime? completedAtUtc)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            runId,
+            type = type.ToString(),
+            status = status.ToString(),
+            startedAtUtc = DateTime.UtcNow.AddHours(-1),
+            completedAtUtc
+        }, new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+            WriteIndented = true
+        });
+        File.WriteAllText(Path.Combine(_runsDir, $"{runId}.json"), json);
+    }
 }

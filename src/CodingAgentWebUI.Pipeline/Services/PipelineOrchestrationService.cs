@@ -603,7 +603,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on issue {Issue}", newLabel, issueId); }
     }
-    private async Task RemoveAllAgentLabelsAsync(string issueId, CancellationToken ct)
+    internal async Task RemoveAllAgentLabelsAsync(string issueId, CancellationToken ct)
     {
         try
         {
