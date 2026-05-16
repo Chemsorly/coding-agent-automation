@@ -128,6 +128,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     public async Task<AgentResult> ExecuteAsync(AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null)
     {
         _isExecuting = true;
+        LastOutputTime = DateTime.UtcNow; // Reset so stall monitor measures from this call's start
         try
         {
             // 1. Session selection

@@ -310,6 +310,17 @@ internal partial class QualityGateOrchestrator
                     callbacks, _logger, ct,
                     resumeSessionId: run.CodegenSessionId);
 
+                // Detect dead/exhausted session: agent returned successfully but produced nothing.
+                // This typically means the session's context window overflowed and the provider
+                // returned an empty response. Clear session affinity so the next retry uses a fresh session.
+                if (agentResult is { ExitCode: 0 } && agentResult.Usage?.TotalTokens == 0 && agentResult.OutputLines.Count == 0)
+                {
+                    _logger.Warning("Pipeline {RunId} retry {RetryCount}: agent returned empty response (0 tokens), " +
+                                    "clearing session affinity for next attempt", run.RunId, run.RetryCount);
+                    run.CodegenSessionId = null;
+                    continue; // Skip QG validation — workspace unchanged, go straight to next retry
+                }
+
                 if (agentResult != null)
                     await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
             }
