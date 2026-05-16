@@ -353,7 +353,7 @@ public sealed class ConsolidationService : IConsolidationService
     /// Determines the timestamp of the last successful harness suggestion run by scanning
     /// persisted run files. Returns <see cref="DateTime.MinValue"/> if no prior run exists.
     /// </summary>
-    private async Task<DateTime> GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken ct = default)
+    internal async Task<DateTime> GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken ct = default)
     {
         if (!Directory.Exists(_consolidationRunsDirectory))
             return DateTime.MinValue;
@@ -425,7 +425,8 @@ public sealed class ConsolidationService : IConsolidationService
     /// <summary>
     /// Deletes a persisted run file (used when dispatch fails and the run must be rolled back).
     /// </summary>
-    private async Task DeletePersistedRunAsync(string runId)
+    // TODO: Add ArgumentNullException.ThrowIfNull(runId) for consistency with other methods in this class.
+    internal async Task DeletePersistedRunAsync(string runId)
     {
         try
         {
