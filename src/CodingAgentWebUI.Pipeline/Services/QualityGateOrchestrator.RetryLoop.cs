@@ -298,7 +298,7 @@ internal partial class QualityGateOrchestrator
 
             callbacks.TransitionTo(PipelineStep.GeneratingCode);
 
-            var fixPrompt = $"{retryPromptSummary}\n\nDo NOT run git write commands (git add, git commit, git push, etc.). The pipeline handles version control automatically.";
+            var fixPrompt = $"{retryPromptSummary}\n\n{PipelineConstants.GitRestrictionShort}";
             run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = fixPrompt });
             callbacks.NotifyChange();
 

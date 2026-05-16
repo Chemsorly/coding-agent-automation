@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Components;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.GitHub;
@@ -26,7 +27,7 @@ builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddSingleton(BuildInfo.Load());
 
 // Pipeline — Configuration Store
-var configStore = new JsonConfigurationStore("config/pipeline");
+var configStore = new JsonConfigurationStore(PipelineConstants.ConfigBaseDirectory);
 builder.Services.AddSingleton<IConfigurationStore>(configStore);
 builder.Services.AddSingleton<IPipelineConfigStore>(configStore);
 builder.Services.AddSingleton<IProviderConfigStore>(configStore);
@@ -251,7 +252,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // SignalR hub endpoint for agent connections
-app.MapHub<AgentHub>("/hubs/agent").RequireAuthorization("AgentApiKey");
+app.MapHub<AgentHub>(HubRoutes.Agent).RequireAuthorization("AgentApiKey");
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()

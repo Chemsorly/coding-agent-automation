@@ -49,8 +49,8 @@ internal partial class AgentExecutionOrchestrator
             run.AccumulateTokenUsage(agentResult);
 
             var outputSummary = agentResult.OutputLines.Count > 0
-                ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
-                : "(no output)";
+                ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
+                : PipelineConstants.NoOutputFallback;
 
             run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = outputSummary });
 

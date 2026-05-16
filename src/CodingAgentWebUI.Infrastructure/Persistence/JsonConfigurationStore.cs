@@ -14,7 +14,7 @@ public class JsonConfigurationStore : IConfigurationStore
 
     private static JsonSerializerOptions JsonOptions => PipelineJsonOptions.Default;
 
-    public JsonConfigurationStore(string baseDirectory = "config/pipeline")
+    public JsonConfigurationStore(string baseDirectory = PipelineConstants.ConfigBaseDirectory)
     {
         ArgumentNullException.ThrowIfNull(baseDirectory);
         _baseDirectory = baseDirectory;

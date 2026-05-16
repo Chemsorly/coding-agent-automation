@@ -2,6 +2,7 @@ using KiroCliLib.Core;
 using CodingAgentWebUI.Agent.KiroCli;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure.GitHub;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
@@ -64,7 +65,7 @@ public sealed class AgentProviderFactory : IProviderFactory
         if (config.ProviderType.Equals("KiroCli", StringComparison.OrdinalIgnoreCase))
             return CreateKiroCliAgentProvider(config);
 
-        if (config.ProviderType.Equals("OpenCode", StringComparison.OrdinalIgnoreCase))
+        if (config.ProviderType.Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase))
             return CreateOpenCodeAgentProvider(config);
 
         throw new NotSupportedException(
@@ -83,10 +84,10 @@ public sealed class AgentProviderFactory : IProviderFactory
 
     private GitHubRepositoryProvider CreateGitHubRepositoryProvider(ProviderConfig config)
     {
-        var apiUrl = GetRequiredSetting(config, "apiUrl");
-        var owner = GetRequiredSetting(config, "owner");
-        var repo = GetRequiredSetting(config, "repo");
-        var baseBranch = GetRequiredSetting(config, "baseBranch");
+        var apiUrl = GetRequiredSetting(config, ProviderSettingKeys.ApiUrl);
+        var owner = GetRequiredSetting(config, ProviderSettingKeys.Owner);
+        var repo = GetRequiredSetting(config, ProviderSettingKeys.Repo);
+        var baseBranch = GetRequiredSetting(config, ProviderSettingKeys.BaseBranch);
 
         if (_orchestratorProxy is not null)
         {
@@ -101,20 +102,20 @@ public sealed class AgentProviderFactory : IProviderFactory
             return new GitHubRepositoryProvider(apiUrl, tokenProvider, owner, repo, baseBranch);
         }
 
-        var token = GetRequiredSetting(config, "token");
+        var token = GetRequiredSetting(config, ProviderSettingKeys.Token);
         return new GitHubRepositoryProvider(apiUrl, token, owner, repo, baseBranch);
     }
 
     private KiroCliAgentProvider CreateKiroCliAgentProvider(ProviderConfig config)
     {
-        var model = config.Settings.GetValueOrDefault("model");
-        var executablePath = config.Settings.GetValueOrDefault("executablePath", "/home/ubuntu/.local/bin/kiro-cli");
+        var model = config.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
+        var executablePath = config.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, AgentDefaults.KiroCliPath);
         return new KiroCliAgentProvider(_orchestrator, Serilog.Log.Logger, model, executablePath);
     }
 
     private OpenCodeAgentProvider CreateOpenCodeAgentProvider(ProviderConfig config)
     {
-        var baseUrl = config.Settings.GetValueOrDefault("baseUrl", "http://127.0.0.1:4096");
+        var baseUrl = config.Settings.GetValueOrDefault(ProviderSettingKeys.BaseUrl, AgentDefaults.OpenCodeBaseUrl);
 
         if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) ||
             (uri.Scheme != "http" && uri.Scheme != "https"))
@@ -125,18 +126,18 @@ public sealed class AgentProviderFactory : IProviderFactory
         }
 
         // Validate password is available at construction time
-        _ = Environment.GetEnvironmentVariable("OPENCODE_SERVER_PASSWORD")
+        _ = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword)
             ?? throw new InvalidOperationException("OPENCODE_SERVER_PASSWORD not set.");
 
-        var model = config.Settings.GetValueOrDefault("model");
+        var model = config.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
         return new OpenCodeAgentProvider(_httpClientFactory, Serilog.Log.Logger, model);
     }
 
     private GitHubActionsPipelineProvider CreateGitHubPipelineProvider(ProviderConfig config)
     {
-        var apiUrl = GetRequiredSetting(config, "apiUrl");
-        var owner = GetRequiredSetting(config, "owner");
-        var repo = GetRequiredSetting(config, "repo");
+        var apiUrl = GetRequiredSetting(config, ProviderSettingKeys.ApiUrl);
+        var owner = GetRequiredSetting(config, ProviderSettingKeys.Owner);
+        var repo = GetRequiredSetting(config, ProviderSettingKeys.Repo);
 
         if (_orchestratorProxy is not null)
         {
@@ -146,7 +147,7 @@ public sealed class AgentProviderFactory : IProviderFactory
                 apiUrl, tokenProvider, owner, repo, _pipelineConfig.ExternalCiPollInterval);
         }
 
-        var token = GetRequiredSetting(config, "token");
+        var token = GetRequiredSetting(config, ProviderSettingKeys.Token);
         return new GitHubActionsPipelineProvider(
             apiUrl, token, owner, repo, _pipelineConfig.ExternalCiPollInterval);
     }

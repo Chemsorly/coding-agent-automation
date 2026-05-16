@@ -15,7 +15,7 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
 
     private static System.Text.Json.JsonSerializerOptions JsonOptions => PipelineJsonOptions.Default;
 
-    public PipelineRunHistoryService(Serilog.ILogger logger, string runsDirectory = "config/pipeline/runs")
+    public PipelineRunHistoryService(Serilog.ILogger logger, string runsDirectory = PipelineConstants.RunsDirectory)
     {
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;

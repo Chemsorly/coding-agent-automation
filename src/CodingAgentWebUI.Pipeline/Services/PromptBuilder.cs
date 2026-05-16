@@ -1,4 +1,5 @@
 using System.Text;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Services;
@@ -128,7 +129,7 @@ public static class PromptBuilder
         sb.AppendLine();
 
         // Pipeline mechanics (non-configurable)
-        sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). The pipeline handles all version control operations. Read-only git commands (git log, git diff, git status, git show) are fine.");
+        sb.AppendLine(PipelineConstants.GitRestrictionFull);
         sb.AppendLine($"The analysis for this issue is at `{AnalysisFilePath}` — read it before implementing.");
         sb.AppendLine();
 
@@ -184,7 +185,7 @@ public static class PromptBuilder
         sb.AppendLine();
         sb.AppendLine($"Write your findings to the file `{findingsFilePath}` in the workspace. Do NOT print the findings to stdout — only write them to that file.");
         sb.AppendLine();
-        sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). The pipeline handles all version control operations. Read-only git commands are fine.");
+        sb.AppendLine(PipelineConstants.GitRestrictionFull);
         sb.AppendLine();
         sb.AppendLine("Below is the original issue for reference. Review the changes against these requirements.");
         sb.AppendLine();
@@ -198,10 +199,10 @@ public static class PromptBuilder
     // NOTE: [ARC-08a] Gate comment markers rely on exact substring match — if a human edits the comment to remove the HTML marker, the gate comment leaks into prompt context
     internal static readonly string[] ExcludedCommentMarkers =
     [
-        "## 🤖 Agent Analysis",
-        "<!-- agent:gate-rejection -->",
-        "<!-- agent:gate-wont-do -->",
-        "<!-- agent:issue-feedback -->"
+        CommentMarkers.AnalysisHeader,
+        CommentMarkers.GateRejection,
+        CommentMarkers.GateWontDo,
+        CommentMarkers.IssueFeedback
     ];
 
     /// <summary>
@@ -215,7 +216,7 @@ public static class PromptBuilder
         var sb = new StringBuilder();
         sb.AppendLine(fixInstructions);
         sb.AppendLine();
-        sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). The pipeline handles all version control operations. Read-only git commands are fine.");
+        sb.AppendLine(PipelineConstants.GitRestrictionFull);
         sb.AppendLine();
         sb.AppendLine($"Review findings have been written to `{ReviewFindingsFilePath}`. Read the file, then fix only items marked [CRITICAL].");
         return sb.ToString().TrimEnd();
@@ -285,7 +286,7 @@ public static class PromptBuilder
 
         var filtered = comments
             .Where(c => !ExcludedCommentMarkers.Any(marker => c.Body.Contains(marker)))
-            .TakeLast(10)
+            .TakeLast(PipelineConstants.OutputTailLineCount)
             .ToList();
 
         if (filtered.Count == 0)
@@ -322,7 +323,7 @@ public static class PromptBuilder
         sb.AppendLine();
         sb.AppendLine("Do NOT make functional changes — cleanup only.");
         sb.AppendLine();
-        sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, etc.). The pipeline handles version control automatically.");
+        sb.AppendLine(PipelineConstants.GitRestrictionShort);
         return sb.ToString().TrimEnd();
     }
 
@@ -488,8 +489,7 @@ public static class PromptBuilder
 
         sb.AppendLine($"Refer to `{IssueContextFilePath}` for the full issue description and comments.");
         sb.AppendLine();
-        sb.AppendLine("Do NOT run git write commands (git add, git commit, git push, etc.). " +
-            "The pipeline handles version control automatically.");
+        sb.AppendLine(PipelineConstants.GitRestrictionShort);
 
         return sb.ToString().TrimEnd();
     }

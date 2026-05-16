@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Agent.Executors;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
@@ -317,14 +318,14 @@ public sealed class LocalConsolidationExecutor
     private IIssueProvider CreateIssueProviderForConsolidation(ProviderConfig issueConfig)
     {
         // Use the Infrastructure layer's GitHubIssueProvider directly
-        var apiUrl = issueConfig.Settings.GetValueOrDefault("apiUrl", "https://api.github.com");
-        var token = issueConfig.Settings.GetValueOrDefault("token")
+        var apiUrl = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, "https://api.github.com");
+        var token = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Token)
             ?? throw new InvalidOperationException(
                 $"Issue provider '{issueConfig.DisplayName}' is missing 'token' setting for consolidation");
-        var owner = issueConfig.Settings.GetValueOrDefault("owner")
+        var owner = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Owner)
             ?? throw new InvalidOperationException(
                 $"Issue provider '{issueConfig.DisplayName}' is missing 'owner' setting for consolidation");
-        var repo = issueConfig.Settings.GetValueOrDefault("repo")
+        var repo = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Repo)
             ?? throw new InvalidOperationException(
                 $"Issue provider '{issueConfig.DisplayName}' is missing 'repo' setting for consolidation");
 

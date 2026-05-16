@@ -139,8 +139,8 @@ internal partial class AgentExecutionOrchestrator
                         Role = ChatRole.Agent,
                         Content = $"[Code review {i + 1}/{config.CodeReview.MaxIterations} — {agent.Name}] " +
                                   (reviewResult.OutputLines.Count > 0
-                                      ? string.Join(Environment.NewLine, reviewResult.OutputLines.TakeLast(10))
-                                      : "(no output)")
+                                      ? string.Join(Environment.NewLine, reviewResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
+                                      : PipelineConstants.NoOutputFallback)
                     });
                     context.Callbacks.NotifyChange();
                 }

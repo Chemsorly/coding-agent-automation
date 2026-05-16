@@ -315,7 +315,7 @@ public partial class BrainUpdateService : IBrainUpdateService
             Commands.Stage(repo, "*");
 
             // Commit
-            var signature = new Signature("CodingAgentWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
+            var signature = new Signature(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
             repo.Commit(commitMessage, signature, signature);
         }, ct);
     }
@@ -464,7 +464,7 @@ public partial class BrainUpdateService : IBrainUpdateService
 
             // Stage and recommit
             Commands.Stage(repo, "*");
-            var signature = new Signature("CodingAgentWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
+            var signature = new Signature(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
             try
             {
                 repo.Commit(commitMessage, signature, signature);

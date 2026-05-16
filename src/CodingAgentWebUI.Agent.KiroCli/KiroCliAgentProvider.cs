@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Agent;
 using KiroCliLib.Core;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -27,7 +28,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// <summary>The model configured for this agent provider, or null/auto for default.</summary>
     public string? Model => _model;
 
-    public KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger = null, string? model = null, string executablePath = "/home/ubuntu/.local/bin/kiro-cli")
+    public KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger = null, string? model = null, string executablePath = AgentDefaults.KiroCliPath)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         _orchestrator = orchestrator;

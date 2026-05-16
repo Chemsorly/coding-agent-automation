@@ -37,7 +37,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatcher
         ITokenVendingService tokenVending,
         PipelineConfiguration config,
         ILogger logger,
-        string consolidationRunsDirectory = "config/pipeline/consolidation-runs")
+        string consolidationRunsDirectory = PipelineConstants.ConsolidationRunsDirectory)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(jobDispatcher);

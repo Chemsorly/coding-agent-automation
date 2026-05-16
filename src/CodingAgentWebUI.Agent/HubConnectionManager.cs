@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
@@ -80,7 +81,7 @@ public sealed class HubConnectionManager : IAsyncDisposable
 
         _logger = logger;
 
-        var hubUrl = $"{orchestratorUrl.TrimEnd('/')}/hubs/agent?agentId={Uri.EscapeDataString(agentId)}";
+        var hubUrl = $"{orchestratorUrl.TrimEnd('/')}{HubRoutes.Agent}?agentId={Uri.EscapeDataString(agentId)}";
 
         _connection = new HubConnectionBuilder()
             .WithUrl(hubUrl, options =>

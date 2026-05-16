@@ -114,8 +114,8 @@ internal partial class AgentExecutionOrchestrator : IAgentPhaseExecutor
             if (recordOutputToHistory)
             {
                 var outputSummary = agentResult.OutputLines.Count > 0
-                    ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(10))
-                    : "(no output)";
+                    ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
+                    : PipelineConstants.NoOutputFallback;
                 run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = outputSummary });
             }
 

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CodingAgentWebUI.Agent;
 using Microsoft.Extensions.Hosting;
 using ILogger = Serilog.ILogger;
 
@@ -52,7 +53,7 @@ public sealed class OpenCodeHealthMonitor : BackgroundService
     {
         try
         {
-            using var client = _httpClientFactory.CreateClient("OpenCode");
+            using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
 
