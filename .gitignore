@@ -58,9 +58,9 @@ nunit-*.xml
 /package-lock.json
 /package.json
 
-.kiro/*
-.brain/*
-.agent/*
+.kiro/
+.brain/
+.agent/
 .env
 
 # Test fixture build artifacts
