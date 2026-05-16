@@ -127,9 +127,12 @@
 
                             <div class="monitoring-detail-grid">
                                 <div><strong>Retries:</strong> @modalRun.RetryCount</div>
-                                @if (modalRun.TotalTokens > 0 || modalRun.TotalCost is not null)
+                                @if (modalRun.TotalCost is not null and > 0m)
                                 {
-                                    <div><strong>Cost:</strong> @CostFormatter.FormatBadge(modalRun.TotalTokens, modalRun.TotalCost)</div>
+                                    <div><strong>Cost:</strong> @CostFormatter.FormatCost(modalRun.TotalCost)</div>
+                                }
+                                @if (modalRun.TotalTokens > 0)
+                                {
                                     <div><strong>Tokens:</strong> @CostFormatter.FormatTokens(modalRun.TotalTokens)</div>
                                 }
                                 @if (modalRun.BranchName != null)
@@ -395,7 +398,7 @@
                                 <th>Agent</th>
                                 <th>Final Step</th>
                                 <th>Duration</th>
-                                <th>Cost</th>
+                                <th>Tokens</th>
                                 <th>PR</th>
                                 <th>Initiated By</th>
                             </tr>
@@ -414,7 +417,7 @@
                                         </span>
                                     </td>
                                     <td>@FormatDuration(run.StartedAt, run.CompletedAt)</td>
-                                    <td><span class="cost-badge">@CostFormatter.FormatBadge(run.TotalTokens, run.TotalCost)</span></td>
+                                    <td><span class="token-badge">@CostFormatter.FormatTokens(run.TotalTokens)</span></td>
                                     <td>
                                         @if (!string.IsNullOrEmpty(run.PullRequestUrl))
                                         {
@@ -461,9 +464,12 @@
                     @* TODO: [UX-24] Add AgentProviderConfigId to PipelineRunSummary and resolve display name/type here *@
                     <div><strong>Agent:</strong> @(_selectedHistoryRun.AgentId ?? "local")</div>
                     <div><strong>Initiated By:</strong> @_selectedHistoryRun.InitiatedBy</div>
-                    @if (_selectedHistoryRun.TotalTokens > 0 || _selectedHistoryRun.TotalCost is not null)
+                    @if (_selectedHistoryRun.TotalCost is not null and > 0m)
                     {
-                        <div><strong>Cost:</strong> @CostFormatter.FormatBadge(_selectedHistoryRun.TotalTokens, _selectedHistoryRun.TotalCost)</div>
+                        <div><strong>Cost:</strong> @CostFormatter.FormatCost(_selectedHistoryRun.TotalCost)</div>
+                    }
+                    @if (_selectedHistoryRun.TotalTokens > 0)
+                    {
                         <div><strong>Tokens:</strong> @CostFormatter.FormatTokens(_selectedHistoryRun.TotalTokens)</div>
                     }
                     @if (_selectedHistoryRun.ModelName != null)

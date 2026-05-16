@@ -53,8 +53,12 @@ OPENCODE_PID=$!
 echo "OpenCode server started (PID: $OPENCODE_PID)"
 
 # Tail OpenCode logs to stdout (debug visibility via docker compose logs)
-# Wait briefly for the log file to be created, then tail in background
-(sleep 2 && tail -F /home/ubuntu/.local/share/opencode/log/*.log 2>/dev/null | sed 's/^/[opencode] /' &) &
+# Filter out high-volume noise: bus streaming deltas, internal pub/sub bookkeeping,
+# and tool registry resolution spam (~91% of lines). Keeps: session lifecycle, LLM calls,
+# provider init, permission checks, errors/warnings, and startup logs.
+(sleep 2 && tail -F /home/ubuntu/.local/share/opencode/log/*.log 2>/dev/null \
+  | grep -v -E 'service=bus type=(message\.part\.(delta|updated)|message\.updated|session\.(updated|diff|status|next\.|created)|\* subscribing)|service=tool\.registry status=' \
+  | sed 's/^/[opencode] /' &) &
 
 # -----------------------------------------------------------------------------
 # Signal handling — graceful shutdown (set up early, before health check loop)

@@ -113,7 +113,7 @@ try
         var baseUrl = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeBaseUrl) ?? AgentDefaults.OpenCodeBaseUrl;
         client.BaseAddress = new Uri(baseUrl);
         // OpenCode message API blocks until the agent finishes — can take minutes for complex tasks
-        client.Timeout = TimeSpan.FromMinutes(30);
+        client.Timeout = TimeSpan.FromMinutes(60);
 
         var password = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword);
         if (!string.IsNullOrEmpty(password))

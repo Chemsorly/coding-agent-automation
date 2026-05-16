@@ -108,37 +108,37 @@ internal static class AgentStallMonitor
                         break;
                     }
 
-                    if (health.LastOutputTime.HasValue)
+                    // Determine silence duration: use LastOutputTime if available,
+                    // otherwise fall back to run start time (no output received yet at all).
+                    var referenceTime = health.LastOutputTime ?? run.StartedAt;
+                    var silence = DateTime.UtcNow - referenceTime;
+
+                    // Hard kill: silence exceeds kill timeout
+                    if (silence >= killTimeout)
                     {
-                        var silence = DateTime.UtcNow - health.LastOutputTime.Value;
+                        var killMsg = $"{phaseDescription} — no output for {silence.TotalMinutes:F0}m (kill timeout {killTimeout.TotalMinutes:F0}m). " +
+                                      $"Forcefully terminating agent process.";
+                        logger.Error("Pipeline {RunId} {StallMessage}", run.RunId, killMsg);
+                        run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = killMsg });
+                        onChange?.Invoke();
 
-                        // Hard kill: silence exceeds kill timeout
-                        if (silence >= killTimeout)
-                        {
-                            var killMsg = $"{phaseDescription} — no output for {silence.TotalMinutes:F0}m (kill timeout {killTimeout.TotalMinutes:F0}m). " +
-                                          $"Forcefully terminating agent process.";
-                            logger.Error("Pipeline {RunId} {StallMessage}", run.RunId, killMsg);
-                            run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = killMsg });
-                            onChange?.Invoke();
+                        try { await agentProvider.KillAsync(); }
+                        catch (Exception ex) { logger.Warning(ex, "Pipeline {RunId} KillAsync() failed", run.RunId); }
+                        break;
+                    }
 
-                            try { await agentProvider.KillAsync(); }
-                            catch (Exception ex) { logger.Warning(ex, "Pipeline {RunId} KillAsync() failed", run.RunId); }
-                            break;
-                        }
-
-                        // Silence warning
-                        var timeSinceLastWarn = DateTime.UtcNow - lastWarnTime;
-                        if (silence >= config.StallWarningInterval && timeSinceLastWarn >= config.StallWarningInterval)
-                        {
-                            var elapsed = DateTime.UtcNow - run.StartedAt;
-                            var msg = $"{phaseDescription} — no output for {silence.TotalMinutes:F0}m. " +
-                                      $"Agent call still in progress. " +
-                                      $"Total elapsed: {elapsed:hh\\:mm\\:ss}. Timeout: {config.AgentTimeout:hh\\:mm\\:ss}.";
-                            logger.Warning("Pipeline {RunId} {StallMessage}", run.RunId, msg);
-                            run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = msg });
-                            onChange?.Invoke();
-                            lastWarnTime = DateTime.UtcNow;
-                        }
+                    // Silence warning
+                    var timeSinceLastWarn = DateTime.UtcNow - lastWarnTime;
+                    if (silence >= config.StallWarningInterval && timeSinceLastWarn >= config.StallWarningInterval)
+                    {
+                        var elapsed = DateTime.UtcNow - run.StartedAt;
+                        var msg = $"{phaseDescription} — no output for {silence.TotalMinutes:F0}m. " +
+                                  $"Agent call still in progress. " +
+                                  $"Total elapsed: {elapsed:hh\\:mm\\:ss}. Timeout: {config.AgentTimeout:hh\\:mm\\:ss}.";
+                        logger.Warning("Pipeline {RunId} {StallMessage}", run.RunId, msg);
+                        run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = msg });
+                        onChange?.Invoke();
+                        lastWarnTime = DateTime.UtcNow;
                     }
                 }
             }
