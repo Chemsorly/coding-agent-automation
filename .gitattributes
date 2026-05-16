@@ -4,6 +4,11 @@
 * text=auto
 
 ###############################################################################
+# Force LF line endings for shell scripts (required for Docker/Linux execution)
+###############################################################################
+*.sh text eol=lf
+
+###############################################################################
 # Set default behavior for command prompt diff.
 #
 # This is need for earlier builds of msysgit that does not have it on by
