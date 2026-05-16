@@ -34,6 +34,12 @@ internal partial class AgentExecutionOrchestrator
             return;
 
         run.CodeReviewIterationsTotal = config.CodeReview.MaxIterations;
+
+        // Pre-compute diff artifacts so review agents don't need to run git diff themselves.
+        // This saves context window space (agents read selectively) and eliminates the first
+        // 2-3 tool-call rounds that every review agent would otherwise spend on git commands.
+        await PreComputeDiffArtifactsAsync(run, _logger, ct);
+
         for (var i = 0; i < config.CodeReview.MaxIterations; i++)
         {
             run.CodeReviewIterationInProgress = i + 1;
@@ -206,5 +212,59 @@ internal partial class AgentExecutionOrchestrator
         }
 
         run.CodeReviewIterationInProgress = 0;
+    }
+
+    /// <summary>
+    /// Pre-computes git diff artifacts (stat + full diff) and writes them to the workspace
+    /// so review agents can read them selectively instead of running git diff themselves.
+    /// This reduces context window usage and eliminates initial tool-call rounds.
+    /// </summary>
+    private static async Task PreComputeDiffArtifactsAsync(PipelineRun run, Serilog.ILogger logger, CancellationToken ct)
+    {
+        if (run.WorkspacePath is null) return;
+
+        var agentDir = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.MetadataDirectory);
+        Directory.CreateDirectory(agentDir);
+
+        try
+        {
+            // Generate diff stat (compact file list with line counts)
+            var diffStatResult = await RunGitCommandAsync(run.WorkspacePath, "diff --stat origin/main", ct);
+            var diffStatPath = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.DiffStatFilePath);
+            await File.WriteAllTextAsync(diffStatPath, diffStatResult, ct);
+            logger.Debug("Pipeline {RunId} wrote diff stat to {FilePath} ({Length} chars)",
+                run.RunId, AgentWorkspacePaths.DiffStatFilePath, diffStatResult.Length);
+
+            // Generate full diff
+            var fullDiffResult = await RunGitCommandAsync(run.WorkspacePath, "diff origin/main", ct);
+            var fullDiffPath = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.FullDiffFilePath);
+            await File.WriteAllTextAsync(fullDiffPath, fullDiffResult, ct);
+            logger.Debug("Pipeline {RunId} wrote full diff to {FilePath} ({Length} chars)",
+                run.RunId, AgentWorkspacePaths.FullDiffFilePath, fullDiffResult.Length);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.Warning(ex, "Pipeline {RunId} failed to pre-compute diff artifacts, review agents will fall back to running git diff", run.RunId);
+        }
+    }
+
+    private static async Task<string> RunGitCommandAsync(string workingDirectory, string arguments, CancellationToken ct)
+    {
+        using var process = new System.Diagnostics.Process();
+        process.StartInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "git",
+            Arguments = arguments,
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        process.Start();
+        var output = await process.StandardOutput.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct);
+        return output;
     }
 }

@@ -172,12 +172,15 @@ public static class PromptBuilder
         {
             sb.AppendLine("You are reviewing code changes made by another agent. You have no prior context about how or why these changes were made — judge purely on correctness, security, and adherence to requirements.");
             sb.AppendLine();
-            sb.AppendLine("To see ALL changes (both committed and uncommitted), run these commands:");
-            sb.AppendLine("- `git diff origin/main` — shows the full diff between origin/main and the working tree (includes both committed and uncommitted changes)");
-            sb.AppendLine("- `git status` — shows uncommitted/unstaged files in the working tree");
-            sb.AppendLine("- `git log origin/main..HEAD --oneline` — shows commits already on the branch (may be empty if changes are uncommitted)");
+            sb.AppendLine("The diff has been pre-computed for you. Read these files to understand the changes:");
+            sb.AppendLine($"- `{AgentWorkspacePaths.DiffStatFilePath}` — summary of changed files with line counts (read this FIRST to triage)");
+            sb.AppendLine($"- `{AgentWorkspacePaths.FullDiffFilePath}` — full diff between origin/main and the working tree");
             sb.AppendLine();
-            sb.AppendLine("IMPORTANT: Do NOT use `git diff origin/main...HEAD` (three dots) — that only compares commits and will miss uncommitted working tree changes.");
+            sb.AppendLine("IMPORTANT: Do NOT run `git diff` yourself — the diff is already captured in the files above. Read the diff-stat first to identify which files are relevant to your review focus, then selectively read sections of the full diff for those files. You do NOT need to read the entire full-diff file.");
+            sb.AppendLine();
+            sb.AppendLine("You may also run read-only git commands for additional context:");
+            sb.AppendLine("- `git log origin/main..HEAD --oneline` — shows commits on the branch");
+            sb.AppendLine("- `git status` — shows uncommitted/unstaged files");
             sb.AppendLine();
         }
 

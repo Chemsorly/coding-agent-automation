@@ -506,7 +506,10 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
             var localBranch = repo.CreateBranch(branchName, remoteBranch.Tip);
             repo.Branches.Update(localBranch,
                 b => b.TrackedBranch = remoteBranch.CanonicalName);
-            Commands.Checkout(repo, localBranch);
+            Commands.Checkout(repo, localBranch, new CheckoutOptions
+            {
+                CheckoutModifiers = CheckoutModifiers.Force
+            });
         }, ct);
     }
 
