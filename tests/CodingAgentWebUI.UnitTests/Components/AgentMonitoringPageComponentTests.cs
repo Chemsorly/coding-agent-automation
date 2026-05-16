@@ -336,7 +336,7 @@ public class AgentMonitoringPageComponentTests : BunitContext
     }
 
     [Fact]
-    public void RecentRuns_ClickingFailedRun_ShowsModalWithFailureReason()
+    public async Task RecentRuns_ClickingFailedRun_ShowsModalWithFailureReason()
     {
         var history = new List<PipelineRunSummary>
         {
@@ -346,15 +346,14 @@ public class AgentMonitoringPageComponentTests : BunitContext
         RegisterDefaults(history);
         var cut = Render<AgentMonitoring>();
 
-        var row = cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable");
-        row.Click();
+        await cut.InvokeAsync(() => cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click());
 
         var callout = cut.Find(".summary-failure-callout");
         Assert.Contains("Analysis failed after 2 attempt(s): analysis.md not found", callout.TextContent);
     }
 
     [Fact]
-    public void RecentRuns_ClickingCompletedRun_ShowsModalWithoutFailureCallout()
+    public async Task RecentRuns_ClickingCompletedRun_ShowsModalWithoutFailureCallout()
     {
         var history = new List<PipelineRunSummary>
         {
@@ -363,8 +362,7 @@ public class AgentMonitoringPageComponentTests : BunitContext
         RegisterDefaults(history);
         var cut = Render<AgentMonitoring>();
 
-        var row = cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable");
-        row.Click();
+        await cut.InvokeAsync(() => cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click());
 
         Assert.Empty(cut.FindAll(".summary-failure-callout"));
         // Modal should still be visible with run details
@@ -373,7 +371,7 @@ public class AgentMonitoringPageComponentTests : BunitContext
     }
 
     [Fact]
-    public void RecentRuns_HistoryModal_CanBeDismissedWithCloseButton()
+    public async Task RecentRuns_HistoryModal_CanBeDismissedWithCloseButton()
     {
         var history = new List<PipelineRunSummary>
         {
@@ -382,11 +380,11 @@ public class AgentMonitoringPageComponentTests : BunitContext
         RegisterDefaults(history);
         var cut = Render<AgentMonitoring>();
 
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
+        await cut.InvokeAsync(() => cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click());
         Assert.NotEmpty(cut.FindAll(".summary-failure-callout"));
 
         // Click close button
-        cut.Find(".modal-card .btn-cancel").Click();
+        await cut.InvokeAsync(() => cut.Find(".modal-card .btn-cancel").Click());
         Assert.Empty(cut.FindAll(".summary-failure-callout"));
     }
 }
