@@ -359,7 +359,7 @@ public sealed class LocalPipelineExecutor
     /// Builds the ordered step pipeline for agent-side execution.
     /// Skips FetchIssueStep (issue data comes from job assignment) and adds MCP config step.
     /// </summary>
-    private static IReadOnlyList<IPipelineStep> BuildAgentStepPipeline(
+    internal static IReadOnlyList<IPipelineStep> BuildAgentStepPipeline(
         JobAssignmentMessage job, HubConnection connection)
     {
         var steps = new List<IPipelineStep>
@@ -536,7 +536,7 @@ public sealed class LocalPipelineExecutor
         run.CurrentStep = finalStep;
     }
 
-    private static JobCompletionPayload BuildCompletionPayload(PipelineRun run) => new()
+    internal static JobCompletionPayload BuildCompletionPayload(PipelineRun run) => new()
     {
         FinalStep = run.CurrentStep,
         FailureReason = run.FailureReason,
@@ -563,7 +563,7 @@ public sealed class LocalPipelineExecutor
         TotalCost = run.TotalCost
     };
 
-    private static JobCompletionPayload BuildFailurePayload(PipelineRun run, string reason) => new()
+    internal static JobCompletionPayload BuildFailurePayload(PipelineRun run, string reason) => new()
     {
         FinalStep = PipelineStep.Failed,
         FailureReason = reason,
