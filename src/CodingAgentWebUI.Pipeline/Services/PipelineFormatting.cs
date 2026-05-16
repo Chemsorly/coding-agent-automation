@@ -24,7 +24,7 @@ public static partial class PipelineFormatting
     {
         var slug = GenerateSlug(title);
         var suffix = runId != null ? $"-{runId[..8]}" : "";
-        var prefix = $"feature/auto-{issueNumber}";
+        var prefix = $"{PipelineConstants.BranchPrefix}{issueNumber}";
 
         if (!string.IsNullOrEmpty(slug))
         {
@@ -220,7 +220,7 @@ public static partial class PipelineFormatting
 
         var filtered = comments
             .Where(c => !PromptBuilder.ExcludedCommentMarkers.Any(marker => c.Body.Contains(marker)))
-            .TakeLast(10)
+            .TakeLast(PipelineConstants.OutputTailLineCount)
             .ToList();
 
         if (filtered.Count == 0)

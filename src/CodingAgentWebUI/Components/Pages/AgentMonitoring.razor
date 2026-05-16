@@ -501,6 +501,9 @@
 </div>
 
 @code {
+    private const string JsScrollToBottom = "scrollToBottom";
+    private const string JsScrollActiveStep = "scrollActiveStepIntoView";
+
     private IReadOnlyList<PipelineRun> _activeRuns = [];
     private IReadOnlyList<AgentEntry> _agents = [];
     private IReadOnlyList<PendingJob> _queuedJobs = [];
@@ -582,8 +585,8 @@
             try
             {
                 await Task.Delay(50);
-                await JS.InvokeVoidAsync("scrollActiveStepIntoView", "sidebarSteps");
-                await JS.InvokeVoidAsync("scrollToBottom", "modalOutputPanel");
+                await JS.InvokeVoidAsync(JsScrollActiveStep, "sidebarSteps");
+                await JS.InvokeVoidAsync(JsScrollToBottom, "modalOutputPanel");
             }
             catch (Exception ex) { Log.Debug(ex, "JS interop scroll failed in modal render"); }
         }

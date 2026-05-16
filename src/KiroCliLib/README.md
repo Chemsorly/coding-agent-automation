@@ -151,8 +151,8 @@ ExecutePromptAsync(prompt, workspace, useResume, ct)
   │
   ├─ FileSystemMonitor.ScanWorkspace(before)
   ├─ ProcessWrapper.StartAsync(prompt, workspace, useResume, ct)
-  │     ├─ Write prompt to .kiro/prompt-input.md
-  │     ├─ Start process: kiro-cli chat [--resume] @.kiro/prompt-input.md
+  │     ├─ Write prompt to .agent/prompt-input.md
+  │     ├─ Start process: kiro-cli chat [--resume] @.agent/prompt-input.md
   │     ├─ OutputReceived → OutputParser.ProcessLine → StateChanged → CallbackHandler.Invoke
   │     └─ WaitForExitAsync
   ├─ FileSystemMonitor.ScanWorkspace(after)

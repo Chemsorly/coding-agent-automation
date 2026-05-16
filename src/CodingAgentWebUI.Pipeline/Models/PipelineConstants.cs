@@ -25,6 +25,44 @@ public static class PipelineConstants
     /// <summary>Default capacity (line count) for the output ring buffer.</summary>
     public const int DefaultOutputBufferCapacity = 10_000;
 
+    /// <summary>Number of output lines to include in chat history summaries and log messages.</summary>
+    public const int OutputTailLineCount = 10;
+
+    /// <summary>Fallback text when agent produces no output.</summary>
+    public const string NoOutputFallback = "(no output)";
+
+    /// <summary>Branch name prefix for auto-generated feature branches.</summary>
+    public const string BranchPrefix = "feature/auto-";
+
+    /// <summary>Default commit message suffix for pipeline-generated commits.</summary>
+    public const string AutomatedCommitSuffix = "Automated implementation via pipeline";
+
+    /// <summary>Base directory for pipeline configuration files.</summary>
+    public const string ConfigBaseDirectory = "config/pipeline";
+
+    /// <summary>Directory for pipeline run history files.</summary>
+    public const string RunsDirectory = "config/pipeline/runs";
+
+    /// <summary>Directory for consolidation run files.</summary>
+    public const string ConsolidationRunsDirectory = "config/pipeline/consolidation-runs";
+
+    /// <summary>Path for harness suggestions file.</summary>
+    public const string HarnessSuggestionsPath = "config/pipeline/harness-suggestions.json";
+
+    /// <summary>
+    /// Git restriction instruction appended to prompts (full version with read-only examples).
+    /// </summary>
+    public const string GitRestrictionFull =
+        "Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). " +
+        "The pipeline handles all version control operations. Read-only git commands (git log, git diff, git status, git show) are fine.";
+
+    /// <summary>
+    /// Git restriction instruction appended to prompts (short version for cleanup/retry).
+    /// </summary>
+    public const string GitRestrictionShort =
+        "Do NOT run git write commands (git add, git commit, git push, etc.). " +
+        "The pipeline handles version control automatically.";
+
     // ── TimeSpan defaults for sub-configurations ────────────────────────
 
     /// <summary>Default agent execution timeout (30 minutes).</summary>

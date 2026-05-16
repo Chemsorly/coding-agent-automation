@@ -40,8 +40,8 @@ public sealed class ConsolidationService : IConsolidationService
         PipelineConfiguration config,
         IPipelineRunHistoryService runHistoryService,
         IConsolidationDispatcher? dispatcher = null,
-        string consolidationRunsDirectory = "config/pipeline/consolidation-runs",
-        string harnessSuggestionsPath = "config/pipeline/harness-suggestions.json")
+        string consolidationRunsDirectory = PipelineConstants.ConsolidationRunsDirectory,
+        string harnessSuggestionsPath = PipelineConstants.HarnessSuggestionsPath)
     {
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(config);

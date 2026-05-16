@@ -303,7 +303,7 @@ public class QualityGateValidator : IQualityGateValidator
 
     /// <summary>
     /// Formats a short CI failure summary for GateResult.Details.
-    /// Verbose per-job logs are in .kiro/quality-gates/ — the retry prompt points there.
+    /// Verbose per-job logs are in .agent/quality-gates/ — the retry prompt points there.
     /// </summary>
     internal static string BuildCiFailureDetails(
         PipelineRunStatus status, IReadOnlyDictionary<long, string>? logPathMapping = null)
@@ -660,7 +660,7 @@ public class QualityGateValidator : IQualityGateValidator
     }
 
     /// <summary>
-    /// Writes gate stdout/stderr to .kiro/quality-gates/{gateName}-stdout.txt and
+    /// Writes gate stdout/stderr to .agent/quality-gates/{gateName}-stdout.txt and
     /// {gateName}-stderr.txt so the agent can read them on demand.
     /// </summary>
     private void WriteGateOutput(string workspacePath, string gateName, string? stdout, string? stderr)

@@ -21,9 +21,9 @@ internal partial class AgentExecutionOrchestrator
         var run = context.Run;
         var config = context.Config;
         string? existingAnalysis = null;
-        var analysisComment = issueComments.FirstOrDefault(c => c.Body.Contains("## 🤖 Agent Analysis"));
-        var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains("<!-- agent:gate-rejection -->"));
-        var gateWontDo = issueComments.FirstOrDefault(c => c.Body.Contains("<!-- agent:gate-wont-do -->"));
+        var analysisComment = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.AnalysisHeader));
+        var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateRejection));
+        var gateWontDo = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateWontDo));
 
         var latestGateComment = new[] { gateRejection, gateWontDo }
             .Where(c => c != null)
@@ -43,8 +43,8 @@ internal partial class AgentExecutionOrchestrator
         // Write issue context file before analysis
         try
         {
-            var kiroDir = Path.Combine(run.WorkspacePath!, ".kiro");
-            Directory.CreateDirectory(kiroDir);
+            var agentDir = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.MetadataDirectory);
+            Directory.CreateDirectory(agentDir);
 
             var issueContextContent = PromptBuilder.BuildIssueContextFileContent(context.Issue, context.ParsedIssue, issueComments);
             await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, PromptBuilder.IssueContextFilePath), issueContextContent, ct);
@@ -116,8 +116,8 @@ internal partial class AgentExecutionOrchestrator
                     if (!File.Exists(analysisFilePath))
                     {
                         var tailOutput = analysisResult.OutputLines.Count > 0
-                            ? string.Join(Environment.NewLine, analysisResult.OutputLines.TakeLast(10))
-                            : "(no output)";
+                            ? string.Join(Environment.NewLine, analysisResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
+                            : PipelineConstants.NoOutputFallback;
                         _logger.Warning("Pipeline {RunId} analysis.md not found. Exit code: {ExitCode}, last output:\n{Output}",
                             run.RunId, analysisResult.ExitCode, tailOutput);
                         throw new AnalysisIncompleteException("analysis.md not found after agent execution");
@@ -134,8 +134,8 @@ internal partial class AgentExecutionOrchestrator
                     if (!File.Exists(assessmentFilePath))
                     {
                         var tailOutput = analysisResult.OutputLines.Count > 0
-                            ? string.Join(Environment.NewLine, analysisResult.OutputLines.TakeLast(10))
-                            : "(no output)";
+                            ? string.Join(Environment.NewLine, analysisResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
+                            : PipelineConstants.NoOutputFallback;
                         _logger.Warning("Pipeline {RunId} analysis-assessment.json not found. Exit code: {ExitCode}, last output:\n{Output}",
                             run.RunId, analysisResult.ExitCode, tailOutput);
                     }
@@ -317,7 +317,7 @@ internal partial class AgentExecutionOrchestrator
         sb.AppendLine("---");
         sb.AppendLine("*The issue has been labeled `agent:needs-refinement`. Refine the issue description addressing the blocking issues above, then re-apply `agent:next` to retry.*");
         sb.AppendLine();
-        sb.AppendLine("<!-- agent:gate-rejection -->");
+        sb.AppendLine(CommentMarkers.GateRejection);
         return sb.ToString().TrimEnd();
     }
 
@@ -341,7 +341,7 @@ internal partial class AgentExecutionOrchestrator
         sb.AppendLine("---");
         sb.AppendLine("*The agent analyzed the codebase and determined no code changes are needed. The issue has been labeled `agent:wont-do`. If you disagree with this assessment, remove the label and re-apply `agent:next` to retry with a fresh analysis.*");
         sb.AppendLine();
-        sb.AppendLine("<!-- agent:gate-wont-do -->");
+        sb.AppendLine(CommentMarkers.GateWontDo);
         return sb.ToString().TrimEnd();
     }
 }

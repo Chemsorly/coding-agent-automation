@@ -15,19 +15,19 @@ using OpenTelemetry.Trace;
 using Serilog;
 
 // ── Read required environment variables early ──
-var orchestratorUrl = Environment.GetEnvironmentVariable("ORCHESTRATOR_URL")
+var orchestratorUrl = Environment.GetEnvironmentVariable(AgentDefaults.EnvOrchestratorUrl)
     ?? throw new InvalidOperationException("ORCHESTRATOR_URL environment variable is required");
-var agentApiKey = Environment.GetEnvironmentVariable("AGENT_API_KEY")
+var agentApiKey = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentApiKey)
     ?? throw new InvalidOperationException("AGENT_API_KEY environment variable is required");
-var agentId = Environment.GetEnvironmentVariable("AGENT_ID")
+var agentId = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentId)
     ?? Environment.MachineName;
 
 // Validate AGENT_TYPE is set (AgentWorkerService reads it, but fail fast here)
-if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AGENT_TYPE")))
+if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentType)))
     throw new InvalidOperationException("AGENT_TYPE environment variable is required");
 
 // ── Configure Serilog ──
-var logLevel = Environment.GetEnvironmentVariable("LOG_LEVEL")?.ToLowerInvariant() switch
+var logLevel = Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel)?.ToLowerInvariant() switch
 {
     "debug" or "dbg" => Serilog.Events.LogEventLevel.Debug,
     "verbose" or "trace" => Serilog.Events.LogEventLevel.Verbose,
@@ -75,7 +75,7 @@ try
     // ── KiroCliLib ──
     var kiroConfig = new Configuration
     {
-        KiroCliPath = "/home/ubuntu/.local/bin/kiro-cli",
+        KiroCliPath = AgentDefaults.KiroCliPath,
         UseWsl = false, // Agent runs natively in Linux container
         WorkspaceDirectory = "/app/workspaces"
     };
@@ -107,15 +107,15 @@ try
     builder.Services.AddPipelineServices(Log.Logger);
 
     // ── OpenCode named HttpClient (always registered — safe when OPENCODE_SERVER_PASSWORD is absent) ──
-    var agentProviderType = Environment.GetEnvironmentVariable("AGENT_PROVIDER_TYPE") ?? "";
-    builder.Services.AddHttpClient("OpenCode", (sp, client) =>
+    var agentProviderType = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "";
+    builder.Services.AddHttpClient(AgentDefaults.OpenCodeHttpClientName, (sp, client) =>
     {
-        var baseUrl = Environment.GetEnvironmentVariable("OPENCODE_BASE_URL") ?? "http://127.0.0.1:4096";
+        var baseUrl = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeBaseUrl) ?? AgentDefaults.OpenCodeBaseUrl;
         client.BaseAddress = new Uri(baseUrl);
         // OpenCode message API blocks until the agent finishes — can take minutes for complex tasks
         client.Timeout = TimeSpan.FromMinutes(30);
 
-        var password = Environment.GetEnvironmentVariable("OPENCODE_SERVER_PASSWORD");
+        var password = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword);
         if (!string.IsNullOrEmpty(password))
         {
             client.DefaultRequestHeaders.Authorization =
@@ -125,7 +125,7 @@ try
     });
 
     // ── OpenCode health monitor (only when provider type is OpenCode) ──
-    if (agentProviderType.Equals("OpenCode", StringComparison.OrdinalIgnoreCase))
+    if (agentProviderType.Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase))
     {
         builder.Services.AddHostedService<OpenCodeHealthMonitor>(sp =>
             new OpenCodeHealthMonitor(sp.GetRequiredService<IHttpClientFactory>(), Log.Logger));

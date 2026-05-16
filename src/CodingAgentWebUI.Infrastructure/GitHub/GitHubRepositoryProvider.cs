@@ -129,7 +129,7 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                 if (trackingBranch != null)
                 {
                     var signature = new Signature(
-                        "CodingAgentWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
+                        GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
                     repo.Merge(trackingBranch, signature, new MergeOptions
                     {
                         FastForwardStrategy = FastForwardStrategy.FastForwardOnly
@@ -237,7 +237,7 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
             if (stagedChanges.Count == 0 && !allowEmpty)
                 throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
 
-            var signature = new Signature("CodingAgentWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
+            var signature = new Signature(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
             var commitOptions = allowEmpty ? new CommitOptions { AllowEmptyCommit = true } : new CommitOptions();
             repo.Commit(message, signature, signature, commitOptions);
 
@@ -410,7 +410,7 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         string issueIdentifier, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
-        var branchPrefix = $"feature/auto-{issueIdentifier}-";
+        var branchPrefix = $"{PipelineConstants.BranchPrefix}{issueIdentifier}-";
 
         // 1. List all open PRs for the repository
         var allPrs = await ExecuteWithResilienceAsync(
@@ -525,7 +525,7 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                     $"Base branch '{_baseBranch}' not found.");
 
             var signature = new Signature(
-                "CodingAgentWebUI Pipeline", "pipeline@kiro.dev", DateTimeOffset.UtcNow);
+                GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
 
             var mergeResult = repo.Merge(baseBranch, signature, new MergeOptions
             {

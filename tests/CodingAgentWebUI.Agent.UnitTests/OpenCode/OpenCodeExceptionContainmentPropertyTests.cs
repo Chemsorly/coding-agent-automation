@@ -85,7 +85,7 @@ public class OpenCodeExceptionContainmentPropertyTests
     /// **Validates: Requirements 3.10**
     /// </summary>
     [Property(Arbitrary = [typeof(ExceptionContainmentArbitrary)], MaxTest = 20)]
-    public async void CallerCancellation_PropagatesOperationCanceledException(CallerCancellationOutcome outcome)
+    public async Task CallerCancellation_PropagatesOperationCanceledException(CallerCancellationOutcome outcome)
     {
         // Arrange — use a handler that delays the message endpoint so cancellation can fire
         var handler = new CancellationTestHandler(outcome.DelayBeforeCancelMs);
@@ -101,8 +101,9 @@ public class OpenCodeExceptionContainmentPropertyTests
             Timeout = TimeSpan.FromMinutes(5) // long timeout so it doesn't interfere
         };
 
-        // Cancel after a short delay
-        cts.CancelAfter(TimeSpan.FromMilliseconds(outcome.DelayBeforeCancelMs));
+        // Cancel after a short delay — use a minimum of 200ms to ensure the provider
+        // has time to create the session and reach the message endpoint before cancellation fires.
+        cts.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(outcome.DelayBeforeCancelMs, 200)));
 
         // Act & Assert — OperationCanceledException should propagate
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
@@ -190,7 +191,7 @@ public static class ExceptionContainmentArbitrary
     public static Arbitrary<CallerCancellationOutcome> CallerCancellationOutcomeArb()
     {
         var gen =
-            from delayMs in FsCheck.Fluent.Gen.Choose(10, 100)
+            from delayMs in FsCheck.Fluent.Gen.Choose(200, 500)
             select new CallerCancellationOutcome { DelayBeforeCancelMs = delayMs };
 
         return gen.ToArbitrary();

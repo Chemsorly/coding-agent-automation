@@ -2,7 +2,7 @@ namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
 /// A single refactoring proposal produced by the agent.
-/// Parsed from the .kiro/refactoring-proposals.json file in the workspace.
+/// Parsed from the .agent/refactoring-proposals.json file in the workspace.
 /// </summary>
 public sealed class RefactoringProposal
 {

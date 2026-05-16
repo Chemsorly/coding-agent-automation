@@ -61,7 +61,7 @@ public class ConsolidationPromptBuilderTests
         var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
 
         result.Should().Contain("JSON");
-        result.Should().Contain(".kiro/refactoring-proposals.json");
+        result.Should().Contain(".agent/refactoring-proposals.json");
     }
 
     /// <summary>

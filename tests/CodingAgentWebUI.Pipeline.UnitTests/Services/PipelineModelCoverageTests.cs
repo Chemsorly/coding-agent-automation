@@ -154,8 +154,8 @@ public class PipelineModelCoverageTests
     {
         var body = PipelineFormatting.GeneratePrBody(
             "42", 10, 0, 0, null, Array.Empty<FileChangeSummary>(), "Fix bug",
-            blacklistedFilesDetected: new[] { ".kiro/settings.json" });
-        body.Should().Contain(".kiro/settings.json");
+            blacklistedFilesDetected: new[] { ".agent/settings.json" });
+        body.Should().Contain(".agent/settings.json");
     }
 
     [Fact]

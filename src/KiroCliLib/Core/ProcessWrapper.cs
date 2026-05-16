@@ -9,6 +9,9 @@ namespace KiroCliLib.Core;
 /// </summary>
 public class ProcessWrapper : IProcessWrapper
 {
+    private const int WslKillTimeoutMs = 2000;
+    private const int ProcessKillTimeoutMs = 5000;
+
     private readonly Configuration.Configuration _config;
     private readonly ILogger _logger;
     private readonly bool _useWsl;
@@ -45,14 +48,14 @@ public class ProcessWrapper : IProcessWrapper
         // See: https://kiro.dev/docs/cli/chat/file-references/
         // This avoids shell argument escaping issues with complex prompts containing
         // quotes, newlines, backticks, and JSON that cause exit code 2 (argument parse error).
-        var kiroDir = Path.Combine(workspaceDirectory, ".kiro");
-        Directory.CreateDirectory(kiroDir);
-        var promptFile = Path.Combine(kiroDir, "prompt-input.md");
+        var agentDir = Path.Combine(workspaceDirectory, ".agent");
+        Directory.CreateDirectory(agentDir);
+        var promptFile = Path.Combine(agentDir, "prompt-input.md");
         await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
 
         // The @path syntax expands file contents inline before sending (per Kiro docs).
         // Use explicit relative path (@./path) to avoid prompt name collision.
-        var inlinePrompt = "@.kiro/prompt-input.md";
+        var inlinePrompt = "@.agent/prompt-input.md";
         var resumeFlag = resumeSessionId is not null
             ? $"--resume-id {resumeSessionId}"
             : useResume ? "--resume" : null;
@@ -136,12 +139,12 @@ public class ProcessWrapper : IProcessWrapper
                         }
                     };
                     killProcess.Start();
-                    killProcess.WaitForExit(2000);
+                    killProcess.WaitForExit(WslKillTimeoutMs);
                 }
                 catch (Exception ex) { _logger.Warning(ex, "Failed to kill WSL kiro-cli processes"); }
             }
             _process.Kill(entireProcessTree: true);
-            _process.WaitForExit(5000);
+            _process.WaitForExit(ProcessKillTimeoutMs);
         }
         catch (Exception ex) { _logger.Error(ex, "Error killing Kiro CLI process"); }
     }

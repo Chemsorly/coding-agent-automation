@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Infrastructure.GitHub;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
@@ -27,36 +28,36 @@ public class ProviderFactory : IProviderFactory
         // Register built-in providers
         RegisterIssueProvider("GitHub", config =>
         {
-            ValidateRequiredSettings(config, "apiUrl", "clientId", "installationId", "privateKeyBase64", "owner", "repo");
+            ValidateRequiredSettings(config, ProviderSettingKeys.ApiUrl, ProviderSettingKeys.ClientId, ProviderSettingKeys.InstallationId, ProviderSettingKeys.PrivateKeyBase64, ProviderSettingKeys.Owner, ProviderSettingKeys.Repo);
             var authService = GetOrCreateAuthService(config);
             return new GitHubIssueProvider(
-                config.Settings["apiUrl"],
+                config.Settings[ProviderSettingKeys.ApiUrl],
                 authService.GetTokenAsync,
-                config.Settings["owner"],
-                config.Settings["repo"]);
+                config.Settings[ProviderSettingKeys.Owner],
+                config.Settings[ProviderSettingKeys.Repo]);
         });
 
         RegisterRepositoryProvider("GitHub", config =>
         {
-            ValidateRequiredSettings(config, "apiUrl", "clientId", "installationId", "privateKeyBase64", "owner", "repo", "baseBranch");
+            ValidateRequiredSettings(config, ProviderSettingKeys.ApiUrl, ProviderSettingKeys.ClientId, ProviderSettingKeys.InstallationId, ProviderSettingKeys.PrivateKeyBase64, ProviderSettingKeys.Owner, ProviderSettingKeys.Repo, ProviderSettingKeys.BaseBranch);
             var authService = GetOrCreateAuthService(config);
             return new GitHubRepositoryProvider(
-                config.Settings["apiUrl"],
+                config.Settings[ProviderSettingKeys.ApiUrl],
                 authService.GetTokenAsync,
-                config.Settings["owner"],
-                config.Settings["repo"],
-                config.Settings["baseBranch"]);
+                config.Settings[ProviderSettingKeys.Owner],
+                config.Settings[ProviderSettingKeys.Repo],
+                config.Settings[ProviderSettingKeys.BaseBranch]);
         });
 
         RegisterPipelineProvider("GitHub", config =>
         {
-            ValidateRequiredSettings(config, "apiUrl", "clientId", "installationId", "privateKeyBase64", "owner", "repo");
+            ValidateRequiredSettings(config, ProviderSettingKeys.ApiUrl, ProviderSettingKeys.ClientId, ProviderSettingKeys.InstallationId, ProviderSettingKeys.PrivateKeyBase64, ProviderSettingKeys.Owner, ProviderSettingKeys.Repo);
             var authService = GetOrCreateAuthService(config);
             return new GitHubActionsPipelineProvider(
-                config.Settings["apiUrl"],
+                config.Settings[ProviderSettingKeys.ApiUrl],
                 authService.GetTokenAsync,
-                config.Settings["owner"],
-                config.Settings["repo"],
+                config.Settings[ProviderSettingKeys.Owner],
+                config.Settings[ProviderSettingKeys.Repo],
                 _pipelineConfig.ExternalCiPollInterval);
         });
     }
@@ -129,21 +130,21 @@ public class ProviderFactory : IProviderFactory
     /// </summary>
     internal GitHubAppAuthService GetOrCreateAuthService(ProviderConfig config)
     {
-        if (!long.TryParse(config.Settings["installationId"], out var installationId))
+        if (!long.TryParse(config.Settings[ProviderSettingKeys.InstallationId], out var installationId))
             throw new ArgumentException(
-                $"Provider '{config.DisplayName}' (type: {config.ProviderType}) has invalid installationId: '{config.Settings["installationId"]}'. Expected a numeric value.",
+                $"Provider '{config.DisplayName}' (type: {config.ProviderType}) has invalid installationId: '{config.Settings[ProviderSettingKeys.InstallationId]}'. Expected a numeric value.",
                 nameof(config));
 
-        var cacheKey = $"{config.Settings["clientId"]}:{installationId}";
+        var cacheKey = $"{config.Settings[ProviderSettingKeys.ClientId]}:{installationId}";
 
         if (_authServiceCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
         var authService = new GitHubAppAuthService(
-            config.Settings["clientId"],
+            config.Settings[ProviderSettingKeys.ClientId],
             installationId,
-            config.Settings["privateKeyBase64"],
-            config.Settings["apiUrl"],
+            config.Settings[ProviderSettingKeys.PrivateKeyBase64],
+            config.Settings[ProviderSettingKeys.ApiUrl],
             Serilog.Log.Logger);
 
         _authServiceCache[cacheKey] = authService;

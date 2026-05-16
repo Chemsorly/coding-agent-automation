@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Services;
@@ -21,7 +22,7 @@ public static class FeedbackCommentFormatter
         var builder = new System.Text.StringBuilder();
 
         // HTML marker for identification (must not be duplicated by analysis or gate-rejection comments)
-        builder.AppendLine("<!-- agent:issue-feedback -->");
+        builder.AppendLine(CommentMarkers.IssueFeedback);
         builder.AppendLine("## 🤖 Agent Feedback — Issue Quality");
         builder.AppendLine();
 

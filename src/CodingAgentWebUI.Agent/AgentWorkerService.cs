@@ -83,15 +83,15 @@ public sealed class AgentWorkerService : BackgroundService
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
-        _isOpenCodeProvider = (Environment.GetEnvironmentVariable("AGENT_PROVIDER_TYPE") ?? "")
-            .Equals("OpenCode", StringComparison.OrdinalIgnoreCase);
+        _isOpenCodeProvider = (Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "")
+            .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase);
 
-        _agentId = Environment.GetEnvironmentVariable("AGENT_ID")
+        _agentId = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentId)
             ?? Environment.MachineName;
-        _agentType = Environment.GetEnvironmentVariable("AGENT_TYPE")
+        _agentType = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentType)
             ?? throw new InvalidOperationException("AGENT_TYPE environment variable is required");
 
-        var labelsEnv = Environment.GetEnvironmentVariable("AGENT_LABELS") ?? string.Empty;
+        var labelsEnv = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentLabels) ?? string.Empty;
         _labels = labelsEnv
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList()
@@ -486,7 +486,7 @@ public sealed class AgentWorkerService : BackgroundService
         {
             var psi = new ProcessStartInfo
             {
-                FileName = Environment.GetEnvironmentVariable("KIRO_CLI_PATH") ?? "/home/ubuntu/.local/bin/kiro-cli",
+                FileName = Environment.GetEnvironmentVariable(AgentDefaults.EnvKiroCliPath) ?? AgentDefaults.KiroCliPath,
                 Arguments = "chat --list-models --format json",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

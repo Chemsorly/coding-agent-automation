@@ -103,6 +103,8 @@
 </div>
 
 @code {
+    private const string ChatSessionJobId = "chat-session";
+
     private IReadOnlyList<AgentEntry> _idleAgents = [];
     private string _selectedAgentId = "";
     private bool _isChatActive;
@@ -184,7 +186,7 @@
         }
 
         // Mark agent as busy for chat
-        agent.ActiveJobId = "chat-session";
+        agent.ActiveJobId = ChatSessionJobId;
         Registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
 
         _isChatActive = true;
@@ -331,7 +333,7 @@
 
         // Return agent to idle
         var agentEntry = Registry.GetByAgentId(_selectedAgentId);
-        if (agentEntry is not null && agentEntry.Status == AgentStatus.Busy && agentEntry.ActiveJobId == "chat-session")
+        if (agentEntry is not null && agentEntry.Status == AgentStatus.Busy && agentEntry.ActiveJobId == ChatSessionJobId)
         {
             agentEntry.ActiveJobId = null;
             Registry.TransitionStatus(agentEntry.AgentId, AgentStatus.Idle);
@@ -395,7 +397,7 @@
             }
 
             var agentEntry = Registry.GetByAgentId(_selectedAgentId);
-            if (agentEntry is not null && agentEntry.Status == AgentStatus.Busy && agentEntry.ActiveJobId == "chat-session")
+            if (agentEntry is not null && agentEntry.Status == AgentStatus.Busy && agentEntry.ActiveJobId == ChatSessionJobId)
             {
                 agentEntry.ActiveJobId = null;
                 Registry.TransitionStatus(agentEntry.AgentId, AgentStatus.Idle);

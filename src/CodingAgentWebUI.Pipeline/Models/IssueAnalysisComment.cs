@@ -1,4 +1,5 @@
 using System.Text;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Pipeline.Models;
 
@@ -19,7 +20,7 @@ public sealed class IssueAnalysisComment
     public string ToMarkdown()
     {
         var sb = new StringBuilder();
-        sb.AppendLine("## 🤖 Agent Analysis");
+        sb.AppendLine(CommentMarkers.AnalysisHeader);
         sb.AppendLine();
 
         // If we have agent-generated analysis, use it as the primary content

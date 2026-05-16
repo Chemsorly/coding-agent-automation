@@ -76,6 +76,6 @@ public sealed record AgentConfiguration
 /// </summary>
 public sealed record CommitConfiguration
 {
-    public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".kiro", ".github", ".brain" };
+    public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".agent", ".github", ".brain" };
     public BlacklistMode BlacklistMode { get; init; } = BlacklistMode.WarnAndExclude;
 }

@@ -192,7 +192,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             var issueProvider = _providerManager.ActiveIssueProvider!;
             if (!string.IsNullOrEmpty(brainProviderId))
                 await _providerManager.CreateBrainProviderAsync(brainProviderId, linkedCt);
-            var configuredModel = agentProviderConfig.Settings.GetValueOrDefault("model", "auto");
+            var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
             var run = new PipelineRun
             {
                 RunId = Guid.NewGuid().ToString(),
@@ -270,7 +270,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, ct);
         await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
         var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId, ProviderKind.Agent, ct);
-        var configuredModel = agentProviderConfig.Settings.GetValueOrDefault("model", "auto");
+        var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
 
         var run = new PipelineRun
         {

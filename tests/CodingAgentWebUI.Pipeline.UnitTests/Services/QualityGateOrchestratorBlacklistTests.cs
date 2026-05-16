@@ -56,7 +56,7 @@ public class QualityGateOrchestratorBlacklistTests
     public async Task AppendExternalCi_BlacklistedFilesInFailMode_StopsPipeline()
     {
         // Arrange
-        var blacklistedFiles = new List<string> { ".kiro/settings.json", ".github/workflows/ci.yml" };
+        var blacklistedFiles = new List<string> { ".agent/settings.json", ".github/workflows/ci.yml" };
         var run = CreateRun();
         var config = CreateConfig(BlacklistMode.Fail);
 
@@ -74,7 +74,7 @@ public class QualityGateOrchestratorBlacklistTests
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
         _mockCallbacks.Verify(c => c.AddRunToHistory(run), Times.Once);
         run.FailureReason.Should().Contain("Blacklisted files detected");
-        run.FailureReason.Should().Contain(".kiro/settings.json");
+        run.FailureReason.Should().Contain(".agent/settings.json");
         run.CompletedAt.Should().NotBeNull();
     }
 
@@ -82,7 +82,7 @@ public class QualityGateOrchestratorBlacklistTests
     public async Task AppendExternalCi_BlacklistedFilesInWarnMode_ContinuesPipeline()
     {
         // Arrange
-        var blacklistedFiles = new List<string> { ".kiro/config.json" };
+        var blacklistedFiles = new List<string> { ".agent/config.json" };
         var run = CreateRun();
         var config = CreateConfig(BlacklistMode.WarnAndExclude);
 
@@ -107,7 +107,7 @@ public class QualityGateOrchestratorBlacklistTests
         _mockCallbacks.Verify(c => c.NotifyChange(), Times.AtLeastOnce);
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Never);
         _mockIssueOps.Verify(o => o.SwapLabelAsync(It.IsAny<string>(), AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Never);
-        run.BlacklistedFilesDetected.Should().Contain(".kiro/config.json");
+        run.BlacklistedFilesDetected.Should().Contain(".agent/config.json");
         run.FailureReason.Should().BeNull();
     }
 
@@ -160,7 +160,7 @@ public class QualityGateOrchestratorBlacklistTests
     {
         AgentTimeout = TimeSpan.FromMinutes(10),
         MaxRetries = 0,
-        BlacklistedPaths = new[] { ".kiro", ".github" },
+        BlacklistedPaths = new[] { ".agent", ".github" },
         BlacklistMode = mode,
         ExternalCiTimeout = TimeSpan.FromMinutes(5),
         StallPollInterval = TimeSpan.FromMilliseconds(50),

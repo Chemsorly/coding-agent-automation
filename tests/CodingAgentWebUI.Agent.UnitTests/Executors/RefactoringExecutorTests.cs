@@ -93,10 +93,10 @@ public class RefactoringExecutorTests : IDisposable
             .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Callback<string, CancellationToken>((path, _) =>
             {
-                // Create the .kiro directory and write malformed JSON
-                var kiroDir = Path.Combine(path, ".kiro");
-                Directory.CreateDirectory(kiroDir);
-                File.WriteAllText(Path.Combine(kiroDir, "refactoring-proposals.json"), "{ invalid json [[[");
+                // Create the .agent directory and write malformed JSON
+                var agentDir = Path.Combine(path, ".agent");
+                Directory.CreateDirectory(agentDir);
+                File.WriteAllText(Path.Combine(agentDir, "refactoring-proposals.json"), "{ invalid json [[[");
             })
             .Returns(Task.CompletedTask);
 
@@ -144,9 +144,9 @@ public class RefactoringExecutorTests : IDisposable
             .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Callback<string, CancellationToken>((path, _) =>
             {
-                var kiroDir = Path.Combine(path, ".kiro");
-                Directory.CreateDirectory(kiroDir);
-                File.WriteAllText(Path.Combine(kiroDir, "refactoring-proposals.json"), proposalsJson);
+                var agentDir = Path.Combine(path, ".agent");
+                Directory.CreateDirectory(agentDir);
+                File.WriteAllText(Path.Combine(agentDir, "refactoring-proposals.json"), proposalsJson);
             })
             .Returns(Task.CompletedTask);
 

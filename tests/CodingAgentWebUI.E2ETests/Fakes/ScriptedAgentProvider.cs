@@ -96,7 +96,7 @@ public abstract class AgentScript
     public abstract void Execute(string workspacePath);
 }
 
-/// <summary>Writes analysis.md and analysis-assessment.json to .kiro/ directory.</summary>
+/// <summary>Writes analysis.md and analysis-assessment.json to .agent/ directory.</summary>
 public sealed class AnalysisScript : AgentScript
 {
     public string Recommendation { get; init; } = "ready";
@@ -105,10 +105,10 @@ public sealed class AnalysisScript : AgentScript
 
     public override void Execute(string workspacePath)
     {
-        var kiroDir = Path.Combine(workspacePath, ".kiro");
-        Directory.CreateDirectory(kiroDir);
+        var agentDir = Path.Combine(workspacePath, ".agent");
+        Directory.CreateDirectory(agentDir);
 
-        File.WriteAllText(Path.Combine(kiroDir, "analysis.md"), AnalysisContent);
+        File.WriteAllText(Path.Combine(agentDir, "analysis.md"), AnalysisContent);
 
         var assessment = new
         {
@@ -118,7 +118,7 @@ public sealed class AnalysisScript : AgentScript
             blockingIssues = Array.Empty<string>()
         };
         File.WriteAllText(
-            Path.Combine(kiroDir, "analysis-assessment.json"),
+            Path.Combine(agentDir, "analysis-assessment.json"),
             JsonSerializer.Serialize(assessment, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
     }
 }
@@ -129,15 +129,15 @@ public sealed class CodeGenScript : AgentScript
     public override void Execute(string workspacePath) { }
 }
 
-/// <summary>Writes review findings to .kiro/review-findings.md.</summary>
+/// <summary>Writes review findings to .agent/review-findings.md.</summary>
 public sealed class ReviewScript : AgentScript
 {
     public string Findings { get; init; } = "No findings.";
 
     public override void Execute(string workspacePath)
     {
-        var kiroDir = Path.Combine(workspacePath, ".kiro");
-        Directory.CreateDirectory(kiroDir);
-        File.WriteAllText(Path.Combine(kiroDir, "review-findings.md"), Findings);
+        var agentDir = Path.Combine(workspacePath, ".agent");
+        Directory.CreateDirectory(agentDir);
+        File.WriteAllText(Path.Combine(agentDir, "review-findings.md"), Findings);
     }
 }

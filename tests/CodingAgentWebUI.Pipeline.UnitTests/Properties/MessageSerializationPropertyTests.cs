@@ -100,7 +100,7 @@ public class MessageSerializationPropertyTests
             IsRework = isRework,
             AnalysisConcerns = new[] { "concern1" },
             AnalysisBlockingIssues = new List<string>(),
-            BlacklistedFilesDetected = new[] { ".kiro/test" },
+            BlacklistedFilesDetected = new[] { ".agent/test" },
             CodeReviewAgentsRun = new[] { "Correctness" },
             CodeReviewCriticalCount = 0,
             CodeReviewWarningCount = 1,

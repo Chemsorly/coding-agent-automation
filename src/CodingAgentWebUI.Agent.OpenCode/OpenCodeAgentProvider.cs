@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using ILogger = Serilog.ILogger;
@@ -84,7 +85,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
     private async Task<bool> ValidateExistingSessionAsync(string sessionId, CancellationToken ct)
     {
-        using var client = _httpClientFactory.CreateClient("OpenCode");
+        using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
 
         try
         {
@@ -109,7 +110,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
     private async Task CreateNewSessionAsync(string workspacePath, CancellationToken ct)
     {
-        using var client = _httpClientFactory.CreateClient("OpenCode");
+        using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
 
         var title = Path.GetFileName(workspacePath) ?? workspacePath;
         var request = new CreateSessionRequest { Title = title, Path = workspacePath };
@@ -152,7 +153,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             AgentResult result;
             try
             {
-                using var client = _httpClientFactory.CreateClient("OpenCode");
+                using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
                 var messageRequest = new SendMessageRequest
                 {
                     Parts = [new MessagePart { Type = "text", Text = request.Prompt }],
@@ -281,7 +282,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         try
         {
             _logger.Debug("POST /session/{SessionId}/abort", sessionId);
-            using var client = _httpClientFactory.CreateClient("OpenCode");
+            using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
             await client.PostAsync($"/session/{sessionId}/abort", null);
         }
         catch (Exception ex)
@@ -295,8 +296,8 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
 
-        using var client = _httpClientFactory.CreateClient("OpenCode");
-        var serverUrl = client.BaseAddress?.ToString() ?? "http://127.0.0.1:4096";
+        using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+        var serverUrl = client.BaseAddress?.ToString() ?? AgentDefaults.OpenCodeBaseUrl;
 
         try
         {
@@ -368,7 +369,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
 
-            using var client = _httpClientFactory.CreateClient("OpenCode");
+            using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
             var response = await client.GetAsync($"/session/{sessionId}/diff", timeoutCts.Token);
             response.EnsureSuccessStatusCode();
 
@@ -429,7 +430,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     {
         try
         {
-            using var client = _httpClientFactory.CreateClient("OpenCode");
+            using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
             await client.PostAsync($"/session/{sessionId}/abort", null);
         }
         catch (Exception ex)
@@ -447,7 +448,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     {
         try
         {
-            using var client = _httpClientFactory.CreateClient("OpenCode");
+            using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
             var response = await client.GetAsync($"/session/{sessionId}", CancellationToken.None);
             if (!response.IsSuccessStatusCode) return (null, null);
 
@@ -514,7 +515,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     /// </summary>
     internal async Task ConnectAndProcessSseAsync(string sessionId, Action<string>? onOutputLine, CancellationToken ct)
     {
-        using var client = _httpClientFactory.CreateClient("OpenCode");
+        using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
 
         try
         {
@@ -618,7 +619,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         try
         {
             _logger.Debug("POST /session/{SessionId}/permissions/{PermissionId} (auto-approve)", sessionId, permissionId);
-            using var client = _httpClientFactory.CreateClient("OpenCode");
+            using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
             var body = new PermissionResponse { Response = "allow", Remember = true };
             await client.PostAsJsonAsync($"/session/{sessionId}/permissions/{permissionId}", body, OpenCodeJson.JsonOptions, ct);
         }
@@ -675,7 +676,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                     Config = config
                 };
 
-                using var client = _httpClientFactory.CreateClient("OpenCode");
+                using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
                 var response = await client.PostAsJsonAsync("/mcp", request, OpenCodeJson.JsonOptions, ct);
                 response.EnsureSuccessStatusCode();
             }

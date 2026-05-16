@@ -1,12 +1,9 @@
 using System.Net.Http.Headers;
 using System.Net.Sockets;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using CodingAgentWebUI.Pipeline.Models;
-using Microsoft.IdentityModel.JsonWebTokens;
-using Microsoft.IdentityModel.Tokens;
 using Polly;
 using Polly.Retry;
 using Serilog;
@@ -245,35 +242,11 @@ public sealed partial class TokenVendingService : ITokenVendingService
 
     /// <summary>
     /// Generates a JWT signed with the GitHub App's private key.
-    /// Reuses the same pattern as <c>GitHubAppAuthService.GenerateJwt()</c>.
+    /// Delegates to <see cref="CodingAgentWebUI.Infrastructure.GitHub.GitHubJwtGenerator"/>.
     /// </summary>
     private static string GenerateJwt(string clientId, string privateKeyBase64)
     {
-        // Decode base64 to get the PEM string
-        var pemBytes = Convert.FromBase64String(privateKeyBase64);
-        var privateKeyPem = Encoding.UTF8.GetString(pemBytes);
-
-        if (!privateKeyPem.Contains("-----BEGIN") || !privateKeyPem.Contains("PRIVATE KEY-----"))
-            throw new InvalidOperationException("Decoded content is not a PEM private key");
-
-        using var rsa = RSA.Create();
-        rsa.ImportFromPem(privateKeyPem);
-
-        var now = DateTimeOffset.UtcNow;
-        var securityKey = new RsaSecurityKey(rsa.ExportParameters(true));
-        var descriptor = new SecurityTokenDescriptor
-        {
-            Issuer = clientId,
-            IssuedAt = (now - TimeSpan.FromSeconds(60)).UtcDateTime,
-            // 5 minutes — same as GitHubAppAuthService (headroom for clock drift)
-            Expires = (now + TimeSpan.FromMinutes(5)).UtcDateTime,
-            SigningCredentials = new SigningCredentials(securityKey, SecurityAlgorithms.RsaSha256)
-        };
-
-        var handler = new JsonWebTokenHandler();
-        var jwt = handler.CreateToken(descriptor);
-
-        return jwt;
+        return CodingAgentWebUI.Pipeline.GitHub.GitHubJwtGenerator.GenerateFromBase64(clientId, privateKeyBase64);
     }
 
     // ── JSON serialization types for GitHub API ─────────────────────────

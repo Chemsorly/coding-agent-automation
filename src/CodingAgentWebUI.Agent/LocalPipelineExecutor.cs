@@ -587,7 +587,7 @@ public sealed class LocalPipelineExecutor
 
     /// <summary>
     /// Writes the MCP server configuration to the workspace at the path specified by
-    /// the agent provider's mcpConfigPath setting (defaults to .kiro/settings/mcp.json for Kiro CLI).
+    /// the agent provider's mcpConfigPath setting (defaults to .agent/settings/mcp.json for Kiro CLI).
     /// Delegates to <see cref="McpConfigWriter.WriteConfig"/> for the shared implementation.
     /// </summary>
     internal static void WriteMcpConfigToWorkspace(string workspacePath, IReadOnlyList<McpServerConfig> mcpServers, string mcpConfigRelativePath)

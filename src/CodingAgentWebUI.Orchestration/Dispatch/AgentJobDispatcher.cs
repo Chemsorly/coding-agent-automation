@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -360,12 +361,12 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         // Detect existing analysis and rework state from comments
         string? existingAnalysis = null;
         bool forceRefreshAnalysis = false;
-        var analysisComment = issueComments.FirstOrDefault(c => c.Body.Contains("## 🤖 Agent Analysis"));
+        var analysisComment = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.AnalysisHeader));
         if (analysisComment is not null)
         {
             existingAnalysis = analysisComment.Body;
-            var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains("<!-- agent:gate-rejection -->"));
-            var gateWontDo = issueComments.FirstOrDefault(c => c.Body.Contains("<!-- agent:gate-wont-do -->"));
+            var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateRejection));
+            var gateWontDo = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateWontDo));
             if ((gateRejection?.CreatedAt > analysisComment.CreatedAt) ||
                 (gateWontDo?.CreatedAt > analysisComment.CreatedAt))
                 forceRefreshAnalysis = true;
