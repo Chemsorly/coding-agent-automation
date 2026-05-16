@@ -34,6 +34,15 @@ namespace CodingAgentWebUI.Agent;
 /// </remarks>
 public sealed class HubConnectionManager : IAsyncDisposable
 {
+    private static readonly TimeSpan[] ReconnectDelays =
+    [
+        TimeSpan.FromSeconds(1),
+        TimeSpan.FromSeconds(2),
+        TimeSpan.FromSeconds(5),
+        TimeSpan.FromSeconds(10),
+        TimeSpan.FromSeconds(30)
+    ];
+
     private readonly HubConnection _connection;
     private readonly Serilog.ILogger _logger;
 
@@ -89,7 +98,7 @@ public sealed class HubConnectionManager : IAsyncDisposable
                 options.AccessTokenProvider = () => Task.FromResult<string?>(apiKey);
             })
             .AddMessagePackProtocol()
-            .WithAutomaticReconnect(new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30) })
+            .WithAutomaticReconnect(ReconnectDelays)
             .Build();
 
         // Wire up connection lifecycle events

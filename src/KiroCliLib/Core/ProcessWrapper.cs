@@ -9,6 +9,9 @@ namespace KiroCliLib.Core;
 /// </summary>
 public class ProcessWrapper : IProcessWrapper
 {
+    private const int WslKillTimeoutMs = 2000;
+    private const int ProcessKillTimeoutMs = 5000;
+
     private readonly Configuration.Configuration _config;
     private readonly ILogger _logger;
     private readonly bool _useWsl;
@@ -136,12 +139,12 @@ public class ProcessWrapper : IProcessWrapper
                         }
                     };
                     killProcess.Start();
-                    killProcess.WaitForExit(2000);
+                    killProcess.WaitForExit(WslKillTimeoutMs);
                 }
                 catch (Exception ex) { _logger.Warning(ex, "Failed to kill WSL kiro-cli processes"); }
             }
             _process.Kill(entireProcessTree: true);
-            _process.WaitForExit(5000);
+            _process.WaitForExit(ProcessKillTimeoutMs);
         }
         catch (Exception ex) { _logger.Error(ex, "Error killing Kiro CLI process"); }
     }

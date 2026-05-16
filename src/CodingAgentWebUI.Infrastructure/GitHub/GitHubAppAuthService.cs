@@ -1,6 +1,3 @@
-using System.Security.Cryptography;
-using Microsoft.IdentityModel.JsonWebTokens;
-using Microsoft.IdentityModel.Tokens;
 using Octokit;
 using Serilog;
 using ILogger = Serilog.ILogger;
@@ -180,26 +177,6 @@ public sealed class GitHubAppAuthService
     /// </summary>
     internal string GenerateJwt()
     {
-        var rsa = RSA.Create();
-        rsa.ImportFromPem(_privateKeyPem);
-
-        var now = DateTimeOffset.UtcNow;
-        var securityKey = new RsaSecurityKey(rsa.ExportParameters(true));
-        var descriptor = new SecurityTokenDescriptor
-        {
-            Issuer = _clientId,
-            IssuedAt = (now - TimeSpan.FromSeconds(60)).UtcDateTime,
-            // GitHub enforces a strict ~10-minute max on the exp claim.
-            // Using 5 minutes instead of 10 gives ~5 minutes of headroom for
-            // clock drift (common in WSL2/Docker Desktop after host sleep/hibernate).
-            Expires = (now + TimeSpan.FromMinutes(5)).UtcDateTime,
-            SigningCredentials = new SigningCredentials(securityKey, SecurityAlgorithms.RsaSha256)
-        };
-
-        var handler = new JsonWebTokenHandler();
-        var jwt = handler.CreateToken(descriptor);
-
-        rsa.Dispose();
-        return jwt;
+        return CodingAgentWebUI.Pipeline.GitHub.GitHubJwtGenerator.GenerateFromPem(_clientId, _privateKeyPem);
     }
 }
