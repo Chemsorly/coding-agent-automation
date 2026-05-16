@@ -697,13 +697,13 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
     /// <summary>
     /// Strips ANSI escape sequences (CSI codes, OSC sequences, color codes) from output strings.
-    /// Delegates to <see cref="AnsiStripper.Strip"/> with null/empty guard.
+    /// Delegates to <see cref="KiroCliLib.Core.AnsiStripper.Strip"/> with null/empty guard.
     /// </summary>
     internal static string StripAnsiEscapes(string? input)
     {
         if (string.IsNullOrEmpty(input))
             return string.Empty;
 
-        return AnsiStripper.Strip(input);
+        return KiroCliLib.Core.AnsiStripper.Strip(input);
     }
 }
