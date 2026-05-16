@@ -41,7 +41,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
             ExternalCiPollInterval = TimeSpan.FromSeconds(45),
             StallWarningInterval = TimeSpan.FromMinutes(5),
             StallPollInterval = TimeSpan.FromSeconds(15),
-            BlacklistedPaths = new[] { ".kiro", ".github", ".secret" },
+            BlacklistedPaths = new[] { ".agent", ".github", ".secret" },
             BlacklistMode = BlacklistMode.Fail,
             FailedWorkspaceRetentionDays = 14,
             LastUsedProviderIds = new Dictionary<string, string>
@@ -285,7 +285,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
                 Interlocked.Increment(ref callCount);
-                var kiroDir = Path.Combine(req.WorkspacePath, ".kiro");
+                var kiroDir = Path.Combine(req.WorkspacePath, ".agent");
                 Directory.CreateDirectory(kiroDir);
 
                 if (req.Prompt.Contains("Analyze the codebase"))

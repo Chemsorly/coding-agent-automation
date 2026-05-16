@@ -167,7 +167,7 @@ public class PipelineOrchestrationServiceDispatchTests
             {
                 if (req.Prompt.Contains("Analyze the codebase"))
                 {
-                    var analysisDir = Path.Combine(req.WorkspacePath, ".kiro");
+                    var analysisDir = Path.Combine(req.WorkspacePath, ".agent");
                     Directory.CreateDirectory(analysisDir);
                     File.WriteAllText(Path.Combine(analysisDir, "analysis.md"), new string('x', 200));
                     File.WriteAllText(Path.Combine(analysisDir, "analysis-assessment.json"),
@@ -257,7 +257,7 @@ public class PipelineOrchestrationServiceDispatchTests
             {
                 if (req.Prompt.Contains("Analyze the codebase"))
                 {
-                    var analysisDir = Path.Combine(req.WorkspacePath, ".kiro");
+                    var analysisDir = Path.Combine(req.WorkspacePath, ".agent");
                     Directory.CreateDirectory(analysisDir);
                     File.WriteAllText(Path.Combine(analysisDir, "analysis.md"), new string('x', 200));
                     File.WriteAllText(Path.Combine(analysisDir, "analysis-assessment.json"),

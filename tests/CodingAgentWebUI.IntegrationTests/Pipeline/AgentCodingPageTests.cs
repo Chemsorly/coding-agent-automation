@@ -112,7 +112,7 @@ public class AgentCodingPageTests
             {
                 if (req.Prompt.Contains("Analyze the codebase"))
                 {
-                    var dir = Path.Combine(req.WorkspacePath, ".kiro");
+                    var dir = Path.Combine(req.WorkspacePath, ".agent");
                     Directory.CreateDirectory(dir);
                     File.WriteAllText(Path.Combine(dir, "analysis.md"), new string('x', 200));
                     var assessment = new { recommendation = "ready", reason = "Test", concerns = Array.Empty<string>(), blockingIssues = Array.Empty<string>() };
@@ -292,7 +292,7 @@ public class AgentCodingPageTests
                 callCount++;
                 if (callCount <= 1)
                 {
-                    var dir = Path.Combine(req.WorkspacePath, ".kiro");
+                    var dir = Path.Combine(req.WorkspacePath, ".agent");
                     Directory.CreateDirectory(dir);
                     File.WriteAllText(Path.Combine(dir, "analysis.md"), new string('x', 200));
                     var assessment = new { recommendation = "ready", reason = "Test", concerns = Array.Empty<string>(), blockingIssues = Array.Empty<string>() };

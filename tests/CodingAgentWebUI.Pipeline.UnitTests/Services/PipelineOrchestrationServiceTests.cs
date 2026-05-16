@@ -167,9 +167,9 @@ public class PipelineOrchestrationServiceTests
     /// </summary>
     private static void WriteReviewFindingsFile(string workspacePath, string content, string prompt)
     {
-        // Extract the findings file path from the prompt (e.g., ".kiro/review-findings-agentname.md")
+        // Extract the findings file path from the prompt (e.g., ".agent/review-findings-agentname.md")
         var match = System.Text.RegularExpressions.Regex.Match(prompt, @"Write your findings to the file `([^`]+)`");
-        var relativePath = match.Success ? match.Groups[1].Value : ".kiro/review-findings.md";
+        var relativePath = match.Success ? match.Groups[1].Value : ".agent/review-findings.md";
         var findingsPath = Path.Combine(workspacePath, relativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(findingsPath)!);
         File.WriteAllText(findingsPath, content);
@@ -681,14 +681,14 @@ public class PipelineOrchestrationServiceTests
     [Fact]
     public async Task StartPipeline_WarnAndExclude_PopulatesBlacklistedFilesAndCompletes()
     {
-        var blacklisted = new List<string> { ".kiro/steering/rule.md", ".github/workflows/ci.yml" };
+        var blacklisted = new List<string> { ".agent/steering/rule.md", ".github/workflows/ci.yml" };
         _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(blacklisted as IReadOnlyList<string>);
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
-        run.BlacklistedFilesDetected.Should().Contain(".kiro/steering/rule.md");
+        run.BlacklistedFilesDetected.Should().Contain(".agent/steering/rule.md");
         run.BlacklistedFilesDetected.Should().Contain(".github/workflows/ci.yml");
     }
 
@@ -1408,7 +1408,7 @@ public class PipelineOrchestrationServiceTests
     /// </summary>
     private static void WriteAnalysisFile(string workspacePath, string content)
     {
-        var dir = Path.Combine(workspacePath, ".kiro");
+        var dir = Path.Combine(workspacePath, ".agent");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "analysis.md"), content);
     }
@@ -1419,7 +1419,7 @@ public class PipelineOrchestrationServiceTests
     private static void WriteAssessmentFile(string workspacePath, string recommendation, string? reason = null,
         string[]? concerns = null, string[]? blockingIssues = null)
     {
-        var dir = Path.Combine(workspacePath, ".kiro");
+        var dir = Path.Combine(workspacePath, ".agent");
         Directory.CreateDirectory(dir);
         var obj = new
         {
@@ -1678,7 +1678,7 @@ public class PipelineOrchestrationServiceTests
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
                 WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
-                var dir = Path.Combine(req.WorkspacePath, ".kiro");
+                var dir = Path.Combine(req.WorkspacePath, ".agent");
                 Directory.CreateDirectory(dir);
                 File.WriteAllText(Path.Combine(dir, "analysis-assessment.json"), "{ invalid json }}}");
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
@@ -2074,8 +2074,8 @@ public class PipelineOrchestrationServiceTests
                     return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
                 }
                 // Second attempt: verify stale files were deleted, then write valid ones
-                var analysisPath = Path.Combine(req.WorkspacePath, ".kiro", "analysis.md");
-                var assessmentPath = Path.Combine(req.WorkspacePath, ".kiro", "analysis-assessment.json");
+                var analysisPath = Path.Combine(req.WorkspacePath, ".agent", "analysis.md");
+                var assessmentPath = Path.Combine(req.WorkspacePath, ".agent", "analysis-assessment.json");
                 File.Exists(analysisPath).Should().BeFalse("stale analysis.md should be deleted before retry");
                 File.Exists(assessmentPath).Should().BeFalse("stale assessment.json should be deleted before retry");
 

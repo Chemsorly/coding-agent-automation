@@ -17,7 +17,7 @@ public class CiLogWriter
     }
 
     /// <summary>
-    /// Writes log content for failed jobs to .kiro/quality-gates/ and returns
+    /// Writes log content for failed jobs to .agent/quality-gates/ and returns
     /// a dictionary mapping jobId to the workspace-relative file path.
     /// </summary>
     public IReadOnlyDictionary<long, string> WriteJobLogs(

@@ -192,7 +192,7 @@ public class PromptBuilderTests
         var findingsPath = PromptBuilder.GetReviewFindingsFilePath("Correctness");
         var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath);
         result.Should().Contain(findingsPath);
-        result.Should().Contain(".kiro/review-findings-correctness.md");
+        result.Should().Contain(".agent/review-findings-correctness.md");
     }
 
     [Fact]
@@ -259,21 +259,21 @@ public class PromptBuilderTests
     public void GetReviewFindingsFilePath_ReturnsExpectedFormat()
     {
         var result = PromptBuilder.GetReviewFindingsFilePath("Correctness");
-        result.Should().Be(".kiro/review-findings-correctness.md");
+        result.Should().Be(".agent/review-findings-correctness.md");
     }
 
     [Fact]
     public void GetReviewFindingsFilePath_SanitizesSpaces()
     {
         var result = PromptBuilder.GetReviewFindingsFilePath("DotNet Specialist");
-        result.Should().Be(".kiro/review-findings-dotnet-specialist.md");
+        result.Should().Be(".agent/review-findings-dotnet-specialist.md");
     }
 
     [Fact]
     public void GetReviewFindingsFilePath_SanitizesPathSeparators()
     {
         var result = PromptBuilder.GetReviewFindingsFilePath("Agent/Sub\\Name");
-        result.Should().Be(".kiro/review-findings-agent-sub-name.md");
+        result.Should().Be(".agent/review-findings-agent-sub-name.md");
     }
 
     [Fact]

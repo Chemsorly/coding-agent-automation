@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Steps;
 
@@ -23,8 +24,8 @@ internal sealed class WriteMcpConfigStep : IPipelineStep
         try
         {
             var agentConfig = _job.ProviderConfigs.FirstOrDefault(c => c.Id == _job.AgentProviderConfigId);
-            var mcpConfigPath = agentConfig?.Settings.GetValueOrDefault("mcpConfigPath", ".kiro/settings/mcp.json")
-                ?? ".kiro/settings/mcp.json";
+            var mcpConfigPath = agentConfig?.Settings.GetValueOrDefault("mcpConfigPath", AgentWorkspacePaths.DefaultMcpConfigPath)
+                ?? AgentWorkspacePaths.DefaultMcpConfigPath;
             LocalPipelineExecutor.WriteMcpConfigToWorkspace(context.Run.WorkspacePath!, _job.McpServers, mcpConfigPath);
             context.Callbacks.EmitOutputLine($"🔌 Wrote MCP config with {_job.McpServers.Count} server(s) to {mcpConfigPath}");
         }

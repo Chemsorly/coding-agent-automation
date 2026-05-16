@@ -399,7 +399,7 @@ public class PromptConstructionPropertyTests
     [Fact]
     public void QualityGatesOutputDirectory_IsKiroSubdirectory()
     {
-        PromptBuilder.QualityGatesOutputDirectory.Should().StartWith(".kiro/");
+        PromptBuilder.QualityGatesOutputDirectory.Should().StartWith(".agent/");
     }
 
     // --- BuildQualityGateRetryPrompt tests ---

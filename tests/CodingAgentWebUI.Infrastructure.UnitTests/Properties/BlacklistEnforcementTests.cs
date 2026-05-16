@@ -17,7 +17,7 @@ public class BlacklistEnforcementTests
     public void PipelineConfiguration_DefaultBlacklistedPaths_ContainsKiroAndGitHub()
     {
         var config = new PipelineConfiguration();
-        config.BlacklistedPaths.Should().Contain(".kiro");
+        config.BlacklistedPaths.Should().Contain(".agent");
         config.BlacklistedPaths.Should().Contain(".github");
         config.BlacklistedPaths.Should().Contain(".brain");
         config.BlacklistedPaths.Should().HaveCount(3);
@@ -52,14 +52,14 @@ public class BlacklistEnforcementTests
     [Theory]
     [InlineData(".github/workflows/ci.yml", ".github", true)]
     [InlineData(".github/CODEOWNERS", ".github", true)]
-    [InlineData(".kiro/steering/rule.md", ".kiro", true)]
-    [InlineData(".kiro/settings/mcp.json", ".kiro", true)]
-    [InlineData("src/Program.cs", ".kiro", false)]
+    [InlineData(".agent/steering/rule.md", ".agent", true)]
+    [InlineData(".agent/settings/mcp.json", ".agent", true)]
+    [InlineData("src/Program.cs", ".agent", false)]
     [InlineData("src/Program.cs", ".github", false)]
     [InlineData(".githubignore", ".github", false)]  // Not a prefix match — no slash
-    [InlineData(".kiro-notes.md", ".kiro", false)]   // Not a prefix match — no slash
+    [InlineData(".agent-notes.md", ".agent", false)]   // Not a prefix match — no slash
     [InlineData(".github", ".github", true)]          // Exact match
-    [InlineData(".kiro", ".kiro", true)]              // Exact match
+    [InlineData(".agent", ".agent", true)]              // Exact match
     public void IsPathBlacklisted_MatchesPrefixCorrectly(string filePath, string prefix, bool expected)
     {
         var result = PipelineFormatting.IsPathBlacklisted(filePath, new[] { prefix });
@@ -68,8 +68,8 @@ public class BlacklistEnforcementTests
 
     [Theory]
     [InlineData(".GitHub/workflows/ci.yml", ".github")]
-    [InlineData(".KIRO/settings/mcp.json", ".kiro")]
-    [InlineData(".Kiro/Steering/Rule.md", ".kiro")]
+    [InlineData(".AGENT/settings/mcp.json", ".agent")]
+    [InlineData(".Agent/Steering/Rule.md", ".agent")]
     public void IsPathBlacklisted_IsCaseInsensitive(string filePath, string prefix)
     {
         PipelineFormatting.IsPathBlacklisted(filePath, new[] { prefix }).Should().BeTrue();
@@ -77,7 +77,7 @@ public class BlacklistEnforcementTests
 
     [Theory]
     [InlineData(".github\\workflows\\ci.yml", ".github")]
-    [InlineData(".kiro\\settings\\mcp.json", ".kiro")]
+    [InlineData(".agent\\settings\\mcp.json", ".agent")]
     public void IsPathBlacklisted_NormalizesBackslashes(string filePath, string prefix)
     {
         PipelineFormatting.IsPathBlacklisted(filePath, new[] { prefix }).Should().BeTrue();
@@ -86,8 +86,8 @@ public class BlacklistEnforcementTests
     [Fact]
     public void IsPathBlacklisted_WithMultiplePrefixes_MatchesAny()
     {
-        var prefixes = new[] { ".kiro", ".github" };
-        PipelineFormatting.IsPathBlacklisted(".kiro/foo", prefixes).Should().BeTrue();
+        var prefixes = new[] { ".agent", ".github" };
+        PipelineFormatting.IsPathBlacklisted(".agent/foo", prefixes).Should().BeTrue();
         PipelineFormatting.IsPathBlacklisted(".github/bar", prefixes).Should().BeTrue();
         PipelineFormatting.IsPathBlacklisted("src/main.cs", prefixes).Should().BeFalse();
     }
@@ -95,7 +95,7 @@ public class BlacklistEnforcementTests
     [Fact]
     public void IsPathBlacklisted_WithEmptyPrefixes_ReturnsFalse()
     {
-        PipelineFormatting.IsPathBlacklisted(".kiro/foo", Array.Empty<string>()).Should().BeFalse();
+        PipelineFormatting.IsPathBlacklisted(".agent/foo", Array.Empty<string>()).Should().BeFalse();
     }
 
     [Fact]
@@ -110,7 +110,7 @@ public class BlacklistEnforcementTests
     [Fact]
     public void GeneratePrBody_WithBlacklistedFiles_IncludesWarningSection()
     {
-        var blacklisted = new[] { ".kiro/steering/rule.md", ".github/workflows/ci.yml" };
+        var blacklisted = new[] { ".agent/steering/rule.md", ".github/workflows/ci.yml" };
 
         var body = PipelineFormatting.GeneratePrBody(
             issueNumber: "42", testsPassed: 5, testsFailed: 0, testsSkipped: 0,
@@ -119,7 +119,7 @@ public class BlacklistEnforcementTests
             blacklistedFilesDetected: blacklisted);
 
         body.Should().Contain("## ⚠️ Blacklisted Files Excluded");
-        body.Should().Contain(".kiro/steering/rule.md");
+        body.Should().Contain(".agent/steering/rule.md");
         body.Should().Contain(".github/workflows/ci.yml");
     }
 

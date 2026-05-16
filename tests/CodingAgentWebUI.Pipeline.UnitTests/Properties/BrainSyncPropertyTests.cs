@@ -103,7 +103,7 @@ public class BrainSyncPropertyTests
                 ["repository"] = "id-2",
                 ["brain"] = "id-3"
             },
-            BlacklistedPaths = new[] { ".kiro", ".github", ".brain" },
+            BlacklistedPaths = new[] { ".agent", ".github", ".brain" },
             BrainReadOnly = true
         };
 

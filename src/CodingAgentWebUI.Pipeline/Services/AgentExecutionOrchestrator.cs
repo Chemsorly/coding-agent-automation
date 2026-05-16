@@ -26,7 +26,7 @@ internal partial class AgentExecutionOrchestrator : IAgentPhaseExecutor
 
     /// <summary>
     /// Builds the brain context section and writes it to the workspace if non-empty.
-    /// Always ensures the .kiro directory exists before writing (fixing inconsistency
+    /// Always ensures the .agent directory exists before writing (fixing inconsistency
     /// where Analysis previously skipped directory creation).
     /// </summary>
     /// <returns>True if brain context was written, false otherwise.</returns>
@@ -40,8 +40,8 @@ internal partial class AgentExecutionOrchestrator : IAgentPhaseExecutor
 
         if (string.IsNullOrEmpty(brainContext)) return false;
 
-        var kiroDir = Path.Combine(run.WorkspacePath, ".kiro");
-        Directory.CreateDirectory(kiroDir);
+        var agentDir = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.MetadataDirectory);
+        Directory.CreateDirectory(agentDir);
 
         var contextPath = Path.Combine(run.WorkspacePath, PromptBuilder.BrainContextFilePath);
         await File.WriteAllTextAsync(contextPath, brainContext, ct);

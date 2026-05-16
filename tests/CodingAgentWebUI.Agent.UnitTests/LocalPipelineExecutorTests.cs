@@ -117,7 +117,7 @@ public class LocalPipelineExecutorTests : IDisposable
                 Args = ["@context7/mcp", "--stdio"]
             }
         };
-        var relativePath = ".kiro/settings/mcp.json";
+        var relativePath = ".agent/settings/mcp.json";
 
         // Act
         LocalPipelineExecutor.WriteMcpConfigToWorkspace(_tempDir, servers, relativePath);
@@ -186,7 +186,7 @@ public class LocalPipelineExecutorTests : IDisposable
                 Url = "https://mcp.example.com/search"
             }
         };
-        var relativePath = ".kiro/settings/mcp.json";
+        var relativePath = ".agent/settings/mcp.json";
 
         // Act
         LocalPipelineExecutor.WriteMcpConfigToWorkspace(_tempDir, servers, relativePath);

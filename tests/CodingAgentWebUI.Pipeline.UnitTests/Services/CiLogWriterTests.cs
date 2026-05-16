@@ -108,7 +108,7 @@ public class CiLogWriterTests : IDisposable
         var status = CreateStatus(CreateFailedJob(1, "build", "error"));
         var result = _writer.WriteJobLogs(status, _tempDir, "run-1");
 
-        result[1].Should().StartWith(".kiro/quality-gates/");
+        result[1].Should().StartWith(".agent/quality-gates/");
         result[1].Should().Contain("build");
     }
 

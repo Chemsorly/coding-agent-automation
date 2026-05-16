@@ -50,7 +50,7 @@ public class WriteMcpConfigStepTests : IDisposable
         _mockCallbacks.Verify(c => c.EmitOutputLine(It.IsAny<string>()), Times.Never);
 
         // Verify no file was written
-        var mcpConfigPath = Path.Combine(_tempDir, ".kiro", "settings", "mcp.json");
+        var mcpConfigPath = Path.Combine(_tempDir, ".agent", "settings", "mcp.json");
         File.Exists(mcpConfigPath).Should().BeFalse();
     }
 
@@ -84,7 +84,7 @@ public class WriteMcpConfigStepTests : IDisposable
             Times.Once);
 
         // Verify file was written
-        var mcpConfigPath = Path.Combine(_tempDir, ".kiro", "settings", "mcp.json");
+        var mcpConfigPath = Path.Combine(_tempDir, ".agent", "settings", "mcp.json");
         File.Exists(mcpConfigPath).Should().BeTrue();
     }
 
@@ -119,7 +119,7 @@ public class WriteMcpConfigStepTests : IDisposable
     {
         // Arrange — use a workspace path that will cause an IOException
         // Create a file where the directory should be, causing IOException when trying to create subdirectory
-        var blockingFilePath = Path.Combine(_tempDir, ".kiro");
+        var blockingFilePath = Path.Combine(_tempDir, ".agent");
         File.WriteAllText(blockingFilePath, "blocking file");
 
         var servers = new List<McpServerConfig>
@@ -157,12 +157,12 @@ public class WriteMcpConfigStepTests : IDisposable
         // Act
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Assert — default path ".kiro/settings/mcp.json" is used
+        // Assert — default path ".agent/settings/mcp.json" is used
         _mockCallbacks.Verify(
-            c => c.EmitOutputLine(It.Is<string>(s => s.Contains(".kiro/settings/mcp.json"))),
+            c => c.EmitOutputLine(It.Is<string>(s => s.Contains(".agent/settings/mcp.json"))),
             Times.Once);
 
-        var expectedPath = Path.Combine(_tempDir, ".kiro", "settings", "mcp.json");
+        var expectedPath = Path.Combine(_tempDir, ".agent", "settings", "mcp.json");
         File.Exists(expectedPath).Should().BeTrue();
     }
 

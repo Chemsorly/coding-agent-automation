@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -29,7 +30,7 @@ public sealed class RefactoringExecutor
     /// 1. Clone code repo into temp workspace
     /// 2. Optionally clone brain repo for architectural context
     /// 3. Build holistic analysis prompt
-    /// 4. Execute agent — expects .kiro/refactoring-proposals.json in workspace
+    /// 4. Execute agent — expects .agent/refactoring-proposals.json in workspace
     /// 5. Parse proposals JSON from workspace file
     /// 6. If no proposals: return success with "No refactoring opportunities identified"
     /// 7. Create GitHub issues via issueProvider.CreateIssueAsync() for each proposal (max 3)
@@ -115,7 +116,7 @@ public sealed class RefactoringExecutor
             }
 
             // 5. Parse proposals JSON from workspace file
-            var proposalsFilePath = Path.Combine(workspacePath, ".kiro", "refactoring-proposals.json");
+            var proposalsFilePath = Path.Combine(workspacePath, AgentWorkspacePaths.MetadataDirectory, "refactoring-proposals.json");
             var proposals = await ParseProposalsAsync(proposalsFilePath, ct);
 
             if (proposals is null)

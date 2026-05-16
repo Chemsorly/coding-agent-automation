@@ -43,8 +43,8 @@ internal partial class AgentExecutionOrchestrator
         // Write issue context file before analysis
         try
         {
-            var kiroDir = Path.Combine(run.WorkspacePath!, ".kiro");
-            Directory.CreateDirectory(kiroDir);
+            var agentDir = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.MetadataDirectory);
+            Directory.CreateDirectory(agentDir);
 
             var issueContextContent = PromptBuilder.BuildIssueContextFileContent(context.Issue, context.ParsedIssue, issueComments);
             await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, PromptBuilder.IssueContextFilePath), issueContextContent, ct);

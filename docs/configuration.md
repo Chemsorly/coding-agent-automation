@@ -15,7 +15,7 @@ See also: [Pipeline Orchestration](pipeline-orchestration.md) for how these sett
 | `codeReview.maxIterations` | 2 | Max review → fix cycles |
 | `externalCiTimeout` | 00:15:00 | Max wait time for external CI completion (CI runs automatically when a Pipeline Provider is configured on the job template) |
 | `externalCiPollInterval` | 00:01:00 | How often to poll external CI for status updates |
-| `blacklistedPaths` | .kiro, .github, .brain | Paths excluded from agent commits |
+| `blacklistedPaths` | .agent, .github, .brain | Paths excluded from agent commits |
 | `blacklistMode` | WarnAndExclude | How to handle blacklisted files. `WarnAndExclude` silently excludes them from commits. `Fail` aborts the run if the agent touches blacklisted paths. |
 | `failedWorkspaceRetentionDays` | 7 | Days to keep failed workspaces before cleanup |
 | `stallWarningInterval` | 00:02:00 | Time without agent output before a stall warning is logged |
@@ -106,4 +106,4 @@ Configure MCP servers in the agent's settings directory (mounted at `/home/ubunt
 }
 ```
 
-The agent CLI automatically discovers and starts configured MCP servers during pipeline runs. The `.kiro/` directory is in the pipeline's blacklisted paths, so MCP config and any credentials it contains are never committed.
+The agent CLI automatically discovers and starts configured MCP servers during pipeline runs. The `.agent/` directory is in the pipeline's blacklisted paths, so MCP config and any credentials it contains are never committed.

@@ -12,53 +12,47 @@ public static class PromptBuilder
     /// <summary>
     /// The file path (relative to workspace) where the agent writes its analysis.
     /// </summary>
-    public const string AnalysisFilePath = ".kiro/analysis.md";
+    public const string AnalysisFilePath = AgentWorkspacePaths.AnalysisFilePath;
 
     /// <summary>
     /// The file path (relative to workspace) where the agent writes its structured assessment.
     /// </summary>
-    public const string AnalysisAssessmentFilePath = ".kiro/analysis-assessment.json";
+    public const string AnalysisAssessmentFilePath = AgentWorkspacePaths.AnalysisAssessmentFilePath;
 
     /// <summary>
     /// The file path (relative to workspace) where the pipeline writes consolidated
     /// review findings for the fix agent to read.
     /// </summary>
-    public const string ReviewFindingsFilePath = ".kiro/review-findings.md";
+    public const string ReviewFindingsFilePath = AgentWorkspacePaths.ReviewFindingsFilePath;
 
     /// <summary>
     /// Returns a per-agent findings file path to prevent sub-agent overwrite conflicts.
     /// Each review agent writes to its own isolated file.
     /// </summary>
     public static string GetReviewFindingsFilePath(string agentName)
-    {
-        ArgumentNullException.ThrowIfNull(agentName);
-        return $".kiro/review-findings-{SanitizeAgentName(agentName)}.md";
-    }
-
-    private static string SanitizeAgentName(string name)
-        => name.ToLowerInvariant().Replace(' ', '-').Replace('/', '-').Replace('\\', '-');
+        => AgentWorkspacePaths.GetReviewFindingsFilePath(agentName);
 
     /// <summary>
     /// The directory (relative to workspace) where quality gate output files are written.
     /// Each gate writes its stdout/stderr here; the agent discovers files by listing the directory.
     /// </summary>
-    public const string QualityGatesOutputDirectory = ".kiro/quality-gates";
+    public const string QualityGatesOutputDirectory = AgentWorkspacePaths.QualityGatesOutputDirectory;
 
     /// <summary>
     /// The file path (relative to workspace) where the pipeline writes issue context
     /// (description + comments) for the agent to read on demand.
     /// </summary>
-    public const string IssueContextFilePath = ".kiro/issue-context.md";
+    public const string IssueContextFilePath = AgentWorkspacePaths.IssueContextFilePath;
 
     /// <summary>
     /// The file path (relative to workspace) where the pipeline writes brain context
     /// for the agent to read on demand.
     /// </summary>
-    public const string BrainContextFilePath = ".kiro/brain-context.md";
+    public const string BrainContextFilePath = AgentWorkspacePaths.BrainContextFilePath;
 
     /// <summary>
     /// Constructs an analysis-only prompt. The agent examines the codebase in context of the
-    /// issue and writes its recommendation to .kiro/analysis.md without making any other changes.
+    /// issue and writes its recommendation to .agent/analysis.md without making any other changes.
     /// The configurable analysis instructions are prepended, followed by pipeline mechanics.
     /// </summary>
     public static string BuildAnalysisPrompt(string analysisInstructions, IssueDetail issue, ParsedIssue parsed,
@@ -212,7 +206,7 @@ public static class PromptBuilder
 
     /// <summary>
     /// Constructs a fix prompt that references the review findings file instead of inlining
-    /// the raw findings. The agent reads .kiro/review-findings.md on demand.
+    /// the raw findings. The agent reads .agent/review-findings.md on demand.
     /// </summary>
     public static string BuildFixPrompt(string fixInstructions)
     {
@@ -246,7 +240,7 @@ public static class PromptBuilder
     }
 
     /// <summary>
-    /// Builds the markdown content for the issue context file (.kiro/issue-context.md).
+    /// Builds the markdown content for the issue context file (.agent/issue-context.md).
     /// Contains the full issue description, requirements, and filtered comments.
     /// </summary>
     public static string BuildIssueContextFileContent(IssueDetail issue, ParsedIssue parsed,

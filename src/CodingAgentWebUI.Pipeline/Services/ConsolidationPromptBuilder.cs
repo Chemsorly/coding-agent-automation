@@ -147,7 +147,7 @@ public static class ConsolidationPromptBuilder
         // Output format
         sb.AppendLine("## Output Format");
         sb.AppendLine();
-        sb.AppendLine("Produce your findings as a JSON file at `.kiro/refactoring-proposals.json`.");
+        sb.AppendLine("Produce your findings as a JSON file at `.agent/refactoring-proposals.json`.");
         sb.AppendLine("The file must contain an array of proposal objects (maximum 3 proposals).");
         sb.AppendLine();
         sb.AppendLine("Each proposal must follow this schema:");

@@ -48,7 +48,7 @@ public class ConfigurationStorePropertyTests : IDisposable
             MaxRetries = clampedRetries,
             AgentTimeout = TimeSpan.FromMinutes(timeoutMinutes),
             WorkspaceBaseDirectory = workspaceDir.Get,
-            BlacklistedPaths = new[] { ".kiro", ".github", $".custom-{Math.Abs(maxRetries % 10)}" },
+            BlacklistedPaths = new[] { ".agent", ".github", $".custom-{Math.Abs(maxRetries % 10)}" },
             BlacklistMode = blacklistMode
         };
 

@@ -45,14 +45,14 @@ public class ProcessWrapper : IProcessWrapper
         // See: https://kiro.dev/docs/cli/chat/file-references/
         // This avoids shell argument escaping issues with complex prompts containing
         // quotes, newlines, backticks, and JSON that cause exit code 2 (argument parse error).
-        var kiroDir = Path.Combine(workspaceDirectory, ".kiro");
-        Directory.CreateDirectory(kiroDir);
-        var promptFile = Path.Combine(kiroDir, "prompt-input.md");
+        var agentDir = Path.Combine(workspaceDirectory, ".agent");
+        Directory.CreateDirectory(agentDir);
+        var promptFile = Path.Combine(agentDir, "prompt-input.md");
         await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
 
         // The @path syntax expands file contents inline before sending (per Kiro docs).
         // Use explicit relative path (@./path) to avoid prompt name collision.
-        var inlinePrompt = "@.kiro/prompt-input.md";
+        var inlinePrompt = "@.agent/prompt-input.md";
         var resumeFlag = resumeSessionId is not null
             ? $"--resume-id {resumeSessionId}"
             : useResume ? "--resume" : null;
