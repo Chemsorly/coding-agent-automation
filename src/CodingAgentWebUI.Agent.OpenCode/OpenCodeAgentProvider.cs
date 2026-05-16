@@ -20,6 +20,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     private volatile string? _currentSessionId;
     private volatile bool _isExecuting;
     private long _lastOutputTimeTicks; // Interlocked access for DateTime
+    private readonly Dictionary<string, (long Input, long Output, long Reasoning, long CacheRead, long CacheWrite, double Cost)> _lastSessionTokens = new();
 
     public AgentProviderType ProviderType => AgentProviderType.OpenCode;
 
@@ -148,6 +149,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             var sseTask = ConnectAndProcessSseAsync(sessionId, onOutputLine, sseCts.Token);
 
             // 4. Send message (synchronous — blocks until agent finishes)
+            AgentResult result;
             try
             {
                 using var client = _httpClientFactory.CreateClient("OpenCode");
@@ -164,52 +166,52 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 if (!response.IsSuccessStatusCode)
                 {
                     var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
-                    return new AgentResult
+                    result = new AgentResult
                     {
                         ExitCode = ExitCodes.GeneralFailure,
                         OutputLines = [$"HTTP {(int)response.StatusCode}: {body[..Math.Min(body.Length, 1000)]}"]
                     };
                 }
-
-                var json = await response.Content.ReadAsStringAsync(CancellationToken.None);
-                SendMessageResponse? messageResponse;
-                try
+                else
                 {
-                    messageResponse = JsonSerializer.Deserialize<SendMessageResponse>(json, OpenCodeJson.JsonOptions);
-                }
-                catch (JsonException ex)
-                {
-                    _logger.Debug(ex, "Malformed JSON response: {RawResponse}", json[..Math.Min(json.Length, 500)]);
-                    return new AgentResult
+                    var json = await response.Content.ReadAsStringAsync(CancellationToken.None);
+                    SendMessageResponse? messageResponse;
+                    try
                     {
-                        ExitCode = ExitCodes.GeneralFailure,
-                        OutputLines = [$"JSON parse error ({ex.GetType().Name}): {json[..Math.Min(json.Length, 500)]}"]
+                        messageResponse = JsonSerializer.Deserialize<SendMessageResponse>(json, OpenCodeJson.JsonOptions);
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.Debug(ex, "Malformed JSON response: {RawResponse}", json[..Math.Min(json.Length, 500)]);
+                        result = new AgentResult
+                        {
+                            ExitCode = ExitCodes.GeneralFailure,
+                            OutputLines = [$"JSON parse error ({ex.GetType().Name}): {json[..Math.Min(json.Length, 500)]}"]
+                        };
+                        goto CaptureTokens;
+                    }
+
+                    // Extract text parts, concatenate, split into lines
+                    var textParts = messageResponse?.Parts
+                        .Where(p => string.Equals(p.Type, "text", StringComparison.OrdinalIgnoreCase))
+                        .Select(p => p.Text ?? string.Empty)
+                        ?? [];
+                    var combinedText = string.Join("\n", textParts);
+                    var outputLines = combinedText.Split('\n')
+                        .Select(line => StripAnsiEscapes(line))
+                        .ToList();
+
+                    result = new AgentResult
+                    {
+                        ExitCode = ExitCodes.Success,
+                        OutputLines = outputLines
                     };
                 }
-
-                // Extract text parts, concatenate, split into lines
-                var textParts = messageResponse?.Parts
-                    .Where(p => string.Equals(p.Type, "text", StringComparison.OrdinalIgnoreCase))
-                    .Select(p => p.Text ?? string.Empty)
-                    ?? [];
-                var combinedText = string.Join("\n", textParts);
-                var outputLines = combinedText.Split('\n')
-                    .Select(line => StripAnsiEscapes(line))
-                    .ToList();
-
-                // Log token usage for the session
-                await LogSessionTokenUsageAsync(sessionId, ct);
-
-                return new AgentResult
-                {
-                    ExitCode = ExitCodes.Success,
-                    OutputLines = outputLines
-                };
             }
             catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
             {
                 await AbortBestEffortAsync(sessionId);
-                return new AgentResult
+                result = new AgentResult
                 {
                     ExitCode = ExitCodes.Timeout,
                     OutputLines = ["Execution timed out"]
@@ -218,13 +220,12 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 await AbortBestEffortAsync(sessionId);
-                throw; // propagate caller cancellation
+                _ = await CaptureSessionTokenDeltaAsync(sessionId);
+                throw; // finally block handles SSE cleanup
             }
             catch (OperationCanceledException ex)
             {
-                // TaskCanceledException/OperationCanceledException not from our timeout or caller
-                // (e.g., HttpClient internal timeout wrapping as TaskCanceledException)
-                return new AgentResult
+                result = new AgentResult
                 {
                     ExitCode = ExitCodes.GeneralFailure,
                     OutputLines = [$"Operation cancelled unexpectedly: {ex.GetType().Name}: {ex.Message}"]
@@ -232,7 +233,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             }
             catch (HttpRequestException ex)
             {
-                return new AgentResult
+                result = new AgentResult
                 {
                     ExitCode = ExitCodes.GeneralFailure,
                     OutputLines = [$"HTTP error: {ex.Message}"]
@@ -240,7 +241,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             }
             catch (Exception ex)
             {
-                return new AgentResult
+                result = new AgentResult
                 {
                     ExitCode = ExitCodes.GeneralFailure,
                     OutputLines = [$"Unexpected error: {ex.GetType().Name}: {ex.Message}"]
@@ -253,6 +254,17 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 try { await sseTask.ConfigureAwait(false); } catch { /* expected cancellation */ }
                 sseCts.Dispose();
             }
+
+            CaptureTokens:
+            // Capture token usage delta on all paths (success, timeout, error)
+            var (usage, cost) = await CaptureSessionTokenDeltaAsync(sessionId);
+            return new AgentResult
+            {
+                ExitCode = result.ExitCode,
+                OutputLines = result.OutputLines,
+                Usage = usage,
+                Cost = cost
+            };
         }
         finally
         {
@@ -427,31 +439,71 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     }
 
     /// <summary>
-    /// Queries the session for token usage and logs it at Information level.
-    /// Best-effort — failures are logged as warnings and do not affect execution.
+    /// Queries the session for token usage, computes the delta from last known values,
+    /// logs it, and returns the delta as (TokenUsage?, decimal? Cost).
+    /// Best-effort — failures return (null, null).
     /// </summary>
-    private async Task LogSessionTokenUsageAsync(string sessionId, CancellationToken ct)
+    private async Task<(TokenUsage? Usage, decimal? Cost)> CaptureSessionTokenDeltaAsync(string sessionId)
     {
         try
         {
             using var client = _httpClientFactory.CreateClient("OpenCode");
-            var response = await client.GetAsync($"/session/{sessionId}", ct);
-            if (!response.IsSuccessStatusCode) return;
+            var response = await client.GetAsync($"/session/{sessionId}", CancellationToken.None);
+            if (!response.IsSuccessStatusCode) return (null, null);
 
-            var json = await response.Content.ReadAsStringAsync(ct);
+            var json = await response.Content.ReadAsStringAsync(CancellationToken.None);
             var session = System.Text.Json.JsonSerializer.Deserialize<SessionDetailResponse>(json, OpenCodeJson.JsonOptions);
-            if (session?.Tokens is null) return;
+            if (session?.Tokens is null) return (null, null);
 
             var t = session.Tokens;
-            var total = t.Input + t.Output + t.Reasoning;
+            var currentInput = t.Input;
+            var currentOutput = t.Output;
+            var currentReasoning = t.Reasoning;
+            var currentCacheRead = t.Cache?.Read ?? 0;
+            var currentCacheWrite = t.Cache?.Write ?? 0;
+            var currentCost = session.Cost;
+
+            // Compute delta from last known values
+            long deltaInput = currentInput, deltaOutput = currentOutput, deltaReasoning = currentReasoning;
+            long deltaCacheRead = currentCacheRead, deltaCacheWrite = currentCacheWrite;
+            double deltaCost = currentCost;
+
+            if (_lastSessionTokens.TryGetValue(sessionId, out var last))
+            {
+                deltaInput = currentInput - last.Input;
+                deltaOutput = currentOutput - last.Output;
+                deltaReasoning = currentReasoning - last.Reasoning;
+                deltaCacheRead = currentCacheRead - last.CacheRead;
+                deltaCacheWrite = currentCacheWrite - last.CacheWrite;
+                deltaCost = currentCost - last.Cost;
+            }
+
+            // Store current cumulative values for next delta calculation
+            _lastSessionTokens[sessionId] = (currentInput, currentOutput, currentReasoning, currentCacheRead, currentCacheWrite, currentCost);
+
+            var usage = new TokenUsage
+            {
+                InputTokens = deltaInput,
+                OutputTokens = deltaOutput,
+                ReasoningTokens = deltaReasoning,
+                CacheReadTokens = deltaCacheRead,
+                CacheWriteTokens = deltaCacheWrite
+            };
+
+            // Cost is null when OpenCode reports 0 (unknown pricing)
+            decimal? cost = deltaCost > 0 ? (decimal)deltaCost : null;
+
             _logger.Information(
-                "Session {SessionId} token usage: input={Input}, output={Output}, reasoning={Reasoning}, cache_read={CacheRead}, cache_write={CacheWrite}, total={Total}, cost=${Cost:F4}",
-                sessionId, t.Input, t.Output, t.Reasoning,
-                t.Cache?.Read ?? 0, t.Cache?.Write ?? 0, total, session.Cost);
+                "Session {SessionId} token delta: input={Input}, output={Output}, reasoning={Reasoning}, cache_read={CacheRead}, cache_write={CacheWrite}, total={Total}, cost=${Cost:F4}",
+                sessionId, deltaInput, deltaOutput, deltaReasoning, deltaCacheRead, deltaCacheWrite,
+                usage.TotalTokens, deltaCost);
+
+            return (usage, cost);
         }
         catch (Exception ex)
         {
-            _logger.Debug(ex, "Failed to retrieve token usage for session {SessionId}", sessionId);
+            _logger.Debug(ex, "Failed to capture token delta for session {SessionId}", sessionId);
+            return (null, null);
         }
     }
 

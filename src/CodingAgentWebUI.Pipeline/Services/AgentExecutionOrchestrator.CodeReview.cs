@@ -94,6 +94,7 @@ internal partial class AgentExecutionOrchestrator
                             context.Callbacks.EmitOutputLine(line);
                         });
 
+                    run.AccumulateTokenUsage(reviewResult);
                     agentsRun.Add(agent.Name);
 
                     string fullReviewText;

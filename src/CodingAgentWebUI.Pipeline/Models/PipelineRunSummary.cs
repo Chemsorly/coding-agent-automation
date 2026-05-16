@@ -37,4 +37,10 @@ public sealed class PipelineRunSummary
 
     /// <summary>Structured feedback collected from the agent after this run.</summary>
     public RunFeedback? Feedback { get; init; }
+
+    /// <summary>Accumulated total tokens across all agent invocations.</summary>
+    public long TotalTokens { get; init; }
+
+    /// <summary>Accumulated total cost (USD), or null if no cost data available.</summary>
+    public decimal? TotalCost { get; init; }
 }

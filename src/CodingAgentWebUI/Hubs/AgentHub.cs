@@ -191,6 +191,8 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
             Interlocked.Exchange(ref run.CodeReviewWarningCount, payload.CodeReviewWarningCount);
             Interlocked.Exchange(ref run.CodeReviewSuggestionCount, payload.CodeReviewSuggestionCount);
             run.Feedback = payload.Feedback;
+            run.TotalTokens = payload.TotalTokens;
+            run.TotalCost = payload.TotalCost;
 
             // Persist to history and remove from active runs
             _facade.AddRunToHistory(run);

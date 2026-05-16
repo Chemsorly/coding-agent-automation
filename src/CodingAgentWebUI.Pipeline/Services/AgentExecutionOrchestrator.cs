@@ -109,6 +109,8 @@ internal partial class AgentExecutionOrchestrator : IAgentPhaseExecutor
                     callbacks.EmitOutputLine(line);
                 });
 
+            run.AccumulateTokenUsage(agentResult);
+
             if (recordOutputToHistory)
             {
                 var outputSummary = agentResult.OutputLines.Count > 0

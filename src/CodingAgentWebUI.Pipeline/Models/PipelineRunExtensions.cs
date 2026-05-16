@@ -21,4 +21,15 @@ public static class PipelineRunExtensions
         if (!string.IsNullOrEmpty(run.WorkspacePath)) return PipelineStep.CloningRepository;
         return PipelineStep.Created;
     }
+
+    /// <summary>
+    /// Accumulates token usage and cost from an agent result into the pipeline run totals.
+    /// </summary>
+    public static void AccumulateTokenUsage(this PipelineRun run, AgentResult? result)
+    {
+        if (result?.Usage is null) return;
+        run.TotalTokens += result.Usage.TotalTokens;
+        if (result.Cost is not null)
+            run.TotalCost = (run.TotalCost ?? 0m) + result.Cost.Value;
+    }
 }

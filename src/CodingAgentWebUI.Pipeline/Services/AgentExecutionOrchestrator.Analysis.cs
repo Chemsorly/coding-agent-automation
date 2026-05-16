@@ -107,6 +107,8 @@ internal partial class AgentExecutionOrchestrator
                             context.Callbacks.EmitOutputLine(line);
                         });
 
+                    run.AccumulateTokenUsage(analysisResult);
+
                     _logger.Information("Pipeline {RunId} analysis agent completed with exit code {ExitCode}, output lines: {LineCount}",
                         run.RunId, analysisResult.ExitCode, analysisResult.OutputLines.Count);
 

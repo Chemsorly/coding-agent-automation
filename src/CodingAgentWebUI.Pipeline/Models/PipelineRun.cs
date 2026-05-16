@@ -151,6 +151,12 @@ public sealed class PipelineRun
     /// <summary>Structured feedback collected from the agent after this run completes.</summary>
     public RunFeedback? Feedback { get; set; }
 
+    /// <summary>Accumulated total tokens across all agent invocations in this run.</summary>
+    public long TotalTokens { get; set; }
+
+    /// <summary>Accumulated total cost (USD, decimal) across all agent invocations, or null if no cost data available.</summary>
+    public decimal? TotalCost { get; set; }
+
     /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
     // NOTE: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
     public PipelineRunSummary ToSummary() => new()
@@ -171,6 +177,8 @@ public sealed class PipelineRun
         AnalysisRecommendation = AnalysisRecommendation,
         IsRework = LinkedPullRequest != null,
         FailureReason = FailureReason,
-        Feedback = Feedback
+        Feedback = Feedback,
+        TotalTokens = TotalTokens,
+        TotalCost = TotalCost
     };
 }
