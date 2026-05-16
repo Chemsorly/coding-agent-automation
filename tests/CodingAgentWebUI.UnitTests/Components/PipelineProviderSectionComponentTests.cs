@@ -5,6 +5,7 @@ using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Components;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.UnitTests.Components;
 
@@ -52,8 +53,8 @@ public class PipelineProviderSectionComponentTests : BunitContext
                 DisplayName = "My CI Pipeline",
                 Settings = new Dictionary<string, string>
                 {
-                    ["owner"] = "acme",
-                    ["repo"] = "webapp"
+                    [ProviderSettingKeys.Owner] = "acme",
+                    [ProviderSettingKeys.Repo] = "webapp"
                 }
             }
         };
@@ -76,7 +77,7 @@ public class PipelineProviderSectionComponentTests : BunitContext
                 Kind = ProviderKind.Pipeline,
                 ProviderType = "GitHub",
                 DisplayName = "Pipeline 1",
-                Settings = new Dictionary<string, string> { ["owner"] = "org", ["repo"] = "repo" }
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "org", [ProviderSettingKeys.Repo] = "repo" }
             }
         };
 
@@ -144,7 +145,7 @@ public class PipelineProviderSectionComponentTests : BunitContext
                 Kind = ProviderKind.Pipeline,
                 ProviderType = "GitHub",
                 DisplayName = "To Delete",
-                Settings = new Dictionary<string, string> { ["owner"] = "org", ["repo"] = "repo" }
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "org", [ProviderSettingKeys.Repo] = "repo" }
             }
         };
 
@@ -173,12 +174,12 @@ public class PipelineProviderSectionComponentTests : BunitContext
                 DisplayName = "My Pipeline",
                 Settings = new Dictionary<string, string>
                 {
-                    ["apiUrl"] = "https://api.github.com",
-                    ["clientId"] = "123",
-                    ["installationId"] = "456",
-                    ["privateKeyBase64"] = "key",
-                    ["owner"] = "org",
-                    ["repo"] = "repo"
+                    [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                    [ProviderSettingKeys.ClientId] = "123",
+                    [ProviderSettingKeys.InstallationId] = "456",
+                    [ProviderSettingKeys.PrivateKeyBase64] = "key",
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo"
                 }
             }
         };
@@ -200,12 +201,12 @@ public class PipelineProviderSectionComponentTests : BunitContext
             new()
             {
                 Id = "pp-1", Kind = ProviderKind.Pipeline, ProviderType = "GitHub",
-                DisplayName = "Pipeline A", Settings = new Dictionary<string, string> { ["owner"] = "org1", ["repo"] = "repo1" }
+                DisplayName = "Pipeline A", Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "org1", [ProviderSettingKeys.Repo] = "repo1" }
             },
             new()
             {
                 Id = "pp-2", Kind = ProviderKind.Pipeline, ProviderType = "GitHub",
-                DisplayName = "Pipeline B", Settings = new Dictionary<string, string> { ["owner"] = "org2", ["repo"] = "repo2" }
+                DisplayName = "Pipeline B", Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "org2", [ProviderSettingKeys.Repo] = "repo2" }
             }
         };
 

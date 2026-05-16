@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -26,7 +27,7 @@ public class OrchestratorProxyTests
     {
         // Build a minimal HubConnection (won't actually connect)
         var connection = new HubConnectionBuilder()
-            .WithUrl("http://localhost/hubs/agent", options =>
+            .WithUrl($"http://localhost{HubRoutes.Agent}", options =>
             {
                 options.HttpMessageHandlerFactory = _ => new NoOpHandler();
             })
@@ -40,7 +41,7 @@ public class OrchestratorProxyTests
     public void ImplementsIAgentIssueOperations()
     {
         var connection = new HubConnectionBuilder()
-            .WithUrl("http://localhost/hubs/agent", options =>
+            .WithUrl($"http://localhost{HubRoutes.Agent}", options =>
             {
                 options.HttpMessageHandlerFactory = _ => new NoOpHandler();
             })
@@ -57,7 +58,7 @@ public class OrchestratorProxyTests
         // Arrange — use a recording handler to capture the outgoing request
         var handler = new RecordingHandler();
         var connection = new HubConnectionBuilder()
-            .WithUrl("http://localhost/hubs/agent", options =>
+            .WithUrl($"http://localhost{HubRoutes.Agent}", options =>
             {
                 options.HttpMessageHandlerFactory = _ => handler;
             })
@@ -78,7 +79,7 @@ public class OrchestratorProxyTests
     {
         var handler = new RecordingHandler();
         var connection = new HubConnectionBuilder()
-            .WithUrl("http://localhost/hubs/agent", options =>
+            .WithUrl($"http://localhost{HubRoutes.Agent}", options =>
             {
                 options.HttpMessageHandlerFactory = _ => handler;
             })
@@ -97,7 +98,7 @@ public class OrchestratorProxyTests
     {
         var handler = new RecordingHandler();
         var connection = new HubConnectionBuilder()
-            .WithUrl("http://localhost/hubs/agent", options =>
+            .WithUrl($"http://localhost{HubRoutes.Agent}", options =>
             {
                 options.HttpMessageHandlerFactory = _ => handler;
             })
@@ -162,7 +163,7 @@ public class OrchestratorProxyTests
     private static OrchestratorProxy CreateProxy()
     {
         var connection = new HubConnectionBuilder()
-            .WithUrl("http://localhost/hubs/agent", options =>
+            .WithUrl($"http://localhost{HubRoutes.Agent}", options =>
             {
                 options.HttpMessageHandlerFactory = _ => new NoOpHandler();
             })

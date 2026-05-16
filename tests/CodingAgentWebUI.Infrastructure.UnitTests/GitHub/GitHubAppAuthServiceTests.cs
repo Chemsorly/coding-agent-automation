@@ -8,6 +8,7 @@ using Microsoft.IdentityModel.JsonWebTokens;
 using Moq;
 using Octokit;
 using ILogger = Serilog.ILogger;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.GitHub;
 

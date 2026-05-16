@@ -1,4 +1,5 @@
 using System.Net;
+using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Agent.OpenCode;
 using Moq;
 using ILogger = Serilog.ILogger;
@@ -229,7 +230,7 @@ internal sealed class NetworkErrorClientFactory : IHttpClientFactory
     {
         return new HttpClient(_handler, disposeHandler: false)
         {
-            BaseAddress = new Uri("http://127.0.0.1:4096")
+            BaseAddress = new Uri(AgentDefaults.OpenCodeBaseUrl)
         };
     }
 }

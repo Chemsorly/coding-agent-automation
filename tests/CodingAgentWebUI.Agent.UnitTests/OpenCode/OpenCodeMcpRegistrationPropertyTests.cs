@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using AwesomeAssertions;
+using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Pipeline.Models;
 using FsCheck;
@@ -26,7 +27,7 @@ public class OpenCodeMcpRegistrationPropertyTests
 {
     private static readonly string[] ExcludedEnvKeys =
     [
-        "OPENCODE_SERVER_PASSWORD",
+        AgentEnvironmentVariables.OpenCodeServerPassword,
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
         "OPENROUTER_API_KEY"
@@ -301,7 +302,7 @@ public static class McpRegistrationArbitrary
     private static readonly string[] AllEnvKeys =
     [
         "NODE_ENV", "PATH", "HOME", "CUSTOM_TOKEN", "MCP_DEBUG", "LOG_LEVEL",
-        "OPENCODE_SERVER_PASSWORD", "opencode_server_password", "Opencode_Server_Password",
+        AgentEnvironmentVariables.OpenCodeServerPassword, "opencode_server_password", "Opencode_Server_Password",
         "ANTHROPIC_API_KEY", "anthropic_api_key", "Anthropic_Api_Key",
         "OPENAI_API_KEY", "openai_api_key", "Openai_Api_Key",
         "OPENROUTER_API_KEY", "openrouter_api_key", "Openrouter_Api_Key"

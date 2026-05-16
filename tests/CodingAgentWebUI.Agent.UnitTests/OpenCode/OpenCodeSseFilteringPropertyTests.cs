@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using AwesomeAssertions;
+using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Agent.OpenCode;
 using FsCheck;
 using FsCheck.Xunit;
@@ -326,7 +327,7 @@ internal sealed class SseStreamClientFactory : IHttpClientFactory
     {
         return new HttpClient(_handler, disposeHandler: false)
         {
-            BaseAddress = new Uri("http://127.0.0.1:4096")
+            BaseAddress = new Uri(AgentDefaults.OpenCodeBaseUrl)
         };
     }
 }

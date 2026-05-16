@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
@@ -60,10 +61,10 @@ public class HubAuthorizationTests
     [Fact]
     public void ApiKeyAuth_MissingKey_GeneratesRandomKey()
     {
-        var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
+        var originalKey = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey);
         try
         {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, null);
             var logger = new Mock<ILogger>();
             var key = AgentApiKeyAuthHandler.ResolveApiKey(logger.Object);
 
@@ -73,17 +74,17 @@ public class HubAuthorizationTests
         finally
         {
             if (originalKey != null)
-                Environment.SetEnvironmentVariable("AGENT_API_KEY", originalKey);
+                Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, originalKey);
         }
     }
 
     [Fact]
     public void ApiKeyAuth_ValidKey_ReturnsConfiguredKey()
     {
-        var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
+        var originalKey = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey);
         try
         {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-secret-key-123");
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, "test-secret-key-123");
             var logger = new Mock<ILogger>();
             var key = AgentApiKeyAuthHandler.ResolveApiKey(logger.Object);
 
@@ -91,7 +92,7 @@ public class HubAuthorizationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", originalKey);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, originalKey);
         }
     }
 

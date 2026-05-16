@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 
@@ -52,7 +53,7 @@ public class FeedbackCommentFormatterTests
         var result = FeedbackCommentFormatter.FormatComment(feedback);
 
         result.Should().NotBeNull();
-        result.Should().Contain("<!-- agent:issue-feedback -->");
+        result.Should().Contain(CommentMarkers.IssueFeedback);
     }
 
     #endregion

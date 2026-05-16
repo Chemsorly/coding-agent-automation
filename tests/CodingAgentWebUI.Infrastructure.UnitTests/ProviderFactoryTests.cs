@@ -6,6 +6,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure;
 using Moq;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests;
 
@@ -45,12 +46,12 @@ public class ProviderFactoryTests
             DisplayName = "CI Provider",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["clientId"] = "Iv1.testclientid123",
-                ["installationId"] = "12345",
-                ["privateKeyBase64"] = GenerateValidPrivateKeyBase64(),
-                ["owner"] = "testowner",
-                ["repo"] = "testrepo"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.ClientId] = "Iv1.testclientid123",
+                [ProviderSettingKeys.InstallationId] = "12345",
+                [ProviderSettingKeys.PrivateKeyBase64] = GenerateValidPrivateKeyBase64(),
+                [ProviderSettingKeys.Owner] = "testowner",
+                [ProviderSettingKeys.Repo] = "testrepo"
             }
         };
 
@@ -81,12 +82,12 @@ public class ProviderFactoryTests
             DisplayName = "CI Provider",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["clientId"] = "Iv1.testclientid456",
-                ["installationId"] = "67890",
-                ["privateKeyBase64"] = GenerateValidPrivateKeyBase64(),
-                ["owner"] = "testowner",
-                ["repo"] = "testrepo"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.ClientId] = "Iv1.testclientid456",
+                [ProviderSettingKeys.InstallationId] = "67890",
+                [ProviderSettingKeys.PrivateKeyBase64] = GenerateValidPrivateKeyBase64(),
+                [ProviderSettingKeys.Owner] = "testowner",
+                [ProviderSettingKeys.Repo] = "testrepo"
             }
         };
 

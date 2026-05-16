@@ -214,7 +214,7 @@ public class PipelineModelCoverageTests
     {
         var body = PipelineFormatting.GeneratePrBody(
             "42", 10, 0, 0, null, Array.Empty<FileChangeSummary>(), "Fix bug");
-        body.Should().Contain("Automated implementation via pipeline");
+        body.Should().Contain(PipelineConstants.AutomatedCommitSuffix);
         body.Should().NotContain("Model:");
     }
 }

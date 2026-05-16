@@ -5,6 +5,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Services.Steps;
 using Moq;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Agent.UnitTests;
 

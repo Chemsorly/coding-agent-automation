@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using Polly;
 using Polly.Retry;
@@ -87,16 +88,16 @@ public sealed partial class TokenVendingService : ITokenVendingService
 
         var settings = repoConfig.Settings;
 
-        if (!settings.TryGetValue("privateKeyBase64", out var privateKeyBase64) || string.IsNullOrWhiteSpace(privateKeyBase64))
-            throw new InvalidOperationException("Repository config is missing 'privateKeyBase64' setting");
+        if (!settings.TryGetValue(ProviderSettingKeys.PrivateKeyBase64, out var privateKeyBase64) || string.IsNullOrWhiteSpace(privateKeyBase64))
+            throw new InvalidOperationException($"Repository config is missing '{ProviderSettingKeys.PrivateKeyBase64}' setting");
 
-        if (!settings.TryGetValue("clientId", out var clientId) || string.IsNullOrWhiteSpace(clientId))
-            throw new InvalidOperationException("Repository config is missing 'clientId' setting");
+        if (!settings.TryGetValue(ProviderSettingKeys.ClientId, out var clientId) || string.IsNullOrWhiteSpace(clientId))
+            throw new InvalidOperationException($"Repository config is missing '{ProviderSettingKeys.ClientId}' setting");
 
-        if (!settings.TryGetValue("installationId", out var installationIdStr) || !long.TryParse(installationIdStr, out var installationId))
-            throw new InvalidOperationException("Repository config is missing or invalid 'installationId' setting");
+        if (!settings.TryGetValue(ProviderSettingKeys.InstallationId, out var installationIdStr) || !long.TryParse(installationIdStr, out var installationId))
+            throw new InvalidOperationException($"Repository config is missing or invalid '{ProviderSettingKeys.InstallationId}' setting");
 
-        var apiUrl = settings.TryGetValue("apiUrl", out var url) ? url.TrimEnd('/') : "https://api.github.com";
+        var apiUrl = settings.TryGetValue(ProviderSettingKeys.ApiUrl, out var url) ? url.TrimEnd('/') : "https://api.github.com";
 
         // Generate JWT (same pattern as GitHubAppAuthService)
         var jwt = GenerateJwt(clientId, privateKeyBase64);
@@ -114,7 +115,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
         };
 
         // Scope to specific repository if available
-        if (settings.TryGetValue("repo", out var repoName) && !string.IsNullOrWhiteSpace(repoName))
+        if (settings.TryGetValue(ProviderSettingKeys.Repo, out var repoName) && !string.IsNullOrWhiteSpace(repoName))
         {
             requestBody.Repositories = [repoName];
         }
@@ -179,16 +180,16 @@ public sealed partial class TokenVendingService : ITokenVendingService
         {
             // Any config with privateKeyBase64 needs a short-lived token replacement
             // (repo, brain repo, pipeline provider — all may use GitHub App auth)
-            if (config.Settings.ContainsKey("privateKeyBase64"))
+            if (config.Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64))
             {
                 try
                 {
                     var (token, expiresAt) = await GenerateAgentTokenAsync(config, ct, includeIssuePermission);
 
                     var clonedSettings = new Dictionary<string, string>(config.Settings);
-                    clonedSettings.Remove("privateKeyBase64");
-                    clonedSettings["token"] = token;
-                    clonedSettings["tokenExpiresAt"] = expiresAt.ToString("O");
+                    clonedSettings.Remove(ProviderSettingKeys.PrivateKeyBase64);
+                    clonedSettings[ProviderSettingKeys.TokenValue] = token;
+                    clonedSettings[ProviderSettingKeys.TokenExpiresAt] = expiresAt.ToString("O");
 
                     result.Add(new ProviderConfig
                     {
@@ -206,7 +207,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
                         config.Id, config.DisplayName);
 
                     var clonedSettings = new Dictionary<string, string>(config.Settings);
-                    clonedSettings.Remove("privateKeyBase64");
+                    clonedSettings.Remove(ProviderSettingKeys.PrivateKeyBase64);
 
                     result.Add(new ProviderConfig
                     {
@@ -223,7 +224,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
             {
                 // Clone non-repo configs as-is (strip any private keys from non-repo configs too)
                 var clonedSettings = new Dictionary<string, string>(config.Settings);
-                clonedSettings.Remove("privateKeyBase64");
+                clonedSettings.Remove(ProviderSettingKeys.PrivateKeyBase64);
 
                 result.Add(new ProviderConfig
                 {

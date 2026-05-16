@@ -1,5 +1,6 @@
 using System.Text.Encodings.Web;
 using AwesomeAssertions;
+using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Hubs;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
@@ -30,10 +31,10 @@ public class AgentApiKeyAuthHandlerTests
     [Fact]
     public void ResolveApiKey_WithEnvironmentVariable_ReturnsConfiguredKey()
     {
-        var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
+        var originalKey = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey);
         try
         {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", "my-secret-key");
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, "my-secret-key");
 
             var key = AgentApiKeyAuthHandler.ResolveApiKey(_mockLogger.Object);
 
@@ -41,20 +42,20 @@ public class AgentApiKeyAuthHandlerTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", originalKey);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, originalKey);
         }
     }
 
     [Fact]
     public void ResolveApiKey_WithoutEnvironmentVariable_GeneratesRandomKey()
     {
-        var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
+        var originalKey = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey);
         try
         {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, null);
 
             var key1 = AgentApiKeyAuthHandler.ResolveApiKey(_mockLogger.Object);
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, null);
             var key2 = AgentApiKeyAuthHandler.ResolveApiKey(_mockLogger.Object);
 
             key1.Should().NotBeNullOrWhiteSpace();
@@ -64,17 +65,17 @@ public class AgentApiKeyAuthHandlerTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", originalKey);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, originalKey);
         }
     }
 
     [Fact]
     public void ResolveApiKey_GeneratedKey_IsBase64Of32Bytes()
     {
-        var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
+        var originalKey = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey);
         try
         {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, null);
 
             var key = AgentApiKeyAuthHandler.ResolveApiKey(_mockLogger.Object);
 
@@ -86,17 +87,17 @@ public class AgentApiKeyAuthHandlerTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", originalKey);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, originalKey);
         }
     }
 
     [Fact]
     public void ResolveApiKey_EmptyEnvironmentVariable_GeneratesRandomKey()
     {
-        var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
+        var originalKey = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey);
         try
         {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", "");
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, "");
 
             var key = AgentApiKeyAuthHandler.ResolveApiKey(_mockLogger.Object);
 
@@ -106,17 +107,17 @@ public class AgentApiKeyAuthHandlerTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", originalKey);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, originalKey);
         }
     }
 
     [Fact]
     public void ResolveApiKey_WhitespaceEnvironmentVariable_GeneratesRandomKey()
     {
-        var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
+        var originalKey = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey);
         try
         {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", "   ");
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, "   ");
 
             var key = AgentApiKeyAuthHandler.ResolveApiKey(_mockLogger.Object);
 
@@ -125,7 +126,7 @@ public class AgentApiKeyAuthHandlerTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", originalKey);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, originalKey);
         }
     }
 

@@ -7,6 +7,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure;
 using Xunit;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests;
 
@@ -54,25 +55,25 @@ public class ProviderFactoryPropertyTests
             DisplayName = input.DisplayName,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = input.ApiUrl,
-                ["clientId"] = input.ClientId,
-                ["installationId"] = input.InstallationId.ToString(),
-                ["privateKeyBase64"] = input.PrivateKeyBase64,
-                ["owner"] = input.Owner,
-                ["repo"] = input.Repo
+                [ProviderSettingKeys.ApiUrl] = input.ApiUrl,
+                [ProviderSettingKeys.ClientId] = input.ClientId,
+                [ProviderSettingKeys.InstallationId] = input.InstallationId.ToString(),
+                [ProviderSettingKeys.PrivateKeyBase64] = input.PrivateKeyBase64,
+                [ProviderSettingKeys.Owner] = input.Owner,
+                [ProviderSettingKeys.Repo] = input.Repo
             }
         };
 
         // Assert: Settings contains all required keys
-        Assert.True(config.Settings.ContainsKey("clientId"), "Settings must contain 'clientId'");
-        Assert.True(config.Settings.ContainsKey("installationId"), "Settings must contain 'installationId'");
-        Assert.True(config.Settings.ContainsKey("privateKeyBase64"), "Settings must contain 'privateKeyBase64'");
-        Assert.True(config.Settings.ContainsKey("apiUrl"), "Settings must contain 'apiUrl'");
-        Assert.True(config.Settings.ContainsKey("owner"), "Settings must contain 'owner'");
-        Assert.True(config.Settings.ContainsKey("repo"), "Settings must contain 'repo'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.ClientId), "Settings must contain 'clientId'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.InstallationId), "Settings must contain 'installationId'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64), "Settings must contain 'privateKeyBase64'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.ApiUrl), "Settings must contain 'apiUrl'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.Owner), "Settings must contain 'owner'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.Repo), "Settings must contain 'repo'");
 
         // Assert: Settings does NOT contain a 'token' key (PAT has been replaced)
-        Assert.False(config.Settings.ContainsKey("token"), "Settings must NOT contain 'token' — PAT has been replaced by GitHub App auth");
+        Assert.False(config.Settings.ContainsKey(ProviderSettingKeys.Token), "Settings must NOT contain 'token' — PAT has been replaced by GitHub App auth");
 
         // Assert: The ProviderFactory accepts this config without throwing a validation error.
         // CreateIssueProvider will call ValidateRequiredSettings internally.
@@ -100,27 +101,27 @@ public class ProviderFactoryPropertyTests
             DisplayName = input.DisplayName,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = input.ApiUrl,
-                ["clientId"] = input.ClientId,
-                ["installationId"] = input.InstallationId.ToString(),
-                ["privateKeyBase64"] = input.PrivateKeyBase64,
-                ["owner"] = input.Owner,
-                ["repo"] = input.Repo,
-                ["baseBranch"] = input.BaseBranch
+                [ProviderSettingKeys.ApiUrl] = input.ApiUrl,
+                [ProviderSettingKeys.ClientId] = input.ClientId,
+                [ProviderSettingKeys.InstallationId] = input.InstallationId.ToString(),
+                [ProviderSettingKeys.PrivateKeyBase64] = input.PrivateKeyBase64,
+                [ProviderSettingKeys.Owner] = input.Owner,
+                [ProviderSettingKeys.Repo] = input.Repo,
+                [ProviderSettingKeys.BaseBranch] = input.BaseBranch
             }
         };
 
         // Assert: Settings contains all required keys including baseBranch
-        Assert.True(config.Settings.ContainsKey("clientId"), "Settings must contain 'clientId'");
-        Assert.True(config.Settings.ContainsKey("installationId"), "Settings must contain 'installationId'");
-        Assert.True(config.Settings.ContainsKey("privateKeyBase64"), "Settings must contain 'privateKeyBase64'");
-        Assert.True(config.Settings.ContainsKey("apiUrl"), "Settings must contain 'apiUrl'");
-        Assert.True(config.Settings.ContainsKey("owner"), "Settings must contain 'owner'");
-        Assert.True(config.Settings.ContainsKey("repo"), "Settings must contain 'repo'");
-        Assert.True(config.Settings.ContainsKey("baseBranch"), "Settings must contain 'baseBranch'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.ClientId), "Settings must contain 'clientId'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.InstallationId), "Settings must contain 'installationId'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64), "Settings must contain 'privateKeyBase64'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.ApiUrl), "Settings must contain 'apiUrl'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.Owner), "Settings must contain 'owner'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.Repo), "Settings must contain 'repo'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.BaseBranch), "Settings must contain 'baseBranch'");
 
         // Assert: Settings does NOT contain a 'token' key (PAT has been replaced)
-        Assert.False(config.Settings.ContainsKey("token"), "Settings must NOT contain 'token' — PAT has been replaced by GitHub App auth");
+        Assert.False(config.Settings.ContainsKey(ProviderSettingKeys.Token), "Settings must NOT contain 'token' — PAT has been replaced by GitHub App auth");
 
         // Assert: The ProviderFactory accepts this config without throwing a validation error.
         var factory = new ProviderFactory(DefaultPipelineConfig);
@@ -156,7 +157,7 @@ public class ProviderFactoryPropertyTests
 
         // Group by composite key (clientId:installationId)
         var groupedByKey = results
-            .GroupBy(r => $"{r.Config.Settings["clientId"]}:{r.Config.Settings["installationId"]}")
+            .GroupBy(r => $"{r.Config.Settings[ProviderSettingKeys.ClientId]}:{r.Config.Settings[ProviderSettingKeys.InstallationId]}")
             .ToList();
 
         // Assert: Within each group, all instances are the same reference
@@ -195,26 +196,26 @@ public class ProviderFactoryPropertyTests
         // Arrange: Build a ProviderConfig with some fields missing or empty
         var settings = new Dictionary<string, string>
         {
-            ["apiUrl"] = "https://api.github.com",
-            ["owner"] = "testowner",
-            ["repo"] = "testrepo"
+            [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+            [ProviderSettingKeys.Owner] = "testowner",
+            [ProviderSettingKeys.Repo] = "testrepo"
         };
 
         // Add or omit each field based on the input
         if (input.ClientIdPresence == FieldPresence.Present)
-            settings["clientId"] = input.ClientIdValue;
+            settings[ProviderSettingKeys.ClientId] = input.ClientIdValue;
         else if (input.ClientIdPresence == FieldPresence.Empty)
-            settings["clientId"] = input.ClientIdValue; // empty or whitespace
+            settings[ProviderSettingKeys.ClientId] = input.ClientIdValue; // empty or whitespace
 
         if (input.InstallationIdPresence == FieldPresence.Present)
-            settings["installationId"] = input.InstallationIdValue;
+            settings[ProviderSettingKeys.InstallationId] = input.InstallationIdValue;
         else if (input.InstallationIdPresence == FieldPresence.Empty)
-            settings["installationId"] = input.InstallationIdValue; // empty or whitespace
+            settings[ProviderSettingKeys.InstallationId] = input.InstallationIdValue; // empty or whitespace
 
         if (input.PrivateKeyPresence == FieldPresence.Present)
-            settings["privateKeyBase64"] = input.PrivateKeyBase64Value;
+            settings[ProviderSettingKeys.PrivateKeyBase64] = input.PrivateKeyBase64Value;
         else if (input.PrivateKeyPresence == FieldPresence.Empty)
-            settings["privateKeyBase64"] = input.PrivateKeyBase64Value; // empty or whitespace
+            settings[ProviderSettingKeys.PrivateKeyBase64] = input.PrivateKeyBase64Value; // empty or whitespace
 
         var config = new ProviderConfig
         {
@@ -423,9 +424,9 @@ public static class MissingConfigFieldArbitrary
         FieldPresence clientId, FieldPresence installationId, FieldPresence privateKey)
     {
         var missing = new List<string>();
-        if (clientId != FieldPresence.Present) missing.Add("clientId");
-        if (installationId != FieldPresence.Present) missing.Add("installationId");
-        if (privateKey != FieldPresence.Present) missing.Add("privateKeyBase64");
+        if (clientId != FieldPresence.Present) missing.Add(ProviderSettingKeys.ClientId);
+        if (installationId != FieldPresence.Present) missing.Add(ProviderSettingKeys.InstallationId);
+        if (privateKey != FieldPresence.Present) missing.Add(ProviderSettingKeys.PrivateKeyBase64);
         return missing.ToArray();
     }
 }
@@ -504,17 +505,17 @@ public static class AuthCacheConsistencyArbitrary
                     DisplayName = $"TestProvider-{i}",
                     Settings = new Dictionary<string, string>
                     {
-                        ["apiUrl"] = "https://api.github.com",
-                        ["clientId"] = clientId,
-                        ["installationId"] = installationId.ToString(),
-                        ["privateKeyBase64"] = ValidPrivateKeyBase64,
-                        ["owner"] = "testowner",
-                        ["repo"] = "testrepo"
+                        [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                        [ProviderSettingKeys.ClientId] = clientId,
+                        [ProviderSettingKeys.InstallationId] = installationId.ToString(),
+                        [ProviderSettingKeys.PrivateKeyBase64] = ValidPrivateKeyBase64,
+                        [ProviderSettingKeys.Owner] = "testowner",
+                        [ProviderSettingKeys.Repo] = "testrepo"
                     }
                 };
             }).ToList()
             let expectedDistinct = configs
-                .Select(c => $"{c.Settings["clientId"]}:{c.Settings["installationId"]}")
+                .Select(c => $"{c.Settings[ProviderSettingKeys.ClientId]}:{c.Settings[ProviderSettingKeys.InstallationId]}")
                 .Distinct()
                 .Count()
             select new AuthCacheConsistencyInput(configs, expectedDistinct);

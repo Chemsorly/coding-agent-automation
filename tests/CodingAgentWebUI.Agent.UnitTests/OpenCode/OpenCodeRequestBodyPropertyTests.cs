@@ -4,6 +4,7 @@ using FsCheck.Fluent;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Agent.UnitTests.OpenCode;
 

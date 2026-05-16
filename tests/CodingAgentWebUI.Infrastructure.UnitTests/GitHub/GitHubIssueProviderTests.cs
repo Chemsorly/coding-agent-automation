@@ -5,6 +5,7 @@ using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests;
 

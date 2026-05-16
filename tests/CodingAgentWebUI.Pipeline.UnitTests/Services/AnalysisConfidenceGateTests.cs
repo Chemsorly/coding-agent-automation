@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 
@@ -113,7 +114,7 @@ public class AnalysisConfidenceGateTests
         comment.Should().Contain("### Concerns");
         comment.Should().Contain("- Might affect perf");
         comment.Should().Contain("agent:needs-refinement");
-        comment.Should().Contain("<!-- agent:gate-rejection -->");
+        comment.Should().Contain(CommentMarkers.GateRejection);
     }
 
     [Fact]
@@ -128,7 +129,7 @@ public class AnalysisConfidenceGateTests
         var comment = AgentExecutionOrchestrator.BuildNotReadyComment(assessment);
 
         comment.Should().NotContain("### Blocking Issues");
-        comment.Should().Contain("<!-- agent:gate-rejection -->");
+        comment.Should().Contain(CommentMarkers.GateRejection);
     }
 
     // --- BuildWontDoComment ---
@@ -150,7 +151,7 @@ public class AnalysisConfidenceGateTests
         comment.Should().Contain("### Concerns");
         comment.Should().Contain("- Related test coverage is thin");
         comment.Should().Contain("agent:wont-do");
-        comment.Should().Contain("<!-- agent:gate-wont-do -->");
+        comment.Should().Contain(CommentMarkers.GateWontDo);
     }
 
     [Fact]
@@ -165,7 +166,7 @@ public class AnalysisConfidenceGateTests
         var comment = AgentExecutionOrchestrator.BuildWontDoComment(assessment);
 
         comment.Should().NotContain("### Concerns");
-        comment.Should().Contain("<!-- agent:gate-wont-do -->");
+        comment.Should().Contain(CommentMarkers.GateWontDo);
     }
 
     // --- ExcludedCommentMarkers ---
@@ -173,8 +174,8 @@ public class AnalysisConfidenceGateTests
     [Fact]
     public void ExcludedCommentMarkers_ContainsGateMarkers()
     {
-        PromptBuilder.ExcludedCommentMarkers.Should().Contain("<!-- agent:gate-rejection -->");
-        PromptBuilder.ExcludedCommentMarkers.Should().Contain("<!-- agent:gate-wont-do -->");
+        PromptBuilder.ExcludedCommentMarkers.Should().Contain(CommentMarkers.GateRejection);
+        PromptBuilder.ExcludedCommentMarkers.Should().Contain(CommentMarkers.GateWontDo);
     }
 
     // --- PromptBuilder constants ---

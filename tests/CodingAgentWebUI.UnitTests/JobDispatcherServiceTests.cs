@@ -7,6 +7,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Moq;
 using ILogger = Serilog.ILogger;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.UnitTests;
 

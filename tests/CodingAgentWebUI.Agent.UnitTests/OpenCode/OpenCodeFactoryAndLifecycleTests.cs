@@ -1,5 +1,7 @@
 using System.Net;
+using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Agent.OpenCode;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
@@ -236,15 +238,15 @@ public class OpenCodeFactoryAndLifecycleTests
     public void Factory_OpenCodeType_CreatesOpenCodeAgentProvider()
     {
         // Arrange — set the required env var
-        var originalPassword = Environment.GetEnvironmentVariable("OPENCODE_SERVER_PASSWORD");
+        var originalPassword = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeServerPassword);
         try
         {
-            Environment.SetEnvironmentVariable("OPENCODE_SERVER_PASSWORD", "test-password-32-chars-long-enough");
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeServerPassword, "test-password-32-chars-long-enough");
 
             var orchestratorMock = new Mock<IKiroCliOrchestrator>();
             var httpClientFactoryMock = new Mock<IHttpClientFactory>();
             httpClientFactoryMock.Setup(f => f.CreateClient(It.IsAny<string>()))
-                .Returns(new HttpClient { BaseAddress = new Uri("http://127.0.0.1:4096") });
+                .Returns(new HttpClient { BaseAddress = new Uri(AgentDefaults.OpenCodeBaseUrl) });
 
             var pipelineConfig = new PipelineConfiguration();
             var factory = new AgentProviderFactory(
@@ -253,11 +255,11 @@ public class OpenCodeFactoryAndLifecycleTests
             var config = new ProviderConfig
             {
                 Kind = ProviderKind.Agent,
-                ProviderType = "OpenCode",
+                ProviderType = AgentDefaults.OpenCodeHttpClientName,
                 DisplayName = "Test OpenCode Provider",
                 Settings = new Dictionary<string, string>
                 {
-                    ["baseUrl"] = "http://127.0.0.1:4096"
+                    [ProviderSettingKeys.BaseUrl] = AgentDefaults.OpenCodeBaseUrl
                 }
             };
 
@@ -271,7 +273,7 @@ public class OpenCodeFactoryAndLifecycleTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("OPENCODE_SERVER_PASSWORD", originalPassword);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeServerPassword, originalPassword);
         }
     }
 
@@ -283,15 +285,15 @@ public class OpenCodeFactoryAndLifecycleTests
     public void Factory_OpenCodeTypeCaseInsensitive_CreatesProvider()
     {
         // Arrange
-        var originalPassword = Environment.GetEnvironmentVariable("OPENCODE_SERVER_PASSWORD");
+        var originalPassword = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeServerPassword);
         try
         {
-            Environment.SetEnvironmentVariable("OPENCODE_SERVER_PASSWORD", "test-password-32-chars-long-enough");
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeServerPassword, "test-password-32-chars-long-enough");
 
             var orchestratorMock = new Mock<IKiroCliOrchestrator>();
             var httpClientFactoryMock = new Mock<IHttpClientFactory>();
             httpClientFactoryMock.Setup(f => f.CreateClient(It.IsAny<string>()))
-                .Returns(new HttpClient { BaseAddress = new Uri("http://127.0.0.1:4096") });
+                .Returns(new HttpClient { BaseAddress = new Uri(AgentDefaults.OpenCodeBaseUrl) });
 
             var pipelineConfig = new PipelineConfiguration();
             var factory = new AgentProviderFactory(
@@ -304,7 +306,7 @@ public class OpenCodeFactoryAndLifecycleTests
                 DisplayName = "Test OpenCode Provider",
                 Settings = new Dictionary<string, string>
                 {
-                    ["baseUrl"] = "http://127.0.0.1:4096"
+                    [ProviderSettingKeys.BaseUrl] = AgentDefaults.OpenCodeBaseUrl
                 }
             };
 
@@ -317,7 +319,7 @@ public class OpenCodeFactoryAndLifecycleTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("OPENCODE_SERVER_PASSWORD", originalPassword);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeServerPassword, originalPassword);
         }
     }
 
@@ -332,10 +334,10 @@ public class OpenCodeFactoryAndLifecycleTests
     public void Factory_InvalidBaseUrl_ThrowsArgumentException(string invalidUrl)
     {
         // Arrange
-        var originalPassword = Environment.GetEnvironmentVariable("OPENCODE_SERVER_PASSWORD");
+        var originalPassword = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeServerPassword);
         try
         {
-            Environment.SetEnvironmentVariable("OPENCODE_SERVER_PASSWORD", "test-password-32-chars-long-enough");
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeServerPassword, "test-password-32-chars-long-enough");
 
             var orchestratorMock = new Mock<IKiroCliOrchestrator>();
             var httpClientFactoryMock = new Mock<IHttpClientFactory>();
@@ -346,7 +348,7 @@ public class OpenCodeFactoryAndLifecycleTests
             var config = new ProviderConfig
             {
                 Kind = ProviderKind.Agent,
-                ProviderType = "OpenCode",
+                ProviderType = AgentDefaults.OpenCodeHttpClientName,
                 DisplayName = "Test OpenCode Provider",
                 Settings = new Dictionary<string, string>
                 {
@@ -359,7 +361,7 @@ public class OpenCodeFactoryAndLifecycleTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("OPENCODE_SERVER_PASSWORD", originalPassword);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeServerPassword, originalPassword);
         }
     }
 
@@ -371,10 +373,10 @@ public class OpenCodeFactoryAndLifecycleTests
     public void Factory_MissingPassword_ThrowsInvalidOperationException()
     {
         // Arrange — ensure env var is NOT set
-        var originalPassword = Environment.GetEnvironmentVariable("OPENCODE_SERVER_PASSWORD");
+        var originalPassword = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeServerPassword);
         try
         {
-            Environment.SetEnvironmentVariable("OPENCODE_SERVER_PASSWORD", null);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeServerPassword, null);
 
             var orchestratorMock = new Mock<IKiroCliOrchestrator>();
             var httpClientFactoryMock = new Mock<IHttpClientFactory>();
@@ -385,11 +387,11 @@ public class OpenCodeFactoryAndLifecycleTests
             var config = new ProviderConfig
             {
                 Kind = ProviderKind.Agent,
-                ProviderType = "OpenCode",
+                ProviderType = AgentDefaults.OpenCodeHttpClientName,
                 DisplayName = "Test OpenCode Provider",
                 Settings = new Dictionary<string, string>
                 {
-                    ["baseUrl"] = "http://127.0.0.1:4096"
+                    [ProviderSettingKeys.BaseUrl] = AgentDefaults.OpenCodeBaseUrl
                 }
             };
 
@@ -398,7 +400,7 @@ public class OpenCodeFactoryAndLifecycleTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("OPENCODE_SERVER_PASSWORD", originalPassword);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeServerPassword, originalPassword);
         }
     }
 
@@ -518,7 +520,7 @@ internal sealed class HealthNetworkErrorClientFactory : IHttpClientFactory
     {
         return new HttpClient(_handler, disposeHandler: false)
         {
-            BaseAddress = new Uri("http://127.0.0.1:4096")
+            BaseAddress = new Uri(AgentDefaults.OpenCodeBaseUrl)
         };
     }
 }

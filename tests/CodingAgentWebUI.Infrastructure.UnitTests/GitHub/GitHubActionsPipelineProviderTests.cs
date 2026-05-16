@@ -5,6 +5,7 @@ using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure;
 using Moq;
 using Octokit;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests;
 

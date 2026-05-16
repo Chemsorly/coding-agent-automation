@@ -23,7 +23,7 @@ public static class FeedbackCommentFormatter
 
         // HTML marker for identification (must not be duplicated by analysis or gate-rejection comments)
         builder.AppendLine(CommentMarkers.IssueFeedback);
-        builder.AppendLine("## 🤖 Agent Feedback — Issue Quality");
+        builder.AppendLine(CommentMarkers.IssueFeedbackHeader);
         builder.AppendLine();
 
         // Category (if present)

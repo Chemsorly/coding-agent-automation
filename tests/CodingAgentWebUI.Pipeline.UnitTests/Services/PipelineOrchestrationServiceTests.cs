@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Moq;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -217,7 +218,7 @@ public class PipelineOrchestrationServiceTests
                 new()
                 {
                     Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test",
-                    Settings = new Dictionary<string, string> { ["model"] = "claude-sonnet-4.6" }
+                    Settings = new Dictionary<string, string> { [ProviderSettingKeys.Model] = "claude-sonnet-4.6" }
                 }
             });
 
@@ -307,7 +308,7 @@ public class PipelineOrchestrationServiceTests
                 new()
                 {
                     Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test",
-                    Settings = new Dictionary<string, string> { ["model"] = "claude-opus-4.6" }
+                    Settings = new Dictionary<string, string> { [ProviderSettingKeys.Model] = "claude-opus-4.6" }
                 }
             });
 
@@ -1628,7 +1629,7 @@ public class PipelineOrchestrationServiceTests
         run.AnalysisRecommendation.Should().Be("not_ready");
         run.AnalysisBlockingIssues.Should().Contain("No acceptance criteria");
         _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:needs-refinement", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
-        _mockIssueProvider.Verify(p => p.PostCommentAsync("42", It.Is<string>(s => s.Contains("<!-- agent:gate-rejection -->")), It.IsAny<CancellationToken>()), Times.Once);
+        _mockIssueProvider.Verify(p => p.PostCommentAsync("42", It.Is<string>(s => s.Contains(CommentMarkers.GateRejection)), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -1642,7 +1643,7 @@ public class PipelineOrchestrationServiceTests
         run.FailureReason.Should().Contain("won't do");
         run.AnalysisRecommendation.Should().Be("wont_do");
         _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:wont-do", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
-        _mockIssueProvider.Verify(p => p.PostCommentAsync("42", It.Is<string>(s => s.Contains("<!-- agent:gate-wont-do -->")), It.IsAny<CancellationToken>()), Times.Once);
+        _mockIssueProvider.Verify(p => p.PostCommentAsync("42", It.Is<string>(s => s.Contains(CommentMarkers.GateWontDo)), It.IsAny<CancellationToken>()), Times.Once);
         // Should NOT proceed to code generation
         _mockAgentProvider.Verify(p => p.ExecuteAsync(
             It.Is<AgentRequest>(r => r.Prompt.Contains("Implement")),

@@ -6,6 +6,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR;
 using Moq;
 using ILogger = Serilog.ILogger;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.UnitTests.Hubs;
 
@@ -65,11 +66,11 @@ public class BrainTokenRefreshRegressionTests
             RepositoryRole = RepositoryRole.Work,
             Settings = new Dictionary<string, string>
             {
-                ["privateKeyBase64"] = "dGVzdA==",
-                ["clientId"] = "client-1",
-                ["installationId"] = "12345",
-                ["owner"] = "org",
-                ["repo"] = "work-repo"
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.ClientId] = "client-1",
+                [ProviderSettingKeys.InstallationId] = "12345",
+                [ProviderSettingKeys.Owner] = "org",
+                [ProviderSettingKeys.Repo] = "work-repo"
             }
         };
 
@@ -82,11 +83,11 @@ public class BrainTokenRefreshRegressionTests
             RepositoryRole = RepositoryRole.Brain,
             Settings = new Dictionary<string, string>
             {
-                ["privateKeyBase64"] = "dGVzdA==",
-                ["clientId"] = "client-1",
-                ["installationId"] = "12345",
-                ["owner"] = "org",
-                ["repo"] = "brain-repo"
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.ClientId] = "client-1",
+                [ProviderSettingKeys.InstallationId] = "12345",
+                [ProviderSettingKeys.Owner] = "org",
+                [ProviderSettingKeys.Repo] = "brain-repo"
             }
         };
 
@@ -118,7 +119,7 @@ public class BrainTokenRefreshRegressionTests
         // Assert: Token was generated from the BRAIN config, not the work config
         capturedConfig.Should().NotBeNull();
         capturedConfig!.Id.Should().Be("brain-repo-1", "token must be generated from brain config, not work config");
-        capturedConfig.Settings["repo"].Should().Be("brain-repo");
+        capturedConfig.Settings[ProviderSettingKeys.Repo].Should().Be("brain-repo");
         response.Token.Should().Be("ghs_brain_token");
     }
 
@@ -139,11 +140,11 @@ public class BrainTokenRefreshRegressionTests
             RepositoryRole = RepositoryRole.Work,
             Settings = new Dictionary<string, string>
             {
-                ["privateKeyBase64"] = "dGVzdA==",
-                ["clientId"] = "client-1",
-                ["installationId"] = "12345",
-                ["owner"] = "org",
-                ["repo"] = "work-repo"
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.ClientId] = "client-1",
+                [ProviderSettingKeys.InstallationId] = "12345",
+                [ProviderSettingKeys.Owner] = "org",
+                [ProviderSettingKeys.Repo] = "work-repo"
             }
         };
 
@@ -175,7 +176,7 @@ public class BrainTokenRefreshRegressionTests
         // Assert: Token was generated from the WORK config
         capturedConfig.Should().NotBeNull();
         capturedConfig!.Id.Should().Be("work-repo-1");
-        capturedConfig.Settings["repo"].Should().Be("work-repo");
+        capturedConfig.Settings[ProviderSettingKeys.Repo].Should().Be("work-repo");
         response.Token.Should().Be("ghs_work_token");
     }
 
@@ -196,11 +197,11 @@ public class BrainTokenRefreshRegressionTests
             RepositoryRole = RepositoryRole.Work,
             Settings = new Dictionary<string, string>
             {
-                ["privateKeyBase64"] = "dGVzdA==",
-                ["clientId"] = "client-1",
-                ["installationId"] = "12345",
-                ["owner"] = "org",
-                ["repo"] = "work-repo"
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.ClientId] = "client-1",
+                [ProviderSettingKeys.InstallationId] = "12345",
+                [ProviderSettingKeys.Owner] = "org",
+                [ProviderSettingKeys.Repo] = "work-repo"
             }
         };
 
@@ -250,11 +251,11 @@ public class BrainTokenRefreshRegressionTests
             DisplayName = "Work Repo",
             Settings = new Dictionary<string, string>
             {
-                ["privateKeyBase64"] = "dGVzdA==",
-                ["clientId"] = "client-1",
-                ["installationId"] = "12345",
-                ["owner"] = "org",
-                ["repo"] = "work-repo"
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.ClientId] = "client-1",
+                [ProviderSettingKeys.InstallationId] = "12345",
+                [ProviderSettingKeys.Owner] = "org",
+                [ProviderSettingKeys.Repo] = "work-repo"
             }
         };
 

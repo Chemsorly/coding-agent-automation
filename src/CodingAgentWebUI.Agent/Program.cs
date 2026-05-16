@@ -15,19 +15,19 @@ using OpenTelemetry.Trace;
 using Serilog;
 
 // ── Read required environment variables early ──
-var orchestratorUrl = Environment.GetEnvironmentVariable(AgentDefaults.EnvOrchestratorUrl)
+var orchestratorUrl = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.OrchestratorUrl)
     ?? throw new InvalidOperationException("ORCHESTRATOR_URL environment variable is required");
-var agentApiKey = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentApiKey)
+var agentApiKey = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey)
     ?? throw new InvalidOperationException("AGENT_API_KEY environment variable is required");
-var agentId = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentId)
+var agentId = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentId)
     ?? Environment.MachineName;
 
 // Validate AGENT_TYPE is set (AgentWorkerService reads it, but fail fast here)
-if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentType)))
+if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentType)))
     throw new InvalidOperationException("AGENT_TYPE environment variable is required");
 
 // ── Configure Serilog ──
-var logLevel = Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel)?.ToLowerInvariant() switch
+var logLevel = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.LogLevel)?.ToLowerInvariant() switch
 {
     "debug" or "dbg" => Serilog.Events.LogEventLevel.Debug,
     "verbose" or "trace" => Serilog.Events.LogEventLevel.Verbose,
@@ -107,15 +107,15 @@ try
     builder.Services.AddPipelineServices(Log.Logger);
 
     // ── OpenCode named HttpClient (always registered — safe when OPENCODE_SERVER_PASSWORD is absent) ──
-    var agentProviderType = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "";
+    var agentProviderType = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentProviderType) ?? "";
     builder.Services.AddHttpClient(AgentDefaults.OpenCodeHttpClientName, (sp, client) =>
     {
-        var baseUrl = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeBaseUrl) ?? AgentDefaults.OpenCodeBaseUrl;
+        var baseUrl = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeBaseUrl) ?? AgentDefaults.OpenCodeBaseUrl;
         client.BaseAddress = new Uri(baseUrl);
         // OpenCode message API blocks until the agent finishes — can take minutes for complex tasks
-        client.Timeout = TimeSpan.FromMinutes(30);
+        client.Timeout = AgentDefaults.OpenCodeRequestTimeout;
 
-        var password = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword);
+        var password = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeServerPassword);
         if (!string.IsNullOrEmpty(password))
         {
             client.DefaultRequestHeaders.Authorization =

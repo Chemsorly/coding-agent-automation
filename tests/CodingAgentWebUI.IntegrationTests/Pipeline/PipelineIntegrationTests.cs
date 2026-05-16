@@ -8,6 +8,7 @@ using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.IntegrationTests.Helpers;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.IntegrationTests.Pipeline;
 
@@ -139,24 +140,24 @@ public class PipelineIntegrationTests : IntegrationTestBase
             new ProviderConfig
             {
                 Id = "issue-gh", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "GitHub Issues",
-                Settings = new Dictionary<string, string> { ["apiUrl"] = "https://api.github.com", ["owner"] = "org", ["repo"] = "repo" }
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.ApiUrl] = "https://api.github.com", [ProviderSettingKeys.Owner] = "org", [ProviderSettingKeys.Repo] = "repo" }
             },
             new ProviderConfig
             {
                 Id = "repo-gh", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "GitHub Repo",
                 RepositoryRole = RepositoryRole.Work,
-                Settings = new Dictionary<string, string> { ["baseBranch"] = "main" }
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.BaseBranch] = "main" }
             },
             new ProviderConfig
             {
                 Id = "repo-brain", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain Repo",
                 RepositoryRole = RepositoryRole.Brain,
-                Settings = new Dictionary<string, string> { ["baseBranch"] = "main" }
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.BaseBranch] = "main" }
             },
             new ProviderConfig
             {
                 Id = "agent-kiro", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Kiro Agent",
-                Settings = new Dictionary<string, string> { ["model"] = "claude-sonnet-4.6" }
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.Model] = "claude-sonnet-4.6" }
             },
             new ProviderConfig
             {

@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Orchestration;
@@ -47,7 +48,7 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         // Set the API key via environment variable before host builds
-        Environment.SetEnvironmentVariable("AGENT_API_KEY", TestApiKey);
+        Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey, TestApiKey);
 
         // Set environment to Development so static web assets are resolved correctly.
         builder.UseEnvironment("Development");

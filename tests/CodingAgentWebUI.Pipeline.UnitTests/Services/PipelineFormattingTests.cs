@@ -128,7 +128,7 @@ public class PipelineFormattingTests
     {
         var result = PipelineFormatting.GenerateCommitMessage("Fix bug", "7");
 
-        result.Should().Contain("Automated implementation via pipeline");
+        result.Should().Contain(PipelineConstants.AutomatedCommitSuffix);
     }
 
     // --- IsPathBlacklisted ---

@@ -80,14 +80,14 @@ public class AgentWorkerServiceTests
     public void Constructor_ReadsAgentTypeFromEnvironment()
     {
         // AGENT_TYPE is required — if not set, constructor throws
-        var originalType = Environment.GetEnvironmentVariable("AGENT_TYPE");
+        var originalType = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentType);
         try
         {
             // Must clear the env var completely
-            Environment.SetEnvironmentVariable("AGENT_TYPE", null);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentType, null);
 
             // Verify it's actually cleared
-            var currentValue = Environment.GetEnvironmentVariable("AGENT_TYPE");
+            var currentValue = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentType);
             if (currentValue is not null)
             {
                 // Skip test if we can't clear the env var (e.g., set at process level)
@@ -103,17 +103,17 @@ public class AgentWorkerServiceTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("AGENT_TYPE", originalType ?? "kiro-dotnet");
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentType, originalType ?? "kiro-dotnet");
         }
     }
 
     [Fact]
     public void Constructor_UsesHostnameWhenAgentIdNotSet()
     {
-        var originalId = Environment.GetEnvironmentVariable("AGENT_ID");
+        var originalId = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentId);
         try
         {
-            Environment.SetEnvironmentVariable("AGENT_ID", null);
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentId, null);
             // Should not throw — falls back to Environment.MachineName
             var service = CreateService();
             service.Should().NotBeNull();
@@ -121,40 +121,40 @@ public class AgentWorkerServiceTests
         finally
         {
             if (originalId != null)
-                Environment.SetEnvironmentVariable("AGENT_ID", originalId);
+                Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentId, originalId);
         }
     }
 
     [Fact]
     public void Constructor_ParsesLabelsFromEnvironment()
     {
-        var originalLabels = Environment.GetEnvironmentVariable("AGENT_LABELS");
+        var originalLabels = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentLabels);
         try
         {
-            Environment.SetEnvironmentVariable("AGENT_LABELS", "kiro,dotnet,gpu");
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentLabels, "kiro,dotnet,gpu");
             var service = CreateService();
             // Service should be created successfully with parsed labels
             service.Should().NotBeNull();
         }
         finally
         {
-            Environment.SetEnvironmentVariable("AGENT_LABELS", originalLabels ?? "kiro,dotnet");
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentLabels, originalLabels ?? "kiro,dotnet");
         }
     }
 
     [Fact]
     public void Constructor_HandlesEmptyLabels()
     {
-        var originalLabels = Environment.GetEnvironmentVariable("AGENT_LABELS");
+        var originalLabels = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentLabels);
         try
         {
-            Environment.SetEnvironmentVariable("AGENT_LABELS", "");
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentLabels, "");
             var service = CreateService();
             service.Should().NotBeNull();
         }
         finally
         {
-            Environment.SetEnvironmentVariable("AGENT_LABELS", originalLabels ?? "kiro,dotnet");
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentLabels, originalLabels ?? "kiro,dotnet");
         }
     }
 
@@ -462,8 +462,8 @@ public class AgentWorkerServiceTests
     private static AgentWorkerService CreateService()
     {
         // Ensure AGENT_TYPE is set for the constructor
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AGENT_TYPE")))
-            Environment.SetEnvironmentVariable("AGENT_TYPE", "kiro-dotnet");
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentType)))
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentType, "kiro-dotnet");
 
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
@@ -478,8 +478,8 @@ public class AgentWorkerServiceTests
 
     private static AgentWorkerService CreateServiceWithOrchestrator(KiroCliLib.Core.IKiroCliOrchestrator orchestrator)
     {
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AGENT_TYPE")))
-            Environment.SetEnvironmentVariable("AGENT_TYPE", "kiro-dotnet");
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentType)))
+            Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentType, "kiro-dotnet");
 
         var mockLogger = new Mock<Serilog.ILogger>();
         return new AgentWorkerService(

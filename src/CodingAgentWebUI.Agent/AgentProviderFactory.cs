@@ -126,7 +126,7 @@ public sealed class AgentProviderFactory : IProviderFactory
         }
 
         // Validate password is available at construction time
-        _ = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword)
+        _ = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.OpenCodeServerPassword)
             ?? throw new InvalidOperationException("OPENCODE_SERVER_PASSWORD not set.");
 
         var model = config.Settings.GetValueOrDefault(ProviderSettingKeys.Model);

@@ -17,4 +17,13 @@ public static class CommentMarkers
 
     /// <summary>HTML marker indicating an issue feedback comment.</summary>
     public const string IssueFeedback = "<!-- agent:issue-feedback -->";
+
+    /// <summary>Header for the agent feedback comment posted on issues.</summary>
+    public const string IssueFeedbackHeader = "## 🤖 Agent Feedback — Issue Quality";
+
+    /// <summary>Generic prefix used to identify any pipeline-generated markdown header.</summary>
+    public const string PipelinePrefix = "## 🤖";
+
+    /// <summary>Generic prefix for all HTML comment agent markers.</summary>
+    public const string AgentCommentPrefix = "<!-- agent:";
 }

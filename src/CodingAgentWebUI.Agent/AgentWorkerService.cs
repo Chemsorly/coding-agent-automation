@@ -83,15 +83,15 @@ public sealed class AgentWorkerService : BackgroundService
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
-        _isOpenCodeProvider = (Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "")
+        _isOpenCodeProvider = (Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentProviderType) ?? "")
             .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase);
 
-        _agentId = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentId)
+        _agentId = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentId)
             ?? Environment.MachineName;
-        _agentType = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentType)
+        _agentType = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentType)
             ?? throw new InvalidOperationException("AGENT_TYPE environment variable is required");
 
-        var labelsEnv = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentLabels) ?? string.Empty;
+        var labelsEnv = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentLabels) ?? string.Empty;
         _labels = labelsEnv
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList()
@@ -137,7 +137,7 @@ public sealed class AgentWorkerService : BackgroundService
                 _agentId, _agentType, string.Join(", ", _labels));
 
             // Heartbeat loop
-            using var heartbeatTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+            using var heartbeatTimer = new PeriodicTimer(AgentDefaults.HeartbeatInterval);
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
@@ -362,7 +362,7 @@ public sealed class AgentWorkerService : BackgroundService
                             Prompt = message.Prompt,
                             WorkspacePath = chatWorkspace,
                             UseResume = message.UseResume,
-                            Timeout = TimeSpan.FromMinutes(30)
+                            Timeout = AgentDefaults.OpenCodeRequestTimeout
                         },
                         _chatCts.Token,
                         onOutputLine: async line => await outputBatcher.AddLineAsync(line));
@@ -486,7 +486,7 @@ public sealed class AgentWorkerService : BackgroundService
         {
             var psi = new ProcessStartInfo
             {
-                FileName = Environment.GetEnvironmentVariable(AgentDefaults.EnvKiroCliPath) ?? AgentDefaults.KiroCliPath,
+                FileName = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.KiroCliPath) ?? AgentDefaults.KiroCliPath,
                 Arguments = "chat --list-models --format json",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

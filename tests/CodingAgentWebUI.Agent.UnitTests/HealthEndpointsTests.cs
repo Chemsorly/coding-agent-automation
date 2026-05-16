@@ -32,7 +32,7 @@ public class HealthEndpointsTests : IAsyncDisposable
         // Ensure AGENT_TYPE is set before any test method runs.
         // AgentWorkerServiceTests in the same assembly may clear this env var;
         // setting it here prevents race conditions during parallel test execution.
-        Environment.SetEnvironmentVariable("AGENT_TYPE", "kiro-dotnet");
+        Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentType, "kiro-dotnet");
     }
 
     private async Task<HttpClient> CreateTestClient(bool isConnected)
@@ -45,7 +45,7 @@ public class HealthEndpointsTests : IAsyncDisposable
         var mockQualityGateValidator = new Mock<IQualityGateValidator>();
 
         // Ensure AGENT_TYPE is set
-        Environment.SetEnvironmentVariable("AGENT_TYPE", "kiro-dotnet");
+        Environment.SetEnvironmentVariable(AgentEnvironmentVariables.AgentType, "kiro-dotnet");
 
         var hubManager = new HubConnectionManager(
             "http://localhost:9999",

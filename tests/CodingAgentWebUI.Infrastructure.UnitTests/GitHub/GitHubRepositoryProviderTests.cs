@@ -264,7 +264,7 @@ public class GitHubRepositoryProviderTests
             fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Test");
 
-        body.Should().Contain("Automated implementation via pipeline");
+        body.Should().Contain(PipelineConstants.AutomatedCommitSuffix);
         body.Should().NotContain("Model:");
     }
 

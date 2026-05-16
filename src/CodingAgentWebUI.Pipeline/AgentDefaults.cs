@@ -18,35 +18,11 @@ public static class AgentDefaults
     /// <summary>Named HttpClient identifier for the OpenCode agent API.</summary>
     public const string OpenCodeHttpClientName = "OpenCode";
 
-    // ── Environment variable names ───────────────────────────────────────
+    // ── TimeSpan defaults ────────────────────────────────────────────────
 
-    /// <summary>URL of the orchestrator's SignalR hub.</summary>
-    public const string EnvOrchestratorUrl = "ORCHESTRATOR_URL";
+    /// <summary>Default timeout for OpenCode HTTP requests (30 minutes).</summary>
+    public static readonly TimeSpan OpenCodeRequestTimeout = TimeSpan.FromMinutes(30);
 
-    /// <summary>Shared secret for authenticating agent connections.</summary>
-    public const string EnvAgentApiKey = "AGENT_API_KEY";
-
-    /// <summary>Unique identifier for this agent instance.</summary>
-    public const string EnvAgentId = "AGENT_ID";
-
-    /// <summary>Agent type identifier (e.g., "kiro-dotnet10").</summary>
-    public const string EnvAgentType = "AGENT_TYPE";
-
-    /// <summary>Comma-separated labels for agent routing.</summary>
-    public const string EnvAgentLabels = "AGENT_LABELS";
-
-    /// <summary>Serilog log level override.</summary>
-    public const string EnvLogLevel = "LOG_LEVEL";
-
-    /// <summary>Agent provider type (e.g., "OpenCode", "KiroCli").</summary>
-    public const string EnvAgentProviderType = "AGENT_PROVIDER_TYPE";
-
-    /// <summary>Override path for the Kiro CLI executable.</summary>
-    public const string EnvKiroCliPath = "KIRO_CLI_PATH";
-
-    /// <summary>Override base URL for the OpenCode agent API.</summary>
-    public const string EnvOpenCodeBaseUrl = "OPENCODE_BASE_URL";
-
-    /// <summary>Password for OpenCode server authentication.</summary>
-    public const string EnvOpenCodeServerPassword = "OPENCODE_SERVER_PASSWORD";
+    /// <summary>Default interval between agent heartbeats (30 seconds).</summary>
+    public static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(30);
 }

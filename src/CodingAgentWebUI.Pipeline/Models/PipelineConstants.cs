@@ -34,11 +34,20 @@ public static class PipelineConstants
     /// <summary>Branch name prefix for auto-generated feature branches.</summary>
     public const string BranchPrefix = "feature/auto-";
 
+    /// <inheritdoc cref="BranchPrefix"/>
+    public const string BranchNamePrefix = BranchPrefix;
+
     /// <summary>Default commit message suffix for pipeline-generated commits.</summary>
     public const string AutomatedCommitSuffix = "Automated implementation via pipeline";
 
+    /// <inheritdoc cref="AutomatedCommitSuffix"/>
+    public const string AutomatedFooter = AutomatedCommitSuffix;
+
     /// <summary>Base directory for pipeline configuration files.</summary>
     public const string ConfigBaseDirectory = "config/pipeline";
+
+    /// <inheritdoc cref="ConfigBaseDirectory"/>
+    public const string DefaultConfigBaseDirectory = ConfigBaseDirectory;
 
     /// <summary>Directory for pipeline run history files.</summary>
     public const string RunsDirectory = "config/pipeline/runs";

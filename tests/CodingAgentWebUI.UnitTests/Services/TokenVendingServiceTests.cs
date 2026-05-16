@@ -7,6 +7,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Moq;
 using ILogger = Serilog.ILogger;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.UnitTests.Services;
 
@@ -50,8 +51,8 @@ public class TokenVendingServiceTests
             DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["clientId"] = "123",
-                ["installationId"] = "456"
+                [ProviderSettingKeys.ClientId] = "123",
+                [ProviderSettingKeys.InstallationId] = "456"
                 // Missing privateKeyBase64
             }
         };
@@ -59,7 +60,7 @@ public class TokenVendingServiceTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.GenerateAgentTokenAsync(config, CancellationToken.None));
 
-        ex.Message.Should().Contain("privateKeyBase64");
+        ex.Message.Should().Contain(ProviderSettingKeys.PrivateKeyBase64);
     }
 
     [Fact]
@@ -74,8 +75,8 @@ public class TokenVendingServiceTests
             DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["privateKeyBase64"] = "dGVzdA==",
-                ["installationId"] = "456"
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.InstallationId] = "456"
                 // Missing clientId
             }
         };
@@ -83,7 +84,7 @@ public class TokenVendingServiceTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.GenerateAgentTokenAsync(config, CancellationToken.None));
 
-        ex.Message.Should().Contain("clientId");
+        ex.Message.Should().Contain(ProviderSettingKeys.ClientId);
     }
 
     [Fact]
@@ -98,8 +99,8 @@ public class TokenVendingServiceTests
             DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["privateKeyBase64"] = "dGVzdA==",
-                ["clientId"] = "123"
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.ClientId] = "123"
                 // Missing installationId
             }
         };
@@ -107,7 +108,7 @@ public class TokenVendingServiceTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.GenerateAgentTokenAsync(config, CancellationToken.None));
 
-        ex.Message.Should().Contain("installationId");
+        ex.Message.Should().Contain(ProviderSettingKeys.InstallationId);
     }
 
     [Fact]
@@ -122,16 +123,16 @@ public class TokenVendingServiceTests
             DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["privateKeyBase64"] = "dGVzdA==",
-                ["clientId"] = "123",
-                ["installationId"] = "not-a-number"
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.ClientId] = "123",
+                [ProviderSettingKeys.InstallationId] = "not-a-number"
             }
         };
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.GenerateAgentTokenAsync(config, CancellationToken.None));
 
-        ex.Message.Should().Contain("installationId");
+        ex.Message.Should().Contain(ProviderSettingKeys.InstallationId);
     }
 
     [Fact]
@@ -148,9 +149,9 @@ public class TokenVendingServiceTests
             DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["privateKeyBase64"] = notPemBase64,
-                ["clientId"] = "123",
-                ["installationId"] = "456"
+                [ProviderSettingKeys.PrivateKeyBase64] = notPemBase64,
+                [ProviderSettingKeys.ClientId] = "123",
+                [ProviderSettingKeys.InstallationId] = "456"
             }
         };
 
@@ -192,7 +193,7 @@ public class TokenVendingServiceTests
                 DisplayName = "Agent",
                 Settings = new Dictionary<string, string>
                 {
-                    ["executablePath"] = "/usr/bin/kiro-cli",
+                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
                     ["timeout"] = "30"
                 }
             }
@@ -202,8 +203,8 @@ public class TokenVendingServiceTests
 
         result.Should().HaveCount(1);
         result[0].Id.Should().Be("ap-1");
-        result[0].Settings.Should().ContainKey("executablePath");
-        result[0].Settings.Should().NotContainKey("privateKeyBase64");
+        result[0].Settings.Should().ContainKey(ProviderSettingKeys.ExecutablePath);
+        result[0].Settings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
     }
 
     [Fact]
@@ -222,11 +223,11 @@ public class TokenVendingServiceTests
                 DisplayName = "Repo",
                 Settings = new Dictionary<string, string>
                 {
-                    ["privateKeyBase64"] = notPemBase64,
-                    ["clientId"] = "123",
-                    ["installationId"] = "456",
-                    ["owner"] = "org",
-                    ["repo"] = "repo"
+                    [ProviderSettingKeys.PrivateKeyBase64] = notPemBase64,
+                    [ProviderSettingKeys.ClientId] = "123",
+                    [ProviderSettingKeys.InstallationId] = "456",
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo"
                 }
             }
         };
@@ -235,8 +236,8 @@ public class TokenVendingServiceTests
 
         result.Should().HaveCount(1);
         result[0].Id.Should().Be("rp-1");
-        result[0].Settings.Should().NotContainKey("privateKeyBase64");
-        result[0].Settings.Should().ContainKey("owner");
+        result[0].Settings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
+        result[0].Settings.Should().ContainKey(ProviderSettingKeys.Owner);
     }
 
     [Fact]

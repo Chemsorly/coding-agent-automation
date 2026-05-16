@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
@@ -19,7 +20,7 @@ public class IssueAnalysisCommentTests
 
         var md = comment.ToMarkdown();
 
-        md.Should().Contain("## 🤖 Agent Analysis");
+        md.Should().Contain(CommentMarkers.AnalysisHeader);
         md.Should().Contain("### Planned Approach");
         md.Should().Contain("Do the thing");
         md.Should().Contain("- ComponentA");

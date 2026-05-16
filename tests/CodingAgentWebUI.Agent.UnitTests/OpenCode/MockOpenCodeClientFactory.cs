@@ -1,9 +1,11 @@
+using CodingAgentWebUI.Agent;
+
 namespace CodingAgentWebUI.Agent.UnitTests.OpenCode;
 
 /// <summary>
 /// A mock <see cref="IHttpClientFactory"/> that returns <see cref="HttpClient"/> instances
 /// backed by a <see cref="MockOpenCodeHandler"/>. The base address is set to
-/// <c>http://127.0.0.1:4096</c> to match the OpenCode server default.
+/// <c>@AgentDefaults.OpenCodeBaseUrl</c> to match the OpenCode server default.
 /// </summary>
 public sealed class MockOpenCodeClientFactory : IHttpClientFactory
 {
@@ -33,7 +35,7 @@ public sealed class MockOpenCodeClientFactory : IHttpClientFactory
         // This matches IHttpClientFactory semantics where the handler is pooled.
         var client = new HttpClient(_handler, disposeHandler: false)
         {
-            BaseAddress = new Uri("http://127.0.0.1:4096")
+            BaseAddress = new Uri(AgentDefaults.OpenCodeBaseUrl)
         };
         return client;
     }

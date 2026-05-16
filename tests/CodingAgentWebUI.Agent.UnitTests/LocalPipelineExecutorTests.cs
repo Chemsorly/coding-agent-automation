@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Steps;
@@ -527,11 +528,11 @@ public class LocalPipelineExecutorTests : IDisposable
             DisplayName = "Test Repo",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo",
-                ["baseBranch"] = "main",
-                ["token"] = "fake-token"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
             }
         };
         var agentConfig = new ProviderConfig
@@ -590,11 +591,11 @@ public class LocalPipelineExecutorTests : IDisposable
             DisplayName = "Test Repo",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo",
-                ["baseBranch"] = "main",
-                ["token"] = "fake-token"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
             }
         };
         var agentConfig = new ProviderConfig
@@ -675,11 +676,11 @@ public class LocalPipelineExecutorTests : IDisposable
             DisplayName = "Test Repo",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo",
-                ["baseBranch"] = "main",
-                ["token"] = "fake-token"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
             },
             BlacklistedPaths = ["*.secret", "credentials/"],
             BlacklistMode = BlacklistMode.Fail
@@ -741,11 +742,11 @@ public class LocalPipelineExecutorTests : IDisposable
             DisplayName = "Test Repo",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo",
-                ["baseBranch"] = "main",
-                ["token"] = "fake-token"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
             }
         };
         var agentConfig = new ProviderConfig
@@ -765,11 +766,11 @@ public class LocalPipelineExecutorTests : IDisposable
             RepositoryRole = RepositoryRole.Brain,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-brain",
-                ["baseBranch"] = "main",
-                ["token"] = "fake-brain-token"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-brain",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-brain-token"
             }
         };
 
@@ -818,11 +819,11 @@ public class LocalPipelineExecutorTests : IDisposable
             DisplayName = "Test Repo",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo",
-                ["baseBranch"] = "main",
-                ["token"] = "fake-token"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
             }
         };
         var agentConfig = new ProviderConfig
@@ -879,11 +880,11 @@ public class LocalPipelineExecutorTests : IDisposable
             DisplayName = "Test Repo",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo",
-                ["baseBranch"] = "main",
-                ["token"] = "fake-token"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
             }
         };
         var agentConfig = new ProviderConfig
@@ -902,10 +903,10 @@ public class LocalPipelineExecutorTests : IDisposable
             DisplayName = "CI Pipeline",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo",
-                ["token"] = "fake-pipeline-token"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.Token] = "fake-pipeline-token"
             }
         };
 
@@ -953,11 +954,11 @@ public class LocalPipelineExecutorTests : IDisposable
             DisplayName = "Test Repo",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo",
-                ["baseBranch"] = "main",
-                ["token"] = "fake-token"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
             }
         };
         var agentConfig = new ProviderConfig
@@ -1013,11 +1014,11 @@ public class LocalPipelineExecutorTests : IDisposable
             DisplayName = "Test Repo",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo",
-                ["baseBranch"] = "main",
-                ["token"] = "fake-token"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
             }
         };
         var agentConfig = new ProviderConfig
@@ -1106,7 +1107,7 @@ public class LocalPipelineExecutorTests : IDisposable
     private static HubConnection CreateDisconnectedHubConnection()
     {
         return new HubConnectionBuilder()
-            .WithUrl("http://localhost/hubs/agent", options =>
+            .WithUrl($"http://localhost{HubRoutes.Agent}", options =>
             {
                 options.HttpMessageHandlerFactory = _ => new NoOpHandler();
             })

@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using Moq;
 using Octokit;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.GitHub;
 
