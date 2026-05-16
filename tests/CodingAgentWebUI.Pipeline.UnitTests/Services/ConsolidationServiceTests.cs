@@ -400,6 +400,14 @@ public sealed class ConsolidationServiceTests : IDisposable
         await sut.DeletePersistedRunAsync(Guid.NewGuid().ToString());
     }
 
+    [Fact]
+    public async Task DeletePersistedRunAsync_NullRunId_ThrowsArgumentNullException()
+    {
+        var sut = CreateSut();
+        await sut.Invoking(s => s.DeletePersistedRunAsync(null!))
+            .Should().ThrowExactlyAsync<ArgumentNullException>();
+    }
+
     // --- GetLastSuccessfulHarnessRunTimestampAsync tests ---
 
     [Fact]

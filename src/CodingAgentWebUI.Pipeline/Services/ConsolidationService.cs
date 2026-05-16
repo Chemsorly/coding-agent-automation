@@ -425,9 +425,10 @@ public sealed class ConsolidationService : IConsolidationService
     /// <summary>
     /// Deletes a persisted run file (used when dispatch fails and the run must be rolled back).
     /// </summary>
-    // TODO: Add ArgumentNullException.ThrowIfNull(runId) for consistency with other methods in this class.
     internal async Task DeletePersistedRunAsync(string runId)
     {
+        ArgumentNullException.ThrowIfNull(runId);
+
         try
         {
             var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
