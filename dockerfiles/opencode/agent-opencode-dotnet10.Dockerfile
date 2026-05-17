@@ -30,8 +30,8 @@ COPY . .
 RUN dotnet publish src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -c Release -r linux-x64 --self-contained false -o /app/publish
 
 # Stage 2: Runtime
-# Uses ASP.NET runtime (lighter than full SDK — OpenCode handles LLM calls, not dotnet build/test)
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+# Uses ASP.NET runtime + .NET SDK for quality gate compilation/testing in workspaces
+FROM mcr.microsoft.com/dotnet/sdk:10.0.300 AS runtime
 
 # Pin OpenCode version via build ARG for reproducible builds
 ARG OPENCODE_VERSION=1.14.50
