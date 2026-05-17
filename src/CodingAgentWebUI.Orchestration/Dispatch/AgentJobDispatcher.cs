@@ -263,11 +263,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
                 config = config with { BrainReadOnly = true };
 
             // Override blacklist settings from repo provider config (per-repo takes precedence)
-            var repoProviderForBlacklist = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId);
-            if (repoProviderForBlacklist?.BlacklistedPaths is { Count: > 0 })
-                config = config with { BlacklistedPaths = repoProviderForBlacklist.BlacklistedPaths };
-            if (repoProviderForBlacklist?.BlacklistMode is { } dispatchBlacklistMode)
-                config = config with { BlacklistMode = dispatchBlacklistMode };
+            config = PipelineConfiguration.ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == repoProviderId));
 
             var message = new JobAssignmentMessage
             {
