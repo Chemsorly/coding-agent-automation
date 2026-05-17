@@ -475,7 +475,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                         run, _activeIssue?.Title, run.RepositoryName?.Split('/').LastOrDefault());
                     _logger.Debug("Pipeline {RunId} reflection prompt:\n{Prompt}", run.RunId, reflectionPrompt);
 
-                    await _providerManager.ActiveAgentProvider!.ExecuteAsync(
+                    var reflectionResult = await _providerManager.ActiveAgentProvider!.ExecuteAsync(
                         new AgentRequest
                         {
                             Prompt = reflectionPrompt,
@@ -490,6 +490,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                             _lifecycle.EmitOutputLine(line);
                         });
 
+                    run.AccumulateTokenUsage(reflectionResult);
                     _logger.Information("Pipeline {RunId} reflection step completed", run.RunId);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)

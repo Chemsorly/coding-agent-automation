@@ -447,7 +447,7 @@ public sealed class LocalPipelineExecutor
                 var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
                     run, run.IssueTitle, run.RepositoryName?.Split('/').LastOrDefault());
 
-                await agentProvider.ExecuteAsync(
+                var reflectionResult = await agentProvider.ExecuteAsync(
                     new AgentRequest
                     {
                         Prompt = reflectionPrompt,
@@ -461,6 +461,8 @@ public sealed class LocalPipelineExecutor
                         run.OutputLines.Enqueue(line);
                         emitOutputLine(line);
                     });
+
+                run.AccumulateTokenUsage(reflectionResult);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
