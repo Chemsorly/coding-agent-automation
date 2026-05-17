@@ -481,6 +481,11 @@ public class AgentWorkerServiceTests
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AGENT_TYPE")))
             Environment.SetEnvironmentVariable("AGENT_TYPE", "kiro-dotnet");
 
+        // Ensure the KiroCli code path is active. When AGENT_PROVIDER_TYPE=OpenCode,
+        // the service routes chat prompts through OpenCodeAgentProvider instead of the
+        // mock IKiroCliOrchestrator, causing Moq verification failures.
+        Environment.SetEnvironmentVariable("AGENT_PROVIDER_TYPE", "KiroCli");
+
         var mockLogger = new Mock<Serilog.ILogger>();
         return new AgentWorkerService(
             CreateTestHubManager(),

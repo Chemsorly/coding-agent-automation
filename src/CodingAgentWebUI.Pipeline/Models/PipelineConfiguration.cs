@@ -188,6 +188,24 @@ public sealed record PipelineConfiguration
     }
 
     /// <summary>
+    /// Applies per-repo blacklist overrides from a <see cref="ProviderConfig"/>.
+    /// When the provider config specifies <see cref="ProviderConfig.BlacklistedPaths"/>
+    /// or <see cref="ProviderConfig.BlacklistMode"/>, they take precedence over the
+    /// global pipeline configuration defaults.
+    /// </summary>
+    public static PipelineConfiguration ApplyBlacklistOverride(PipelineConfiguration config, ProviderConfig? repoProviderConfig)
+    {
+        if (repoProviderConfig is null)
+            return config;
+
+        if (repoProviderConfig.BlacklistedPaths is { Count: > 0 })
+            config = config with { BlacklistedPaths = repoProviderConfig.BlacklistedPaths };
+        if (repoProviderConfig.BlacklistMode is { } repoBlacklistMode)
+            config = config with { BlacklistMode = repoBlacklistMode };
+        return config;
+    }
+
+    /// <summary>
     /// Number of days to retain workspace folders for failed or cancelled runs.
     /// Set to 0 to delete immediately. Set to -1 to retain indefinitely.
     /// </summary>
