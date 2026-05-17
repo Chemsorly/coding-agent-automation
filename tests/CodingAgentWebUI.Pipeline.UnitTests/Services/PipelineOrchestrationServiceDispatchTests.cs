@@ -4,6 +4,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.UnitTests.Helpers;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
@@ -41,7 +42,7 @@ public class PipelineOrchestrationServiceDispatchTests
             .ReturnsAsync(new List<ProviderConfig>
             {
                 new() { Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test Agent",
-                    Settings = new Dictionary<string, string> { ["model"] = "claude-sonnet" } }
+                    Settings = new Dictionary<string, string> { [ProviderSettingKeys.Model] = "claude-sonnet" } }
             });
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>

@@ -79,6 +79,7 @@
 </section>
 
 @code {
+    // TODO: Replace hardcoded provider setting key strings with ProviderSettingKeys constants (review finding #1)
     [Parameter, EditorRequired] public List<ProviderConfig> Providers { get; set; } = new();
     [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
     [Parameter, EditorRequired] public GitHubValidationService GitHubValidator { get; set; } = default!;

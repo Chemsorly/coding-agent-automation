@@ -7,6 +7,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure;
 using Xunit;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests;
 
@@ -54,12 +55,12 @@ public class ProviderFactoryPropertyTests
             DisplayName = input.DisplayName,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = input.ApiUrl,
-                ["clientId"] = input.ClientId,
-                ["installationId"] = input.InstallationId.ToString(),
-                ["privateKeyBase64"] = input.PrivateKeyBase64,
-                ["owner"] = input.Owner,
-                ["repo"] = input.Repo
+                [ProviderSettingKeys.ApiUrl] = input.ApiUrl,
+                [ProviderSettingKeys.ClientId] = input.ClientId,
+                [ProviderSettingKeys.InstallationId] = input.InstallationId.ToString(),
+                [ProviderSettingKeys.PrivateKeyBase64] = input.PrivateKeyBase64,
+                [ProviderSettingKeys.Owner] = input.Owner,
+                [ProviderSettingKeys.Repo] = input.Repo
             }
         };
 
@@ -100,13 +101,13 @@ public class ProviderFactoryPropertyTests
             DisplayName = input.DisplayName,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = input.ApiUrl,
-                ["clientId"] = input.ClientId,
-                ["installationId"] = input.InstallationId.ToString(),
-                ["privateKeyBase64"] = input.PrivateKeyBase64,
-                ["owner"] = input.Owner,
-                ["repo"] = input.Repo,
-                ["baseBranch"] = input.BaseBranch
+                [ProviderSettingKeys.ApiUrl] = input.ApiUrl,
+                [ProviderSettingKeys.ClientId] = input.ClientId,
+                [ProviderSettingKeys.InstallationId] = input.InstallationId.ToString(),
+                [ProviderSettingKeys.PrivateKeyBase64] = input.PrivateKeyBase64,
+                [ProviderSettingKeys.Owner] = input.Owner,
+                [ProviderSettingKeys.Repo] = input.Repo,
+                [ProviderSettingKeys.BaseBranch] = input.BaseBranch
             }
         };
 
@@ -156,7 +157,7 @@ public class ProviderFactoryPropertyTests
 
         // Group by composite key (clientId:installationId)
         var groupedByKey = results
-            .GroupBy(r => $"{r.Config.Settings["clientId"]}:{r.Config.Settings["installationId"]}")
+            .GroupBy(r => $"{r.Config.Settings[ProviderSettingKeys.ClientId]}:{r.Config.Settings[ProviderSettingKeys.InstallationId]}")
             .ToList();
 
         // Assert: Within each group, all instances are the same reference
@@ -195,26 +196,26 @@ public class ProviderFactoryPropertyTests
         // Arrange: Build a ProviderConfig with some fields missing or empty
         var settings = new Dictionary<string, string>
         {
-            ["apiUrl"] = "https://api.github.com",
-            ["owner"] = "testowner",
-            ["repo"] = "testrepo"
+            [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+            [ProviderSettingKeys.Owner] = "testowner",
+            [ProviderSettingKeys.Repo] = "testrepo"
         };
 
         // Add or omit each field based on the input
         if (input.ClientIdPresence == FieldPresence.Present)
-            settings["clientId"] = input.ClientIdValue;
+            settings[ProviderSettingKeys.ClientId] = input.ClientIdValue;
         else if (input.ClientIdPresence == FieldPresence.Empty)
-            settings["clientId"] = input.ClientIdValue; // empty or whitespace
+            settings[ProviderSettingKeys.ClientId] = input.ClientIdValue; // empty or whitespace
 
         if (input.InstallationIdPresence == FieldPresence.Present)
-            settings["installationId"] = input.InstallationIdValue;
+            settings[ProviderSettingKeys.InstallationId] = input.InstallationIdValue;
         else if (input.InstallationIdPresence == FieldPresence.Empty)
-            settings["installationId"] = input.InstallationIdValue; // empty or whitespace
+            settings[ProviderSettingKeys.InstallationId] = input.InstallationIdValue; // empty or whitespace
 
         if (input.PrivateKeyPresence == FieldPresence.Present)
-            settings["privateKeyBase64"] = input.PrivateKeyBase64Value;
+            settings[ProviderSettingKeys.PrivateKeyBase64] = input.PrivateKeyBase64Value;
         else if (input.PrivateKeyPresence == FieldPresence.Empty)
-            settings["privateKeyBase64"] = input.PrivateKeyBase64Value; // empty or whitespace
+            settings[ProviderSettingKeys.PrivateKeyBase64] = input.PrivateKeyBase64Value; // empty or whitespace
 
         var config = new ProviderConfig
         {
@@ -504,17 +505,17 @@ public static class AuthCacheConsistencyArbitrary
                     DisplayName = $"TestProvider-{i}",
                     Settings = new Dictionary<string, string>
                     {
-                        ["apiUrl"] = "https://api.github.com",
-                        ["clientId"] = clientId,
-                        ["installationId"] = installationId.ToString(),
-                        ["privateKeyBase64"] = ValidPrivateKeyBase64,
-                        ["owner"] = "testowner",
-                        ["repo"] = "testrepo"
+                        [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                        [ProviderSettingKeys.ClientId] = clientId,
+                        [ProviderSettingKeys.InstallationId] = installationId.ToString(),
+                        [ProviderSettingKeys.PrivateKeyBase64] = ValidPrivateKeyBase64,
+                        [ProviderSettingKeys.Owner] = "testowner",
+                        [ProviderSettingKeys.Repo] = "testrepo"
                     }
                 };
             }).ToList()
             let expectedDistinct = configs
-                .Select(c => $"{c.Settings["clientId"]}:{c.Settings["installationId"]}")
+                .Select(c => $"{c.Settings[ProviderSettingKeys.ClientId]}:{c.Settings[ProviderSettingKeys.InstallationId]}")
                 .Distinct()
                 .Count()
             select new AuthCacheConsistencyInput(configs, expectedDistinct);

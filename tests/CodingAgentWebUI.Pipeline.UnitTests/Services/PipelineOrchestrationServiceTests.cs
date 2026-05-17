@@ -4,6 +4,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.UnitTests.Helpers;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
@@ -217,7 +218,7 @@ public class PipelineOrchestrationServiceTests
                 new()
                 {
                     Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test",
-                    Settings = new Dictionary<string, string> { ["model"] = "claude-sonnet-4.6" }
+                    Settings = new Dictionary<string, string> { [ProviderSettingKeys.Model] = "claude-sonnet-4.6" }
                 }
             });
 
@@ -307,7 +308,7 @@ public class PipelineOrchestrationServiceTests
                 new()
                 {
                     Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test",
-                    Settings = new Dictionary<string, string> { ["model"] = "claude-opus-4.6" }
+                    Settings = new Dictionary<string, string> { [ProviderSettingKeys.Model] = "claude-opus-4.6" }
                 }
             });
 

@@ -7,6 +7,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Moq;
 using ILogger = Serilog.ILogger;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.UnitTests.Services;
 
@@ -50,8 +51,8 @@ public class TokenVendingServiceTests
             DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["clientId"] = "123",
-                ["installationId"] = "456"
+                [ProviderSettingKeys.ClientId] = "123",
+                [ProviderSettingKeys.InstallationId] = "456"
                 // Missing privateKeyBase64
             }
         };
@@ -74,8 +75,8 @@ public class TokenVendingServiceTests
             DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["privateKeyBase64"] = "dGVzdA==",
-                ["installationId"] = "456"
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.InstallationId] = "456"
                 // Missing clientId
             }
         };
@@ -98,8 +99,8 @@ public class TokenVendingServiceTests
             DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["privateKeyBase64"] = "dGVzdA==",
-                ["clientId"] = "123"
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.ClientId] = "123"
                 // Missing installationId
             }
         };
@@ -122,9 +123,9 @@ public class TokenVendingServiceTests
             DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["privateKeyBase64"] = "dGVzdA==",
-                ["clientId"] = "123",
-                ["installationId"] = "not-a-number"
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.ClientId] = "123",
+                [ProviderSettingKeys.InstallationId] = "not-a-number"
             }
         };
 
@@ -148,9 +149,9 @@ public class TokenVendingServiceTests
             DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["privateKeyBase64"] = notPemBase64,
-                ["clientId"] = "123",
-                ["installationId"] = "456"
+                [ProviderSettingKeys.PrivateKeyBase64] = notPemBase64,
+                [ProviderSettingKeys.ClientId] = "123",
+                [ProviderSettingKeys.InstallationId] = "456"
             }
         };
 
@@ -192,7 +193,7 @@ public class TokenVendingServiceTests
                 DisplayName = "Agent",
                 Settings = new Dictionary<string, string>
                 {
-                    ["executablePath"] = "/usr/bin/kiro-cli",
+                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
                     ["timeout"] = "30"
                 }
             }
@@ -222,11 +223,11 @@ public class TokenVendingServiceTests
                 DisplayName = "Repo",
                 Settings = new Dictionary<string, string>
                 {
-                    ["privateKeyBase64"] = notPemBase64,
-                    ["clientId"] = "123",
-                    ["installationId"] = "456",
-                    ["owner"] = "org",
-                    ["repo"] = "repo"
+                    [ProviderSettingKeys.PrivateKeyBase64] = notPemBase64,
+                    [ProviderSettingKeys.ClientId] = "123",
+                    [ProviderSettingKeys.InstallationId] = "456",
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo"
                 }
             }
         };

@@ -12,6 +12,7 @@ using FsCheck.Xunit;
 using Moq;
 using Moq.Protected;
 using ILogger = Serilog.ILogger;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.UnitTests;
 
@@ -35,13 +36,13 @@ public class TokenVendingServiceTests
         DisplayName = "Test Repo",
         Settings = new Dictionary<string, string>
         {
-            ["privateKeyBase64"] = privateKey ?? "",
-            ["clientId"] = clientId ?? "",
-            ["installationId"] = installationId ?? "",
-            ["apiUrl"] = apiUrl ?? "",
-            ["owner"] = "test-owner",
-            ["repo"] = "test-repo",
-            ["baseBranch"] = "main"
+            [ProviderSettingKeys.PrivateKeyBase64] = privateKey ?? "",
+            [ProviderSettingKeys.ClientId] = clientId ?? "",
+            [ProviderSettingKeys.InstallationId] = installationId ?? "",
+            [ProviderSettingKeys.ApiUrl] = apiUrl ?? "",
+            [ProviderSettingKeys.Owner] = "test-owner",
+            [ProviderSettingKeys.Repo] = "test-repo",
+            [ProviderSettingKeys.BaseBranch] = "main"
         }
     };
 
@@ -122,8 +123,8 @@ public class TokenVendingServiceTests
                 DisplayName = "Agent",
                 Settings = new Dictionary<string, string>
                 {
-                    ["model"] = "auto",
-                    ["executablePath"] = "/usr/bin/kiro-cli"
+                    [ProviderSettingKeys.Model] = "auto",
+                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli"
                 }
             }
         };
@@ -152,11 +153,11 @@ public class TokenVendingServiceTests
                 DisplayName = "Test Repo",
                 Settings = new Dictionary<string, string>
                 {
-                    ["privateKeyBase64"] = "bm90LWEtcmVhbC1rZXk=", // "not-a-real-key"
-                    ["clientId"] = "client-123",
-                    ["installationId"] = "456",
-                    ["owner"] = "test",
-                    ["repo"] = "test"
+                    [ProviderSettingKeys.PrivateKeyBase64] = "bm90LWEtcmVhbC1rZXk=", // "not-a-real-key"
+                    [ProviderSettingKeys.ClientId] = "client-123",
+                    [ProviderSettingKeys.InstallationId] = "456",
+                    [ProviderSettingKeys.Owner] = "test",
+                    [ProviderSettingKeys.Repo] = "test"
                 }
             }
         };
@@ -182,8 +183,8 @@ public class TokenVendingServiceTests
                 DisplayName = "Agent",
                 Settings = new Dictionary<string, string>
                 {
-                    ["model"] = "claude-sonnet-4",
-                    ["executablePath"] = "/usr/bin/kiro-cli",
+                    [ProviderSettingKeys.Model] = "claude-sonnet-4",
+                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
                     ["timeout"] = "300"
                 }
             }
@@ -191,8 +192,8 @@ public class TokenVendingServiceTests
 
         var result = await service.PrepareAgentConfigsAsync(configs, "repo-1", CancellationToken.None);
 
-        result[0].Settings["model"].Should().Be("claude-sonnet-4");
-        result[0].Settings["executablePath"].Should().Be("/usr/bin/kiro-cli");
+        result[0].Settings[ProviderSettingKeys.Model].Should().Be("claude-sonnet-4");
+        result[0].Settings[ProviderSettingKeys.ExecutablePath].Should().Be("/usr/bin/kiro-cli");
         result[0].Settings["timeout"].Should().Be("300");
     }
 
@@ -237,12 +238,12 @@ public class TokenVendingServiceTests
         DisplayName = "Test Repo",
         Settings = new Dictionary<string, string>
         {
-            ["privateKeyBase64"] = privateKeyBase64,
-            ["clientId"] = "Iv1.abc123",
-            ["installationId"] = "12345",
-            ["apiUrl"] = "https://api.github.com",
-            ["owner"] = "test-owner",
-            ["repo"] = "test-repo"
+            [ProviderSettingKeys.PrivateKeyBase64] = privateKeyBase64,
+            [ProviderSettingKeys.ClientId] = "Iv1.abc123",
+            [ProviderSettingKeys.InstallationId] = "12345",
+            [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+            [ProviderSettingKeys.Owner] = "test-owner",
+            [ProviderSettingKeys.Repo] = "test-repo"
         }
     };
 
@@ -421,11 +422,11 @@ public class TokenVendingServiceTests
             DisplayName = "Test Config",
             Settings = new Dictionary<string, string>
             {
-                ["privateKeyBase64"] = privateKeyValue.Get,
-                ["clientId"] = "client-123",
-                ["installationId"] = "456",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo"
+                [ProviderSettingKeys.PrivateKeyBase64] = privateKeyValue.Get,
+                [ProviderSettingKeys.ClientId] = "client-123",
+                [ProviderSettingKeys.InstallationId] = "456",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo"
             }
         };
 

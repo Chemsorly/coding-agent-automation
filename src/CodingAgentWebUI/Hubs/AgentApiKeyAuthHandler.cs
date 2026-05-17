@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
+using CodingAgentWebUI.Agent;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
 using ILogger = Serilog.ILogger;
@@ -111,7 +112,7 @@ public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAu
     /// </summary>
     public static string ResolveApiKey(ILogger logger)
     {
-        var key = Environment.GetEnvironmentVariable("AGENT_API_KEY");
+        var key = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey);
         if (!string.IsNullOrWhiteSpace(key))
         {
             logger.Information("AGENT_API_KEY loaded from environment variable");

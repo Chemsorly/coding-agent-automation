@@ -46,8 +46,11 @@ public static class ProviderSettingKeys
     /// <summary>Workspace-relative path for MCP server configuration.</summary>
     public const string McpConfigPath = "mcpConfigPath";
 
+    // TODO: Add constants for "timeout" and "agentName" keys used in AgentProviderSection.razor (review finding - AcceptanceCriteria #2)
+
     // ── Token vending (written by orchestrator) ──────────────────────────
 
+    // TODO: TokenValue duplicates Token (both resolve to "token") — consolidate into a single constant (review finding - DotNet #1)
     /// <summary>Vended token value (written to provider settings at runtime).</summary>
     public const string TokenValue = "token";
 

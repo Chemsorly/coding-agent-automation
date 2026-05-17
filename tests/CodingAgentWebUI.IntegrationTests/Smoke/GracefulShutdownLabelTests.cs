@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Moq;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.IntegrationTests.Smoke;
 
@@ -44,10 +45,10 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             ProviderType = "GitHub",
             Settings = new Dictionary<string, string>
             {
-                ["owner"] = "test",
-                ["repo"] = "test",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "test",
                 ["appId"] = "1",
-                ["installationId"] = "1",
+                [ProviderSettingKeys.InstallationId] = "1",
                 ["privateKey"] = "fake"
             }
         };
@@ -128,10 +129,10 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             ProviderType = "GitHub",
             Settings = new Dictionary<string, string>
             {
-                ["owner"] = "test",
-                ["repo"] = "test",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "test",
                 ["appId"] = "1",
-                ["installationId"] = "1",
+                [ProviderSettingKeys.InstallationId] = "1",
                 ["privateKey"] = "fake"
             }
         };

@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -28,7 +29,7 @@ public class BrainTokenScopingRegressionTests
     private static OrchestratorProxy CreateTestProxy()
     {
         var connection = new HubConnectionBuilder()
-            .WithUrl("http://localhost/hubs/agent", options =>
+            .WithUrl($"http://localhost{HubRoutes.Agent}", options =>
             {
                 options.HttpMessageHandlerFactory = _ => new NoOpHandler();
             })
@@ -60,10 +61,10 @@ public class BrainTokenScopingRegressionTests
             RepositoryRole = RepositoryRole.Brain,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-brain-repo",
-                ["baseBranch"] = "main"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-brain-repo",
+                [ProviderSettingKeys.BaseBranch] = "main"
             }
         };
 
@@ -97,10 +98,10 @@ public class BrainTokenScopingRegressionTests
             RepositoryRole = RepositoryRole.Work,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-work-repo",
-                ["baseBranch"] = "main"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-work-repo",
+                [ProviderSettingKeys.BaseBranch] = "main"
             }
         };
 
@@ -134,10 +135,10 @@ public class BrainTokenScopingRegressionTests
             DisplayName = "Default Role Repo",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo",
-                ["baseBranch"] = "main"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main"
             }
         };
 
@@ -170,11 +171,11 @@ public class BrainTokenScopingRegressionTests
             RepositoryRole = RepositoryRole.Brain,
             Settings = new Dictionary<string, string>
             {
-                ["token"] = "ghs_brain_token",
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-brain-repo",
-                ["baseBranch"] = "main"
+                [ProviderSettingKeys.Token] = "ghs_brain_token",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-brain-repo",
+                [ProviderSettingKeys.BaseBranch] = "main"
             }
         };
 

@@ -5,6 +5,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.IntegrationTests.Pipeline;
 
@@ -81,12 +82,12 @@ public class SettingsPageTests
             DisplayName = "My GitHub Issues",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["clientId"] = "Iv1.abc123",
-                ["installationId"] = "78901234",
-                ["privateKeyBase64"] = "LS0tLS1CRUdJTi...",
-                ["owner"] = "myorg",
-                ["repo"] = "myrepo"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.ClientId] = "Iv1.abc123",
+                [ProviderSettingKeys.InstallationId] = "78901234",
+                [ProviderSettingKeys.PrivateKeyBase64] = "LS0tLS1CRUdJTi...",
+                [ProviderSettingKeys.Owner] = "myorg",
+                [ProviderSettingKeys.Repo] = "myrepo"
             }
         };
         await _mockStore.Object.SaveProviderConfigAsync(config, CancellationToken.None);
@@ -123,13 +124,13 @@ public class SettingsPageTests
             DisplayName = "My Repo",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["clientId"] = "Iv1.abc123",
-                ["installationId"] = "78901234",
-                ["privateKeyBase64"] = "LS0tLS1CRUdJTi...",
-                ["owner"] = "org",
-                ["repo"] = "repo",
-                ["baseBranch"] = "develop"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.ClientId] = "Iv1.abc123",
+                [ProviderSettingKeys.InstallationId] = "78901234",
+                [ProviderSettingKeys.PrivateKeyBase64] = "LS0tLS1CRUdJTi...",
+                [ProviderSettingKeys.Owner] = "org",
+                [ProviderSettingKeys.Repo] = "repo",
+                [ProviderSettingKeys.BaseBranch] = "develop"
             }
         };
         await _mockStore.Object.SaveProviderConfigAsync(config, CancellationToken.None);
@@ -159,7 +160,7 @@ public class SettingsPageTests
             DisplayName = "Kiro CLI Agent",
             Settings = new Dictionary<string, string>
             {
-                ["executablePath"] = "/root/.local/bin/kiro-cli",
+                [ProviderSettingKeys.ExecutablePath] = "/root/.local/bin/kiro-cli",
                 ["timeout"] = "45",
                 ["agentName"] = "default"
             }
@@ -191,10 +192,10 @@ public class SettingsPageTests
             DisplayName = "Kiro CLI Agent",
             Settings = new Dictionary<string, string>
             {
-                ["executablePath"] = "/root/.local/bin/kiro-cli",
+                [ProviderSettingKeys.ExecutablePath] = "/root/.local/bin/kiro-cli",
                 ["timeout"] = "30",
                 ["agentName"] = "default",
-                ["model"] = "claude-sonnet-4.6"
+                [ProviderSettingKeys.Model] = "claude-sonnet-4.6"
             }
         };
         await _mockStore.Object.SaveProviderConfigAsync(config, CancellationToken.None);
@@ -222,12 +223,12 @@ public class SettingsPageTests
             DisplayName = "Updated Name",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["clientId"] = "Iv1.new123",
-                ["installationId"] = "11111111",
-                ["privateKeyBase64"] = "LS0tLS1CRUdJTi...",
-                ["owner"] = "neworg",
-                ["repo"] = "newrepo"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.ClientId] = "Iv1.new123",
+                [ProviderSettingKeys.InstallationId] = "11111111",
+                [ProviderSettingKeys.PrivateKeyBase64] = "LS0tLS1CRUdJTi...",
+                [ProviderSettingKeys.Owner] = "neworg",
+                [ProviderSettingKeys.Repo] = "newrepo"
             }
         };
         await _mockStore.Object.SaveProviderConfigAsync(config, CancellationToken.None);
@@ -236,7 +237,7 @@ public class SettingsPageTests
         savedConfig.Should().NotBeNull();
         savedConfig!.Id.Should().Be(existingId);
         savedConfig.DisplayName.Should().Be("Updated Name");
-        savedConfig.Settings["owner"].Should().Be("neworg");
+        savedConfig.Settings[ProviderSettingKeys.Owner].Should().Be("neworg");
     }
 
     [Fact]
@@ -417,8 +418,8 @@ public class SettingsPageTests
             Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com", ["clientId"] = "Iv1.abc",
-                ["installationId"] = "456", ["privateKeyBase64"] = "key", ["owner"] = "org", ["repo"] = "repo"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com", [ProviderSettingKeys.ClientId] = "Iv1.abc",
+                [ProviderSettingKeys.InstallationId] = "456", [ProviderSettingKeys.PrivateKeyBase64] = "key", [ProviderSettingKeys.Owner] = "org", [ProviderSettingKeys.Repo] = "repo"
             }
         };
 
@@ -426,7 +427,7 @@ public class SettingsPageTests
             issueConfig.Settings.Should().ContainKey(key);
 
         // Repository provider has the same keys plus baseBranch
-        var repoSettings = new Dictionary<string, string>(issueConfig.Settings) { ["baseBranch"] = "main" };
+        var repoSettings = new Dictionary<string, string>(issueConfig.Settings) { [ProviderSettingKeys.BaseBranch] = "main" };
         repoSettings.Should().ContainKey("baseBranch");
         foreach (var key in expectedSharedKeys)
             repoSettings.Should().ContainKey(key);
@@ -455,9 +456,9 @@ public class SettingsPageTests
         var existingProviders = new List<ProviderConfig>
         {
             new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "My Repo",
-                Settings = new() { ["owner"] = "acme", ["repo"] = "webapp", ["baseBranch"] = "main" } },
+                Settings = new() { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp", [ProviderSettingKeys.BaseBranch] = "main" } },
             new() { Id = "rp-2", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Other Repo",
-                Settings = new() { ["owner"] = "acme", ["repo"] = "other-project" } }
+                Settings = new() { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "other-project" } }
         };
 
         var targetOwner = "acme";
@@ -479,7 +480,7 @@ public class SettingsPageTests
         var existingProviders = new List<ProviderConfig>
         {
             new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "My Repo",
-                Settings = new() { ["owner"] = "acme", ["repo"] = "webapp" } }
+                Settings = new() { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp" } }
         };
 
         var match = existingProviders.FirstOrDefault(p =>
@@ -519,16 +520,16 @@ public class SettingsPageTests
         // Replicate the exact logic from ConfirmRelatedProviders
         var sharedSettings = new Dictionary<string, string>
         {
-            ["apiUrl"] = "https://api.github.com",
-            ["clientId"] = "Iv1.abc123",
-            ["installationId"] = "78901234",
-            ["privateKeyBase64"] = "LS0tLS1CRUdJTi...",
-            ["owner"] = "myorg",
-            ["repo"] = "myrepo"
+            [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+            [ProviderSettingKeys.ClientId] = "Iv1.abc123",
+            [ProviderSettingKeys.InstallationId] = "78901234",
+            [ProviderSettingKeys.PrivateKeyBase64] = "LS0tLS1CRUdJTi...",
+            [ProviderSettingKeys.Owner] = "myorg",
+            [ProviderSettingKeys.Repo] = "myrepo"
         };
 
         // Repository provider: shared settings + baseBranch
-        var repoSettings = new Dictionary<string, string>(sharedSettings) { ["baseBranch"] = "main" };
+        var repoSettings = new Dictionary<string, string>(sharedSettings) { [ProviderSettingKeys.BaseBranch] = "main" };
         var repoConfig = new ProviderConfig
         {
             Kind = ProviderKind.Repository, ProviderType = "GitHub",
@@ -581,7 +582,7 @@ public class SettingsPageTests
         var agentConfig = new ProviderConfig
         {
             Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Kiro Agent",
-            Settings = new() { ["executablePath"] = "/usr/bin/kiro-cli" }
+            Settings = new() { [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli" }
         };
 
         agentConfig.ProviderType.Should().NotBe("GitHub");

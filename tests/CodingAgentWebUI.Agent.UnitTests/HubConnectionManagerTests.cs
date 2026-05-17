@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
@@ -134,7 +135,7 @@ public class HubConnectionManagerTests : IAsyncDisposable
         manager.Connection.State.Should().Be(HubConnectionState.Disconnected);
 
         // Verify the expected URL format by reconstructing what the constructor should produce
-        var expectedFormattedUrl = $"{orchestratorUrl.TrimEnd('/')}/hubs/agent?agentId={Uri.EscapeDataString(agentId)}";
+        var expectedFormattedUrl = $"{orchestratorUrl.TrimEnd('/')}{HubRoutes.Agent}?agentId={Uri.EscapeDataString(agentId)}";
         expectedFormattedUrl.Should().Be(expectedUrl);
     }
 
@@ -146,8 +147,8 @@ public class HubConnectionManagerTests : IAsyncDisposable
 
         // Assert — if URL formation was wrong (double slash), the HubConnection would still build
         // but we verify the logic by checking the expected output
-        var expectedUrl = "http://localhost:5000/hubs/agent?agentId=agent-1";
-        var actualUrl = $"{"http://localhost:5000/".TrimEnd('/')}/hubs/agent?agentId={Uri.EscapeDataString("agent-1")}";
+        var expectedUrl = $"http://localhost:5000{HubRoutes.Agent}?agentId=agent-1";
+        var actualUrl = $"{"http://localhost:5000/".TrimEnd('/')}{HubRoutes.Agent}?agentId={Uri.EscapeDataString("agent-1")}";
         actualUrl.Should().Be(expectedUrl);
 
         manager.Connection.Should().NotBeNull();

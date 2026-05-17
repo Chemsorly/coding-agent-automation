@@ -2,6 +2,7 @@ using LibGit2Sharp;
 using Octokit;
 using Polly;
 using CodingAgentWebUI.Infrastructure.Resilience;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
@@ -89,7 +90,7 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                 FetchOptions =
                 {
                     CredentialsProvider = (_, _, _) =>
-                        new UsernamePasswordCredentials { Username = "x-access-token", Password = token }
+                        new UsernamePasswordCredentials { Username = GitConstants.TokenUsername, Password = token }
                 }
             };
 
@@ -119,7 +120,7 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                 {
                     CredentialsProvider = (_, _, _) =>
                         new UsernamePasswordCredentials
-                            { Username = "x-access-token", Password = token }
+                            { Username = GitConstants.TokenUsername, Password = token }
                 };
                 var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
                 Commands.Fetch(repo, remote.Name, refSpecs, fetchOptions, null);
@@ -260,7 +261,7 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
             var options = new PushOptions
             {
                 CredentialsProvider = (_, _, _) =>
-                    new UsernamePasswordCredentials { Username = "x-access-token", Password = token },
+                    new UsernamePasswordCredentials { Username = GitConstants.TokenUsername, Password = token },
                 OnPushStatusError = error =>
                     pushError = $"Push failed for ref '{error.Reference}': {error.Message}"
             };
@@ -484,8 +485,8 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     private static bool IsPipelineGeneratedComment(string? body)
     {
         if (string.IsNullOrEmpty(body)) return false;
-        return body.StartsWith("## 🤖", StringComparison.Ordinal)
-            || body.Contains("<!-- agent:");
+        return body.StartsWith(CommentMarkers.PipelinePrefix, StringComparison.Ordinal)
+            || body.Contains(CommentMarkers.AgentCommentPrefix);
     }
 
     public Task CheckoutRemoteBranchAsync(string workspacePath, string branchName, CancellationToken ct)

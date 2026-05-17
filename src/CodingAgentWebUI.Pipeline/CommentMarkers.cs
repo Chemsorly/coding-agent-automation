@@ -17,4 +17,10 @@ public static class CommentMarkers
 
     /// <summary>HTML marker indicating an issue feedback comment.</summary>
     public const string IssueFeedback = "<!-- agent:issue-feedback -->";
+
+    /// <summary>Markdown header prefix used by all pipeline-generated comments (emoji robot).</summary>
+    public const string PipelinePrefix = "## 🤖";
+
+    /// <summary>HTML comment prefix shared by all agent marker comments.</summary>
+    public const string AgentCommentPrefix = "<!-- agent:";
 }

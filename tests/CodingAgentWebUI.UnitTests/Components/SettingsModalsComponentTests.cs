@@ -4,6 +4,7 @@ using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Components;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.UnitTests.Components;
 
@@ -43,7 +44,7 @@ public class SettingsModalsComponentTests : BunitContext
             Kind = ProviderKind.Issue,
             ProviderType = "Jira", // Not GitHub
             DisplayName = "Jira Provider",
-            Settings = new Dictionary<string, string> { ["owner"] = "org", ["repo"] = "repo" }
+            Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "org", [ProviderSettingKeys.Repo] = "repo" }
         };
 
         component.InvokeAsync(() => component.Instance.ShowRelatedProviders(savedConfig));
@@ -64,12 +65,12 @@ public class SettingsModalsComponentTests : BunitContext
             DisplayName = "My Issues",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["clientId"] = "123",
-                ["installationId"] = "456",
-                ["privateKeyBase64"] = "key",
-                ["owner"] = "acme",
-                ["repo"] = "webapp"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.ClientId] = "123",
+                [ProviderSettingKeys.InstallationId] = "456",
+                [ProviderSettingKeys.PrivateKeyBase64] = "key",
+                [ProviderSettingKeys.Owner] = "acme",
+                [ProviderSettingKeys.Repo] = "webapp"
             }
         };
 
@@ -93,8 +94,8 @@ public class SettingsModalsComponentTests : BunitContext
             DisplayName = "My Issues",
             Settings = new Dictionary<string, string>
             {
-                ["owner"] = "acme",
-                ["repo"] = "webapp"
+                [ProviderSettingKeys.Owner] = "acme",
+                [ProviderSettingKeys.Repo] = "webapp"
             }
         };
 
@@ -115,7 +116,7 @@ public class SettingsModalsComponentTests : BunitContext
                 Kind = ProviderKind.Repository,
                 ProviderType = "GitHub",
                 DisplayName = "Existing Repo",
-                Settings = new Dictionary<string, string> { ["owner"] = "acme", ["repo"] = "webapp" }
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp" }
             }
         };
 
@@ -127,7 +128,7 @@ public class SettingsModalsComponentTests : BunitContext
             Kind = ProviderKind.Issue,
             ProviderType = "GitHub",
             DisplayName = "My Issues",
-            Settings = new Dictionary<string, string> { ["owner"] = "acme", ["repo"] = "webapp" }
+            Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp" }
         };
 
         component.InvokeAsync(() => component.Instance.ShowRelatedProviders(savedConfig));
@@ -143,7 +144,7 @@ public class SettingsModalsComponentTests : BunitContext
             new()
             {
                 Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub",
-                DisplayName = "Repo", Settings = new Dictionary<string, string> { ["owner"] = "acme", ["repo"] = "webapp" }
+                DisplayName = "Repo", Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp" }
             }
         };
         var existingPipelineProviders = new List<ProviderConfig>
@@ -151,7 +152,7 @@ public class SettingsModalsComponentTests : BunitContext
             new()
             {
                 Id = "pp-1", Kind = ProviderKind.Pipeline, ProviderType = "GitHub",
-                DisplayName = "Pipeline", Settings = new Dictionary<string, string> { ["owner"] = "acme", ["repo"] = "webapp" }
+                DisplayName = "Pipeline", Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp" }
             }
         };
 
@@ -163,7 +164,7 @@ public class SettingsModalsComponentTests : BunitContext
             Kind = ProviderKind.Issue,
             ProviderType = "GitHub",
             DisplayName = "My Issues",
-            Settings = new Dictionary<string, string> { ["owner"] = "acme", ["repo"] = "webapp" }
+            Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp" }
         };
 
         component.InvokeAsync(() => component.Instance.ShowRelatedProviders(savedConfig));
@@ -182,7 +183,7 @@ public class SettingsModalsComponentTests : BunitContext
             Kind = ProviderKind.Issue,
             ProviderType = "GitHub",
             DisplayName = "My Issues",
-            Settings = new Dictionary<string, string> { ["owner"] = "acme", ["repo"] = "webapp" }
+            Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp" }
         };
 
         component.InvokeAsync(() => component.Instance.ShowRelatedProviders(savedConfig));
@@ -203,7 +204,7 @@ public class SettingsModalsComponentTests : BunitContext
             Kind = ProviderKind.Issue,
             ProviderType = "GitHub",
             DisplayName = "My Issues",
-            Settings = new Dictionary<string, string> { ["owner"] = "acme", ["repo"] = "webapp" }
+            Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp" }
         };
 
         component.InvokeAsync(() => component.Instance.ShowRelatedProviders(savedConfig));
@@ -222,7 +223,7 @@ public class SettingsModalsComponentTests : BunitContext
             Kind = ProviderKind.Issue,
             ProviderType = "GitHub",
             DisplayName = "My Issues",
-            Settings = new Dictionary<string, string> { ["owner"] = "acme", ["repo"] = "webapp" }
+            Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp" }
         };
 
         component.InvokeAsync(() => component.Instance.ShowRelatedProviders(savedConfig));
@@ -246,12 +247,12 @@ public class SettingsModalsComponentTests : BunitContext
             DisplayName = "My Issues",
             Settings = new Dictionary<string, string>
             {
-                ["owner"] = "acme",
-                ["repo"] = "webapp",
-                ["apiUrl"] = "https://api.github.com",
-                ["clientId"] = "123",
-                ["installationId"] = "456",
-                ["privateKeyBase64"] = "key"
+                [ProviderSettingKeys.Owner] = "acme",
+                [ProviderSettingKeys.Repo] = "webapp",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.ClientId] = "123",
+                [ProviderSettingKeys.InstallationId] = "456",
+                [ProviderSettingKeys.PrivateKeyBase64] = "key"
             }
         };
 
@@ -276,7 +277,7 @@ public class SettingsModalsComponentTests : BunitContext
             Kind = ProviderKind.Issue,
             ProviderType = "GitHub",
             DisplayName = "My Issues",
-            Settings = new Dictionary<string, string> { ["owner"] = "acme", ["repo"] = "webapp" }
+            Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp" }
         };
 
         component.InvokeAsync(() => component.Instance.ShowConfigureLabels(config));
@@ -355,7 +356,7 @@ public class SettingsModalsComponentTests : BunitContext
             Kind = ProviderKind.Issue,
             ProviderType = "GitHub",
             DisplayName = "My Issues",
-            Settings = new Dictionary<string, string> { ["owner"] = "acme", ["repo"] = "webapp" }
+            Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp" }
         };
 
         await component.InvokeAsync(() => component.Instance.ShowConfigureLabels(config));
@@ -404,7 +405,7 @@ public class SettingsModalsComponentTests : BunitContext
             Kind = ProviderKind.Issue,
             ProviderType = "GitHub",
             DisplayName = "My Issues",
-            Settings = new Dictionary<string, string> { ["owner"] = "acme", ["repo"] = "webapp" }
+            Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp" }
         };
 
         await component.InvokeAsync(() => component.Instance.ShowConfigureLabels(config));

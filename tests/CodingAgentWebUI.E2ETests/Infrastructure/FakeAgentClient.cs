@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR.Client;
 
@@ -35,7 +36,7 @@ public sealed class FakeAgentClient : IAsyncDisposable
     public async Task ConnectAsync(string serverAddress, string apiKey)
     {
         _connection = new HubConnectionBuilder()
-            .WithUrl($"{serverAddress}/hubs/agent?agentId={AgentId}&access_token={apiKey}")
+            .WithUrl($"{serverAddress}{HubRoutes.Agent}?agentId={AgentId}&access_token={apiKey}")
             .Build();
 
         // Register all IAgentHubClient handlers

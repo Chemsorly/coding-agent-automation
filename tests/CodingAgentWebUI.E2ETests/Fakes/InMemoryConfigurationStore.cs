@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.E2ETests.Fakes;
 
@@ -49,7 +50,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
             new ProviderConfig { Id = "issue-e2e", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "E2E Issue Provider" },
             new ProviderConfig { Id = "repo-e2e", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "E2E Repo Provider" },
             new ProviderConfig { Id = "agent-e2e", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "E2E Agent Provider",
-                Settings = new Dictionary<string, string> { ["model"] = "test-model" } }
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.Model] = "test-model" } }
         });
 
         _qualityGateConfigs.Add(new QualityGateConfiguration

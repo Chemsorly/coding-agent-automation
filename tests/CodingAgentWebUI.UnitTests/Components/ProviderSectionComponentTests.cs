@@ -5,6 +5,7 @@ using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.UnitTests.Components;
 
@@ -63,9 +64,9 @@ public class ProviderSectionComponentTests : BunitContext
                 RepositoryRole = RepositoryRole.Work,
                 Settings = new Dictionary<string, string>
                 {
-                    ["owner"] = "myorg",
-                    ["repo"] = "myrepo",
-                    ["baseBranch"] = "develop"
+                    [ProviderSettingKeys.Owner] = "myorg",
+                    [ProviderSettingKeys.Repo] = "myrepo",
+                    [ProviderSettingKeys.BaseBranch] = "develop"
                 }
             }
         };
@@ -97,9 +98,9 @@ public class ProviderSectionComponentTests : BunitContext
                 RequiredLabels = new List<string> { "kiro", "dotnet" },
                 Settings = new Dictionary<string, string>
                 {
-                    ["owner"] = "org",
-                    ["repo"] = "repo",
-                    ["baseBranch"] = "main"
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo",
+                    [ProviderSettingKeys.BaseBranch] = "main"
                 }
             }
         };
@@ -128,9 +129,9 @@ public class ProviderSectionComponentTests : BunitContext
                 RequiredLabels = new List<string> { "should-not-show" },
                 Settings = new Dictionary<string, string>
                 {
-                    ["owner"] = "org",
-                    ["repo"] = "brain",
-                    ["baseBranch"] = "main"
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "brain",
+                    [ProviderSettingKeys.BaseBranch] = "main"
                 }
             }
         };
@@ -156,9 +157,9 @@ public class ProviderSectionComponentTests : BunitContext
                 DisplayName = "Editable Repo",
                 Settings = new Dictionary<string, string>
                 {
-                    ["owner"] = "org",
-                    ["repo"] = "repo",
-                    ["baseBranch"] = "main"
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo",
+                    [ProviderSettingKeys.BaseBranch] = "main"
                 }
             }
         };
@@ -236,13 +237,13 @@ public class ProviderSectionComponentTests : BunitContext
                 DisplayName = "Edit Me",
                 Settings = new Dictionary<string, string>
                 {
-                    ["owner"] = "editorg",
-                    ["repo"] = "editrepo",
-                    ["baseBranch"] = "develop",
-                    ["apiUrl"] = "https://api.github.com",
-                    ["clientId"] = "Iv1.test123",
-                    ["installationId"] = "12345",
-                    ["privateKeyBase64"] = ""
+                    [ProviderSettingKeys.Owner] = "editorg",
+                    [ProviderSettingKeys.Repo] = "editrepo",
+                    [ProviderSettingKeys.BaseBranch] = "develop",
+                    [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                    [ProviderSettingKeys.ClientId] = "Iv1.test123",
+                    [ProviderSettingKeys.InstallationId] = "12345",
+                    [ProviderSettingKeys.PrivateKeyBase64] = ""
                 }
             }
         };
@@ -272,9 +273,9 @@ public class ProviderSectionComponentTests : BunitContext
                 DisplayName = "Delete Me",
                 Settings = new Dictionary<string, string>
                 {
-                    ["owner"] = "org",
-                    ["repo"] = "repo",
-                    ["baseBranch"] = "main"
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo",
+                    [ProviderSettingKeys.BaseBranch] = "main"
                 }
             }
         };
@@ -331,8 +332,8 @@ public class ProviderSectionComponentTests : BunitContext
                 DisplayName = "My Issues",
                 Settings = new Dictionary<string, string>
                 {
-                    ["owner"] = "issueorg",
-                    ["repo"] = "issuerepo"
+                    [ProviderSettingKeys.Owner] = "issueorg",
+                    [ProviderSettingKeys.Repo] = "issuerepo"
                 }
             }
         };
@@ -361,8 +362,8 @@ public class ProviderSectionComponentTests : BunitContext
                 DisplayName = "Init Provider",
                 Settings = new Dictionary<string, string>
                 {
-                    ["owner"] = "org",
-                    ["repo"] = "repo"
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo"
                 }
             }
         };
@@ -389,8 +390,8 @@ public class ProviderSectionComponentTests : BunitContext
                 DisplayName = "Editable Issues",
                 Settings = new Dictionary<string, string>
                 {
-                    ["owner"] = "org",
-                    ["repo"] = "repo"
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo"
                 }
             }
         };
@@ -456,8 +457,8 @@ public class ProviderSectionComponentTests : BunitContext
                 DisplayName = "Delete Me",
                 Settings = new Dictionary<string, string>
                 {
-                    ["owner"] = "org",
-                    ["repo"] = "repo"
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo"
                 }
             }
         };
@@ -501,8 +502,8 @@ public class ProviderSectionComponentTests : BunitContext
                 DisplayName = "Init Success",
                 Settings = new Dictionary<string, string>
                 {
-                    ["owner"] = "org",
-                    ["repo"] = "repo"
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo"
                 }
             }
         };
@@ -544,8 +545,8 @@ public class ProviderSectionComponentTests : BunitContext
                 DisplayName = "Init Fail",
                 Settings = new Dictionary<string, string>
                 {
-                    ["owner"] = "org",
-                    ["repo"] = "repo"
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo"
                 }
             }
         };
@@ -587,7 +588,7 @@ public class ProviderSectionComponentTests : BunitContext
                 Kind = ProviderKind.Issue,
                 ProviderType = "GitHub",
                 DisplayName = "Provider One",
-                Settings = new Dictionary<string, string> { ["owner"] = "org", ["repo"] = "repo1" }
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "org", [ProviderSettingKeys.Repo] = "repo1" }
             },
             new()
             {
@@ -595,7 +596,7 @@ public class ProviderSectionComponentTests : BunitContext
                 Kind = ProviderKind.Issue,
                 ProviderType = "GitHub",
                 DisplayName = "Provider Two",
-                Settings = new Dictionary<string, string> { ["owner"] = "org", ["repo"] = "repo2" }
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "org", [ProviderSettingKeys.Repo] = "repo2" }
             }
         };
 

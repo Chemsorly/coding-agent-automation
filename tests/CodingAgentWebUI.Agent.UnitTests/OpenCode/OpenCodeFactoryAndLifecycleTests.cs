@@ -5,6 +5,8 @@ using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
 using Moq;
 using ILogger = Serilog.ILogger;
+using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Agent.UnitTests.OpenCode;
 
@@ -244,7 +246,7 @@ public class OpenCodeFactoryAndLifecycleTests
             var orchestratorMock = new Mock<IKiroCliOrchestrator>();
             var httpClientFactoryMock = new Mock<IHttpClientFactory>();
             httpClientFactoryMock.Setup(f => f.CreateClient(It.IsAny<string>()))
-                .Returns(new HttpClient { BaseAddress = new Uri("http://127.0.0.1:4096") });
+                .Returns(new HttpClient { BaseAddress = new Uri(AgentDefaults.OpenCodeBaseUrl) });
 
             var pipelineConfig = new PipelineConfiguration();
             var factory = new AgentProviderFactory(
@@ -253,11 +255,11 @@ public class OpenCodeFactoryAndLifecycleTests
             var config = new ProviderConfig
             {
                 Kind = ProviderKind.Agent,
-                ProviderType = "OpenCode",
+                ProviderType = AgentDefaults.OpenCodeHttpClientName,
                 DisplayName = "Test OpenCode Provider",
                 Settings = new Dictionary<string, string>
                 {
-                    ["baseUrl"] = "http://127.0.0.1:4096"
+                    [ProviderSettingKeys.BaseUrl] = AgentDefaults.OpenCodeBaseUrl
                 }
             };
 
@@ -291,7 +293,7 @@ public class OpenCodeFactoryAndLifecycleTests
             var orchestratorMock = new Mock<IKiroCliOrchestrator>();
             var httpClientFactoryMock = new Mock<IHttpClientFactory>();
             httpClientFactoryMock.Setup(f => f.CreateClient(It.IsAny<string>()))
-                .Returns(new HttpClient { BaseAddress = new Uri("http://127.0.0.1:4096") });
+                .Returns(new HttpClient { BaseAddress = new Uri(AgentDefaults.OpenCodeBaseUrl) });
 
             var pipelineConfig = new PipelineConfiguration();
             var factory = new AgentProviderFactory(
@@ -304,7 +306,7 @@ public class OpenCodeFactoryAndLifecycleTests
                 DisplayName = "Test OpenCode Provider",
                 Settings = new Dictionary<string, string>
                 {
-                    ["baseUrl"] = "http://127.0.0.1:4096"
+                    [ProviderSettingKeys.BaseUrl] = AgentDefaults.OpenCodeBaseUrl
                 }
             };
 
@@ -346,11 +348,11 @@ public class OpenCodeFactoryAndLifecycleTests
             var config = new ProviderConfig
             {
                 Kind = ProviderKind.Agent,
-                ProviderType = "OpenCode",
+                ProviderType = AgentDefaults.OpenCodeHttpClientName,
                 DisplayName = "Test OpenCode Provider",
                 Settings = new Dictionary<string, string>
                 {
-                    ["baseUrl"] = invalidUrl
+                    [ProviderSettingKeys.BaseUrl] = invalidUrl
                 }
             };
 
@@ -385,11 +387,11 @@ public class OpenCodeFactoryAndLifecycleTests
             var config = new ProviderConfig
             {
                 Kind = ProviderKind.Agent,
-                ProviderType = "OpenCode",
+                ProviderType = AgentDefaults.OpenCodeHttpClientName,
                 DisplayName = "Test OpenCode Provider",
                 Settings = new Dictionary<string, string>
                 {
-                    ["baseUrl"] = "http://127.0.0.1:4096"
+                    [ProviderSettingKeys.BaseUrl] = AgentDefaults.OpenCodeBaseUrl
                 }
             };
 
@@ -518,7 +520,7 @@ internal sealed class HealthNetworkErrorClientFactory : IHttpClientFactory
     {
         return new HttpClient(_handler, disposeHandler: false)
         {
-            BaseAddress = new Uri("http://127.0.0.1:4096")
+            BaseAddress = new Uri(AgentDefaults.OpenCodeBaseUrl)
         };
     }
 }
