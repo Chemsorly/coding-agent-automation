@@ -48,6 +48,7 @@ public static class ProviderSettingKeys
 
     // ── Token vending (written by orchestrator) ──────────────────────────
 
+    // TODO: TokenValue has the same value as Token above — consolidate into a single constant or make TokenValue an alias (= Token)
     /// <summary>Vended token value (written to provider settings at runtime).</summary>
     public const string TokenValue = "token";
 

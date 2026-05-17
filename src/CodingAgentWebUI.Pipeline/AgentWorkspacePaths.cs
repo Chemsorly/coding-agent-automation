@@ -62,6 +62,18 @@ public static class AgentWorkspacePaths
     public const string DefaultMcpConfigPath = ".agent/settings/mcp.json";
 
     /// <summary>
+    /// The file path (relative to workspace) where the pipeline writes the diff stat
+    /// (file list with line counts) for review agents to triage changes efficiently.
+    /// </summary>
+    public const string DiffStatFilePath = ".agent/diff-stat.txt";
+
+    /// <summary>
+    /// The file path (relative to workspace) where the pipeline writes the full git diff
+    /// for review agents to read selectively instead of running git diff themselves.
+    /// </summary>
+    public const string FullDiffFilePath = ".agent/full-diff.txt";
+
+    /// <summary>
     /// Returns a per-agent findings file path to prevent sub-agent overwrite conflicts.
     /// Each review agent writes to its own isolated file.
     /// </summary>

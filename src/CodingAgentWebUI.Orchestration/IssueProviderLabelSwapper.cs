@@ -36,7 +36,10 @@ public sealed class IssueProviderLabelSwapper : IIssueProviderLabelSwapper
         string newLabel,
         CancellationToken ct)
     {
-        // TODO: Add ArgumentNullException.ThrowIfNull for issueProviderConfigId, issueIdentifier, newLabel (review finding: nulls would be swallowed by catch block)
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(newLabel);
+
         try
         {
             var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);

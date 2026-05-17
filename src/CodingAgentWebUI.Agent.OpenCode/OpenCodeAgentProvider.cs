@@ -128,6 +128,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     public async Task<AgentResult> ExecuteAsync(AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null)
     {
         _isExecuting = true;
+        LastOutputTime = DateTime.UtcNow; // Reset so stall monitor measures from this call's start
         try
         {
             // 1. Session selection
@@ -565,25 +566,31 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 if (sseEvent.SessionId != sessionId)
                     continue;
 
-                // Update LastOutputTime on each processed event
-                LastOutputTime = DateTime.UtcNow;
-
-                // Route events based on type
+                // Route events based on type — only update LastOutputTime on events
+                // that represent meaningful progress (text output, tool calls, token streaming).
+                // Metadata-only events (session.idle, session.status, session.updated,
+                // session.diff, message.updated) are excluded so the stall monitor can
+                // detect extended LLM thinking/reasoning phases where no visible output
+                // is being produced.
                 switch (sseEvent.Type)
                 {
                     case "message.part.updated":
+                        LastOutputTime = DateTime.UtcNow;
                         onOutputLine?.Invoke(StripAnsiEscapes($"[assistant] {sseEvent.Part?.Text}"));
                         break;
 
                     case "tool.execute.before":
+                        LastOutputTime = DateTime.UtcNow;
                         onOutputLine?.Invoke(StripAnsiEscapes($"[tool_call] {sseEvent.ToolName} {sseEvent.ToolArgs}"));
                         break;
 
                     case "tool.execute.after":
+                        LastOutputTime = DateTime.UtcNow;
                         onOutputLine?.Invoke(StripAnsiEscapes($"[tool_result] {sseEvent.ToolResult}"));
                         break;
 
                     case "permission.updated":
+                        LastOutputTime = DateTime.UtcNow;
                         await AutoApprovePermissionAsync(sessionId, sseEvent.PermissionId, ct);
                         break;
 
@@ -592,7 +599,8 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                         break;
 
                     default:
-                        // Discard unrecognized event types
+                        // Discard metadata events (session.status, session.updated,
+                        // session.diff, message.updated, etc.)
                         break;
                 }
             }
@@ -689,13 +697,13 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
     /// <summary>
     /// Strips ANSI escape sequences (CSI codes, OSC sequences, color codes) from output strings.
-    /// Delegates to <see cref="AnsiStripper.Strip"/> with null/empty guard.
+    /// Delegates to <see cref="KiroCliLib.Core.AnsiStripper.Strip"/> with null/empty guard.
     /// </summary>
     internal static string StripAnsiEscapes(string? input)
     {
         if (string.IsNullOrEmpty(input))
             return string.Empty;
 
-        return AnsiStripper.Strip(input);
+        return KiroCliLib.Core.AnsiStripper.Strip(input);
     }
 }

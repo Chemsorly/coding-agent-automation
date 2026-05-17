@@ -89,4 +89,17 @@ public class IssueProviderLabelSwapperTests
         // Should not throw
         await swapper.SwapLabelAsync("cfg-1", "org/repo#42", AgentLabels.Error, CancellationToken.None);
     }
+
+    [Theory]
+    [InlineData(null, "org/repo#1", "agent:done", "issueProviderConfigId")]
+    [InlineData("cfg-1", null, "agent:done", "issueIdentifier")]
+    [InlineData("cfg-1", "org/repo#1", null, "newLabel")]
+    public async Task SwapLabelAsync_NullParameter_ThrowsArgumentNullException(
+        string? configId, string? issueId, string? label, string expectedParamName)
+    {
+        var swapper = CreateSwapper();
+        var act = () => swapper.SwapLabelAsync(configId!, issueId!, label!, CancellationToken.None);
+        (await act.Should().ThrowExactlyAsync<ArgumentNullException>())
+            .And.ParamName.Should().Be(expectedParamName);
+    }
 }

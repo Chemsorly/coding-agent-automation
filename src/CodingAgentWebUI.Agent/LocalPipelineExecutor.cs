@@ -108,10 +108,7 @@ public sealed class LocalPipelineExecutor
             ?? throw new InvalidOperationException($"Agent provider config '{job.AgentProviderConfigId}' not found in job assignment");
 
         // Override blacklist settings from repo provider config (per-repo takes precedence)
-        if (repoConfig.BlacklistedPaths is { Count: > 0 })
-            config = config with { BlacklistedPaths = repoConfig.BlacklistedPaths };
-        if (repoConfig.BlacklistMode is { } repoBlacklistMode)
-            config = config with { BlacklistMode = repoBlacklistMode };
+        config = PipelineConfiguration.ApplyBlacklistOverride(config, repoConfig);
 
         IRepositoryProvider? repoProvider = null;
         IAgentProvider? agentProvider = null;
@@ -447,7 +444,7 @@ public sealed class LocalPipelineExecutor
                 var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
                     run, run.IssueTitle, run.RepositoryName?.Split('/').LastOrDefault());
 
-                await agentProvider.ExecuteAsync(
+                var reflectionResult = await agentProvider.ExecuteAsync(
                     new AgentRequest
                     {
                         Prompt = reflectionPrompt,
@@ -461,6 +458,8 @@ public sealed class LocalPipelineExecutor
                         run.OutputLines.Enqueue(line);
                         emitOutputLine(line);
                     });
+
+                run.AccumulateTokenUsage(reflectionResult);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

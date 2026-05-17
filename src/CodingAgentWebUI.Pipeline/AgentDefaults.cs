@@ -20,8 +20,11 @@ public static class AgentDefaults
 
     // ── TimeSpan defaults ────────────────────────────────────────────────
 
-    /// <summary>Default timeout for OpenCode HTTP requests (30 minutes).</summary>
-    public static readonly TimeSpan OpenCodeRequestTimeout = TimeSpan.FromMinutes(30);
+    /// <summary>Default timeout for OpenCode HTTP requests (60 minutes).</summary>
+    public static readonly TimeSpan OpenCodeRequestTimeout = TimeSpan.FromMinutes(60);
+
+    /// <summary>Default timeout for individual chat/agent request sessions (30 minutes).</summary>
+    public static readonly TimeSpan ChatRequestTimeout = TimeSpan.FromMinutes(30);
 
     /// <summary>Default interval between agent heartbeats (30 seconds).</summary>
     public static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(30);

@@ -362,7 +362,7 @@ public sealed class AgentWorkerService : BackgroundService
                             Prompt = message.Prompt,
                             WorkspacePath = chatWorkspace,
                             UseResume = message.UseResume,
-                            Timeout = AgentDefaults.OpenCodeRequestTimeout
+                            Timeout = AgentDefaults.ChatRequestTimeout
                         },
                         _chatCts.Token,
                         onOutputLine: async line => await outputBatcher.AddLineAsync(line));

@@ -5,11 +5,11 @@ using FsCheck.Xunit;
 namespace CodingAgentWebUI.Agent.UnitTests.OpenCode;
 
 /// <summary>
-/// Property-based tests verifying that the inlined OpenCode AnsiStripper produces
-/// identical output to the KiroCliLib.Core.AnsiStripper for all inputs.
+/// Property-based tests verifying that the OpenCode StripAnsiEscapes wrapper delegates
+/// to KiroCliLib.Core.AnsiStripper and produces identical output for all inputs.
 ///
-/// Feature: 023-agent-project-split, Property 1: For any string, the inlined OpenCode
-/// AnsiStripper produces the same output as KiroCliLib.Core.AnsiStripper
+/// Feature: 023-agent-project-split, Property 1: The OpenCode StripAnsiEscapes wrapper
+/// produces the same output as calling KiroCliLib.Core.AnsiStripper.Strip directly.
 ///
 /// **Validates: Requirements 2.4**
 /// </summary>
@@ -19,18 +19,18 @@ public class AnsiStripperEquivalenceTests
 {
     /// <summary>
     /// Property 1: For any string containing a mix of plain text, ANSI CSI sequences,
-    /// OSC sequences, and bare bracket sequences, the inlined OpenCode AnsiStripper
-    /// produces the same output as KiroCliLib.Core.AnsiStripper.
+    /// OSC sequences, and bare bracket sequences, the OpenCode StripAnsiEscapes wrapper
+    /// produces the same output as KiroCliLib.Core.AnsiStripper.Strip.
     /// </summary>
     [Property(MaxTest = 100, Arbitrary = [typeof(AnsiMixedStringArbitrary)])]
-    public void Strip_OpenCodeAndKiroCliLib_ProduceIdenticalOutput(AnsiMixedString input)
+    public void StripAnsiEscapes_DelegatesToKiroCliLibAnsiStripper(AnsiMixedString input)
     {
         // Act
-        var openCodeResult = CodingAgentWebUI.Agent.OpenCode.AnsiStripper.Strip(input.Value);
-        var kiroCliLibResult = KiroCliLib.Core.AnsiStripper.Strip(input.Value);
+        var wrapperResult = CodingAgentWebUI.Agent.OpenCode.OpenCodeAgentProvider.StripAnsiEscapes(input.Value);
+        var directResult = KiroCliLib.Core.AnsiStripper.Strip(input.Value);
 
-        // Assert — both implementations produce identical output
-        Assert.Equal(kiroCliLibResult, openCodeResult);
+        // Assert — wrapper produces identical output to direct call
+        Assert.Equal(directResult, wrapperResult);
     }
 }
 

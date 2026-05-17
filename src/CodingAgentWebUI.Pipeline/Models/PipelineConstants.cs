@@ -35,18 +35,21 @@ public static class PipelineConstants
     public const string BranchPrefix = "feature/auto-";
 
     /// <inheritdoc cref="BranchPrefix"/>
+    // TODO: BranchNamePrefix alias is unused — remove if no consumer adopts it
     public const string BranchNamePrefix = BranchPrefix;
 
     /// <summary>Default commit message suffix for pipeline-generated commits.</summary>
     public const string AutomatedCommitSuffix = "Automated implementation via pipeline";
 
     /// <inheritdoc cref="AutomatedCommitSuffix"/>
+    // TODO: AutomatedFooter alias is unused — remove if no consumer adopts it
     public const string AutomatedFooter = AutomatedCommitSuffix;
 
     /// <summary>Base directory for pipeline configuration files.</summary>
     public const string ConfigBaseDirectory = "config/pipeline";
 
     /// <inheritdoc cref="ConfigBaseDirectory"/>
+    // TODO: DefaultConfigBaseDirectory alias is unused — remove if no consumer adopts it
     public const string DefaultConfigBaseDirectory = ConfigBaseDirectory;
 
     /// <summary>Directory for pipeline run history files.</summary>
@@ -58,6 +61,7 @@ public static class PipelineConstants
     /// <summary>Path for harness suggestions file.</summary>
     public const string HarnessSuggestionsPath = "config/pipeline/harness-suggestions.json";
 
+    // TODO: Acceptance criteria specify these should live on PromptBuilder, not PipelineConstants
     /// <summary>
     /// Git restriction instruction appended to prompts (full version with read-only examples).
     /// </summary>

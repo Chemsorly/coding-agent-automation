@@ -183,10 +183,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             // not in this local execution path. See review finding #2.
 
             // Override blacklist settings from repo provider config (per-repo takes precedence)
-            if (repoProviderConfig.BlacklistedPaths is { Count: > 0 })
-                _activeConfig = _activeConfig with { BlacklistedPaths = repoProviderConfig.BlacklistedPaths };
-            if (repoProviderConfig.BlacklistMode is { } repoBlacklistMode)
-                _activeConfig = _activeConfig with { BlacklistMode = repoBlacklistMode };
+            _activeConfig = PipelineConfiguration.ApplyBlacklistOverride(_activeConfig, repoProviderConfig);
 
             await _providerManager.CreateCoreProvidersAsync(issueProviderConfig, repoProviderConfig, agentProviderConfig, linkedCt);
             var issueProvider = _providerManager.ActiveIssueProvider!;
@@ -475,7 +472,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                         run, _activeIssue?.Title, run.RepositoryName?.Split('/').LastOrDefault());
                     _logger.Debug("Pipeline {RunId} reflection prompt:\n{Prompt}", run.RunId, reflectionPrompt);
 
-                    await _providerManager.ActiveAgentProvider!.ExecuteAsync(
+                    var reflectionResult = await _providerManager.ActiveAgentProvider!.ExecuteAsync(
                         new AgentRequest
                         {
                             Prompt = reflectionPrompt,
@@ -490,6 +487,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                             _lifecycle.EmitOutputLine(line);
                         });
 
+                    run.AccumulateTokenUsage(reflectionResult);
                     _logger.Information("Pipeline {RunId} reflection step completed", run.RunId);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)

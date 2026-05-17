@@ -1,4 +1,5 @@
 @using CodingAgentWebUI.Agent
+@using CodingAgentWebUI.Pipeline
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
@@ -19,6 +20,7 @@
                 <div class="provider-info">
                     <strong>@p.DisplayName</strong>
                     <span class="provider-type">@p.ProviderType</span>
+                    @* TODO: "timeout" and "agentName" keys are not yet in ProviderSettingKeys — add constants and replace these literals *@
                     <span class="provider-detail">@p.Settings.GetValueOrDefault("executablePath", "") · @(p.Settings.GetValueOrDefault("timeout", "30"))min · model: @(p.Settings.GetValueOrDefault("model", "auto"))</span>
                 </div>
                 <div class="provider-actions">
@@ -187,6 +189,7 @@
             DisplayName = p.DisplayName,
             ExecutablePath = p.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, ""),
             BaseUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseUrl, AgentDefaults.OpenCodeBaseUrl),
+            // TODO: Extract "timeout" and "agentName" into ProviderSettingKeys constants
             TimeoutMinutes = int.TryParse(p.Settings.GetValueOrDefault("timeout", "30"), out var t) ? t : 30,
             AgentName = p.Settings.GetValueOrDefault("agentName", ""),
             Model = p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto")
@@ -211,6 +214,7 @@
             return;
         }
 
+        // TODO: Extract "timeout" and "agentName" into ProviderSettingKeys constants
         var settings = new Dictionary<string, string>
         {
             ["timeout"] = _form.TimeoutMinutes.ToString(),
