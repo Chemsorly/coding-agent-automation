@@ -1,6 +1,7 @@
 @page "/agent-chat"
 @rendermode InteractiveServer
 @implements IAsyncDisposable
+@using CodingAgentWebUI.Pipeline
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
@@ -167,9 +168,9 @@
                 ProviderKind.Agent, CancellationToken.None);
             var agentConfig = agentConfigs.FirstOrDefault(c => c.Id == _resolvedProfile.AgentProviderConfigId);
 
-            _resolvedModel = agentConfig?.Settings.GetValueOrDefault("model", "auto") ?? "auto";
+            _resolvedModel = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto") ?? "auto";
 
-            if (agentConfig?.Settings.TryGetValue("mcpConfigPath", out var path) == true
+            if (agentConfig?.Settings.TryGetValue(ProviderSettingKeys.McpConfigPath, out var path) == true
                 && !string.IsNullOrWhiteSpace(path))
             {
                 _resolvedMcpConfigPath = path;
