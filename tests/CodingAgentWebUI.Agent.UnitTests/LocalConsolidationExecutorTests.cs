@@ -235,7 +235,7 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test",
                 [ProviderSettingKeys.Repo] = "brain",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake-token"
             }
         };
@@ -285,7 +285,7 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test",
                 [ProviderSettingKeys.Repo] = "brain",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake-token"
             }
         };
@@ -398,7 +398,7 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test",
                 [ProviderSettingKeys.Repo] = "work",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake"
             }
         };
@@ -451,7 +451,7 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test",
                 [ProviderSettingKeys.Repo] = "work",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake"
             }
         };
@@ -489,7 +489,7 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test",
                 [ProviderSettingKeys.Repo] = "brain",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake-brain-token"
             }
         };
@@ -522,7 +522,7 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test",
                 [ProviderSettingKeys.Repo] = "work",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake"
             }
         };
@@ -575,7 +575,7 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test",
                 [ProviderSettingKeys.Repo] = "brain",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake-brain-token"
             }
         };

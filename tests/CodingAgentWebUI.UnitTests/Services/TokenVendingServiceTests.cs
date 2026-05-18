@@ -193,7 +193,7 @@ public class TokenVendingServiceTests
                 DisplayName = "Agent",
                 Settings = new Dictionary<string, string>
                 {
-                    ["executablePath"] = "/usr/bin/kiro-cli",
+                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
                     ["timeout"] = "30"
                 }
             }
@@ -203,8 +203,8 @@ public class TokenVendingServiceTests
 
         result.Should().HaveCount(1);
         result[0].Id.Should().Be("ap-1");
-        result[0].Settings.Should().ContainKey("executablePath");
-        result[0].Settings.Should().NotContainKey("privateKeyBase64");
+        result[0].Settings.Should().ContainKey(ProviderSettingKeys.ExecutablePath);
+        result[0].Settings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
     }
 
     [Fact]
@@ -236,8 +236,8 @@ public class TokenVendingServiceTests
 
         result.Should().HaveCount(1);
         result[0].Id.Should().Be("rp-1");
-        result[0].Settings.Should().NotContainKey("privateKeyBase64");
-        result[0].Settings.Should().ContainKey("owner");
+        result[0].Settings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
+        result[0].Settings.Should().ContainKey(ProviderSettingKeys.Owner);
     }
 
     [Fact]

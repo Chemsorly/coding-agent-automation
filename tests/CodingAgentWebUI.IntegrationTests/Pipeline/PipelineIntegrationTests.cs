@@ -146,18 +146,18 @@ public class PipelineIntegrationTests : IntegrationTestBase
             {
                 Id = "repo-gh", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "GitHub Repo",
                 RepositoryRole = RepositoryRole.Work,
-                Settings = new Dictionary<string, string> { ["baseBranch"] = "main" }
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.BaseBranch] = "main" }
             },
             new ProviderConfig
             {
                 Id = "repo-brain", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain Repo",
                 RepositoryRole = RepositoryRole.Brain,
-                Settings = new Dictionary<string, string> { ["baseBranch"] = "main" }
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.BaseBranch] = "main" }
             },
             new ProviderConfig
             {
                 Id = "agent-kiro", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Kiro Agent",
-                Settings = new Dictionary<string, string> { ["model"] = "claude-sonnet-4.6" }
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.Model] = "claude-sonnet-4.6" }
             },
             new ProviderConfig
             {

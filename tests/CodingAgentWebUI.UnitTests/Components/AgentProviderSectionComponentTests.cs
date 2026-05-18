@@ -2,6 +2,7 @@ using Bunit;
 using Moq;
 using AwesomeAssertions;
 using CodingAgentWebUI.Components.Pages;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Components;
@@ -51,9 +52,9 @@ public class AgentProviderSectionComponentTests : BunitContext
                 DisplayName = "My Kiro Agent",
                 Settings = new Dictionary<string, string>
                 {
-                    ["executablePath"] = "/usr/bin/kiro-cli",
+                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
                     ["timeout"] = "45",
-                    ["model"] = "claude-sonnet-4"
+                    [ProviderSettingKeys.Model] = "claude-sonnet-4"
                 }
             }
         };
@@ -79,9 +80,9 @@ public class AgentProviderSectionComponentTests : BunitContext
                 DisplayName = "Agent 1",
                 Settings = new Dictionary<string, string>
                 {
-                    ["executablePath"] = "/usr/bin/kiro-cli",
+                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
                     ["timeout"] = "30",
-                    ["model"] = "auto"
+                    [ProviderSettingKeys.Model] = "auto"
                 }
             }
         };
@@ -156,10 +157,10 @@ public class AgentProviderSectionComponentTests : BunitContext
                 DisplayName = "My Agent",
                 Settings = new Dictionary<string, string>
                 {
-                    ["executablePath"] = "/custom/path/kiro-cli",
+                    [ProviderSettingKeys.ExecutablePath] = "/custom/path/kiro-cli",
                     ["timeout"] = "60",
                     ["agentName"] = "custom-agent",
-                    ["model"] = "claude-sonnet-4"
+                    [ProviderSettingKeys.Model] = "claude-sonnet-4"
                 }
             }
         };
@@ -221,7 +222,7 @@ public class AgentProviderSectionComponentTests : BunitContext
 
         // Verify the saved config has model="auto" (the default)
         _mockConfigStore.Verify(s => s.SaveProviderConfigAsync(
-            It.Is<ProviderConfig>(c => c.Settings["model"] == "auto"),
+            It.Is<ProviderConfig>(c => c.Settings[ProviderSettingKeys.Model] == "auto"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -298,9 +299,9 @@ public class AgentProviderSectionComponentTests : BunitContext
                 DisplayName = "To Delete",
                 Settings = new Dictionary<string, string>
                 {
-                    ["executablePath"] = "/usr/bin/kiro-cli",
+                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
                     ["timeout"] = "30",
-                    ["model"] = "auto"
+                    [ProviderSettingKeys.Model] = "auto"
                 }
             }
         };

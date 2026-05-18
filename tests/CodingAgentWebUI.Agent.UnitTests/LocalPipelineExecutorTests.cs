@@ -531,7 +531,7 @@ public class LocalPipelineExecutorTests : IDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-repo",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake-token"
             }
         };
@@ -594,7 +594,7 @@ public class LocalPipelineExecutorTests : IDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-repo",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake-token"
             }
         };
@@ -679,7 +679,7 @@ public class LocalPipelineExecutorTests : IDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-repo",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake-token"
             },
             BlacklistedPaths = ["*.secret", "credentials/"],
@@ -745,7 +745,7 @@ public class LocalPipelineExecutorTests : IDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-repo",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake-token"
             }
         };
@@ -769,7 +769,7 @@ public class LocalPipelineExecutorTests : IDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-brain",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake-brain-token"
             }
         };
@@ -822,7 +822,7 @@ public class LocalPipelineExecutorTests : IDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-repo",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake-token"
             }
         };
@@ -883,7 +883,7 @@ public class LocalPipelineExecutorTests : IDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-repo",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake-token"
             }
         };
@@ -957,7 +957,7 @@ public class LocalPipelineExecutorTests : IDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-repo",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake-token"
             }
         };
@@ -1017,7 +1017,7 @@ public class LocalPipelineExecutorTests : IDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-repo",
-                ["baseBranch"] = "main",
+                [ProviderSettingKeys.BaseBranch] = "main",
                 [ProviderSettingKeys.Token] = "fake-token"
             }
         };

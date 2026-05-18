@@ -115,7 +115,7 @@ public class AgentProviderFactoryTests
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test",
                 [ProviderSettingKeys.Repo] = "test",
-                ["baseBranch"] = "main"
+                [ProviderSettingKeys.BaseBranch] = "main"
             }
         };
 
@@ -140,7 +140,7 @@ public class AgentProviderFactoryTests
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-repo",
-                ["baseBranch"] = "main"
+                [ProviderSettingKeys.BaseBranch] = "main"
             }
         };
 
@@ -180,7 +180,7 @@ public class AgentProviderFactoryTests
             DisplayName = "Test Agent",
             Settings = new Dictionary<string, string>
             {
-                ["model"] = "auto"
+                [ProviderSettingKeys.Model] = "auto"
             }
         };
 
@@ -248,7 +248,7 @@ public class AgentProviderFactoryTests
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test",
                 [ProviderSettingKeys.Repo] = "test",
-                ["baseBranch"] = "main"
+                [ProviderSettingKeys.BaseBranch] = "main"
             }
         };
 
@@ -273,7 +273,7 @@ public class AgentProviderFactoryTests
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-repo",
-                ["baseBranch"] = "main"
+                [ProviderSettingKeys.BaseBranch] = "main"
             }
         };
 
@@ -322,7 +322,7 @@ public class AgentProviderFactoryTests
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test",
                 [ProviderSettingKeys.Repo] = "test",
-                ["baseBranch"] = "main"
+                [ProviderSettingKeys.BaseBranch] = "main"
             }
         };
 
