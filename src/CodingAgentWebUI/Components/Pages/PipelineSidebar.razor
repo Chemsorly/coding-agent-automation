@@ -22,6 +22,13 @@
         @foreach (var step in _steps)
         {
             var state = GetStepState(step);
+
+            // Hide ReviewingAnalysis when it was skipped (feature disabled — step is Pending but pipeline moved past it)
+            if (step == PipelineStep.ReviewingAnalysis && state == StepState.Pending
+                && Run.HighWaterMark > PipelineStep.ReviewingAnalysis)
+            {
+                continue;
+            }
             var isExpanded = state is StepState.Active or StepState.Failed or StepState.Revisited
                 || _expandedSteps.Contains(step)
                 || (state == StepState.Completed && HasDetails(step));
@@ -83,6 +90,10 @@
                             {
                                 <div class="step-detail">🚫 Won't do</div>
                             }
+                        }
+                        else if (step == PipelineStep.ReviewingAnalysis)
+                        {
+                            <div class="step-detail">Adversarial review</div>
                         }
                         else if (step == PipelineStep.GeneratingCode)
                         {
@@ -308,6 +319,7 @@
         PipelineStep.CreatingBranch,
         PipelineStep.VerifyingBaseline,
         PipelineStep.AnalyzingCode,
+        PipelineStep.ReviewingAnalysis,
         PipelineStep.PostingAnalysis,
         PipelineStep.GeneratingCode,
         PipelineStep.ReviewingCode,
@@ -374,6 +386,7 @@
         PipelineStep.CreatingBranch => "Creating Branch",
         PipelineStep.VerifyingBaseline => "Verifying Baseline",
         PipelineStep.AnalyzingCode => "Analyzing Code",
+        PipelineStep.ReviewingAnalysis => "Reviewing Analysis",
         PipelineStep.PostingAnalysis => "Posting Analysis",
         PipelineStep.GeneratingCode => "Generating Code",
         PipelineStep.ReviewingCode => "Reviewing Code",
@@ -404,6 +417,7 @@
         PipelineStep.CreatingBranch => !string.IsNullOrEmpty(Run.BranchName),
         PipelineStep.VerifyingBaseline => Run.BaselineHealthPassed.HasValue,
         PipelineStep.AnalyzingCode => true,
+        PipelineStep.ReviewingAnalysis => true,
         PipelineStep.GeneratingCode => Run.FilesChangedCount > 0 || Run.LinesAdded > 0 || Run.LinesRemoved > 0,
         PipelineStep.ReviewingCode => Run.CodeReviewIterationsCompleted > 0,
         PipelineStep.RunningQualityGates => Run.LatestQualityReport != null,

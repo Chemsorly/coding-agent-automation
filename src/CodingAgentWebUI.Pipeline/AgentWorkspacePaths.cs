@@ -51,7 +51,12 @@ public static class AgentWorkspacePaths
     public const string RefactoringProposalsFilePath = ".agent/refactoring-proposals.json";
 
     /// <summary>
-    /// The file path (relative to workspace) where the prompt input is written
+    /// The file path (relative to workspace) where the analysis review agent writes its feedback.
+    /// </summary>
+    public const string AnalysisReviewFilePath = ".agent/analysis-review.md";
+
+    /// <summary>
+    /// The file path (relative to workspace) where the pipeline writes the prompt input
     /// for file-reference-based prompt delivery.
     /// </summary>
     public const string PromptInputFilePath = ".agent/prompt-input.md";

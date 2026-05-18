@@ -72,6 +72,8 @@ public sealed record PipelineConfiguration
     };
 
     public const string DefaultAnalysisPrompt = DefaultPrompts.Analysis;
+    public const string DefaultAnalysisReviewPrompt = DefaultPrompts.AnalysisReview;
+    public const string DefaultAnalysisRefinementPrompt = DefaultPrompts.AnalysisRefinement;
     public const string DefaultImplementationPrompt = DefaultPrompts.Implementation;
 
     // ── Domain-specific sub-configurations (source of truth) ────────────
@@ -136,6 +138,27 @@ public sealed record PipelineConfiguration
     public CodeReviewConfiguration CodeReview { get; init; } = new();
     public string AnalysisPrompt { get; init; } = DefaultAnalysisPrompt;
     public string ImplementationPrompt { get; init; } = DefaultImplementationPrompt;
+
+    /// <summary>
+    /// When true, a second agent reviews the analysis in an isolated session and feeds
+    /// findings back to the original analysis agent for refinement. This adversarial
+    /// loop improves analysis quality by catching missed components, incorrect assumptions,
+    /// and feasibility issues before implementation begins. Default: true.
+    /// </summary>
+    public bool AnalysisReviewEnabled { get; init; } = true;
+
+    /// <summary>
+    /// Prompt sent to the isolated review agent that evaluates the analysis.
+    /// The agent reads .agent/analysis.md, .agent/analysis-assessment.json, and .agent/issue-context.md,
+    /// then writes findings to .agent/analysis-review.md.
+    /// </summary>
+    public string AnalysisReviewPrompt { get; init; } = DefaultAnalysisReviewPrompt;
+
+    /// <summary>
+    /// Prompt sent back to the original analysis session instructing it to refine
+    /// the analysis based on the review feedback at .agent/analysis-review.md.
+    /// </summary>
+    public string AnalysisRefinementPrompt { get; init; } = DefaultAnalysisRefinementPrompt;
 
     /// <summary>
     /// When true, the pipeline runs a baseline health check (agent environment + workspace build)

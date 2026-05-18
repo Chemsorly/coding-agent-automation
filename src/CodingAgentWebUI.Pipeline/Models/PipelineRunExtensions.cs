@@ -14,6 +14,7 @@ public static class PipelineRunExtensions
         if (run.CodeReviewIterationsCompleted > 0) return PipelineStep.ReviewingCode;
         if (run.FilesChangedCount > 0 || run.ChatHistory.Count > 0) return PipelineStep.GeneratingCode;
         if (run.AnalysisContent is not null) return PipelineStep.PostingAnalysis;
+        if (run.HighWaterMark >= PipelineStep.ReviewingAnalysis) return PipelineStep.ReviewingAnalysis;
         if (run.HighWaterMark >= PipelineStep.AnalyzingCode) return PipelineStep.AnalyzingCode;
         if (run.BaselineHealthPassed is not null) return PipelineStep.VerifyingBaseline;
         if (!string.IsNullOrEmpty(run.BranchName)) return PipelineStep.CreatingBranch;

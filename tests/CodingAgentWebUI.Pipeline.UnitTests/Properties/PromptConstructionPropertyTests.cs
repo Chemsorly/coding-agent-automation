@@ -460,4 +460,83 @@ public class PromptConstructionPropertyTests
 
         prompt.Should().Contain("Do NOT run git write commands");
     }
+
+    // --- BuildAnalysisReviewPrompt tests ---
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ContainsReviewInstructions()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "42", Title = "Add caching", Description = "Desc",
+            Labels = Array.Empty<string>()
+        };
+        var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = new[] { "Cache hit > 90%" }.ToList().AsReadOnly() };
+
+        var prompt = PromptBuilder.BuildAnalysisReviewPrompt("Custom review instructions", issue, parsed);
+
+        prompt.Should().Contain("Custom review instructions");
+        prompt.Should().Contain(PromptBuilder.AnalysisReviewFilePath);
+        prompt.Should().Contain("Do NOT modify `.agent/analysis.md`");
+        prompt.Should().Contain("Add caching");
+        prompt.Should().Contain("Cache hit > 90%");
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ReferencesIssueContextFile()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "1", Title = "Test", Description = "Desc",
+            Labels = Array.Empty<string>()
+        };
+        var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
+
+        var prompt = PromptBuilder.BuildAnalysisReviewPrompt(DefaultPrompts.AnalysisReview, issue, parsed);
+
+        prompt.Should().Contain(PromptBuilder.IssueContextFilePath);
+        prompt.Should().Contain("[CRITICAL]");
+        prompt.Should().Contain("[WARNING]");
+        prompt.Should().Contain("[SUGGESTION]");
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_DoesNotContainGitProhibition()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "1", Title = "Test", Description = "Desc",
+            Labels = Array.Empty<string>()
+        };
+        var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
+
+        var prompt = PromptBuilder.BuildAnalysisReviewPrompt(DefaultPrompts.AnalysisReview, issue, parsed);
+
+        // Review agent only reads — no git restriction needed
+        prompt.Should().NotContain("Do NOT run git write commands");
+    }
+
+    // --- BuildAnalysisRefinementPrompt tests ---
+
+    [Fact]
+    public void BuildAnalysisRefinementPrompt_ContainsRefinementInstructions()
+    {
+        var prompt = PromptBuilder.BuildAnalysisRefinementPrompt("Custom refinement instructions");
+
+        prompt.Should().Contain("Custom refinement instructions");
+        prompt.Should().Contain(PromptBuilder.AnalysisReviewFilePath);
+        prompt.Should().Contain(PromptBuilder.AnalysisFilePath);
+        prompt.Should().Contain(PromptBuilder.AnalysisAssessmentFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisRefinementPrompt_WithDefaultInstructions_ContainsSeverityGuidance()
+    {
+        var prompt = PromptBuilder.BuildAnalysisRefinementPrompt(DefaultPrompts.AnalysisRefinement);
+
+        prompt.Should().Contain("[CRITICAL]");
+        prompt.Should().Contain("[WARNING]");
+        prompt.Should().Contain("[SUGGESTION]");
+        prompt.Should().Contain("rewrite");
+    }
 }

@@ -3,6 +3,8 @@ using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Moq;
 
 namespace CodingAgentWebUI.IntegrationTests.Smoke;
@@ -17,6 +19,14 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     {
         builder.ConfigureServices(services =>
         {
+            // Reduce shutdown timeout to prevent test host hangs
+            services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
+
+            // Remove all hosted services (PipelineLoopService, HeartbeatMonitorService,
+            // JobQueueDrainService) — they are not needed for integration tests and their
+            // background loops can prevent the test host from shutting down cleanly.
+            services.RemoveAll<IHostedService>();
+
             // Replace IConfigurationStore with a mock returning defaults
             var configStore = CreateConfigurationStoreMock();
             ReplaceService<IConfigurationStore>(services, configStore);

@@ -262,9 +262,30 @@ internal partial class AgentExecutionOrchestrator
             CreateNoWindow = true
         };
 
+        // Prevent git from hanging on credential prompts or pager
+        process.StartInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        process.StartInfo.Environment["GIT_PAGER"] = "";
+
         process.Start();
-        var output = await process.StandardOutput.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct);
-        return output;
+
+        // Read both stdout and stderr concurrently to avoid pipe buffer deadlocks
+        var outputTask = process.StandardOutput.ReadToEndAsync(ct);
+        var errorTask = process.StandardError.ReadToEndAsync(ct);
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Timeout — kill the process
+            try { process.Kill(entireProcessTree: true); } catch { }
+            throw new TimeoutException($"git {arguments} timed out after 30 seconds");
+        }
+
+        return await outputTask;
     }
 }

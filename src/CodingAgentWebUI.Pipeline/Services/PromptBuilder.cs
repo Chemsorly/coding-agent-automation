@@ -27,6 +27,11 @@ public static class PromptBuilder
     public const string ReviewFindingsFilePath = AgentWorkspacePaths.ReviewFindingsFilePath;
 
     /// <summary>
+    /// The file path (relative to workspace) where the analysis review agent writes its feedback.
+    /// </summary>
+    public const string AnalysisReviewFilePath = AgentWorkspacePaths.AnalysisReviewFilePath;
+
+    /// <summary>
     /// Returns a per-agent findings file path to prevent sub-agent overwrite conflicts.
     /// Each review agent writes to its own isolated file.
     /// </summary>
@@ -105,6 +110,48 @@ public static class PromptBuilder
         }
 
         sb.AppendLine($"Analyze the workspace now and write your recommendation to `{AnalysisFilePath}`.");
+
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Constructs a prompt for the isolated analysis review agent. The reviewer reads the
+    /// analysis artifacts and the issue context, explores the codebase independently, and
+    /// writes findings to .agent/analysis-review.md.
+    /// </summary>
+    public static string BuildAnalysisReviewPrompt(string reviewInstructions, IssueDetail issue, ParsedIssue parsed)
+    {
+        ArgumentNullException.ThrowIfNull(reviewInstructions);
+        ArgumentNullException.ThrowIfNull(issue);
+        ArgumentNullException.ThrowIfNull(parsed);
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine(reviewInstructions);
+        sb.AppendLine();
+        sb.AppendLine($"Write your findings to `{AnalysisReviewFilePath}`. Do NOT print findings to stdout — only write them to that file.");
+        sb.AppendLine();
+        sb.AppendLine("Do NOT modify `.agent/analysis.md` or `.agent/analysis-assessment.json` — only write your review.");
+        sb.AppendLine();
+
+        AppendIssueContext(sb, issue, parsed);
+
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Constructs a refinement prompt sent back to the original analysis session.
+    /// The agent reads the review feedback and updates its analysis and assessment.
+    /// </summary>
+    public static string BuildAnalysisRefinementPrompt(string refinementInstructions)
+    {
+        ArgumentNullException.ThrowIfNull(refinementInstructions);
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine(refinementInstructions);
+        sb.AppendLine();
+        sb.AppendLine($"The review findings are at `{AnalysisReviewFilePath}`. Read them, then rewrite `{AnalysisFilePath}` and update `{AnalysisAssessmentFilePath}` as needed.");
 
         return sb.ToString().TrimEnd();
     }

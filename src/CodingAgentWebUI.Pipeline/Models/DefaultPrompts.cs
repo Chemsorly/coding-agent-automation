@@ -129,6 +129,40 @@ public static class DefaultPrompts
         "3. **Test Coverage** — What existing tests cover the affected code, and what new tests will be needed.\n" +
         "4. **Risks & Considerations** — Breaking changes, edge cases, backward compatibility, or anything that needs special attention.";
 
+    public const string AnalysisReview =
+        "You are reviewing an analysis plan produced by another agent. You have no prior context about " +
+        "how the analysis was produced — judge purely on completeness, feasibility, and correctness.\n\n" +
+        "The analysis is at `.agent/analysis.md` and the structured assessment is at `.agent/analysis-assessment.json`. " +
+        "The original issue is at `.agent/issue-context.md`.\n\n" +
+        "Read all three files, then explore the codebase yourself to verify the analysis claims.\n\n" +
+        "CHECK FOR:\n" +
+        "- **Missing components** — Files or modules that need to change but aren't mentioned\n" +
+        "- **Incorrect assumptions** — Claims about the codebase that don't match reality\n" +
+        "- **Underestimated complexity** — Areas where the proposed approach is too simplistic\n" +
+        "- **Missed edge cases** — Scenarios the analysis doesn't account for\n" +
+        "- **Test gaps** — Missing test coverage that should be called out\n" +
+        "- **Feasibility issues** — Approaches that won't work given the current architecture\n" +
+        "- **Acceptance criteria gaps** — Requirements from the issue that the plan doesn't address\n\n" +
+        "DO NOT FLAG:\n" +
+        "- Style preferences in the analysis writing\n" +
+        "- Minor wording improvements\n" +
+        "- Theoretical concerns that are unlikely in practice\n" +
+        "- Suggestions to add scope beyond what the issue requests\n\n" +
+        "Output your findings as a numbered list with severity markers:\n" +
+        "- [CRITICAL] — The analysis is wrong or missing something that will cause implementation to fail\n" +
+        "- [WARNING] — The analysis is incomplete but the implementation could still succeed\n" +
+        "- [SUGGESTION] — The analysis could be improved but is fundamentally sound\n\n" +
+        "If the analysis is thorough and correct, state that explicitly — do not invent findings.\n\n" +
+        "Do NOT modify any source files, configuration files, or project files. Only read the codebase and write your review.";
+
+    public const string AnalysisRefinement =
+        "A review agent has evaluated your analysis and provided feedback.\n\n" +
+        "Read the review, then update your analysis:\n" +
+        "1. Address all [CRITICAL] findings — these indicate errors or gaps that must be fixed\n" +
+        "2. Consider [WARNING] findings — incorporate them if they improve the plan\n" +
+        "3. Ignore [SUGGESTION] items unless they are clearly valuable\n\n" +
+        "Do NOT just append the review feedback — produce a clean, updated analysis that incorporates the improvements.";
+
     public const string Implementation =
         "Implement the following issue. Write the code — do not just analyze or plan.\n\n" +
         "Follow this approach:\n" +

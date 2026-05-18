@@ -665,6 +665,108 @@ public class PromptBuilderTests
 
     #endregion
 
+    #region BuildAnalysisReviewPrompt
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ContainsInstructions()
+    {
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Review carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().StartWith("Review carefully");
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ContainsReviewFilePath()
+    {
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain(PromptBuilder.AnalysisReviewFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ProhibitsModifyingAnalysis()
+    {
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain("Do NOT modify `.agent/analysis.md`");
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ContainsIssueTitle()
+    {
+        var issue = CreateIssue(title: "Fix login bug");
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Instructions", issue, CreateParsedIssue());
+        result.Should().Contain("Fix login bug");
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ContainsAcceptanceCriteria()
+    {
+        var parsed = CreateParsedIssue(criteria: new[] { "Users can log in", "Session persists" });
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Instructions", CreateIssue(), parsed);
+        result.Should().Contain("- Users can log in");
+        result.Should().Contain("- Session persists");
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_NullInstructions_Throws()
+    {
+        var act = () => PromptBuilder.BuildAnalysisReviewPrompt(null!, CreateIssue(), CreateParsedIssue());
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_NullIssue_Throws()
+    {
+        var act = () => PromptBuilder.BuildAnalysisReviewPrompt("Instructions", null!, CreateParsedIssue());
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_NullParsed_Throws()
+    {
+        var act = () => PromptBuilder.BuildAnalysisReviewPrompt("Instructions", CreateIssue(), null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    #endregion
+
+    #region BuildAnalysisRefinementPrompt
+
+    [Fact]
+    public void BuildAnalysisRefinementPrompt_ContainsInstructions()
+    {
+        var result = PromptBuilder.BuildAnalysisRefinementPrompt("Refine the analysis");
+        result.Should().StartWith("Refine the analysis");
+    }
+
+    [Fact]
+    public void BuildAnalysisRefinementPrompt_ReferencesReviewFile()
+    {
+        var result = PromptBuilder.BuildAnalysisRefinementPrompt("Instructions");
+        result.Should().Contain(PromptBuilder.AnalysisReviewFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisRefinementPrompt_ReferencesAnalysisFile()
+    {
+        var result = PromptBuilder.BuildAnalysisRefinementPrompt("Instructions");
+        result.Should().Contain(PromptBuilder.AnalysisFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisRefinementPrompt_ReferencesAssessmentFile()
+    {
+        var result = PromptBuilder.BuildAnalysisRefinementPrompt("Instructions");
+        result.Should().Contain(PromptBuilder.AnalysisAssessmentFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisRefinementPrompt_NullInstructions_Throws()
+    {
+        var act = () => PromptBuilder.BuildAnalysisRefinementPrompt(null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    #endregion
+
     private static PipelineRun CreatePipelineRun(string runId = "test-run", string issueId = "42") => new()
     {
         RunId = runId,
