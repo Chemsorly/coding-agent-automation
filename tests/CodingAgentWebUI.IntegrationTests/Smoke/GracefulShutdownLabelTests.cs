@@ -3,6 +3,7 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
@@ -44,10 +45,10 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             ProviderType = "GitHub",
             Settings = new Dictionary<string, string>
             {
-                ["owner"] = "test",
-                ["repo"] = "test",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "test",
                 ["appId"] = "1",
-                ["installationId"] = "1",
+                [ProviderSettingKeys.InstallationId] = "1",
                 ["privateKey"] = "fake"
             }
         };
@@ -128,10 +129,10 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             ProviderType = "GitHub",
             Settings = new Dictionary<string, string>
             {
-                ["owner"] = "test",
-                ["repo"] = "test",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "test",
                 ["appId"] = "1",
-                ["installationId"] = "1",
+                [ProviderSettingKeys.InstallationId] = "1",
                 ["privateKey"] = "fake"
             }
         };

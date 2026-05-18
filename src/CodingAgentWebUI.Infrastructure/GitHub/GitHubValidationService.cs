@@ -1,5 +1,6 @@
 using Octokit;
 using Serilog;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using ILogger = Serilog.ILogger;
 
@@ -90,12 +91,12 @@ public class GitHubValidationService
                     DisplayName = "Validation",
                     Settings = new Dictionary<string, string>
                     {
-                        ["apiUrl"] = apiUrl,
-                        ["clientId"] = clientId,
-                        ["installationId"] = installationId.ToString(),
-                        ["privateKeyBase64"] = privateKeyBase64,
-                        ["owner"] = owner,
-                        ["repo"] = repo
+                        [ProviderSettingKeys.ApiUrl] = apiUrl,
+                        [ProviderSettingKeys.ClientId] = clientId,
+                        [ProviderSettingKeys.InstallationId] = installationId.ToString(),
+                        [ProviderSettingKeys.PrivateKeyBase64] = privateKeyBase64,
+                        [ProviderSettingKeys.Owner] = owner,
+                        [ProviderSettingKeys.Repo] = repo
                     }
                 };
                 await using var provider = _providerFactory.CreateIssueProvider(config);

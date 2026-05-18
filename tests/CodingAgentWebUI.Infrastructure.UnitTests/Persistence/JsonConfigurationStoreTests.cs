@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.Persistence;
@@ -71,10 +72,10 @@ public class JsonConfigurationStoreTests : IDisposable
             DisplayName = "My GitHub",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["token"] = "ghp_test123",
-                ["owner"] = "testorg",
-                ["repo"] = "testrepo"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Token] = "ghp_test123",
+                [ProviderSettingKeys.Owner] = "testorg",
+                [ProviderSettingKeys.Repo] = "testrepo"
             }
         };
 
@@ -86,8 +87,8 @@ public class JsonConfigurationStoreTests : IDisposable
         Assert.Equal(original.Kind, match.Kind);
         Assert.Equal(original.ProviderType, match.ProviderType);
         Assert.Equal(original.DisplayName, match.DisplayName);
-        Assert.Equal(original.Settings["apiUrl"], match.Settings["apiUrl"]);
-        Assert.Equal(original.Settings["token"], match.Settings["token"]);
+        Assert.Equal(original.Settings[ProviderSettingKeys.ApiUrl], match.Settings[ProviderSettingKeys.ApiUrl]);
+        Assert.Equal(original.Settings[ProviderSettingKeys.Token], match.Settings[ProviderSettingKeys.Token]);
     }
 
     [Fact]

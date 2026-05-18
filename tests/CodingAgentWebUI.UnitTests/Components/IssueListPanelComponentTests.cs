@@ -2,6 +2,7 @@ using Bunit;
 using Moq;
 using Microsoft.AspNetCore.Components;
 using CodingAgentWebUI.Components.Pages;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
@@ -32,8 +33,8 @@ public class IssueListPanelComponentTests : BunitContext
                 DisplayName = "Test Issues",
                 Settings = new Dictionary<string, string>
                 {
-                    ["owner"] = "testorg",
-                    ["repo"] = "testrepo"
+                    [ProviderSettingKeys.Owner] = "testorg",
+                    [ProviderSettingKeys.Repo] = "testrepo"
                 }
             }
         };
@@ -119,9 +120,9 @@ public class IssueListPanelComponentTests : BunitContext
         var providers = new List<ProviderConfig>
         {
             new() { Id = "p1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Provider A",
-                Settings = new() { ["owner"] = "org1", ["repo"] = "repo1" } },
+                Settings = new() { [ProviderSettingKeys.Owner] = "org1", [ProviderSettingKeys.Repo] = "repo1" } },
             new() { Id = "p2", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Provider B",
-                Settings = new() { ["owner"] = "org2", ["repo"] = "repo2" } }
+                Settings = new() { [ProviderSettingKeys.Owner] = "org2", [ProviderSettingKeys.Repo] = "repo2" } }
         };
 
         var cut = Render<IssueListPanel>(p => p

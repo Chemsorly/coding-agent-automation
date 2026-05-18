@@ -5,6 +5,7 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
@@ -274,13 +275,13 @@ public class SettingsPageComponentTests : BunitContext
             .ReturnsAsync(new List<ProviderConfig>
             {
                 new() { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "My Issues",
-                    Settings = new() { ["owner"] = "acme", ["repo"] = "webapp" } }
+                    Settings = new() { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp" } }
             });
         _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
                 new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "My Repo",
-                    Settings = new() { ["owner"] = "acme", ["repo"] = "webapp", ["baseBranch"] = "main" } }
+                    Settings = new() { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp", ["baseBranch"] = "main" } }
             });
 
         var component = Render<Settings>();
@@ -326,7 +327,7 @@ public class SettingsPageComponentTests : BunitContext
             .ReturnsAsync(new List<ProviderConfig>
             {
                 new() { Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "My Issues",
-                    Settings = new Dictionary<string, string> { ["owner"] = "org", ["repo"] = "repo" } }
+                    Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "org", [ProviderSettingKeys.Repo] = "repo" } }
             });
 
         var component = Render<Settings>();

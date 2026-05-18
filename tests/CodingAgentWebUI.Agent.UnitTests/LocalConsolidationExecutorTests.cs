@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -231,11 +232,11 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
             RepositoryRole = RepositoryRole.Brain,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test",
-                ["repo"] = "brain",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "brain",
                 ["baseBranch"] = "main",
-                ["token"] = "fake-token"
+                [ProviderSettingKeys.Token] = "fake-token"
             }
         };
         var agentConfig = new ProviderConfig
@@ -281,11 +282,11 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
             RepositoryRole = RepositoryRole.Brain,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test",
-                ["repo"] = "brain",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "brain",
                 ["baseBranch"] = "main",
-                ["token"] = "fake-token"
+                [ProviderSettingKeys.Token] = "fake-token"
             }
         };
         var agentConfig = new ProviderConfig
@@ -394,11 +395,11 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
             RepositoryRole = RepositoryRole.Work,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test",
-                ["repo"] = "work",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "work",
                 ["baseBranch"] = "main",
-                ["token"] = "fake"
+                [ProviderSettingKeys.Token] = "fake"
             }
         };
         var agentConfig = new ProviderConfig
@@ -417,9 +418,9 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
             DisplayName = "Issue Provider",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test",
-                ["repo"] = "work"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "work"
                 // Missing "token" setting
             }
         };
@@ -447,11 +448,11 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
             RepositoryRole = RepositoryRole.Work,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test",
-                ["repo"] = "work",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "work",
                 ["baseBranch"] = "main",
-                ["token"] = "fake"
+                [ProviderSettingKeys.Token] = "fake"
             }
         };
         var agentConfig = new ProviderConfig
@@ -470,10 +471,10 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
             DisplayName = "Issue Provider",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test",
-                ["repo"] = "work",
-                ["token"] = "fake-issue-token"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "work",
+                [ProviderSettingKeys.Token] = "fake-issue-token"
             }
         };
         var brainConfig = new ProviderConfig
@@ -485,11 +486,11 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
             RepositoryRole = RepositoryRole.Brain,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test",
-                ["repo"] = "brain",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "brain",
                 ["baseBranch"] = "main",
-                ["token"] = "fake-brain-token"
+                [ProviderSettingKeys.Token] = "fake-brain-token"
             }
         };
 
@@ -518,11 +519,11 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
             RepositoryRole = RepositoryRole.Work,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test",
-                ["repo"] = "work",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "work",
                 ["baseBranch"] = "main",
-                ["token"] = "fake"
+                [ProviderSettingKeys.Token] = "fake"
             }
         };
         var agentConfig = new ProviderConfig
@@ -541,10 +542,10 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
             DisplayName = "Issue Provider",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test",
-                ["repo"] = "work",
-                ["token"] = "fake-issue-token"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "work",
+                [ProviderSettingKeys.Token] = "fake-issue-token"
             }
         };
 
@@ -571,11 +572,11 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
             RepositoryRole = RepositoryRole.Brain,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test",
-                ["repo"] = "brain",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "brain",
                 ["baseBranch"] = "main",
-                ["token"] = "fake-brain-token"
+                [ProviderSettingKeys.Token] = "fake-brain-token"
             }
         };
         var agentConfig = new ProviderConfig
@@ -654,7 +655,7 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
     private static HubConnection CreateDisconnectedHubConnection()
     {
         return new HubConnectionBuilder()
-            .WithUrl("http://localhost/hubs/agent", options =>
+            .WithUrl($"http://localhost{HubRoutes.Agent}", options =>
             {
                 options.HttpMessageHandlerFactory = _ => new NoOpHandler();
             })
