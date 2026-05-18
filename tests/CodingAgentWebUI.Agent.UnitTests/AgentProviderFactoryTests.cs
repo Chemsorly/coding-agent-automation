@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
@@ -29,7 +30,7 @@ public class AgentProviderFactoryTests
     private static OrchestratorProxy CreateTestProxy()
     {
         var connection = new HubConnectionBuilder()
-            .WithUrl("http://localhost/hubs/agent", options =>
+            .WithUrl($"http://localhost{HubRoutes.Agent}", options =>
             {
                 options.HttpMessageHandlerFactory = _ => new NoOpHandler();
             })
@@ -111,9 +112,9 @@ public class AgentProviderFactoryTests
             Settings = new Dictionary<string, string>
             {
                 // Missing "token"
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test",
-                ["repo"] = "test",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "test",
                 ["baseBranch"] = "main"
             }
         };
@@ -135,10 +136,10 @@ public class AgentProviderFactoryTests
             DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["token"] = "ghs_test_token",
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo",
+                [ProviderSettingKeys.Token] = "ghs_test_token",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
                 ["baseBranch"] = "main"
             }
         };
@@ -219,10 +220,10 @@ public class AgentProviderFactoryTests
             DisplayName = "Test Pipeline",
             Settings = new Dictionary<string, string>
             {
-                ["token"] = "ghs_test_token",
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo"
+                [ProviderSettingKeys.Token] = "ghs_test_token",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo"
             }
         };
 
@@ -243,10 +244,10 @@ public class AgentProviderFactoryTests
             DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["token"] = "ghs_test",
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test",
-                ["repo"] = "test",
+                [ProviderSettingKeys.Token] = "ghs_test",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "test",
                 ["baseBranch"] = "main"
             }
         };
@@ -269,9 +270,9 @@ public class AgentProviderFactoryTests
             Settings = new Dictionary<string, string>
             {
                 // No "token" — proxy provides token refresh
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
                 ["baseBranch"] = "main"
             }
         };
@@ -295,9 +296,9 @@ public class AgentProviderFactoryTests
             Settings = new Dictionary<string, string>
             {
                 // No "token" — proxy provides token refresh
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test-owner",
-                ["repo"] = "test-repo"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo"
             }
         };
 
@@ -318,9 +319,9 @@ public class AgentProviderFactoryTests
             DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = "https://api.github.com",
-                ["owner"] = "test",
-                ["repo"] = "test",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "test",
                 ["baseBranch"] = "main"
             }
         };

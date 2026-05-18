@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Moq;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure;
@@ -139,7 +140,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
             new ProviderConfig
             {
                 Id = "issue-gh", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "GitHub Issues",
-                Settings = new Dictionary<string, string> { ["apiUrl"] = "https://api.github.com", ["owner"] = "org", ["repo"] = "repo" }
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.ApiUrl] = "https://api.github.com", [ProviderSettingKeys.Owner] = "org", [ProviderSettingKeys.Repo] = "repo" }
             },
             new ProviderConfig
             {
