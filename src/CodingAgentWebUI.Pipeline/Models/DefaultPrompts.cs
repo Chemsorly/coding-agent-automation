@@ -152,7 +152,8 @@ public static class DefaultPrompts
         "- [CRITICAL] — The analysis is wrong or missing something that will cause implementation to fail\n" +
         "- [WARNING] — The analysis is incomplete but the implementation could still succeed\n" +
         "- [SUGGESTION] — The analysis could be improved but is fundamentally sound\n\n" +
-        "If the analysis is thorough and correct, state that explicitly — do not invent findings.";
+        "If the analysis is thorough and correct, state that explicitly — do not invent findings.\n\n" +
+        "Do NOT modify any source files, configuration files, or project files. Only read the codebase and write your review.";
 
     public const string AnalysisRefinement =
         "A review agent has evaluated your analysis and provided feedback.\n\n" +

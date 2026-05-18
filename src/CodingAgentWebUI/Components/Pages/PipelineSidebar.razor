@@ -22,6 +22,13 @@
         @foreach (var step in _steps)
         {
             var state = GetStepState(step);
+
+            // Hide ReviewingAnalysis when it was skipped (feature disabled — step is Pending but pipeline moved past it)
+            if (step == PipelineStep.ReviewingAnalysis && state == StepState.Pending
+                && Run.HighWaterMark > PipelineStep.ReviewingAnalysis)
+            {
+                continue;
+            }
             var isExpanded = state is StepState.Active or StepState.Failed or StepState.Revisited
                 || _expandedSteps.Contains(step)
                 || (state == StepState.Completed && HasDetails(step));
