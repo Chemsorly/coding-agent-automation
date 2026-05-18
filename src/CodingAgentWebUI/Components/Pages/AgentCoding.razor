@@ -483,7 +483,8 @@
                 <!-- Pipeline Progress View -->
                 @if (run.CurrentStep is PipelineStep.CloningRepository or PipelineStep.CreatingBranch
                     or PipelineStep.SyncingBrainRepoPreRun
-                    or PipelineStep.AnalyzingCode or PipelineStep.GeneratingCode
+                    or PipelineStep.AnalyzingCode or PipelineStep.ReviewingAnalysis
+                    or PipelineStep.GeneratingCode
                     or PipelineStep.ReviewingCode
                     or PipelineStep.RunningQualityGates
                     or PipelineStep.PreparingForPullRequest

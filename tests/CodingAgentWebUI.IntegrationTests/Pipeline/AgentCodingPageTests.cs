@@ -283,14 +283,13 @@ public class AgentCodingPageTests
     [Fact]
     public async Task DuringAgentExecution_StepIsGeneratingCode()
     {
-        // Block only the code generation call (second ExecuteAsync), let analysis complete
+        // Block only the code generation call, let analysis + review complete
         var agentTcs = new TaskCompletionSource<AgentResult>();
-        var callCount = 0;
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, ct, onLine) =>
             {
-                callCount++;
-                if (callCount <= 1)
+                // Let analysis prompt complete (writes required files)
+                if (req.Prompt.Contains("Analyze the codebase") || req.Prompt.Contains("Do NOT implement any changes"))
                 {
                     var dir = Path.Combine(req.WorkspacePath, ".agent");
                     Directory.CreateDirectory(dir);
@@ -300,6 +299,12 @@ public class AgentCodingPageTests
                         System.Text.Json.JsonSerializer.Serialize(assessment, new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase }));
                     return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
                 }
+                // Let analysis review and refinement prompts complete immediately (no-op)
+                if (!req.UseResume || req.Prompt.Contains("review") || req.Prompt.Contains("refinement") || req.Prompt.Contains("Review"))
+                {
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
+                // Block on code generation (implementation prompt uses UseResume=true and contains "Implement")
                 return agentTcs.Task;
             });
 

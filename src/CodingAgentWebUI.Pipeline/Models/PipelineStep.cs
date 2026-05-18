@@ -8,6 +8,7 @@ public enum PipelineStep
     CreatingBranch,
     VerifyingBaseline,
     AnalyzingCode,
+    ReviewingAnalysis,
     PostingAnalysis,
     GeneratingCode,
     ReviewingCode,
