@@ -64,7 +64,7 @@ public class BrainTokenScopingRegressionTests
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-brain-repo",
-                ["baseBranch"] = "main"
+                [ProviderSettingKeys.BaseBranch] = "main"
             }
         };
 
@@ -101,7 +101,7 @@ public class BrainTokenScopingRegressionTests
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-work-repo",
-                ["baseBranch"] = "main"
+                [ProviderSettingKeys.BaseBranch] = "main"
             }
         };
 
@@ -138,7 +138,7 @@ public class BrainTokenScopingRegressionTests
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-repo",
-                ["baseBranch"] = "main"
+                [ProviderSettingKeys.BaseBranch] = "main"
             }
         };
 
@@ -175,7 +175,7 @@ public class BrainTokenScopingRegressionTests
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test-owner",
                 [ProviderSettingKeys.Repo] = "test-brain-repo",
-                ["baseBranch"] = "main"
+                [ProviderSettingKeys.BaseBranch] = "main"
             }
         };
 

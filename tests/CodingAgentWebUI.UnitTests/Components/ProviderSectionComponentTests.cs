@@ -66,7 +66,7 @@ public class ProviderSectionComponentTests : BunitContext
                 {
                     [ProviderSettingKeys.Owner] = "myorg",
                     [ProviderSettingKeys.Repo] = "myrepo",
-                    ["baseBranch"] = "develop"
+                    [ProviderSettingKeys.BaseBranch] = "develop"
                 }
             }
         };
@@ -100,7 +100,7 @@ public class ProviderSectionComponentTests : BunitContext
                 {
                     [ProviderSettingKeys.Owner] = "org",
                     [ProviderSettingKeys.Repo] = "repo",
-                    ["baseBranch"] = "main"
+                    [ProviderSettingKeys.BaseBranch] = "main"
                 }
             }
         };
@@ -131,7 +131,7 @@ public class ProviderSectionComponentTests : BunitContext
                 {
                     [ProviderSettingKeys.Owner] = "org",
                     [ProviderSettingKeys.Repo] = "brain",
-                    ["baseBranch"] = "main"
+                    [ProviderSettingKeys.BaseBranch] = "main"
                 }
             }
         };
@@ -159,7 +159,7 @@ public class ProviderSectionComponentTests : BunitContext
                 {
                     [ProviderSettingKeys.Owner] = "org",
                     [ProviderSettingKeys.Repo] = "repo",
-                    ["baseBranch"] = "main"
+                    [ProviderSettingKeys.BaseBranch] = "main"
                 }
             }
         };
@@ -239,7 +239,7 @@ public class ProviderSectionComponentTests : BunitContext
                 {
                     [ProviderSettingKeys.Owner] = "editorg",
                     [ProviderSettingKeys.Repo] = "editrepo",
-                    ["baseBranch"] = "develop",
+                    [ProviderSettingKeys.BaseBranch] = "develop",
                     [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                     [ProviderSettingKeys.ClientId] = "Iv1.test123",
                     [ProviderSettingKeys.InstallationId] = "12345",
@@ -275,7 +275,7 @@ public class ProviderSectionComponentTests : BunitContext
                 {
                     [ProviderSettingKeys.Owner] = "org",
                     [ProviderSettingKeys.Repo] = "repo",
-                    ["baseBranch"] = "main"
+                    [ProviderSettingKeys.BaseBranch] = "main"
                 }
             }
         };

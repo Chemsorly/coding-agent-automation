@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -177,7 +178,7 @@ public class WriteMcpConfigStepTests : IDisposable
             Kind = ProviderKind.Agent,
             ProviderType = "KiroCli",
             DisplayName = "Test Agent",
-            Settings = new Dictionary<string, string> { ["mcpConfigPath"] = customPath }
+            Settings = new Dictionary<string, string> { [ProviderSettingKeys.McpConfigPath] = customPath }
         };
 
         var servers = new List<McpServerConfig>

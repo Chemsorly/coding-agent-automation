@@ -1,5 +1,6 @@
 using System.Net;
 using CodingAgentWebUI.Agent.OpenCode;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
@@ -257,7 +258,7 @@ public class OpenCodeFactoryAndLifecycleTests
                 DisplayName = "Test OpenCode Provider",
                 Settings = new Dictionary<string, string>
                 {
-                    ["baseUrl"] = "http://127.0.0.1:4096"
+                    [ProviderSettingKeys.BaseUrl] = "http://127.0.0.1:4096"
                 }
             };
 
@@ -304,7 +305,7 @@ public class OpenCodeFactoryAndLifecycleTests
                 DisplayName = "Test OpenCode Provider",
                 Settings = new Dictionary<string, string>
                 {
-                    ["baseUrl"] = "http://127.0.0.1:4096"
+                    [ProviderSettingKeys.BaseUrl] = "http://127.0.0.1:4096"
                 }
             };
 
@@ -350,7 +351,7 @@ public class OpenCodeFactoryAndLifecycleTests
                 DisplayName = "Test OpenCode Provider",
                 Settings = new Dictionary<string, string>
                 {
-                    ["baseUrl"] = invalidUrl
+                    [ProviderSettingKeys.BaseUrl] = invalidUrl
                 }
             };
 
@@ -389,7 +390,7 @@ public class OpenCodeFactoryAndLifecycleTests
                 DisplayName = "Test OpenCode Provider",
                 Settings = new Dictionary<string, string>
                 {
-                    ["baseUrl"] = "http://127.0.0.1:4096"
+                    [ProviderSettingKeys.BaseUrl] = "http://127.0.0.1:4096"
                 }
             };
 

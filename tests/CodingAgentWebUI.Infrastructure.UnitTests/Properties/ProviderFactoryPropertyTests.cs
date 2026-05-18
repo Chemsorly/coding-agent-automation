@@ -65,15 +65,15 @@ public class ProviderFactoryPropertyTests
         };
 
         // Assert: Settings contains all required keys
-        Assert.True(config.Settings.ContainsKey("clientId"), "Settings must contain 'clientId'");
-        Assert.True(config.Settings.ContainsKey("installationId"), "Settings must contain 'installationId'");
-        Assert.True(config.Settings.ContainsKey("privateKeyBase64"), "Settings must contain 'privateKeyBase64'");
-        Assert.True(config.Settings.ContainsKey("apiUrl"), "Settings must contain 'apiUrl'");
-        Assert.True(config.Settings.ContainsKey("owner"), "Settings must contain 'owner'");
-        Assert.True(config.Settings.ContainsKey("repo"), "Settings must contain 'repo'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.ClientId), "Settings must contain 'clientId'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.InstallationId), "Settings must contain 'installationId'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64), "Settings must contain 'privateKeyBase64'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.ApiUrl), "Settings must contain 'apiUrl'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.Owner), "Settings must contain 'owner'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.Repo), "Settings must contain 'repo'");
 
         // Assert: Settings does NOT contain a 'token' key (PAT has been replaced)
-        Assert.False(config.Settings.ContainsKey("token"), "Settings must NOT contain 'token' — PAT has been replaced by GitHub App auth");
+        Assert.False(config.Settings.ContainsKey(ProviderSettingKeys.Token), "Settings must NOT contain 'token' — PAT has been replaced by GitHub App auth");
 
         // Assert: The ProviderFactory accepts this config without throwing a validation error.
         // CreateIssueProvider will call ValidateRequiredSettings internally.
@@ -107,21 +107,21 @@ public class ProviderFactoryPropertyTests
                 [ProviderSettingKeys.PrivateKeyBase64] = input.PrivateKeyBase64,
                 [ProviderSettingKeys.Owner] = input.Owner,
                 [ProviderSettingKeys.Repo] = input.Repo,
-                ["baseBranch"] = input.BaseBranch
+                [ProviderSettingKeys.BaseBranch] = input.BaseBranch
             }
         };
 
         // Assert: Settings contains all required keys including baseBranch
-        Assert.True(config.Settings.ContainsKey("clientId"), "Settings must contain 'clientId'");
-        Assert.True(config.Settings.ContainsKey("installationId"), "Settings must contain 'installationId'");
-        Assert.True(config.Settings.ContainsKey("privateKeyBase64"), "Settings must contain 'privateKeyBase64'");
-        Assert.True(config.Settings.ContainsKey("apiUrl"), "Settings must contain 'apiUrl'");
-        Assert.True(config.Settings.ContainsKey("owner"), "Settings must contain 'owner'");
-        Assert.True(config.Settings.ContainsKey("repo"), "Settings must contain 'repo'");
-        Assert.True(config.Settings.ContainsKey("baseBranch"), "Settings must contain 'baseBranch'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.ClientId), "Settings must contain 'clientId'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.InstallationId), "Settings must contain 'installationId'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64), "Settings must contain 'privateKeyBase64'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.ApiUrl), "Settings must contain 'apiUrl'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.Owner), "Settings must contain 'owner'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.Repo), "Settings must contain 'repo'");
+        Assert.True(config.Settings.ContainsKey(ProviderSettingKeys.BaseBranch), "Settings must contain 'baseBranch'");
 
         // Assert: Settings does NOT contain a 'token' key (PAT has been replaced)
-        Assert.False(config.Settings.ContainsKey("token"), "Settings must NOT contain 'token' — PAT has been replaced by GitHub App auth");
+        Assert.False(config.Settings.ContainsKey(ProviderSettingKeys.Token), "Settings must NOT contain 'token' — PAT has been replaced by GitHub App auth");
 
         // Assert: The ProviderFactory accepts this config without throwing a validation error.
         var factory = new ProviderFactory(DefaultPipelineConfig);

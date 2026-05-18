@@ -281,7 +281,7 @@ public class SettingsPageComponentTests : BunitContext
             .ReturnsAsync(new List<ProviderConfig>
             {
                 new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "My Repo",
-                    Settings = new() { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp", ["baseBranch"] = "main" } }
+                    Settings = new() { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp", [ProviderSettingKeys.BaseBranch] = "main" } }
             });
 
         var component = Render<Settings>();

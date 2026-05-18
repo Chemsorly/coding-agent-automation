@@ -97,13 +97,13 @@ public class SettingsPageTests
         savedConfig!.Kind.Should().Be(ProviderKind.Issue);
         savedConfig.ProviderType.Should().Be("GitHub");
         savedConfig.DisplayName.Should().Be("My GitHub Issues");
-        savedConfig.Settings.Should().ContainKey("apiUrl").WhoseValue.Should().Be("https://api.github.com");
-        savedConfig.Settings.Should().ContainKey("clientId").WhoseValue.Should().Be("Iv1.abc123");
-        savedConfig.Settings.Should().ContainKey("installationId").WhoseValue.Should().Be("78901234");
-        savedConfig.Settings.Should().ContainKey("privateKeyBase64").WhoseValue.Should().Be("LS0tLS1CRUdJTi...");
-        savedConfig.Settings.Should().ContainKey("owner").WhoseValue.Should().Be("myorg");
-        savedConfig.Settings.Should().ContainKey("repo").WhoseValue.Should().Be("myrepo");
-        savedConfig.Settings.Should().NotContainKey("token");
+        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.ApiUrl).WhoseValue.Should().Be("https://api.github.com");
+        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.ClientId).WhoseValue.Should().Be("Iv1.abc123");
+        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.InstallationId).WhoseValue.Should().Be("78901234");
+        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.PrivateKeyBase64).WhoseValue.Should().Be("LS0tLS1CRUdJTi...");
+        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.Owner).WhoseValue.Should().Be("myorg");
+        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.Repo).WhoseValue.Should().Be("myrepo");
+        savedConfig.Settings.Should().NotContainKey(ProviderSettingKeys.Token);
     }
 
     [Fact]
@@ -130,7 +130,7 @@ public class SettingsPageTests
                 [ProviderSettingKeys.PrivateKeyBase64] = "LS0tLS1CRUdJTi...",
                 [ProviderSettingKeys.Owner] = "org",
                 [ProviderSettingKeys.Repo] = "repo",
-                ["baseBranch"] = "develop"
+                [ProviderSettingKeys.BaseBranch] = "develop"
             }
         };
         await _mockStore.Object.SaveProviderConfigAsync(config, CancellationToken.None);
@@ -138,8 +138,8 @@ public class SettingsPageTests
         // Assert
         savedConfig.Should().NotBeNull();
         savedConfig!.Kind.Should().Be(ProviderKind.Repository);
-        savedConfig.Settings.Should().ContainKey("baseBranch").WhoseValue.Should().Be("develop");
-        savedConfig.Settings.Should().NotContainKey("token");
+        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.BaseBranch).WhoseValue.Should().Be("develop");
+        savedConfig.Settings.Should().NotContainKey(ProviderSettingKeys.Token);
     }
 
     [Fact]
@@ -160,7 +160,7 @@ public class SettingsPageTests
             DisplayName = "Kiro CLI Agent",
             Settings = new Dictionary<string, string>
             {
-                ["executablePath"] = "/root/.local/bin/kiro-cli",
+                [ProviderSettingKeys.ExecutablePath] = "/root/.local/bin/kiro-cli",
                 ["timeout"] = "45",
                 ["agentName"] = "default"
             }
@@ -171,7 +171,7 @@ public class SettingsPageTests
         savedConfig.Should().NotBeNull();
         savedConfig!.Kind.Should().Be(ProviderKind.Agent);
         savedConfig.ProviderType.Should().Be("KiroCli");
-        savedConfig.Settings.Should().ContainKey("executablePath").WhoseValue.Should().Be("/root/.local/bin/kiro-cli");
+        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.ExecutablePath).WhoseValue.Should().Be("/root/.local/bin/kiro-cli");
         savedConfig.Settings.Should().ContainKey("timeout").WhoseValue.Should().Be("45");
         savedConfig.Settings.Should().ContainKey("agentName").WhoseValue.Should().Be("default");
     }
@@ -192,16 +192,16 @@ public class SettingsPageTests
             DisplayName = "Kiro CLI Agent",
             Settings = new Dictionary<string, string>
             {
-                ["executablePath"] = "/root/.local/bin/kiro-cli",
+                [ProviderSettingKeys.ExecutablePath] = "/root/.local/bin/kiro-cli",
                 ["timeout"] = "30",
                 ["agentName"] = "default",
-                ["model"] = "claude-sonnet-4.6"
+                [ProviderSettingKeys.Model] = "claude-sonnet-4.6"
             }
         };
         await _mockStore.Object.SaveProviderConfigAsync(config, CancellationToken.None);
 
         savedConfig.Should().NotBeNull();
-        savedConfig!.Settings.Should().ContainKey("model").WhoseValue.Should().Be("claude-sonnet-4.6");
+        savedConfig!.Settings.Should().ContainKey(ProviderSettingKeys.Model).WhoseValue.Should().Be("claude-sonnet-4.6");
     }
 
     [Fact]
@@ -427,8 +427,8 @@ public class SettingsPageTests
             issueConfig.Settings.Should().ContainKey(key);
 
         // Repository provider has the same keys plus baseBranch
-        var repoSettings = new Dictionary<string, string>(issueConfig.Settings) { ["baseBranch"] = "main" };
-        repoSettings.Should().ContainKey("baseBranch");
+        var repoSettings = new Dictionary<string, string>(issueConfig.Settings) { [ProviderSettingKeys.BaseBranch] = "main" };
+        repoSettings.Should().ContainKey(ProviderSettingKeys.BaseBranch);
         foreach (var key in expectedSharedKeys)
             repoSettings.Should().ContainKey(key);
     }
@@ -456,7 +456,7 @@ public class SettingsPageTests
         var existingProviders = new List<ProviderConfig>
         {
             new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "My Repo",
-                Settings = new() { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp", ["baseBranch"] = "main" } },
+                Settings = new() { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp", [ProviderSettingKeys.BaseBranch] = "main" } },
             new() { Id = "rp-2", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Other Repo",
                 Settings = new() { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "other-project" } }
         };
@@ -529,7 +529,7 @@ public class SettingsPageTests
         };
 
         // Repository provider: shared settings + baseBranch
-        var repoSettings = new Dictionary<string, string>(sharedSettings) { ["baseBranch"] = "main" };
+        var repoSettings = new Dictionary<string, string>(sharedSettings) { [ProviderSettingKeys.BaseBranch] = "main" };
         var repoConfig = new ProviderConfig
         {
             Kind = ProviderKind.Repository, ProviderType = "GitHub",
@@ -553,24 +553,24 @@ public class SettingsPageTests
         repo.ProviderType.Should().Be("GitHub");
         repo.DisplayName.Should().Be("myorg/myrepo - Repository");
         repo.Settings.Should().HaveCount(7); // 6 shared + baseBranch
-        repo.Settings.Should().ContainKey("baseBranch").WhoseValue.Should().Be("main");
+        repo.Settings.Should().ContainKey(ProviderSettingKeys.BaseBranch).WhoseValue.Should().Be("main");
 
         var pipeline = savedConfigs[1];
         pipeline.Kind.Should().Be(ProviderKind.Pipeline);
         pipeline.ProviderType.Should().Be("GitHub");
         pipeline.DisplayName.Should().Be("myorg/myrepo - Pipeline");
         pipeline.Settings.Should().HaveCount(6); // 6 shared, no baseBranch
-        pipeline.Settings.Should().NotContainKey("baseBranch");
+        pipeline.Settings.Should().NotContainKey(ProviderSettingKeys.BaseBranch);
 
         // Both should have all shared keys
         foreach (var config in savedConfigs)
         {
-            config.Settings.Should().ContainKey("apiUrl");
-            config.Settings.Should().ContainKey("clientId");
-            config.Settings.Should().ContainKey("installationId");
-            config.Settings.Should().ContainKey("privateKeyBase64");
-            config.Settings.Should().ContainKey("owner");
-            config.Settings.Should().ContainKey("repo");
+            config.Settings.Should().ContainKey(ProviderSettingKeys.ApiUrl);
+            config.Settings.Should().ContainKey(ProviderSettingKeys.ClientId);
+            config.Settings.Should().ContainKey(ProviderSettingKeys.InstallationId);
+            config.Settings.Should().ContainKey(ProviderSettingKeys.PrivateKeyBase64);
+            config.Settings.Should().ContainKey(ProviderSettingKeys.Owner);
+            config.Settings.Should().ContainKey(ProviderSettingKeys.Repo);
         }
     }
 
@@ -582,7 +582,7 @@ public class SettingsPageTests
         var agentConfig = new ProviderConfig
         {
             Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Kiro Agent",
-            Settings = new() { ["executablePath"] = "/usr/bin/kiro-cli" }
+            Settings = new() { [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli" }
         };
 
         agentConfig.ProviderType.Should().NotBe("GitHub");

@@ -42,7 +42,7 @@ public class TokenVendingServiceTests
             [ProviderSettingKeys.ApiUrl] = apiUrl ?? "",
             [ProviderSettingKeys.Owner] = "test-owner",
             [ProviderSettingKeys.Repo] = "test-repo",
-            ["baseBranch"] = "main"
+            [ProviderSettingKeys.BaseBranch] = "main"
         }
     };
 
@@ -123,8 +123,8 @@ public class TokenVendingServiceTests
                 DisplayName = "Agent",
                 Settings = new Dictionary<string, string>
                 {
-                    ["model"] = "auto",
-                    ["executablePath"] = "/usr/bin/kiro-cli"
+                    [ProviderSettingKeys.Model] = "auto",
+                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli"
                 }
             }
         };
@@ -133,8 +133,8 @@ public class TokenVendingServiceTests
 
         result.Should().HaveCount(1);
         result[0].Id.Should().Be("agent-1");
-        result[0].Settings.Should().ContainKey("model");
-        result[0].Settings.Should().NotContainKey("privateKeyBase64");
+        result[0].Settings.Should().ContainKey(ProviderSettingKeys.Model);
+        result[0].Settings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
     }
 
     [Fact]
@@ -166,7 +166,7 @@ public class TokenVendingServiceTests
 
         // Should strip the private key even on failure
         result.Should().HaveCount(1);
-        result[0].Settings.Should().NotContainKey("privateKeyBase64");
+        result[0].Settings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
     }
 
     [Fact]
@@ -183,8 +183,8 @@ public class TokenVendingServiceTests
                 DisplayName = "Agent",
                 Settings = new Dictionary<string, string>
                 {
-                    ["model"] = "claude-sonnet-4",
-                    ["executablePath"] = "/usr/bin/kiro-cli",
+                    [ProviderSettingKeys.Model] = "claude-sonnet-4",
+                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
                     ["timeout"] = "300"
                 }
             }
@@ -192,8 +192,8 @@ public class TokenVendingServiceTests
 
         var result = await service.PrepareAgentConfigsAsync(configs, "repo-1", CancellationToken.None);
 
-        result[0].Settings["model"].Should().Be("claude-sonnet-4");
-        result[0].Settings["executablePath"].Should().Be("/usr/bin/kiro-cli");
+        result[0].Settings[ProviderSettingKeys.Model].Should().Be("claude-sonnet-4");
+        result[0].Settings[ProviderSettingKeys.ExecutablePath].Should().Be("/usr/bin/kiro-cli");
         result[0].Settings["timeout"].Should().Be("300");
     }
 
@@ -439,7 +439,7 @@ public class TokenVendingServiceTests
             .GetAwaiter().GetResult();
 
         // Assert: privateKeyBase64 must NOT be present in the result
-        return result.Count == 1 && !result[0].Settings.ContainsKey("privateKeyBase64");
+        return result.Count == 1 && !result[0].Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64);
     }
 
     #endregion

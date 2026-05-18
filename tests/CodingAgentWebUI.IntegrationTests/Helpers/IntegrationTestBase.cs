@@ -1,4 +1,5 @@
 using Moq;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure;
@@ -135,7 +136,7 @@ public class IntegrationTestBase : IDisposable
             CancellationToken.None);
         await ConfigStore.SaveProviderConfigAsync(
             new ProviderConfig { Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test Agent",
-                Settings = new Dictionary<string, string> { ["model"] = "test-model" } },
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.Model] = "test-model" } },
             CancellationToken.None);
         await ConfigStore.SaveQualityGateConfigAsync(
             new QualityGateConfiguration { Id = "default", DisplayName = "Default", CompilationCommand = "dotnet", CompilationArguments = ["build"], TestCommand = "dotnet", TestArguments = ["test"], Enabled = true },
