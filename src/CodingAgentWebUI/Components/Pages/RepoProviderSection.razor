@@ -56,7 +56,7 @@
             <AdditionalFields>
                 <div class="form-group">
                     <label>Base Branch</label>
-                    <input type="text" @bind="_form.BaseBranch" placeholder="main" /> @* TODO: Replace placeholder with @ProviderSettingKeys.DefaultBaseBranch *@
+                    <input type="text" @bind="_form.BaseBranch" placeholder="@ProviderSettingKeys.DefaultBaseBranch" />
                 </div>
                 <div class="form-group">
                     <label>Repository Role</label>
@@ -157,7 +157,7 @@
             Repo = p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, ""),
             BaseBranch = p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseBranch, ProviderSettingKeys.DefaultBaseBranch),
             RepositoryRole = p.RepositoryRole.ToString(),
-            RequiredLabels = p.RequiredLabels != null ? string.Join(", ", p.RequiredLabels) : p.Settings.GetValueOrDefault("requiredAgentLabels", ""), // TODO: Replace "requiredAgentLabels" with a ProviderSettingKeys constant
+            RequiredLabels = p.RequiredLabels != null ? string.Join(", ", p.RequiredLabels) : p.Settings.GetValueOrDefault(ProviderSettingsKeys.RequiredAgentLabels, ""),
             BlacklistedPaths = p.BlacklistedPaths != null ? string.Join(", ", p.BlacklistedPaths) : "",
             BlacklistMode = p.BlacklistMode?.ToString() ?? ""
         };

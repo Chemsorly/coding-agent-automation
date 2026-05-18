@@ -6,6 +6,7 @@ using FsCheck.Fluent;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Agent;
 
 namespace CodingAgentWebUI.Agent.UnitTests.OpenCode;
 
@@ -454,7 +455,7 @@ internal sealed class DelayingClientFactory : IHttpClientFactory
     {
         return new HttpClient(_handler, disposeHandler: false)
         {
-            BaseAddress = new Uri("http://127.0.0.1:4096")
+            BaseAddress = new Uri(AgentDefaults.OpenCodeBaseUrl)
         };
     }
 }

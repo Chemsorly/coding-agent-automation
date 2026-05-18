@@ -69,10 +69,6 @@ public static class ProviderSettingKeys
 
     // ── Token vending (written by orchestrator) ──────────────────────────
 
-    // TODO: TokenValue has the same string value ("token") as Token above — potential key collision if both are used in the same settings dictionary
-    /// <summary>Vended token value (written to provider settings at runtime).</summary>
-    public const string TokenValue = "token";
-
     /// <summary>Token expiration timestamp (written to provider settings at runtime).</summary>
     public const string TokenExpiresAt = "tokenExpiresAt";
 }

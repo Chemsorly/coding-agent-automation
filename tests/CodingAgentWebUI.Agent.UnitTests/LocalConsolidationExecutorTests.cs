@@ -1,6 +1,6 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;

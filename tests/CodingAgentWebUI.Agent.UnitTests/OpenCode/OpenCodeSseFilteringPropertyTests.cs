@@ -7,6 +7,7 @@ using FsCheck;
 using FsCheck.Xunit;
 using Moq;
 using ILogger = Serilog.ILogger;
+using CodingAgentWebUI.Agent;
 
 namespace CodingAgentWebUI.Agent.UnitTests.OpenCode;
 
@@ -326,7 +327,7 @@ internal sealed class SseStreamClientFactory : IHttpClientFactory
     {
         return new HttpClient(_handler, disposeHandler: false)
         {
-            BaseAddress = new Uri("http://127.0.0.1:4096")
+            BaseAddress = new Uri(AgentDefaults.OpenCodeBaseUrl)
         };
     }
 }

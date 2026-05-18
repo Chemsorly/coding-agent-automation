@@ -161,8 +161,8 @@ public class SettingsPageTests
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.ExecutablePath] = "/root/.local/bin/kiro-cli",
-                ["timeout"] = "45",
-                ["agentName"] = "default"
+                [ProviderSettingKeys.Timeout] = "45",
+                [ProviderSettingKeys.AgentName] = "default"
             }
         };
         await _mockStore.Object.SaveProviderConfigAsync(config, CancellationToken.None);
@@ -172,8 +172,8 @@ public class SettingsPageTests
         savedConfig!.Kind.Should().Be(ProviderKind.Agent);
         savedConfig.ProviderType.Should().Be("KiroCli");
         savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.ExecutablePath).WhoseValue.Should().Be("/root/.local/bin/kiro-cli");
-        savedConfig.Settings.Should().ContainKey("timeout").WhoseValue.Should().Be("45");
-        savedConfig.Settings.Should().ContainKey("agentName").WhoseValue.Should().Be("default");
+        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.Timeout).WhoseValue.Should().Be("45");
+        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.AgentName).WhoseValue.Should().Be("default");
     }
 
     [Fact]
@@ -193,8 +193,8 @@ public class SettingsPageTests
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.ExecutablePath] = "/root/.local/bin/kiro-cli",
-                ["timeout"] = "30",
-                ["agentName"] = "default",
+                [ProviderSettingKeys.Timeout] = "30",
+                [ProviderSettingKeys.AgentName] = "default",
                 [ProviderSettingKeys.Model] = "claude-sonnet-4.6"
             }
         };
@@ -410,7 +410,7 @@ public class SettingsPageTests
     {
         // The shared settings keys used by the modal must match the fields that all three
         // GitHub provider types (Issue, Repository, Pipeline) have in common.
-        var expectedSharedKeys = new[] { "apiUrl", "clientId", "installationId", "privateKeyBase64", "owner", "repo" };
+        var expectedSharedKeys = new[] { ProviderSettingKeys.ApiUrl, ProviderSettingKeys.ClientId, ProviderSettingKeys.InstallationId, ProviderSettingKeys.PrivateKeyBase64, ProviderSettingKeys.Owner, ProviderSettingKeys.Repo };
 
         // Verify an Issue provider config contains all shared keys
         var issueConfig = new ProviderConfig
@@ -466,8 +466,8 @@ public class SettingsPageTests
 
         var match = existingProviders.FirstOrDefault(p =>
             p.ProviderType == "GitHub"
-            && p.Settings.GetValueOrDefault("owner", "") == targetOwner
-            && p.Settings.GetValueOrDefault("repo", "") == targetRepo);
+            && p.Settings.GetValueOrDefault(ProviderSettingKeys.Owner, "") == targetOwner
+            && p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, "") == targetRepo);
 
         match.Should().NotBeNull();
         match!.Id.Should().Be("rp-1");
@@ -485,8 +485,8 @@ public class SettingsPageTests
 
         var match = existingProviders.FirstOrDefault(p =>
             p.ProviderType == "GitHub"
-            && p.Settings.GetValueOrDefault("owner", "") == "different-org"
-            && p.Settings.GetValueOrDefault("repo", "") == "different-repo");
+            && p.Settings.GetValueOrDefault(ProviderSettingKeys.Owner, "") == "different-org"
+            && p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, "") == "different-repo");
 
         match.Should().BeNull();
     }
