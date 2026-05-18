@@ -1,12 +1,12 @@
 using System.Net;
 using CodingAgentWebUI.Agent.OpenCode;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
 using Moq;
 using ILogger = Serilog.ILogger;
 using CodingAgentWebUI.Agent;
-using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Agent.UnitTests.OpenCode;
 

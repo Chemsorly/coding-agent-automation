@@ -112,7 +112,7 @@ public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAu
     /// </summary>
     public static string ResolveApiKey(ILogger logger)
     {
-        var key = Environment.GetEnvironmentVariable(AgentEnvironmentVariables.AgentApiKey);
+        var key = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentApiKey);
         if (!string.IsNullOrWhiteSpace(key))
         {
             logger.Information("AGENT_API_KEY loaded from environment variable");

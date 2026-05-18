@@ -188,7 +188,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
 
                     var clonedSettings = new Dictionary<string, string>(config.Settings);
                     clonedSettings.Remove(ProviderSettingKeys.PrivateKeyBase64);
-                    clonedSettings[ProviderSettingKeys.TokenValue] = token;
+                    clonedSettings[ProviderSettingKeys.Token] = token;
                     clonedSettings[ProviderSettingKeys.TokenExpiresAt] = expiresAt.ToString("O");
 
                     result.Add(new ProviderConfig

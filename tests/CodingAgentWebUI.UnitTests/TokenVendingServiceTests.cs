@@ -5,6 +5,7 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using FsCheck;
@@ -12,7 +13,6 @@ using FsCheck.Xunit;
 using Moq;
 using Moq.Protected;
 using ILogger = Serilog.ILogger;
-using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.UnitTests;
 
@@ -133,8 +133,8 @@ public class TokenVendingServiceTests
 
         result.Should().HaveCount(1);
         result[0].Id.Should().Be("agent-1");
-        result[0].Settings.Should().ContainKey("model");
-        result[0].Settings.Should().NotContainKey("privateKeyBase64");
+        result[0].Settings.Should().ContainKey(ProviderSettingKeys.Model);
+        result[0].Settings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
     }
 
     [Fact]
@@ -166,7 +166,7 @@ public class TokenVendingServiceTests
 
         // Should strip the private key even on failure
         result.Should().HaveCount(1);
-        result[0].Settings.Should().NotContainKey("privateKeyBase64");
+        result[0].Settings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
     }
 
     [Fact]
@@ -185,7 +185,7 @@ public class TokenVendingServiceTests
                 {
                     [ProviderSettingKeys.Model] = "claude-sonnet-4",
                     [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
-                    ["timeout"] = "300"
+                    [ProviderSettingKeys.Timeout] = "300"
                 }
             }
         };
@@ -194,7 +194,7 @@ public class TokenVendingServiceTests
 
         result[0].Settings[ProviderSettingKeys.Model].Should().Be("claude-sonnet-4");
         result[0].Settings[ProviderSettingKeys.ExecutablePath].Should().Be("/usr/bin/kiro-cli");
-        result[0].Settings["timeout"].Should().Be("300");
+        result[0].Settings[ProviderSettingKeys.Timeout].Should().Be("300");
     }
 
     [Fact]
@@ -439,7 +439,7 @@ public class TokenVendingServiceTests
             .GetAwaiter().GetResult();
 
         // Assert: privateKeyBase64 must NOT be present in the result
-        return result.Count == 1 && !result[0].Settings.ContainsKey("privateKeyBase64");
+        return result.Count == 1 && !result[0].Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64);
     }
 
     #endregion

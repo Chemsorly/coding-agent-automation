@@ -1,3 +1,4 @@
+@using CodingAgentWebUI.Pipeline
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
@@ -15,7 +16,7 @@
         </div>
         <div class="form-group">
             <label>API URL</label>
-            <input type="text" @bind="ApiUrl" @bind:event="oninput" @bind:after="() => ApiUrlChanged.InvokeAsync(ApiUrl)" placeholder="https://api.github.com" />
+            <input type="text" @bind="ApiUrl" @bind:event="oninput" @bind:after="() => ApiUrlChanged.InvokeAsync(ApiUrl)" placeholder="@ProviderSettingKeys.DefaultApiUrl" />
         </div>
         <div class="form-group">
             <label>Client ID</label>

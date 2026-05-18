@@ -121,10 +121,10 @@ public class HubConnectionManagerTests : IAsyncDisposable
     }
 
     [Theory]
-    [InlineData("http://localhost:5000", "simple-agent", "http://localhost:5000/hubs/agent?agentId=simple-agent")]
-    [InlineData("http://localhost:5000/", "simple-agent", "http://localhost:5000/hubs/agent?agentId=simple-agent")]
-    [InlineData("http://localhost", "agent with spaces", "http://localhost/hubs/agent?agentId=agent%20with%20spaces")]
-    [InlineData("http://localhost", "agent&special=chars", "http://localhost/hubs/agent?agentId=agent%26special%3Dchars")]
+    [InlineData("http://localhost:5000", "simple-agent", "http://localhost:5000" + HubRoutes.Agent + "?agentId=simple-agent")]
+    [InlineData("http://localhost:5000/", "simple-agent", "http://localhost:5000" + HubRoutes.Agent + "?agentId=simple-agent")]
+    [InlineData("http://localhost", "agent with spaces", "http://localhost" + HubRoutes.Agent + "?agentId=agent%20with%20spaces")]
+    [InlineData("http://localhost", "agent&special=chars", "http://localhost" + HubRoutes.Agent + "?agentId=agent%26special%3Dchars")]
     public void Constructor_VariousInputs_FormatsUrlCorrectly(string orchestratorUrl, string agentId, string expectedUrl)
     {
         // Arrange & Act — construct the manager which internally builds the URL
@@ -147,7 +147,7 @@ public class HubConnectionManagerTests : IAsyncDisposable
 
         // Assert — if URL formation was wrong (double slash), the HubConnection would still build
         // but we verify the logic by checking the expected output
-        var expectedUrl = $"http://localhost:5000{HubRoutes.Agent}?agentId=agent-1";
+        var expectedUrl = "http://localhost:5000" + HubRoutes.Agent + "?agentId=agent-1";
         var actualUrl = $"{"http://localhost:5000/".TrimEnd('/')}{HubRoutes.Agent}?agentId={Uri.EscapeDataString("agent-1")}";
         actualUrl.Should().Be(expectedUrl);
 
@@ -187,7 +187,7 @@ public class HubConnectionManagerTests : IAsyncDisposable
 
         // Verify the expected URL contains the escaped agentId as query parameter
         var escapedAgentId = Uri.EscapeDataString(agentId.Value);
-        var expectedUrl = $"{orchestratorUrl}/hubs/agent?agentId={escapedAgentId}";
+        var expectedUrl = $"{orchestratorUrl}{HubRoutes.Agent}?agentId={escapedAgentId}";
 
         // The URL should be a valid URI
         var isValidUri = Uri.TryCreate(expectedUrl, UriKind.Absolute, out var parsedUri);

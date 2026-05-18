@@ -1,4 +1,3 @@
-@using CodingAgentWebUI.Agent
 @using CodingAgentWebUI.Pipeline
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
@@ -20,8 +19,7 @@
                 <div class="provider-info">
                     <strong>@p.DisplayName</strong>
                     <span class="provider-type">@p.ProviderType</span>
-                    @* TODO: Replace hardcoded setting key strings with ProviderSettingKeys constants (review finding #4) *@
-                    <span class="provider-detail">@p.Settings.GetValueOrDefault("executablePath", "") · @(p.Settings.GetValueOrDefault("timeout", "30"))min · model: @(p.Settings.GetValueOrDefault("model", "auto"))</span>
+                    <span class="provider-detail">@p.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, "") · @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Timeout, "30"))min · model: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto"))</span>
                 </div>
                 <div class="provider-actions">
                     <button class="btn-edit" @onclick="() => EditProvider(p)">Edit</button>
@@ -50,14 +48,14 @@
                 {
                     <div class="form-group">
                         <label>Executable Path</label>
-                        <input type="text" @bind="_form.ExecutablePath" placeholder="/root/.local/bin/kiro-cli" />
+                        <input type="text" @bind="_form.ExecutablePath" placeholder="/root/.local/bin/kiro-cli" /> @* TODO: Clarify if this placeholder should reference ProviderSettingKeys.DefaultKiroCliPath (/home/ubuntu/...) or remain /root/... for a different container context *@
                     </div>
                 }
                 else
                 {
                     <div class="form-group">
                         <label>Base URL</label>
-                        <input type="text" @bind="_form.BaseUrl" placeholder="@AgentDefaults.OpenCodeBaseUrl" />
+                        <input type="text" @bind="_form.BaseUrl" placeholder="@ProviderSettingKeys.DefaultOpenCodeBaseUrl" />
                     </div>
                 }
                 <div class="form-group">
@@ -188,9 +186,9 @@
             ProviderType = p.ProviderType,
             DisplayName = p.DisplayName,
             ExecutablePath = p.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, ""),
-            BaseUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseUrl, AgentDefaults.OpenCodeBaseUrl),
-            TimeoutMinutes = int.TryParse(p.Settings.GetValueOrDefault("timeout", "30"), out var t) ? t : 30,
-            AgentName = p.Settings.GetValueOrDefault("agentName", ""),
+            BaseUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseUrl, ProviderSettingKeys.DefaultOpenCodeBaseUrl),
+            TimeoutMinutes = int.TryParse(p.Settings.GetValueOrDefault(ProviderSettingKeys.Timeout, "30"), out var t) ? t : 30,
+            AgentName = p.Settings.GetValueOrDefault(ProviderSettingKeys.AgentName, ""),
             Model = p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto")
         };
         _availableModels.Clear();
@@ -215,18 +213,18 @@
 
         var settings = new Dictionary<string, string>
         {
-            ["timeout"] = _form.TimeoutMinutes.ToString(),
+            [ProviderSettingKeys.Timeout] = _form.TimeoutMinutes.ToString(),
             [ProviderSettingKeys.Model] = model
         };
 
         if (_form.ProviderType == "KiroCli")
         {
             settings[ProviderSettingKeys.ExecutablePath] = _form.ExecutablePath;
-            settings["agentName"] = _form.AgentName;
+            settings[ProviderSettingKeys.AgentName] = _form.AgentName;
         }
         else
         {
-            settings[ProviderSettingKeys.BaseUrl] = string.IsNullOrWhiteSpace(_form.BaseUrl) ? AgentDefaults.OpenCodeBaseUrl : _form.BaseUrl.Trim();
+            settings[ProviderSettingKeys.BaseUrl] = string.IsNullOrWhiteSpace(_form.BaseUrl) ? ProviderSettingKeys.DefaultOpenCodeBaseUrl : _form.BaseUrl.Trim();
         }
 
         var config = new ProviderConfig
@@ -293,8 +291,8 @@
     {
         public string ProviderType { get; set; } = "KiroCli";
         public string DisplayName { get; set; } = "";
-        public string ExecutablePath { get; set; } = AgentDefaults.KiroCliPath;
-        public string BaseUrl { get; set; } = AgentDefaults.OpenCodeBaseUrl;
+        public string ExecutablePath { get; set; } = ProviderSettingKeys.DefaultKiroCliPath;
+        public string BaseUrl { get; set; } = ProviderSettingKeys.DefaultOpenCodeBaseUrl;
         public int TimeoutMinutes { get; set; } = 30;
         public string AgentName { get; set; } = "default";
         public string Model { get; set; } = "auto";

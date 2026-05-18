@@ -2,10 +2,10 @@ using Bunit;
 using Moq;
 using Microsoft.AspNetCore.Components;
 using CodingAgentWebUI.Components.Pages;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
-using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.UnitTests.Components;
 

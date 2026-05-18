@@ -1,4 +1,5 @@
 using Moq;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure;
@@ -6,7 +7,6 @@ using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Pipeline.Services;
-using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.IntegrationTests.Helpers;
 

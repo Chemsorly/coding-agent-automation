@@ -1,3 +1,4 @@
+@using CodingAgentWebUI.Pipeline
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Infrastructure.GitHub
@@ -12,7 +13,7 @@
                 <div class="provider-info">
                     <strong>@p.DisplayName</strong>
                     <span class="provider-type">@p.ProviderType</span>
-                    <span class="provider-detail">@p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", "") → @p.Settings.GetValueOrDefault("baseBranch", "main")</span>
+                    <span class="provider-detail">@p.Settings.GetValueOrDefault(ProviderSettingKeys.Owner, "")/@p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, "") → @p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseBranch, ProviderSettingKeys.DefaultBaseBranch)</span>
                     <span class="provider-type">@p.RepositoryRole</span>
                     @if (p.RepositoryRole == RepositoryRole.Work && p.RequiredLabels is { Count: > 0 })
                     {
@@ -55,7 +56,7 @@
             <AdditionalFields>
                 <div class="form-group">
                     <label>Base Branch</label>
-                    <input type="text" @bind="_form.BaseBranch" placeholder="main" />
+                    <input type="text" @bind="_form.BaseBranch" placeholder="@ProviderSettingKeys.DefaultBaseBranch" />
                 </div>
                 <div class="form-group">
                     <label>Repository Role</label>
@@ -115,7 +116,6 @@
 </section>
 
 @code {
-    // TODO: Replace hardcoded provider setting key strings with ProviderSettingKeys constants (review finding #1)
     [Parameter, EditorRequired] public List<ProviderConfig> Providers { get; set; } = new();
     [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
     [Parameter, EditorRequired] public GitHubValidationService GitHubValidator { get; set; } = default!;
@@ -149,15 +149,15 @@
         {
             ProviderType = p.ProviderType,
             DisplayName = p.DisplayName,
-            ApiUrl = p.Settings.GetValueOrDefault("apiUrl", ""),
-            ClientId = p.Settings.GetValueOrDefault("clientId", ""),
-            InstallationId = p.Settings.GetValueOrDefault("installationId", ""),
-            PrivateKeyBase64 = p.Settings.GetValueOrDefault("privateKeyBase64", ""),
-            Owner = p.Settings.GetValueOrDefault("owner", ""),
-            Repo = p.Settings.GetValueOrDefault("repo", ""),
-            BaseBranch = p.Settings.GetValueOrDefault("baseBranch", "main"),
+            ApiUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, ""),
+            ClientId = p.Settings.GetValueOrDefault(ProviderSettingKeys.ClientId, ""),
+            InstallationId = p.Settings.GetValueOrDefault(ProviderSettingKeys.InstallationId, ""),
+            PrivateKeyBase64 = p.Settings.GetValueOrDefault(ProviderSettingKeys.PrivateKeyBase64, ""),
+            Owner = p.Settings.GetValueOrDefault(ProviderSettingKeys.Owner, ""),
+            Repo = p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, ""),
+            BaseBranch = p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseBranch, ProviderSettingKeys.DefaultBaseBranch),
             RepositoryRole = p.RepositoryRole.ToString(),
-            RequiredLabels = p.RequiredLabels != null ? string.Join(", ", p.RequiredLabels) : p.Settings.GetValueOrDefault("requiredAgentLabels", ""),
+            RequiredLabels = p.RequiredLabels != null ? string.Join(", ", p.RequiredLabels) : p.Settings.GetValueOrDefault(ProviderSettingsKeys.RequiredAgentLabels, ""),
             BlacklistedPaths = p.BlacklistedPaths != null ? string.Join(", ", p.BlacklistedPaths) : "",
             BlacklistMode = p.BlacklistMode?.ToString() ?? ""
         };
@@ -227,13 +227,13 @@
             BlacklistMode = Enum.TryParse<BlacklistMode>(_form.BlacklistMode, out var mode) ? mode : null,
             Settings = new Dictionary<string, string>
             {
-                ["apiUrl"] = _form.ApiUrl,
-                ["clientId"] = _form.ClientId,
-                ["installationId"] = _form.InstallationId,
-                ["privateKeyBase64"] = _form.PrivateKeyBase64,
-                ["owner"] = _form.Owner,
-                ["repo"] = _form.Repo,
-                ["baseBranch"] = _form.BaseBranch
+                [ProviderSettingKeys.ApiUrl] = _form.ApiUrl,
+                [ProviderSettingKeys.ClientId] = _form.ClientId,
+                [ProviderSettingKeys.InstallationId] = _form.InstallationId,
+                [ProviderSettingKeys.PrivateKeyBase64] = _form.PrivateKeyBase64,
+                [ProviderSettingKeys.Owner] = _form.Owner,
+                [ProviderSettingKeys.Repo] = _form.Repo,
+                [ProviderSettingKeys.BaseBranch] = _form.BaseBranch
             }
         };
 
@@ -306,13 +306,13 @@
     {
         public string ProviderType { get; set; } = "GitHub";
         public string DisplayName { get; set; } = "";
-        public string ApiUrl { get; set; } = "https://api.github.com";
+        public string ApiUrl { get; set; } = ProviderSettingKeys.DefaultApiUrl;
         public string ClientId { get; set; } = "";
         public string InstallationId { get; set; } = "";
         public string PrivateKeyBase64 { get; set; } = "";
         public string Owner { get; set; } = "";
         public string Repo { get; set; } = "";
-        public string BaseBranch { get; set; } = "main";
+        public string BaseBranch { get; set; } = ProviderSettingKeys.DefaultBaseBranch;
         public string RepositoryRole { get; set; } = "Work";
         public string RequiredLabels { get; set; } = "";
         public string BlacklistedPaths { get; set; } = "";

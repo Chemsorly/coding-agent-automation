@@ -5,11 +5,11 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Moq;
 using ILogger = Serilog.ILogger;
-using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.UnitTests;
 
@@ -100,11 +100,11 @@ public class OrchestratorRunServicePropertyTests
 
         // Clone and strip private key (same logic as PrepareAgentConfigsAsync)
         var clonedSettings = new Dictionary<string, string>(originalSettings);
-        clonedSettings.Remove("privateKeyBase64");
+        clonedSettings.Remove(ProviderSettingKeys.PrivateKeyBase64);
         clonedSettings[ProviderSettingKeys.Token] = "short-lived-token";
 
-        clonedSettings.Should().NotContainKey("privateKeyBase64");
-        clonedSettings.Should().ContainKey("token");
+        clonedSettings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
+        clonedSettings.Should().ContainKey(ProviderSettingKeys.Token);
     }
 
     /// <summary>

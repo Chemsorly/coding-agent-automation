@@ -1,12 +1,12 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR;
 using Moq;
 using ILogger = Serilog.ILogger;
-using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.UnitTests.Hubs;
 

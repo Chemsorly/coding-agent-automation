@@ -3,11 +3,11 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Moq;
 using ILogger = Serilog.ILogger;
-using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.UnitTests.Services;
 
@@ -194,7 +194,7 @@ public class TokenVendingServiceTests
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
-                    ["timeout"] = "30"
+                    [ProviderSettingKeys.Timeout] = "30"
                 }
             }
         };
@@ -203,8 +203,8 @@ public class TokenVendingServiceTests
 
         result.Should().HaveCount(1);
         result[0].Id.Should().Be("ap-1");
-        result[0].Settings.Should().ContainKey("executablePath");
-        result[0].Settings.Should().NotContainKey("privateKeyBase64");
+        result[0].Settings.Should().ContainKey(ProviderSettingKeys.ExecutablePath);
+        result[0].Settings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
     }
 
     [Fact]
@@ -236,8 +236,8 @@ public class TokenVendingServiceTests
 
         result.Should().HaveCount(1);
         result[0].Id.Should().Be("rp-1");
-        result[0].Settings.Should().NotContainKey("privateKeyBase64");
-        result[0].Settings.Should().ContainKey("owner");
+        result[0].Settings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
+        result[0].Settings.Should().ContainKey(ProviderSettingKeys.Owner);
     }
 
     [Fact]

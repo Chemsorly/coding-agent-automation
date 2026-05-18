@@ -32,7 +32,6 @@ public static class PipelineConstants
     public const string NoOutputFallback = "(no output)";
 
     /// <summary>Branch name prefix for auto-generated feature branches.</summary>
-    // TODO: Consider renaming to BranchNamePrefix, AutomatedFooter, DefaultConfigBaseDirectory to match acceptance criteria naming (review finding - AcceptanceCriteria #7)
     public const string BranchPrefix = "feature/auto-";
 
     /// <summary>Default commit message suffix for pipeline-generated commits.</summary>

@@ -2,10 +2,10 @@ using Bunit;
 using Moq;
 using AwesomeAssertions;
 using CodingAgentWebUI.Components.Pages;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Components;
-using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.UnitTests.Components;
 
@@ -53,7 +53,7 @@ public class AgentProviderSectionComponentTests : BunitContext
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
-                    ["timeout"] = "45",
+                    [ProviderSettingKeys.Timeout] = "45",
                     [ProviderSettingKeys.Model] = "claude-sonnet-4"
                 }
             }
@@ -81,7 +81,7 @@ public class AgentProviderSectionComponentTests : BunitContext
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
-                    ["timeout"] = "30",
+                    [ProviderSettingKeys.Timeout] = "30",
                     [ProviderSettingKeys.Model] = "auto"
                 }
             }
@@ -158,8 +158,8 @@ public class AgentProviderSectionComponentTests : BunitContext
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.ExecutablePath] = "/custom/path/kiro-cli",
-                    ["timeout"] = "60",
-                    ["agentName"] = "custom-agent",
+                    [ProviderSettingKeys.Timeout] = "60",
+                    [ProviderSettingKeys.AgentName] = "custom-agent",
                     [ProviderSettingKeys.Model] = "claude-sonnet-4"
                 }
             }
@@ -300,7 +300,7 @@ public class AgentProviderSectionComponentTests : BunitContext
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
-                    ["timeout"] = "30",
+                    [ProviderSettingKeys.Timeout] = "30",
                     [ProviderSettingKeys.Model] = "auto"
                 }
             }
