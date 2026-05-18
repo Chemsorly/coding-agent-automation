@@ -43,11 +43,33 @@ public static class ProviderSettingKeys
     /// <summary>Base URL for HTTP-based agent providers (e.g., OpenCode).</summary>
     public const string BaseUrl = "baseUrl";
 
+    /// <summary>Timeout in minutes for agent invocations.</summary>
+    public const string Timeout = "timeout";
+
+    /// <summary>Agent name identifier (e.g., "default").</summary>
+    public const string AgentName = "agentName";
+
     /// <summary>Workspace-relative path for MCP server configuration.</summary>
     public const string McpConfigPath = "mcpConfigPath";
 
+    // ── Default values ───────────────────────────────────────────────────
+
+    /// <summary>Default GitHub API URL.</summary>
+    public const string DefaultApiUrl = "https://api.github.com";
+
+    /// <summary>Default base branch name.</summary>
+    public const string DefaultBaseBranch = "main";
+
+    // TODO: DefaultKiroCliPath and DefaultOpenCodeBaseUrl duplicate AgentDefaults.KiroCliPath and AgentDefaults.OpenCodeBaseUrl — consider referencing AgentDefaults instead
+    /// <summary>Default filesystem path to the Kiro CLI executable inside agent containers.</summary>
+    public const string DefaultKiroCliPath = "/home/ubuntu/.local/bin/kiro-cli";
+
+    /// <summary>Default base URL for the OpenCode agent HTTP API.</summary>
+    public const string DefaultOpenCodeBaseUrl = "http://127.0.0.1:4096";
+
     // ── Token vending (written by orchestrator) ──────────────────────────
 
+    // TODO: TokenValue has the same string value ("token") as Token above — potential key collision if both are used in the same settings dictionary
     /// <summary>Vended token value (written to provider settings at runtime).</summary>
     public const string TokenValue = "token";
 

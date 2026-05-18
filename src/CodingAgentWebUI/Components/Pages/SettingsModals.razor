@@ -1,3 +1,4 @@
+@using CodingAgentWebUI.Pipeline
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 
@@ -91,7 +92,7 @@
     private bool _relatedModalIsError;
     private bool _relatedModalSaving;
 
-    private static readonly string[] SharedGitHubSettingKeys = ["apiUrl", "clientId", "installationId", "privateKeyBase64", "owner", "repo"];
+    private static readonly string[] SharedGitHubSettingKeys = [ProviderSettingKeys.ApiUrl, ProviderSettingKeys.ClientId, ProviderSettingKeys.InstallationId, ProviderSettingKeys.PrivateKeyBase64, ProviderSettingKeys.Owner, ProviderSettingKeys.Repo];
 
     public void ShowConfigureLabels(ProviderConfig config)
     {
@@ -111,8 +112,8 @@
         var targetKinds = new[] { ProviderKind.Issue, ProviderKind.Repository, ProviderKind.Pipeline }
             .Where(k => k != sourceKind).ToList();
 
-        _relatedModalOwner = savedConfig.Settings.GetValueOrDefault("owner", "");
-        _relatedModalRepo = savedConfig.Settings.GetValueOrDefault("repo", "");
+        _relatedModalOwner = savedConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Owner, "");
+        _relatedModalRepo = savedConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, "");
         _relatedModalBaseBranch = "main";
         _relatedModalSharedSettings = SharedGitHubSettingKeys
             .Where(k => savedConfig.Settings.ContainsKey(k))
@@ -133,8 +134,8 @@
             };
             var existing = existingList.FirstOrDefault(p =>
                 p.ProviderType == "GitHub"
-                && p.Settings.GetValueOrDefault("owner", "") == _relatedModalOwner
-                && p.Settings.GetValueOrDefault("repo", "") == _relatedModalRepo);
+                && p.Settings.GetValueOrDefault(ProviderSettingKeys.Owner, "") == _relatedModalOwner
+                && p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, "") == _relatedModalRepo);
 
             if (existing is null)
                 _relatedModalItems.Add(new RelatedProviderItem { Kind = kind, Selected = true });
@@ -219,7 +220,7 @@
             {
                 var settings = new Dictionary<string, string>(_relatedModalSharedSettings);
                 if (item.Kind == ProviderKind.Repository)
-                    settings["baseBranch"] = string.IsNullOrWhiteSpace(_relatedModalBaseBranch) ? "main" : _relatedModalBaseBranch;
+                    settings[ProviderSettingKeys.BaseBranch] = string.IsNullOrWhiteSpace(_relatedModalBaseBranch) ? ProviderSettingKeys.DefaultBaseBranch : _relatedModalBaseBranch;
 
                 var config = new ProviderConfig
                 {

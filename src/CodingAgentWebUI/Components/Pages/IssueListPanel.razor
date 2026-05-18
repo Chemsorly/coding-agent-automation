@@ -1,4 +1,5 @@
 @implements IAsyncDisposable
+@using CodingAgentWebUI.Pipeline
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 
@@ -12,7 +13,7 @@
                 <option value="">-- Select Provider --</option>
                 @foreach (var p in IssueProviders)
                 {
-                    <option value="@p.Id">@p.DisplayName (@p.ProviderType: @p.Settings.GetValueOrDefault("owner", "")/@p.Settings.GetValueOrDefault("repo", ""))</option>
+                    <option value="@p.Id">@p.DisplayName (@p.ProviderType: @p.Settings.GetValueOrDefault(ProviderSettingKeys.Owner, "")/@p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, ""))</option>
                 }
             </select>
         </div>
