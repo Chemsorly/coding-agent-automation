@@ -9,6 +9,7 @@ using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Moq;
 
@@ -71,6 +72,8 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         {
             builder.ConfigureServices(services =>
             {
+                services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
+                services.RemoveAll<IHostedService>();
                 ReplaceService<IConfigurationStore>(services, _mockConfigStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, _mockConfigStore.Object);
                 ReplaceService<IProviderConfigStore>(services, _mockConfigStore.Object);
@@ -157,6 +160,8 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         {
             builder.ConfigureServices(services =>
             {
+                services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
+                services.RemoveAll<IHostedService>();
                 ReplaceService<IConfigurationStore>(services, configStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, configStore.Object);
                 ReplaceService<IProviderConfigStore>(services, configStore.Object);
@@ -208,6 +213,8 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         {
             builder.ConfigureServices(services =>
             {
+                services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
+                services.RemoveAll<IHostedService>();
                 ReplaceService<IConfigurationStore>(services, _mockConfigStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, _mockConfigStore.Object);
                 ReplaceService<IProviderConfigStore>(services, _mockConfigStore.Object);

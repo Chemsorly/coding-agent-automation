@@ -452,6 +452,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AnalysisReviewEnabled = false,
                 CodeReview = new CodeReviewConfiguration { MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -486,6 +487,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AnalysisReviewEnabled = false,
                 CodeReview = new CodeReviewConfiguration { MaxIterations = 3 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -507,6 +509,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AnalysisReviewEnabled = false,
                 CodeReview = new CodeReviewConfiguration { MaxIterations = 3 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -540,6 +543,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AnalysisReviewEnabled = false,
                 CodeReview = new CodeReviewConfiguration { MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -581,6 +585,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AnalysisReviewEnabled = false,
                 CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -607,6 +612,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AnalysisReviewEnabled = false,
                 CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -632,6 +638,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AnalysisReviewEnabled = false,
                 CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -657,6 +664,7 @@ public class PipelineOrchestrationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
+                AnalysisReviewEnabled = false,
                 CodeReview = new CodeReviewConfiguration { MaxIterations = 1 }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
