@@ -19,6 +19,7 @@ public static class TestPipelineConfig
         IssuePageSize = 25,
         AgentTimeout = TimeSpan.FromMinutes(30),
         WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
+        AnalysisReviewEnabled = false,
         CodeReview = new CodeReviewConfiguration
         {
             MaxIterations = 2,
@@ -49,6 +50,7 @@ public static class TestPipelineConfig
         IssuePageSize = 25,
         AgentTimeout = TimeSpan.FromMinutes(30),
         WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
+        AnalysisReviewEnabled = false,
         CodeReview = new CodeReviewConfiguration
         {
             MaxIterations = 2,

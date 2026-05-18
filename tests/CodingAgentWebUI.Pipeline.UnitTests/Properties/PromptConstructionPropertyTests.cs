@@ -537,6 +537,6 @@ public class PromptConstructionPropertyTests
         prompt.Should().Contain("[CRITICAL]");
         prompt.Should().Contain("[WARNING]");
         prompt.Should().Contain("[SUGGESTION]");
-        prompt.Should().Contain("Rewrite");
+        prompt.Should().Contain("rewrite");
     }
 }

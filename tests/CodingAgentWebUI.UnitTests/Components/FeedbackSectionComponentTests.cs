@@ -114,8 +114,11 @@ public class FeedbackSectionComponentTests : BunitContext
         // Click the row to open the history modal
         cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
 
-        var feedbackSections = cut.FindAll(".feedback-section");
-        Assert.NotEmpty(feedbackSections);
+        cut.WaitForAssertion(() =>
+        {
+            var feedbackSections = cut.FindAll(".feedback-section");
+            Assert.NotEmpty(feedbackSections);
+        });
     }
 
     /// <summary>
@@ -179,15 +182,18 @@ public class FeedbackSectionComponentTests : BunitContext
 
         cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
 
-        var listSections = cut.FindAll(".feedback-list-section");
-        Assert.True(listSections.Count >= 4, "Expected at least 4 list sections (MissingContext, MissingCapabilities, PromptIssues, Suggestions)");
-
-        // Verify each list section contains ul > li elements
-        foreach (var section in listSections)
+        cut.WaitForAssertion(() =>
         {
-            var listItems = section.QuerySelectorAll("ul li");
-            Assert.NotEmpty(listItems);
-        }
+            var listSections = cut.FindAll(".feedback-list-section");
+            Assert.True(listSections.Count >= 4, "Expected at least 4 list sections (MissingContext, MissingCapabilities, PromptIssues, Suggestions)");
+
+            // Verify each list section contains ul > li elements
+            foreach (var section in listSections)
+            {
+                var listItems = section.QuerySelectorAll("ul li");
+                Assert.NotEmpty(listItems);
+            }
+        });
     }
 
     /// <summary>
@@ -247,13 +253,16 @@ public class FeedbackSectionComponentTests : BunitContext
 
         cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
 
-        // Feedback section should exist
-        Assert.NotEmpty(cut.FindAll(".feedback-section"));
+        cut.WaitForAssertion(() =>
+        {
+            // Feedback section should exist
+            Assert.NotEmpty(cut.FindAll(".feedback-section"));
 
-        // But only one subsection (Harness), not two
-        var subsections = cut.FindAll(".feedback-subsection");
-        Assert.Single(subsections);
-        Assert.Contains("Harness Feedback", subsections[0].TextContent);
+            // But only one subsection (Harness), not two
+            var subsections = cut.FindAll(".feedback-subsection");
+            Assert.Single(subsections);
+            Assert.Contains("Harness Feedback", subsections[0].TextContent);
+        });
     }
 
     /// <summary>
@@ -317,10 +326,13 @@ public class FeedbackSectionComponentTests : BunitContext
 
         cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
 
-        var badges = cut.FindAll(".feedback-category-badge");
-        // Should have two badges: one for harness, one for issue
-        Assert.Equal(2, badges.Count);
-        Assert.Contains("missing component", badges[1].TextContent);
+        cut.WaitForAssertion(() =>
+        {
+            var badges = cut.FindAll(".feedback-category-badge");
+            // Should have two badges: one for harness, one for issue
+            Assert.Equal(2, badges.Count);
+            Assert.Contains("missing component", badges[1].TextContent);
+        });
     }
 
     /// <summary>
@@ -346,12 +358,15 @@ public class FeedbackSectionComponentTests : BunitContext
 
         cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
 
-        // Feedback section exists
-        Assert.NotEmpty(cut.FindAll(".feedback-section"));
+        cut.WaitForAssertion(() =>
+        {
+            // Feedback section exists
+            Assert.NotEmpty(cut.FindAll(".feedback-section"));
 
-        // No list sections rendered (all lists are empty)
-        var listSections = cut.FindAll(".feedback-list-section");
-        Assert.Empty(listSections);
+            // No list sections rendered (all lists are empty)
+            var listSections = cut.FindAll(".feedback-list-section");
+            Assert.Empty(listSections);
+        });
     }
 
     /// <summary>
@@ -377,6 +392,6 @@ public class FeedbackSectionComponentTests : BunitContext
 
         cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
 
-        Assert.Empty(cut.FindAll(".feedback-stuck-reason"));
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".feedback-stuck-reason")));
     }
 }

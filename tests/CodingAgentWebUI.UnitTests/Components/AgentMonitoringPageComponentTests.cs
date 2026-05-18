@@ -203,11 +203,11 @@ public class AgentMonitoringPageComponentTests : BunitContext
 
         // Click toggle to collapse
         cut.Find(".monitoring-section-toggle").Click();
-        Assert.Empty(cut.FindAll(".monitoring-table:last-of-type tbody tr"));
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".monitoring-table:last-of-type tbody tr")));
 
         // Click again to expand
         cut.Find(".monitoring-section-toggle").Click();
-        Assert.NotEmpty(cut.FindAll(".monitoring-table:last-of-type tbody tr"));
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".monitoring-table:last-of-type tbody tr")));
     }
 
     [Fact]
@@ -364,10 +364,13 @@ public class AgentMonitoringPageComponentTests : BunitContext
 
         await cut.InvokeAsync(() => cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click());
 
-        Assert.Empty(cut.FindAll(".summary-failure-callout"));
-        // Modal should still be visible with run details
-        Assert.Contains("Run", cut.Markup);
-        Assert.Contains("#42", cut.Markup);
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Empty(cut.FindAll(".summary-failure-callout"));
+            // Modal should still be visible with run details
+            Assert.Contains("Run", cut.Markup);
+            Assert.Contains("#42", cut.Markup);
+        });
     }
 
     [Fact]
@@ -381,10 +384,10 @@ public class AgentMonitoringPageComponentTests : BunitContext
         var cut = Render<AgentMonitoring>();
 
         await cut.InvokeAsync(() => cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click());
-        Assert.NotEmpty(cut.FindAll(".summary-failure-callout"));
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".summary-failure-callout")));
 
         // Click close button
         await cut.InvokeAsync(() => cut.Find(".modal-card .btn-cancel").Click());
-        Assert.Empty(cut.FindAll(".summary-failure-callout"));
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".summary-failure-callout")));
     }
 }

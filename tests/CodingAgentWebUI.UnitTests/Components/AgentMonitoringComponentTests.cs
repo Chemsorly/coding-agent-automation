@@ -170,8 +170,11 @@ public class AgentMonitoringComponentTests : BunitContext
         removeBtn.Click();
 
         // Assert: job is removed from UI
-        Assert.DoesNotContain("org/repo#42", cut.Markup);
-        Assert.Contains("No pending jobs in queue.", cut.Markup);
+        cut.WaitForAssertion(() =>
+        {
+            Assert.DoesNotContain("org/repo#42", cut.Markup);
+            Assert.Contains("No pending jobs in queue.", cut.Markup);
+        });
     }
 
     [Fact]
@@ -206,9 +209,12 @@ public class AgentMonitoringComponentTests : BunitContext
         removeButtons[0].Click();
 
         // Assert: first job removed, second remains
-        Assert.DoesNotContain("org/repo#10", cut.Markup);
-        Assert.Contains("org/repo#20", cut.Markup);
-        Assert.Contains("Job Queue (1)", cut.Markup);
+        cut.WaitForAssertion(() =>
+        {
+            Assert.DoesNotContain("org/repo#10", cut.Markup);
+            Assert.Contains("org/repo#20", cut.Markup);
+            Assert.Contains("Job Queue (1)", cut.Markup);
+        });
     }
 
     private static PipelineRun CreateRun(string issueTitle) => new()
