@@ -1,5 +1,7 @@
 <Project>
   <PropertyGroup>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Prevent orphaned MSBuild node processes after dotnet test/build -->
+    <UseSharedCompilation>false</UseSharedCompilation>
   </PropertyGroup>
 </Project>
