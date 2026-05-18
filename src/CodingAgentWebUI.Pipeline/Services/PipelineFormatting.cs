@@ -133,9 +133,9 @@ public static partial class PipelineFormatting
 
         sb.AppendLine("---");
         if (!string.IsNullOrEmpty(modelName))
-            sb.AppendLine($"*Model: {modelName} · Automated implementation via pipeline*");
+            sb.AppendLine($"*Model: {modelName} · {PipelineConstants.AutomatedCommitSuffix}*");
         else
-            sb.AppendLine("*Automated implementation via pipeline*");
+            sb.AppendLine($"*{PipelineConstants.AutomatedCommitSuffix}*");
 
         return sb.ToString().TrimEnd();
     }
@@ -145,7 +145,7 @@ public static partial class PipelineFormatting
     /// </summary>
     public static string GenerateCommitMessage(string title, string issueNumber)
     {
-        return $"feat: {title} (#{issueNumber})\n\nAutomated implementation via pipeline";
+        return $"feat: {title} (#{issueNumber})\n\n{PipelineConstants.AutomatedCommitSuffix}";
     }
 
     /// <summary>
