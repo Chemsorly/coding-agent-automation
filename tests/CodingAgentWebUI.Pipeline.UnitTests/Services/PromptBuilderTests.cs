@@ -118,6 +118,16 @@ public class PromptBuilderTests
         result.Should().Contain("\"wont_do\"");
     }
 
+    [Fact]
+    public void BuildAnalysisPrompt_ContainsScopeGuidance()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain("scope is too broad for a single agent run");
+        result.Should().Contain(">30 files");
+        result.Should().Contain(">3 distinct projects");
+        result.Should().Contain("splitting recommendations");
+    }
+
     #endregion
 
     #region BuildPrompt

@@ -1719,6 +1719,20 @@ public class PipelineOrchestrationServiceTests
     }
 
     [Fact]
+    public async Task ConfidenceGate_ScopeRelatedBlockingIssues_TriggersNotReady()
+    {
+        SetupAnalysisAgentWithAssessment("not_ready", "Scope too broad for a single agent run",
+            blockingIssues: new[] { "Issue affects 50+ files across 5 projects — split by project: UI components, Infrastructure, Tests" });
+
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Contain("needs refinement");
+        run.AnalysisBlockingIssues.Should().Contain(b => b.Contains("split by project"));
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:needs-refinement", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
     public async Task ConfidenceGate_UnexpectedRecommendation_ProceedsAsReady()
     {
         SetupAnalysisAgentWithAssessment("maybe", "Not sure about this");
