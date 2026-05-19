@@ -10,14 +10,13 @@ namespace CodingAgentWebUI.Agent.Executors;
 /// Executes brain consolidation: clones the brain repo, runs the 4-phase consolidation
 /// agent prompt, commits all changes, and pushes to the base branch.
 /// </summary>
-public sealed class BrainConsolidationExecutor
+public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
 {
-    private readonly Serilog.ILogger _logger;
+    protected override string WorkspaceSuffix => "brain";
+    protected override string ExecutorName => "Brain consolidation";
 
-    public BrainConsolidationExecutor(Serilog.ILogger logger)
+    public BrainConsolidationExecutor(Serilog.ILogger logger) : base(logger)
     {
-        ArgumentNullException.ThrowIfNull(logger);
-        _logger = logger;
     }
 
     /// <summary>
@@ -42,28 +41,16 @@ public sealed class BrainConsolidationExecutor
         ArgumentNullException.ThrowIfNull(brainProvider);
         ArgumentNullException.ThrowIfNull(agentProvider);
 
-        // WARNING 5 fix: Validate job ID is a valid GUID to prevent path traversal
-        if (!Guid.TryParse(job.JobId, out _))
-        {
-            _logger.Warning("Invalid JobId format: {JobId}", job.JobId);
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = "Invalid JobId format"
-            };
-        }
+        var invalid = ValidateJobId(job);
+        if (invalid is not null) return invalid;
 
-        // CRITICAL 3 fix: Use workspace path from job message, fall back to temp path
-        var workspacePath = job.WorkspacePath is not null
-            ? Path.Combine(job.WorkspacePath, "brain")
-            : Path.Combine(Path.GetTempPath(), "consolidation", job.JobId, "brain");
+        var workspacePath = ResolveWorkspacePath(job);
 
         try
         {
             // 1. Clone brain repo
             Directory.CreateDirectory(workspacePath);
-            _logger.Information("Cloning brain repo for consolidation run {RunId} into {Workspace}",
+            Logger.Information("Cloning brain repo for consolidation run {RunId} into {Workspace}",
                 job.JobId, workspacePath);
             await brainProvider.CloneAsync(workspacePath, ct);
 
@@ -71,7 +58,7 @@ public sealed class BrainConsolidationExecutor
             var prompt = ConsolidationPromptBuilder.BuildBrainConsolidationPrompt(job.LastSuccessfulRunUtc);
 
             // 3. Execute agent
-            _logger.Information("Executing brain consolidation agent for run {RunId}", job.JobId);
+            Logger.Information("Executing brain consolidation agent for run {RunId}", job.JobId);
             var agentResult = await agentProvider.ExecuteAsync(
                 new AgentRequest
                 {
@@ -83,14 +70,9 @@ public sealed class BrainConsolidationExecutor
 
             if (!agentResult.Success)
             {
-                _logger.Warning("Brain consolidation agent exited with code {ExitCode} for run {RunId}",
-                    agentResult.ExitCode, job.JobId);
-                return new ConsolidationJobResult
-                {
-                    JobId = job.JobId,
-                    Success = false,
-                    ErrorMessage = $"Agent exited with code {agentResult.ExitCode}"
-                };
+                Logger.Warning("{ExecutorName} agent exited with code {ExitCode} for run {RunId}",
+                    ExecutorName, agentResult.ExitCode, job.JobId);
+                return CreateFailureResult(job.JobId, $"Agent exited with code {agentResult.ExitCode}");
             }
 
             // 4. Diff summary and adversarial review
@@ -123,7 +105,7 @@ public sealed class BrainConsolidationExecutor
                 // Check if diff summary file meets minimum content threshold
                 if (!File.Exists(diffFilePath))
                 {
-                    _logger.Warning("Diff summary file not produced at {Path}, skipping review", AgentWorkspacePaths.BrainConsolidationDiffFilePath);
+                    Logger.Warning("Diff summary file not produced at {Path}, skipping review", AgentWorkspacePaths.BrainConsolidationDiffFilePath);
                     onOutputLine?.Invoke("⚠️ Diff summary file not produced — skipping review");
                     skipReview = true;
                 }
@@ -132,7 +114,7 @@ public sealed class BrainConsolidationExecutor
                     var diffContent = await File.ReadAllTextAsync(diffFilePath, ct);
                     if (diffContent.Trim().Length < AdversarialReviewHelper.MinimumContentThreshold)
                     {
-                        _logger.Warning("Diff summary file too short ({Length} chars), skipping review",
+                        Logger.Warning("Diff summary file too short ({Length} chars), skipping review",
                             diffContent.Trim().Length);
                         onOutputLine?.Invoke($"⚠️ Diff summary too short ({diffContent.Trim().Length} chars) — skipping review");
                         skipReview = true;
@@ -141,7 +123,7 @@ public sealed class BrainConsolidationExecutor
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.Warning(ex, "Diff summary step failed: {Message}, skipping review entirely", ex.Message);
+                Logger.Warning(ex, "Diff summary step failed: {Message}, skipping review entirely", ex.Message);
                 onOutputLine?.Invoke($"⚠️ Diff summary failed: {ex.Message} — skipping review");
                 skipReview = true;
             }
@@ -161,7 +143,7 @@ public sealed class BrainConsolidationExecutor
                         AgentTimeout = job.PipelineConfiguration.AgentTimeout
                     },
                     onOutputLine,
-                    _logger,
+                    Logger,
                     ct);
             }
 
@@ -170,14 +152,14 @@ public sealed class BrainConsolidationExecutor
             var refinementTokenUsage = reviewResult?.RefinementTokenUsage;
 
             // 6. Commit all changes (AFTER review/refinement completes)
-            _logger.Information("Committing brain consolidation changes for run {RunId}", job.JobId);
+            Logger.Information("Committing brain consolidation changes for run {RunId}", job.JobId);
             try
             {
                 await brainProvider.CommitAllAsync(workspacePath, $"Brain consolidation run {job.JobId}", ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.Error(ex, "Commit failed for brain consolidation run {RunId}: {Message}", job.JobId, ex.Message);
+                Logger.Error(ex, "Commit failed for brain consolidation run {RunId}: {Message}", job.JobId, ex.Message);
                 return new ConsolidationJobResult
                 {
                     JobId = job.JobId,
@@ -190,14 +172,14 @@ public sealed class BrainConsolidationExecutor
             }
 
             // 7. Push to base branch
-            _logger.Information("Pushing brain consolidation changes for run {RunId}", job.JobId);
+            Logger.Information("Pushing brain consolidation changes for run {RunId}", job.JobId);
             try
             {
                 await brainProvider.PushBranchAsync(workspacePath, brainProvider.BaseBranch, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.Error(ex, "Push failed for brain consolidation run {RunId}: {Message}", job.JobId, ex.Message);
+                Logger.Error(ex, "Push failed for brain consolidation run {RunId}: {Message}", job.JobId, ex.Message);
                 return new ConsolidationJobResult
                 {
                     JobId = job.JobId,
@@ -217,7 +199,7 @@ public sealed class BrainConsolidationExecutor
             var summary = ConsolidationPromptBuilder.FormatBrainConsolidationSummary(
                 filesModified, entriesMerged, contradictionsResolved, entriesPruned);
 
-            _logger.Information("Brain consolidation run {RunId} completed: {Summary}", job.JobId, summary);
+            Logger.Information("{ExecutorName} run {RunId} completed: {Summary}", ExecutorName, job.JobId, summary);
 
             return new ConsolidationJobResult
             {
@@ -231,22 +213,12 @@ public sealed class BrainConsolidationExecutor
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = "Consolidation run was cancelled"
-            };
+            return CreateCancelledResult(job.JobId);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Brain consolidation run {RunId} failed: {Message}", job.JobId, ex.Message);
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = ex.Message
-            };
+            Logger.Error(ex, "{ExecutorName} run {RunId} failed: {Message}", ExecutorName, job.JobId, ex.Message);
+            return CreateFailureResult(job.JobId, ex.Message);
         }
         finally
         {
