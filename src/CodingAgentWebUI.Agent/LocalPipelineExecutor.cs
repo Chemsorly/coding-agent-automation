@@ -43,6 +43,7 @@ public sealed class LocalPipelineExecutor
     private readonly IBrainUpdateService? _brainUpdateService;
     private readonly IPipelineRunHistoryService? _historyService;
     private readonly FeedbackService _feedbackService;
+    private readonly PullRequestFinalizationService _finalization;
     private readonly Serilog.ILogger _logger;
 
     public LocalPipelineExecutor(
@@ -67,6 +68,7 @@ public sealed class LocalPipelineExecutor
         _brainUpdateService = brainUpdateService;
         _historyService = historyService;
         _feedbackService = new FeedbackService(logger);
+        _finalization = new PullRequestFinalizationService(logger);
         _logger = logger;
     }
 
@@ -438,97 +440,19 @@ public sealed class LocalPipelineExecutor
             try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.ReflectingOnRun, DateTimeOffset.UtcNow, ct); }
             catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", PipelineStep.ReflectingOnRun); }
 
-            emitOutputLine("🧠 Reflecting on run and updating brain knowledge...");
-            try
-            {
-                var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
-                    run, run.IssueTitle, run.RepositoryName?.Split('/').LastOrDefault());
-
-                var reflectionResult = await agentProvider.ExecuteAsync(
-                    new AgentRequest
-                    {
-                        Prompt = reflectionPrompt,
-                        WorkspacePath = run.WorkspacePath!,
-                        Timeout = config.AgentTimeout,
-                        UseResume = true
-                    },
-                    ct,
-                    line =>
-                    {
-                        run.OutputLines.Enqueue(line);
-                        emitOutputLine(line);
-                    });
-
-                run.AccumulateTokenUsage(reflectionResult);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Warning(ex, "Reflection step failed, continuing with brain sync");
-            }
+            await _finalization.RunReflectionAsync(run, agentProvider, config, emitOutputLine, ct);
 
             run.CurrentStep = PipelineStep.SyncingBrainRepoPostRun;
             try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.SyncingBrainRepoPostRun, DateTimeOffset.UtcNow, ct); }
             catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", PipelineStep.SyncingBrainRepoPostRun); }
 
-            try { await brainSync.SyncPostRunAsync(run, brainProvider, ct, emitOutputLine, config.BrainPushMaxRetries); }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Warning(ex, "Brain post-run sync failed");
-                run.BrainUpdatesPushed = false;
-            }
+            await _finalization.SyncBrainPostRunAsync(run, brainSync, brainProvider, config, emitOutputLine, ct);
         }
 
         // ── Feedback collection: separate agent call, runs regardless of brain provider ──
         if (!isDraft)
         {
-            emitOutputLine("📋 Collecting run feedback...");
-            try
-            {
-                var elapsed = DateTime.UtcNow - run.StartedAt;
-                var recentSummaries = (_historyService?.GetRunHistory() ?? [])
-                    .OrderByDescending(s => s.StartedAt)
-                    .Take(FeedbackConstraints.MaxRecentRunsForCategories)
-                    .ToList();
-
-                var harnessCategories = recentSummaries
-                    .Where(s => s.Feedback?.Harness.Category is not null)
-                    .Select(s => s.Feedback!.Harness.Category!)
-                    .Distinct()
-                    .ToList();
-
-                var issueCategories = recentSummaries
-                    .Where(s => s.Feedback?.Issue?.Category is not null)
-                    .Select(s => s.Feedback!.Issue!.Category!)
-                    .Distinct()
-                    .ToList();
-
-                var feedbackPrompt = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
-                    run, elapsed, harnessCategories, issueCategories);
-
-                var feedbackResult = await agentProvider.ExecuteAsync(
-                    new AgentRequest
-                    {
-                        Prompt = feedbackPrompt,
-                        WorkspacePath = run.WorkspacePath!,
-                        Timeout = TimeSpan.FromSeconds(FeedbackConstraints.FailureFeedbackTimeoutSeconds),
-                        UseResume = true
-                    },
-                    ct,
-                    line =>
-                    {
-                        run.OutputLines.Enqueue(line);
-                        emitOutputLine(line);
-                    });
-
-                var responseText = string.Join("\n", feedbackResult.OutputLines);
-                run.Feedback = _feedbackService.ParseFeedbackFromResponse(responseText, FeedbackOutcome.Success, DateTime.UtcNow);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Warning(ex, "Feedback collection failed, using fallback");
-                run.Feedback = _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
-                    $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
-            }
+            await _finalization.CollectFeedbackAsync(run, agentProvider, _feedbackService, _historyService, emitOutputLine, ct);
         }
 
         run.CompletedAt = DateTime.UtcNow;
