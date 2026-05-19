@@ -174,6 +174,19 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- The `rationale` must reference concrete evidence found during exploration");
         sb.AppendLine("- Do NOT modify any source code — only produce the proposals JSON file");
         sb.AppendLine("- If no refactoring opportunities are found, produce an empty array `[]`");
+        sb.AppendLine();
+
+        // Scope constraints
+        sb.AppendLine("## Scope Requirements");
+        sb.AppendLine();
+        sb.AppendLine("Each proposal MUST be achievable by a single agent in one run. This means:");
+        sb.AppendLine();
+        sb.AppendLine("- **Maximum ~30 affected files** (source + test) per proposal");
+        sb.AppendLine("- If a refactoring would touch more files, **split it** into independent, self-contained phases that can each be completed alone");
+        sb.AppendLine("- Each phase must leave the codebase in a valid, buildable state");
+        sb.AppendLine("- Prefer proposals that are mechanical and low-risk (file moves, renames, extractions) over sweeping architectural changes");
+        sb.AppendLine("- Do NOT propose changes that require coordinated modifications across serialization boundaries (e.g., JSON schema + MessagePack wire format + all consumers simultaneously)");
+        sb.AppendLine("- If a large refactoring is warranted, propose only the smallest first step that delivers value independently");
 
         return sb.ToString();
     }
@@ -287,6 +300,7 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- Proposals not supported by evidence in the codebase");
         sb.AppendLine("- Bundled concerns that should be separate proposals");
         sb.AppendLine("- Abstract rationales lacking concrete code references");
+        sb.AppendLine("- **Scope exceeding single-agent capacity** — proposals touching more than ~30 files (source + test), spanning multiple serialization boundaries, or requiring coordinated breaking changes across projects should be flagged as [CRITICAL] with a suggestion to split into smaller phases");
         sb.AppendLine();
         sb.AppendLine("You are not limited to this checklist. Flag any quality issue you identify.");
         sb.AppendLine();
