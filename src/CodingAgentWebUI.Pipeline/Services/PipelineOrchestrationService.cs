@@ -28,6 +28,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     private readonly IssueDescriptionParser _issueParser;
     private readonly BrainSyncOrchestrator _brainSync;
     private readonly PullRequestOrchestrator _prOrchestrator;
+    private readonly PullRequestFinalizationService _finalization;
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IAgentPhaseExecutor _agentExecution;
     private readonly IQualityGateExecutor _qualityGates;
@@ -133,6 +134,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(brainUpdateService);
         _brainSync = new BrainSyncOrchestrator(brainUpdateService, logger);
         _prOrchestrator = new PullRequestOrchestrator(logger);
+        _finalization = new PullRequestFinalizationService(logger);
         _historyService = historyService ?? throw new ArgumentNullException(nameof(historyService));
 
         // Use provided lifecycle service or create one internally for backward compatibility
@@ -465,93 +467,16 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             {
                 // Reflection step: ask the agent to review the entire run and enrich .brain/ knowledge
                 _lifecycle.TransitionTo(run, PipelineStep.ReflectingOnRun);
-                _lifecycle.EmitOutputLine("🧠 Reflecting on run and updating brain knowledge...");
-                try
-                {
-                    var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
-                        run, _activeIssue?.Title, run.RepositoryName?.Split('/').LastOrDefault());
-                    _logger.Debug("Pipeline {RunId} reflection prompt:\n{Prompt}", run.RunId, reflectionPrompt);
-
-                    var reflectionResult = await _providerManager.ActiveAgentProvider!.ExecuteAsync(
-                        new AgentRequest
-                        {
-                            Prompt = reflectionPrompt,
-                            WorkspacePath = run.WorkspacePath!,
-                            Timeout = _activeConfig.AgentTimeout,
-                            UseResume = true
-                        },
-                        ct,
-                        line =>
-                        {
-                            run.OutputLines.Enqueue(line);
-                            _lifecycle.EmitOutputLine(line);
-                        });
-
-                    run.AccumulateTokenUsage(reflectionResult);
-                    _logger.Information("Pipeline {RunId} reflection step completed", run.RunId);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Pipeline {RunId} reflection step failed, continuing with brain sync", run.RunId);
-                }
+                await _finalization.RunReflectionAsync(run, _providerManager.ActiveAgentProvider!, _activeConfig, line => _lifecycle.EmitOutputLine(line), ct);
 
                 _lifecycle.TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
-                try { await _brainSync.SyncPostRunAsync(run, _providerManager.ActiveBrainProvider, ct, line => _lifecycle.EmitOutputLine(line), _activeConfig!.BrainPushMaxRetries); }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                { _logger.Warning(ex, "Pipeline {RunId} brain post-run sync failed", run.RunId); run.BrainUpdatesPushed = false; }
+                await _finalization.SyncBrainPostRunAsync(run, _brainSync, _providerManager.ActiveBrainProvider, _activeConfig, line => _lifecycle.EmitOutputLine(line), ct);
             }
 
             // Feedback collection: separate agent call, runs regardless of brain provider
             if (!isDraft)
             {
-                _lifecycle.EmitOutputLine("📋 Collecting run feedback...");
-                try
-                {
-                    var elapsed = DateTime.UtcNow - run.StartedAt;
-                    var recentSummaries = _historyService.GetRunHistory()
-                        .OrderByDescending(s => s.StartedAt)
-                        .Take(FeedbackConstraints.MaxRecentRunsForCategories)
-                        .ToList();
-
-                    var harnessCategories = recentSummaries
-                        .Where(s => s.Feedback?.Harness.Category is not null)
-                        .Select(s => s.Feedback!.Harness.Category!)
-                        .Distinct()
-                        .ToList();
-
-                    var issueCategories = recentSummaries
-                        .Where(s => s.Feedback?.Issue?.Category is not null)
-                        .Select(s => s.Feedback!.Issue!.Category!)
-                        .Distinct()
-                        .ToList();
-
-                    var feedbackPrompt = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
-                        run, elapsed, harnessCategories, issueCategories);
-
-                    var feedbackResult = await _providerManager.ActiveAgentProvider!.ExecuteAsync(
-                        new AgentRequest
-                        {
-                            Prompt = feedbackPrompt,
-                            WorkspacePath = run.WorkspacePath!,
-                            Timeout = TimeSpan.FromSeconds(FeedbackConstraints.FailureFeedbackTimeoutSeconds),
-                            UseResume = true
-                        },
-                        ct,
-                        line =>
-                        {
-                            run.OutputLines.Enqueue(line);
-                            _lifecycle.EmitOutputLine(line);
-                        });
-
-                    var responseText = string.Join("\n", feedbackResult.OutputLines);
-                    run.Feedback = _feedbackService.ParseFeedbackFromResponse(responseText, FeedbackOutcome.Success, DateTime.UtcNow);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Pipeline {RunId} feedback collection failed, using fallback", run.RunId);
-                    run.Feedback = _feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
-                        $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
-                }
+                await _finalization.CollectFeedbackAsync(run, _providerManager.ActiveAgentProvider!, _feedbackService, _historyService, line => _lifecycle.EmitOutputLine(line), ct);
             }
 
             _lifecycle.TransitionTo(run, finalStep);
