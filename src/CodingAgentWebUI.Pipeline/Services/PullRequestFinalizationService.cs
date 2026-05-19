@@ -1,0 +1,137 @@
+using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
+
+namespace CodingAgentWebUI.Pipeline.Services;
+
+/// <summary>
+/// Encapsulates the shared post-PR-creation logic (reflection, brain sync, feedback collection)
+/// that was previously duplicated between PipelineOrchestrationService and LocalPipelineExecutor.
+/// Stateless service — all dependencies are passed per-call.
+/// </summary>
+internal sealed class PullRequestFinalizationService
+{
+    private readonly Serilog.ILogger _logger;
+
+    public PullRequestFinalizationService(Serilog.ILogger logger)
+    {
+        ArgumentNullException.ThrowIfNull(logger);
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Executes the reflection step: builds a reflection prompt and asks the agent to review
+    /// the run and enrich .brain/ knowledge. Accumulates token usage on the run.
+    /// Does not throw on failure — logs a warning and returns.
+    /// </summary>
+    public async Task RunReflectionAsync(
+        PipelineRun run, IAgentProvider agentProvider, PipelineConfiguration config,
+        Action<string> emitOutputLine, CancellationToken ct)
+    {
+        emitOutputLine("🧠 Reflecting on run and updating brain knowledge...");
+        try
+        {
+            var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
+                run, run.IssueTitle, run.RepositoryName?.Split('/').LastOrDefault());
+            _logger.Debug("Pipeline {RunId} reflection prompt:\n{Prompt}", run.RunId, reflectionPrompt);
+
+            var reflectionResult = await agentProvider.ExecuteAsync(
+                new AgentRequest
+                {
+                    Prompt = reflectionPrompt,
+                    WorkspacePath = run.WorkspacePath!,
+                    Timeout = config.AgentTimeout,
+                    UseResume = true
+                },
+                ct,
+                line =>
+                {
+                    run.OutputLines.Enqueue(line);
+                    emitOutputLine(line);
+                });
+
+            run.AccumulateTokenUsage(reflectionResult);
+            _logger.Information("Pipeline {RunId} reflection step completed", run.RunId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} reflection step failed, continuing with brain sync", run.RunId);
+        }
+    }
+
+    /// <summary>
+    /// Syncs the brain repository after the run. Delegates to brainSync.SyncPostRunAsync.
+    /// Does not throw on failure — logs a warning and sets run.BrainUpdatesPushed = false.
+    /// </summary>
+    public async Task SyncBrainPostRunAsync(
+        PipelineRun run, IBrainSyncService brainSync, IRepositoryProvider brainProvider,
+        PipelineConfiguration config, Action<string> emitOutputLine, CancellationToken ct)
+    {
+        try
+        {
+            await brainSync.SyncPostRunAsync(run, brainProvider, ct, emitOutputLine, config.BrainPushMaxRetries);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} brain post-run sync failed", run.RunId);
+            run.BrainUpdatesPushed = false;
+        }
+    }
+
+    /// <summary>
+    /// Collects structured feedback from the agent about the run.
+    /// On failure, creates a fallback feedback record via feedbackService.
+    /// </summary>
+    public async Task CollectFeedbackAsync(
+        PipelineRun run, IAgentProvider agentProvider, FeedbackService feedbackService,
+        IPipelineRunHistoryService? historyService, Action<string> emitOutputLine, CancellationToken ct)
+    {
+        emitOutputLine("📋 Collecting run feedback...");
+        try
+        {
+            var elapsed = DateTime.UtcNow - run.StartedAt;
+            var recentSummaries = (historyService?.GetRunHistory() ?? [])
+                .OrderByDescending(s => s.StartedAt)
+                .Take(FeedbackConstraints.MaxRecentRunsForCategories)
+                .ToList();
+
+            var harnessCategories = recentSummaries
+                .Where(s => s.Feedback?.Harness.Category is not null)
+                .Select(s => s.Feedback!.Harness.Category!)
+                .Distinct()
+                .ToList();
+
+            var issueCategories = recentSummaries
+                .Where(s => s.Feedback?.Issue?.Category is not null)
+                .Select(s => s.Feedback!.Issue!.Category!)
+                .Distinct()
+                .ToList();
+
+            var feedbackPrompt = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
+                run, elapsed, harnessCategories, issueCategories);
+
+            var feedbackResult = await agentProvider.ExecuteAsync(
+                new AgentRequest
+                {
+                    Prompt = feedbackPrompt,
+                    WorkspacePath = run.WorkspacePath!,
+                    Timeout = TimeSpan.FromSeconds(FeedbackConstraints.FailureFeedbackTimeoutSeconds),
+                    UseResume = true
+                },
+                ct,
+                line =>
+                {
+                    run.OutputLines.Enqueue(line);
+                    emitOutputLine(line);
+                });
+
+            var responseText = string.Join("\n", feedbackResult.OutputLines);
+            run.Feedback = feedbackService.ParseFeedbackFromResponse(responseText, FeedbackOutcome.Success, DateTime.UtcNow);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} feedback collection failed, using fallback", run.RunId);
+            run.Feedback = feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
+                $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
+        }
+    }
+}
