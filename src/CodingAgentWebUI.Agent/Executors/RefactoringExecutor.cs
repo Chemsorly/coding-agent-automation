@@ -118,7 +118,7 @@ public sealed class RefactoringExecutor
             }
 
             // 5. Parse proposals JSON from workspace file
-            var proposalsFilePath = Path.Combine(workspacePath, AgentWorkspacePaths.MetadataDirectory, "refactoring-proposals.json");
+            var proposalsFilePath = Path.Combine(workspacePath, AgentWorkspacePaths.RefactoringProposalsFilePath);
             var proposals = await ParseProposalsAsync(proposalsFilePath, ct);
 
             if (proposals is null)

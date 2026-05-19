@@ -34,6 +34,10 @@ public class AdversarialReviewHelperTests : IDisposable
         };
 
         _outputLines = new List<string>();
+
+        // Default mock for GetLatestSessionIdAsync (used by CRITICAL 1 fix)
+        _mockAgent.Setup(a => a.GetLatestSessionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("generator-session-default");
     }
 
     public void Dispose()
@@ -162,6 +166,10 @@ public class AdversarialReviewHelperTests : IDisposable
         result.RefinementTriggered.Should().BeTrue();
         result.Severities!.Critical.Should().Be(1);
         _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
+        // Verify refinement call uses ResumeSessionId targeting the generator's session
+        _mockAgent.Verify(a => a.ExecuteAsync(
+            It.Is<AgentRequest>(r => r.UseResume == true && r.ResumeSessionId == "generator-session-default"),
+            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
     }
 
     [Fact]
@@ -291,6 +299,8 @@ public class AdversarialReviewHelperTests : IDisposable
         var callCount = 0;
         var reviewUsage = new TokenUsage { InputTokens = 500, OutputTokens = 250 };
 
+        _mockAgent.Setup(a => a.GetLatestSessionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("generator-session-123");
         _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(() =>
             {
@@ -314,9 +324,11 @@ public class AdversarialReviewHelperTests : IDisposable
             _mockLogger.Object,
             CancellationToken.None);
 
-        // When refinement throws, the whole try-catch catches it and returns ReviewExecuted=false
-        // But the review usage is lost because the exception is caught at the outer level
-        result.ReviewExecuted.Should().BeFalse();
+        // With inner try-catch, refinement exception is caught and review usage is preserved
+        result.ReviewExecuted.Should().BeTrue();
+        result.RefinementTriggered.Should().BeFalse();
+        result.ReviewTokenUsage.Should().Be(reviewUsage);
+        result.Severities!.Critical.Should().Be(1);
     }
 
     [Fact]

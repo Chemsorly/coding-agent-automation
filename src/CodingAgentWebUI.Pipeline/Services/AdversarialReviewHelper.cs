@@ -96,6 +96,9 @@ public static class AdversarialReviewHelper
 
         try
         {
+            // CRITICAL 1: Capture generator's session ID before dispatching discriminator
+            var generatorSessionId = await agentProvider.GetLatestSessionIdAsync(workspacePath, ct);
+
             // 2. Dispatch discriminator (isolated session)
             onOutputLine?.Invoke("🔍 Dispatching adversarial reviewer...");
 
@@ -160,42 +163,59 @@ public static class AdversarialReviewHelper
             // 5. Dispatch refinement (resume generator session)
             onOutputLine?.Invoke("📝 Refinement triggered — sending findings to generator...");
 
-            var refinementResult = await agentProvider.ExecuteAsync(
-                new AgentRequest
-                {
-                    Prompt = refinementPrompt,
-                    WorkspacePath = workspacePath,
-                    Timeout = config.AgentTimeout,
-                    UseResume = true // Resume generator's session
-                },
-                ct);
-
-            // 5a. Check refinement exit code — non-zero means refinement failed
-            if (!refinementResult.Success)
+            // CRITICAL 2: Inner try-catch around refinement to preserve review usage on failure
+            try
             {
-                logger.Warning("Refinement agent exited with code {ExitCode}, keeping original output",
-                    refinementResult.ExitCode);
-                onOutputLine?.Invoke($"⚠️ Refinement agent exited with code {refinementResult.ExitCode} — keeping original output");
+                var refinementResult = await agentProvider.ExecuteAsync(
+                    new AgentRequest
+                    {
+                        Prompt = refinementPrompt,
+                        WorkspacePath = workspacePath,
+                        Timeout = config.AgentTimeout,
+                        UseResume = true,
+                        ResumeSessionId = generatorSessionId // Explicitly target generator's session
+                    },
+                    ct);
+
+                // 5a. Check refinement exit code — non-zero means refinement failed
+                if (!refinementResult.Success)
+                {
+                    logger.Warning("Refinement agent exited with code {ExitCode}, keeping original output",
+                        refinementResult.ExitCode);
+                    onOutputLine?.Invoke($"⚠️ Refinement agent exited with code {refinementResult.ExitCode} — keeping original output");
+                    return new AdversarialReviewResult
+                    {
+                        ReviewExecuted = true,
+                        RefinementTriggered = false, // Treat as "not successfully refined"
+                        ReviewTokenUsage = reviewUsage,
+                        RefinementTokenUsage = refinementResult.Usage,
+                        Severities = severities
+                    };
+                }
+
+                onOutputLine?.Invoke("✅ Refinement complete");
+
                 return new AdversarialReviewResult
                 {
                     ReviewExecuted = true,
-                    RefinementTriggered = false, // Treat as "not successfully refined"
+                    RefinementTriggered = true,
                     ReviewTokenUsage = reviewUsage,
                     RefinementTokenUsage = refinementResult.Usage,
                     Severities = severities
                 };
             }
-
-            onOutputLine?.Invoke("✅ Refinement complete");
-
-            return new AdversarialReviewResult
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                ReviewExecuted = true,
-                RefinementTriggered = true,
-                ReviewTokenUsage = reviewUsage,
-                RefinementTokenUsage = refinementResult.Usage,
-                Severities = severities
-            };
+                logger.Warning(ex, "Refinement failed: {Message}", ex.Message);
+                onOutputLine?.Invoke($"⚠️ Refinement failed: {ex.Message} — keeping original output");
+                return new AdversarialReviewResult
+                {
+                    ReviewExecuted = true,
+                    RefinementTriggered = false,
+                    ReviewTokenUsage = reviewUsage,
+                    Severities = severities
+                };
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

@@ -15,6 +15,13 @@
         <h1>Consolidation</h1>
     </header>
 
+    @if (!string.IsNullOrEmpty(_statusMessage))
+    {
+        <div class="consolidation-status-message @(_statusIsError ? "consolidation-status-error" : "consolidation-status-info")">
+            @_statusMessage
+        </div>
+    }
+
     <!-- Per-Template Cards -->
     <section class="settings-section" style="margin: 16px 20px;">
         <h2>📋 Template Consolidation</h2>
@@ -181,13 +188,6 @@
             </div>
         }
     </section>
-
-    @if (!string.IsNullOrEmpty(_statusMessage))
-    {
-        <div class="consolidation-status-message @(_statusIsError ? "consolidation-status-error" : "consolidation-status-info")">
-            @_statusMessage
-        </div>
-    }
 </div>
 
 @code {

@@ -101,8 +101,7 @@ public sealed class HarnessSuggestionExecutor
                     WorkspacePath = workspacePath,
                     Timeout = job.PipelineConfiguration.AgentTimeout
                 },
-                ct,
-                onOutputLine);
+                ct);
 
             if (!agentResult.Success)
             {
@@ -168,11 +167,6 @@ public sealed class HarnessSuggestionExecutor
             HarnessSuggestions? suggestions = null;
             if (!skipReview)
             {
-                // Delete stale review file before dispatching discriminator
-                var reviewAbsolutePath = Path.Combine(workspacePath, AgentWorkspacePaths.HarnessSuggestionsReviewFilePath);
-                if (File.Exists(reviewAbsolutePath))
-                    File.Delete(reviewAbsolutePath);
-
                 var reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
                     agentProvider,
                     workspacePath,
