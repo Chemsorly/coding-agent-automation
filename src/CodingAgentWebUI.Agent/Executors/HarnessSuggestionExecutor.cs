@@ -11,19 +11,18 @@ namespace CodingAgentWebUI.Agent.Executors;
 /// Executes harness suggestion analysis: writes feedback data to a temp workspace,
 /// runs the analysis agent prompt, and parses the resulting suggestions.
 /// </summary>
-public sealed class HarnessSuggestionExecutor
+public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
 
-    private readonly Serilog.ILogger _logger;
+    protected override string WorkspaceSuffix => "harness";
+    protected override string ExecutorName => "Harness suggestion";
 
-    public HarnessSuggestionExecutor(Serilog.ILogger logger)
+    public HarnessSuggestionExecutor(Serilog.ILogger logger) : base(logger)
     {
-        ArgumentNullException.ThrowIfNull(logger);
-        _logger = logger;
     }
 
     /// <summary>
@@ -50,7 +49,7 @@ public sealed class HarnessSuggestionExecutor
         // 2. If no feedback data: return success early
         if (string.IsNullOrWhiteSpace(job.FeedbackDataJson))
         {
-            _logger.Information("No feedback data for harness suggestion run {RunId}, skipping agent call", job.JobId);
+            Logger.Information("No feedback data for harness suggestion run {RunId}, skipping agent call", job.JobId);
             return new ConsolidationJobResult
             {
                 JobId = job.JobId,
@@ -59,22 +58,10 @@ public sealed class HarnessSuggestionExecutor
             };
         }
 
-        // WARNING 5 fix: Validate job ID is a valid GUID to prevent path traversal
-        if (!Guid.TryParse(job.JobId, out _))
-        {
-            _logger.Warning("Invalid JobId format: {JobId}", job.JobId);
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = "Invalid JobId format"
-            };
-        }
+        var invalid = ValidateJobId(job);
+        if (invalid is not null) return invalid;
 
-        // CRITICAL 3 fix: Use workspace path from job message, fall back to temp path
-        var workspacePath = job.WorkspacePath is not null
-            ? Path.Combine(job.WorkspacePath, "harness")
-            : Path.Combine(Path.GetTempPath(), "consolidation", job.JobId, "harness");
+        var workspacePath = ResolveWorkspacePath(job);
 
         try
         {
@@ -92,7 +79,7 @@ public sealed class HarnessSuggestionExecutor
             var prompt = ConsolidationPromptBuilder.BuildHarnessSuggestionPrompt(feedbackCount, successRate);
 
             // 6. Execute agent
-            _logger.Information("Executing harness suggestion agent for run {RunId} ({FeedbackCount} runs, {SuccessRate:F1}% success rate)",
+            Logger.Information("Executing harness suggestion agent for run {RunId} ({FeedbackCount} runs, {SuccessRate:F1}% success rate)",
                 job.JobId, feedbackCount, successRate);
             var agentResult = await agentProvider.ExecuteAsync(
                 new AgentRequest
@@ -105,14 +92,9 @@ public sealed class HarnessSuggestionExecutor
 
             if (!agentResult.Success)
             {
-                _logger.Warning("Harness suggestion agent exited with code {ExitCode} for run {RunId}",
-                    agentResult.ExitCode, job.JobId);
-                return new ConsolidationJobResult
-                {
-                    JobId = job.JobId,
-                    Success = false,
-                    ErrorMessage = $"Agent exited with code {agentResult.ExitCode}"
-                };
+                Logger.Warning("{ExecutorName} agent exited with code {ExitCode} for run {RunId}",
+                    ExecutorName, agentResult.ExitCode, job.JobId);
+                return CreateFailureResult(job.JobId, $"Agent exited with code {agentResult.ExitCode}");
             }
 
             // 7. Write output to file step + adversarial review
@@ -139,7 +121,7 @@ public sealed class HarnessSuggestionExecutor
 
                 if (!File.Exists(suggestionsOutputPath))
                 {
-                    _logger.Warning("Agent did not write suggestions output file for run {RunId}, falling back to response text parsing", job.JobId);
+                    Logger.Warning("Agent did not write suggestions output file for run {RunId}, falling back to response text parsing", job.JobId);
                     onOutputLine?.Invoke("⚠️ Suggestions output file not created — falling back to response text parsing");
                     skipReview = true;
                 }
@@ -148,7 +130,7 @@ public sealed class HarnessSuggestionExecutor
                     var fileContent = await File.ReadAllTextAsync(suggestionsOutputPath, ct);
                     if (fileContent.Trim().Length < AdversarialReviewHelper.MinimumContentThreshold)
                     {
-                        _logger.Warning("Suggestions output file too short ({Length} chars) for run {RunId}, falling back to response text parsing",
+                        Logger.Warning("Suggestions output file too short ({Length} chars) for run {RunId}, falling back to response text parsing",
                             fileContent.Trim().Length, job.JobId);
                         onOutputLine?.Invoke("⚠️ Suggestions output file too short — falling back to response text parsing");
                         skipReview = true;
@@ -157,7 +139,7 @@ public sealed class HarnessSuggestionExecutor
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.Warning(ex, "Write-to-file step failed for run {RunId}: {Message}, falling back to response text parsing",
+                Logger.Warning(ex, "Write-to-file step failed for run {RunId}: {Message}, falling back to response text parsing",
                     job.JobId, ex.Message);
                 onOutputLine?.Invoke($"⚠️ Write-to-file failed: {ex.Message} — falling back to response text parsing");
                 skipReview = true;
@@ -179,7 +161,7 @@ public sealed class HarnessSuggestionExecutor
                         AgentTimeout = job.PipelineConfiguration.AgentTimeout
                     },
                     onOutputLine,
-                    _logger,
+                    Logger,
                     ct);
 
                 reviewTokenUsage = reviewResult.ReviewTokenUsage;
@@ -195,17 +177,17 @@ public sealed class HarnessSuggestionExecutor
                         if (refinedSuggestions is not null)
                         {
                             suggestions = refinedSuggestions;
-                            _logger.Information("Using refined suggestions for run {RunId}", job.JobId);
+                            Logger.Information("Using refined suggestions for run {RunId}", job.JobId);
                         }
                         else
                         {
-                            _logger.Warning("Refined suggestions file is malformed for run {RunId}, falling back to response text parsing", job.JobId);
+                            Logger.Warning("Refined suggestions file is malformed for run {RunId}, falling back to response text parsing", job.JobId);
                             onOutputLine?.Invoke("⚠️ Refined suggestions file malformed — falling back to response text parsing");
                         }
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
-                        _logger.Warning(ex, "Failed to re-read refined suggestions file for run {RunId}, falling back to response text parsing", job.JobId);
+                        Logger.Warning(ex, "Failed to re-read refined suggestions file for run {RunId}, falling back to response text parsing", job.JobId);
                         onOutputLine?.Invoke("⚠️ Failed to re-read refined suggestions — falling back to response text parsing");
                     }
                 }
@@ -222,12 +204,12 @@ public sealed class HarnessSuggestionExecutor
                         }
                         else
                         {
-                            _logger.Warning("Suggestions output file is malformed for run {RunId}, falling back to response text parsing", job.JobId);
+                            Logger.Warning("Suggestions output file is malformed for run {RunId}, falling back to response text parsing", job.JobId);
                         }
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
-                        _logger.Warning(ex, "Failed to read suggestions output file for run {RunId}, falling back to response text parsing", job.JobId);
+                        Logger.Warning(ex, "Failed to read suggestions output file for run {RunId}, falling back to response text parsing", job.JobId);
                     }
                 }
             }
@@ -240,7 +222,7 @@ public sealed class HarnessSuggestionExecutor
 
             if (suggestions is null)
             {
-                _logger.Warning("Failed to parse harness suggestions from agent output for run {RunId}", job.JobId);
+                Logger.Warning("Failed to parse harness suggestions from agent output for run {RunId}", job.JobId);
                 return new ConsolidationJobResult
                 {
                     JobId = job.JobId,
@@ -253,7 +235,7 @@ public sealed class HarnessSuggestionExecutor
 
             // 9. Return result with suggestions
             var summary = $"Generated {suggestions.Suggestions.Count} suggestion(s) from {suggestions.BasedOnRunCount} runs ({suggestions.SuccessRate:F1}% success rate)";
-            _logger.Information("Harness suggestion run {RunId} completed: {Summary}", job.JobId, summary);
+            Logger.Information("{ExecutorName} run {RunId} completed: {Summary}", ExecutorName, job.JobId, summary);
 
             return new ConsolidationJobResult
             {
@@ -267,22 +249,12 @@ public sealed class HarnessSuggestionExecutor
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = "Consolidation run was cancelled"
-            };
+            return CreateCancelledResult(job.JobId);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Harness suggestion run {RunId} failed: {Message}", job.JobId, ex.Message);
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = ex.Message
-            };
+            Logger.Error(ex, "{ExecutorName} run {RunId} failed: {Message}", ExecutorName, job.JobId, ex.Message);
+            return CreateFailureResult(job.JobId, ex.Message);
         }
     }
 

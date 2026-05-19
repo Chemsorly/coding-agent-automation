@@ -10,19 +10,18 @@ namespace CodingAgentWebUI.Agent.Executors;
 /// Executes refactoring detection: clones the code repo, runs the holistic analysis
 /// agent prompt, parses proposals from the workspace, and creates GitHub issues.
 /// </summary>
-public sealed class RefactoringExecutor
+public sealed class RefactoringExecutor : ConsolidationExecutorBase
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
 
-    private readonly Serilog.ILogger _logger;
+    protected override string WorkspaceSuffix => "refactoring";
+    protected override string ExecutorName => "Refactoring detection";
 
-    public RefactoringExecutor(Serilog.ILogger logger)
+    public RefactoringExecutor(Serilog.ILogger logger) : base(logger)
     {
-        ArgumentNullException.ThrowIfNull(logger);
-        _logger = logger;
     }
 
     /// <summary>
@@ -51,28 +50,16 @@ public sealed class RefactoringExecutor
         ArgumentNullException.ThrowIfNull(issueProvider);
         ArgumentNullException.ThrowIfNull(agentProvider);
 
-        // WARNING 5 fix: Validate job ID is a valid GUID to prevent path traversal
-        if (!Guid.TryParse(job.JobId, out _))
-        {
-            _logger.Warning("Invalid JobId format: {JobId}", job.JobId);
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = "Invalid JobId format"
-            };
-        }
+        var invalid = ValidateJobId(job);
+        if (invalid is not null) return invalid;
 
-        // CRITICAL 3 fix: Use workspace path from job message, fall back to temp path
-        var workspacePath = job.WorkspacePath is not null
-            ? Path.Combine(job.WorkspacePath, "refactoring")
-            : Path.Combine(Path.GetTempPath(), "consolidation", job.JobId, "refactoring");
+        var workspacePath = ResolveWorkspacePath(job);
 
         try
         {
             // 1. Clone code repo
             Directory.CreateDirectory(workspacePath);
-            _logger.Information("Cloning code repo for refactoring detection run {RunId} into {Workspace}",
+            Logger.Information("Cloning code repo for refactoring detection run {RunId} into {Workspace}",
                 job.JobId, workspacePath);
             await repoProvider.CloneAsync(workspacePath, ct);
 
@@ -83,11 +70,11 @@ public sealed class RefactoringExecutor
                 try
                 {
                     await brainProvider.CloneAsync(brainPath, ct);
-                    _logger.Information("Brain repo cloned for architectural context in run {RunId}", job.JobId);
+                    Logger.Information("Brain repo cloned for architectural context in run {RunId}", job.JobId);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _logger.Warning(ex, "Failed to clone brain repo for context in run {RunId}, continuing without it", job.JobId);
+                    Logger.Warning(ex, "Failed to clone brain repo for context in run {RunId}, continuing without it", job.JobId);
                 }
             }
 
@@ -95,7 +82,7 @@ public sealed class RefactoringExecutor
             var prompt = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(job.PipelineConfiguration.MaxRefactoringProposals);
 
             // 4. Execute agent
-            _logger.Information("Executing refactoring detection agent for run {RunId}", job.JobId);
+            Logger.Information("Executing refactoring detection agent for run {RunId}", job.JobId);
             var agentResult = await agentProvider.ExecuteAsync(
                 new AgentRequest
                 {
@@ -107,14 +94,9 @@ public sealed class RefactoringExecutor
 
             if (!agentResult.Success)
             {
-                _logger.Warning("Refactoring detection agent exited with code {ExitCode} for run {RunId}",
-                    agentResult.ExitCode, job.JobId);
-                return new ConsolidationJobResult
-                {
-                    JobId = job.JobId,
-                    Success = false,
-                    ErrorMessage = $"Agent exited with code {agentResult.ExitCode}"
-                };
+                Logger.Warning("{ExecutorName} agent exited with code {ExitCode} for run {RunId}",
+                    ExecutorName, agentResult.ExitCode, job.JobId);
+                return CreateFailureResult(job.JobId, $"Agent exited with code {agentResult.ExitCode}");
             }
 
             // 5. Parse proposals JSON from workspace file
@@ -124,18 +106,13 @@ public sealed class RefactoringExecutor
             if (proposals is null)
             {
                 // Malformed JSON — mark as failed
-                return new ConsolidationJobResult
-                {
-                    JobId = job.JobId,
-                    Success = false,
-                    ErrorMessage = "Failed to parse refactoring proposals JSON from agent output"
-                };
+                return CreateFailureResult(job.JobId, "Failed to parse refactoring proposals JSON from agent output");
             }
 
             // 6. If no proposals: return success (skip review)
             if (proposals.Count == 0)
             {
-                _logger.Information("No refactoring opportunities identified in run {RunId}", job.JobId);
+                Logger.Information("No refactoring opportunities identified in run {RunId}", job.JobId);
                 return new ConsolidationJobResult
                 {
                     JobId = job.JobId,
@@ -157,7 +134,7 @@ public sealed class RefactoringExecutor
                     AgentTimeout = job.PipelineConfiguration.AgentTimeout
                 },
                 onOutputLine,
-                _logger,
+                Logger,
                 ct);
 
             // If refinement was triggered, re-read and re-parse proposals
@@ -166,13 +143,13 @@ public sealed class RefactoringExecutor
                 var refinedProposals = await ParseProposalsAsync(proposalsFilePath, ct);
                 if (refinedProposals is null)
                 {
-                    _logger.Warning("Refined proposals file is malformed in run {RunId}, keeping original proposals", job.JobId);
+                    Logger.Warning("Refined proposals file is malformed in run {RunId}, keeping original proposals", job.JobId);
                     // Keep original proposals — don't overwrite
                 }
                 else
                 {
                     proposals = refinedProposals;
-                    _logger.Information("Using refined proposals ({Count} proposals) in run {RunId}",
+                    Logger.Information("Using refined proposals ({Count} proposals) in run {RunId}",
                         proposals.Count, job.JobId);
                 }
             }
@@ -182,7 +159,7 @@ public sealed class RefactoringExecutor
 
             // 9. Return summary — distinguish between "no proposals" and "proposals found but issues failed"
             var summary = FormatRefactoringSummary(createdIssues, proposals.Count);
-            _logger.Information("Refactoring detection run {RunId} completed: {Summary}", job.JobId, summary);
+            Logger.Information("{ExecutorName} run {RunId} completed: {Summary}", ExecutorName, job.JobId, summary);
 
             return new ConsolidationJobResult
             {
@@ -196,22 +173,12 @@ public sealed class RefactoringExecutor
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = "Consolidation run was cancelled"
-            };
+            return CreateCancelledResult(job.JobId);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Refactoring detection run {RunId} failed: {Message}", job.JobId, ex.Message);
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = ex.Message
-            };
+            Logger.Error(ex, "{ExecutorName} run {RunId} failed: {Message}", ExecutorName, job.JobId, ex.Message);
+            return CreateFailureResult(job.JobId, ex.Message);
         }
     }
 
@@ -225,7 +192,7 @@ public sealed class RefactoringExecutor
     {
         if (!File.Exists(filePath))
         {
-            _logger.Information("No refactoring proposals file found at {Path}, treating as no proposals", filePath);
+            Logger.Information("No refactoring proposals file found at {Path}, treating as no proposals", filePath);
             return Array.Empty<RefactoringProposal>();
         }
 
@@ -237,7 +204,7 @@ public sealed class RefactoringExecutor
         }
         catch (JsonException ex)
         {
-            _logger.Warning(ex, "Malformed JSON in refactoring proposals file at {Path}", filePath);
+            Logger.Warning(ex, "Malformed JSON in refactoring proposals file at {Path}", filePath);
             return null;
         }
     }
@@ -274,12 +241,12 @@ public sealed class RefactoringExecutor
                     Url = result.Url
                 });
 
-                _logger.Information("Created refactoring issue {Identifier}: {Title}",
+                Logger.Information("Created refactoring issue {Identifier}: {Title}",
                     result.Identifier, proposal.Title);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.Warning(ex, "Failed to create issue for proposal '{Title}', continuing with remaining",
+                Logger.Warning(ex, "Failed to create issue for proposal '{Title}', continuing with remaining",
                     proposal.Title);
             }
         }
