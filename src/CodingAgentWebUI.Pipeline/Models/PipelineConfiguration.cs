@@ -361,4 +361,33 @@ public sealed record PipelineConfiguration
     /// When non-empty, the pipeline loop iterates through enabled templates each cycle.
     /// </summary>
     public IReadOnlyList<PipelineJobTemplate> PipelineJobTemplates { get; init; } = Array.Empty<PipelineJobTemplate>();
+
+    /// <summary>
+    /// Maximum number of refactoring proposals the agent is instructed to produce
+    /// and the executor will create issues for. Controls both the prompt instruction
+    /// ("Produce at most N proposals") and the issue creation cap in RefactoringExecutor.
+    /// Default: 3.
+    /// </summary>
+    public int MaxRefactoringProposals { get; init; } = 3;
+
+    /// <summary>
+    /// Whether refactoring proposals undergo adversarial review before issue creation.
+    /// When enabled, proposals are reviewed for quality and feasibility before creating GitHub issues.
+    /// Default: true.
+    /// </summary>
+    public bool RefactoringReviewEnabled { get; init; } = true;
+
+    /// <summary>
+    /// Whether brain consolidation changes undergo adversarial review before committing.
+    /// When enabled, proposed brain updates are reviewed for accuracy and relevance.
+    /// Default: true.
+    /// </summary>
+    public bool BrainConsolidationReviewEnabled { get; init; } = true;
+
+    /// <summary>
+    /// Whether harness suggestions undergo adversarial review before persisting.
+    /// When enabled, suggested harness changes are reviewed for correctness.
+    /// Default: true.
+    /// </summary>
+    public bool HarnessSuggestionsReviewEnabled { get; init; } = true;
 }

@@ -40,6 +40,10 @@ public static class TestPipelineConfig
         ClosedLoopMaxConsecutivePollFailures = 5,
         ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15),
         ClosedLoopMaxPagesToFetch = 10,
+        MaxRefactoringProposals = 3,
+        RefactoringReviewEnabled = false,
+        BrainConsolidationReviewEnabled = false,
+        HarnessSuggestionsReviewEnabled = false,
     };
 
     /// <summary>
@@ -71,5 +75,9 @@ public static class TestPipelineConfig
         ClosedLoopMaxConsecutivePollFailures = 5,
         ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15),
         ClosedLoopMaxPagesToFetch = 10,
+        MaxRefactoringProposals = 3,
+        RefactoringReviewEnabled = false,
+        BrainConsolidationReviewEnabled = false,
+        HarnessSuggestionsReviewEnabled = false,
     };
 }

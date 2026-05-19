@@ -65,7 +65,7 @@ public class ConsolidationPromptBuilderTests
     }
 
     /// <summary>
-    /// Refactoring detection prompt specifies maximum 3 proposals.
+    /// Refactoring detection prompt specifies maximum proposals based on parameter.
     /// **Validates: Requirements 5.4**
     /// </summary>
     [Fact]
@@ -74,6 +74,18 @@ public class ConsolidationPromptBuilderTests
         var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
 
         result.Should().Contain("3 proposals");
+    }
+
+    /// <summary>
+    /// Refactoring detection prompt respects custom max proposals parameter.
+    /// </summary>
+    [Fact]
+    public void BuildRefactoringDetectionPrompt_RespectsCustomMaxProposals()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(5);
+
+        result.Should().Contain("5 proposals");
+        result.Should().NotContain("3 proposals");
     }
 
     /// <summary>

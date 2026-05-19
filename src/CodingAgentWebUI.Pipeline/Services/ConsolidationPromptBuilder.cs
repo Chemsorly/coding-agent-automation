@@ -112,7 +112,8 @@ public static class ConsolidationPromptBuilder
     /// Builds the holistic refactoring analysis prompt.
     /// Instructs agent to produce bounded proposals as JSON.
     /// </summary>
-    public static string BuildRefactoringDetectionPrompt()
+    /// <param name="maxProposals">Maximum number of proposals the agent should produce.</param>
+    public static string BuildRefactoringDetectionPrompt(int maxProposals = 3)
     {
         var sb = new StringBuilder();
 
@@ -148,7 +149,7 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("## Output Format");
         sb.AppendLine();
         sb.AppendLine("Produce your findings as a JSON file at `.agent/refactoring-proposals.json`.");
-        sb.AppendLine("The file must contain an array of proposal objects (maximum 3 proposals).");
+        sb.AppendLine($"The file must contain an array of proposal objects (maximum {maxProposals} proposals).");
         sb.AppendLine();
         sb.AppendLine("Each proposal must follow this schema:");
         sb.AppendLine();
@@ -167,7 +168,7 @@ public static class ConsolidationPromptBuilder
         // Constraints
         sb.AppendLine("## Constraints");
         sb.AppendLine();
-        sb.AppendLine("- Produce at most **3 proposals** per analysis, prioritized by impact");
+        sb.AppendLine($"- Produce at most **{maxProposals} proposals** per analysis, prioritized by impact");
         sb.AppendLine("- Each proposal must address **one concern** — do not bundle unrelated changes");
         sb.AppendLine("- Include specific file paths in `affectedFiles` — do not use wildcards or vague references");
         sb.AppendLine("- The `rationale` must reference concrete evidence found during exploration");

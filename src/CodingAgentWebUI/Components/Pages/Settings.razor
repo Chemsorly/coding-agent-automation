@@ -88,6 +88,11 @@
                         PipelineProviderCount="_pipelineProviders.Count"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
+                case SettingsNodes.PipelineConsolidation:
+                    <PipelineConsolidationSection
+                        ConfigStore="ConfigStore"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
                 case SettingsNodes.AgentProfiles:
                     <AgentProfileSection
                         ConfigStore="ConfigStore"

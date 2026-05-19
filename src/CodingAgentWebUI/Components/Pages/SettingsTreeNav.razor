@@ -53,6 +53,10 @@
                      @onclick="() => SelectNode(SettingsNodes.PipelineQuality)">
                     Quality Gates
                 </div>
+                <div class="tree-node @(SelectedNode == SettingsNodes.PipelineConsolidation ? "active" : "")"
+                     @onclick="() => SelectNode(SettingsNodes.PipelineConsolidation)">
+                    Consolidation
+                </div>
             </div>
         }
     </div>

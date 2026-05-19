@@ -1,0 +1,80 @@
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+
+<section class="settings-section">
+    <h2>Consolidation</h2>
+    <p class="section-description">Controls for the consolidation loops: refactoring detection, brain consolidation, and harness suggestions.</p>
+    <div class="provider-form">
+        <div class="form-group">
+            <label>Max Refactoring Proposals</label>
+            <input type="number" @bind="_maxRefactoringProposals" min="1" max="10" />
+        </div>
+        <div class="config-sub-fields" style="margin-top: 1rem;">
+            <h3 style="margin-bottom: 0.5rem;">Adversarial Review</h3>
+            <div class="form-hint" style="margin-bottom: 0.75rem;">
+                ℹ️ When enabled, a second agent reviews consolidation output before it is persisted. Only findings marked [CRITICAL] or [WARNING] trigger refinement.
+            </div>
+            <div class="form-group form-checkbox">
+                <label>
+                    <input type="checkbox" @bind="_refactoringReviewEnabled" />
+                    Refactoring Review
+                </label>
+            </div>
+            <div class="form-group form-checkbox">
+                <label>
+                    <input type="checkbox" @bind="_brainConsolidationReviewEnabled" />
+                    Brain Consolidation Review
+                </label>
+            </div>
+            <div class="form-group form-checkbox">
+                <label>
+                    <input type="checkbox" @bind="_harnessSuggestionsReviewEnabled" />
+                    Harness Suggestions Review
+                </label>
+            </div>
+        </div>
+        <div class="pipeline-form-actions">
+            <button class="btn-save" @onclick="SaveAsync">Save Consolidation Settings</button>
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private int _maxRefactoringProposals = 3;
+    private bool _refactoringReviewEnabled = true;
+    private bool _brainConsolidationReviewEnabled = true;
+    private bool _harnessSuggestionsReviewEnabled = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        _maxRefactoringProposals = config.MaxRefactoringProposals;
+        _refactoringReviewEnabled = config.RefactoringReviewEnabled;
+        _brainConsolidationReviewEnabled = config.BrainConsolidationReviewEnabled;
+        _harnessSuggestionsReviewEnabled = config.HarnessSuggestionsReviewEnabled;
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            await ConfigStore.UpdatePipelineConfigAsync(
+                current => current with
+                {
+                    MaxRefactoringProposals = _maxRefactoringProposals,
+                    RefactoringReviewEnabled = _refactoringReviewEnabled,
+                    BrainConsolidationReviewEnabled = _brainConsolidationReviewEnabled,
+                    HarnessSuggestionsReviewEnabled = _harnessSuggestionsReviewEnabled
+                },
+                CancellationToken.None);
+            await OnShowStatus.InvokeAsync(("Consolidation settings saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+}

@@ -90,7 +90,7 @@ public sealed class RefactoringExecutor
             }
 
             // 3. Build prompt
-            var prompt = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
+            var prompt = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(job.PipelineConfiguration.MaxRefactoringProposals);
 
             // 4. Execute agent
             _logger.Information("Executing refactoring detection agent for run {RunId}", job.JobId);
@@ -142,8 +142,8 @@ public sealed class RefactoringExecutor
                 };
             }
 
-            // 7. Create GitHub issues (max 3)
-            var createdIssues = await CreateIssuesAsync(proposals, issueProvider, ct);
+            // 7. Create GitHub issues (capped at MaxRefactoringProposals)
+            var createdIssues = await CreateIssuesAsync(proposals, issueProvider, job.PipelineConfiguration.MaxRefactoringProposals, ct);
 
             // 8. Return summary — distinguish between "no proposals" and "proposals found but issues failed"
             var summary = FormatRefactoringSummary(createdIssues, proposals.Count);
@@ -206,16 +206,17 @@ public sealed class RefactoringExecutor
     }
 
     /// <summary>
-    /// Creates GitHub issues for each proposal, capped at 3.
+    /// Creates GitHub issues for each proposal, capped at <paramref name="maxProposals"/>.
     /// Individual issue creation failures are logged but do not stop processing.
     /// </summary>
     private async Task<IReadOnlyList<CreatedIssueInfo>> CreateIssuesAsync(
         IReadOnlyList<RefactoringProposal> proposals,
         IIssueProvider issueProvider,
+        int maxProposals,
         CancellationToken ct)
     {
         var createdIssues = new List<CreatedIssueInfo>();
-        var proposalsToProcess = proposals.Take(3);
+        var proposalsToProcess = proposals.Take(maxProposals);
 
         foreach (var proposal in proposalsToProcess)
         {
