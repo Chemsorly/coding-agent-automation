@@ -208,17 +208,17 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
             // The agent may also attempt a label swap via RequestLabelChange during its own
             // error handling, but that call can race with this handler (run already removed).
             // This is the authoritative swap that guarantees correctness.
-            if (payload.FinalStep == PipelineStep.Failed)
+            var label = payload.FinalLabel ?? payload.FinalStep switch
             {
-                await SwapLabelViaIssueProviderAsync(run, AgentLabels.Error);
-            }
-            else if (payload.FinalStep == PipelineStep.Completed)
+                PipelineStep.Failed => AgentLabels.Error,
+                PipelineStep.Completed => AgentLabels.Done,
+                PipelineStep.Cancelled => AgentLabels.Cancelled,
+                _ => null
+            };
+
+            if (label is not null)
             {
-                await SwapLabelViaIssueProviderAsync(run, AgentLabels.Done);
-            }
-            else if (payload.FinalStep == PipelineStep.Cancelled)
-            {
-                await SwapLabelViaIssueProviderAsync(run, AgentLabels.Cancelled);
+                await SwapLabelViaIssueProviderAsync(run, label);
             }
 
             // Post issue feedback comment if present (non-fatal)

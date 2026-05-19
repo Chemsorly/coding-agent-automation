@@ -322,6 +322,7 @@ public sealed class LocalPipelineExecutor
             return new JobCompletionPayload
             {
                 FinalStep = PipelineStep.Cancelled,
+                FinalLabel = AgentLabels.Cancelled,
                 CompletedAt = DateTimeOffset.UtcNow,
                 RetryCount = run.RetryCount,
                 IsRework = run.LinkedPullRequest is not null
@@ -462,6 +463,7 @@ public sealed class LocalPipelineExecutor
     internal static JobCompletionPayload BuildCompletionPayload(PipelineRun run) => new()
     {
         FinalStep = run.CurrentStep,
+        FinalLabel = DetermineFinalLabel(run),
         FailureReason = run.FailureReason,
         PullRequestUrl = run.PullRequestUrl,
         PullRequestNumber = run.PullRequestNumber,
@@ -489,6 +491,7 @@ public sealed class LocalPipelineExecutor
     internal static JobCompletionPayload BuildFailurePayload(PipelineRun run, string reason) => new()
     {
         FinalStep = PipelineStep.Failed,
+        FinalLabel = AgentLabels.Error,
         FailureReason = reason,
         CompletedAt = DateTimeOffset.UtcNow,
         RetryCount = run.RetryCount,
@@ -506,6 +509,15 @@ public sealed class LocalPipelineExecutor
         Feedback = run.Feedback,
         TotalTokens = run.TotalTokens,
         TotalCost = run.TotalCost
+    };
+
+    internal static string DetermineFinalLabel(PipelineRun run) => run.CurrentStep switch
+    {
+        PipelineStep.Completed when string.Equals(run.AnalysisRecommendation, "wont_do", StringComparison.OrdinalIgnoreCase) => AgentLabels.WontDo,
+        PipelineStep.Completed => AgentLabels.Done,
+        PipelineStep.Cancelled => AgentLabels.Cancelled,
+        PipelineStep.Failed when string.Equals(run.AnalysisRecommendation, "not_ready", StringComparison.OrdinalIgnoreCase) => AgentLabels.NeedsRefinement,
+        _ => AgentLabels.Error
     };
 
     /// <summary>

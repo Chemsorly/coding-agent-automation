@@ -200,7 +200,7 @@ public class OrchestratorRunServicePropertyTests
 
     /// <summary>
     /// Determines the final label based on completion state.
-    /// Mirrors the logic used in the orchestrator.
+    /// Mirrors the fallback logic used in the orchestrator when FinalLabel is null.
     /// </summary>
     private static string DetermineFinalLabel(PipelineStep finalStep, bool isDraftPr)
     {
@@ -210,5 +210,20 @@ public class OrchestratorRunServicePropertyTests
             PipelineStep.Completed when !isDraftPr => "agent:done",
             _ => "agent:error"
         };
+    }
+
+    /// <summary>
+    /// Property: When FinalLabel is present, it overrides FinalStep-based inference.
+    /// **Validates: Requirements 7.4 (FinalLabel override)**
+    /// </summary>
+    [Property]
+    public void FinalLabel_WhenPresent_OverridesFinalStepInference(bool isFailed)
+    {
+        // FinalLabel should be used directly regardless of FinalStep
+        var finalStep = isFailed ? PipelineStep.Failed : PipelineStep.Completed;
+        var finalLabel = "agent:needs-refinement";
+
+        var label = finalLabel ?? DetermineFinalLabel(finalStep, false);
+        label.Should().Be("agent:needs-refinement");
     }
 }

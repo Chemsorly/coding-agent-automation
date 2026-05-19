@@ -147,6 +147,54 @@ public sealed class AgentHubBehaviorTests
     }
 
     [Fact]
+    public async Task ReportJobCompleted_FinalLabelNeedsRefinement_OverridesFailedStep()
+    {
+        var agent = CreateAgent();
+        var run = CreateRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Failed, FinalLabel = AgentLabels.NeedsRefinement, CompletedAt = DateTimeOffset.UtcNow };
+
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportJobCompleted("job-1", payload);
+
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReportJobCompleted_FinalLabelWontDo_OverridesCompletedStep()
+    {
+        var agent = CreateAgent();
+        var run = CreateRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, FinalLabel = AgentLabels.WontDo, CompletedAt = DateTimeOffset.UtcNow };
+
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportJobCompleted("job-1", payload);
+
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.WontDo, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReportJobCompleted_NullFinalLabel_FallsBackToFinalStep()
+    {
+        var agent = CreateAgent();
+        var run = CreateRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Failed, FinalLabel = null, CompletedAt = DateTimeOffset.UtcNow };
+
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportJobCompleted("job-1", payload);
+
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ReportJobCompleted_TransitionsAgentToIdle_SignalsDrain()
     {
         var agent = CreateAgent();

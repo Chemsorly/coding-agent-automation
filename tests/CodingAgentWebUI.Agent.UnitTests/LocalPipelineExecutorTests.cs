@@ -373,6 +373,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
 
         payload.FinalStep.Should().Be(PipelineStep.Completed);
+        payload.FinalLabel.Should().Be(AgentLabels.Done);
         payload.PullRequestUrl.Should().Be("https://github.com/owner/repo/pull/42");
         payload.PullRequestNumber.Should().Be("42");
         payload.IsDraftPr.Should().BeFalse();
@@ -431,6 +432,48 @@ public class LocalPipelineExecutorTests : IDisposable
         payload.CompletedAt.Should().BeOnOrAfter(before);
     }
 
+    [Fact]
+    public void BuildCompletionPayload_NotReadyRecommendation_SetsFinalLabelNeedsRefinement()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-nr",
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.Failed,
+            CompletedAt = DateTime.UtcNow,
+            AnalysisRecommendation = "not_ready"
+        };
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.FinalLabel.Should().Be(AgentLabels.NeedsRefinement);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_WontDoRecommendation_SetsFinalLabelWontDo()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-wd",
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.Completed,
+            CompletedAt = DateTime.UtcNow,
+            AnalysisRecommendation = "wont_do"
+        };
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.FinalLabel.Should().Be(AgentLabels.WontDo);
+    }
+
     // ── BuildFailurePayload ─────────────────────────────────────────────
 
     [Fact]
@@ -453,6 +496,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var payload = LocalPipelineExecutor.BuildFailurePayload(run, "Something went wrong");
 
         payload.FinalStep.Should().Be(PipelineStep.Failed);
+        payload.FinalLabel.Should().Be(AgentLabels.Error);
         payload.FailureReason.Should().Be("Something went wrong");
         payload.RetryCount.Should().Be(3);
         payload.FilesChangedCount.Should().Be(2);
@@ -503,6 +547,25 @@ public class LocalPipelineExecutorTests : IDisposable
         payload.CodeReviewCriticalCount.Should().Be(2);
         payload.CodeReviewWarningCount.Should().Be(5);
         payload.CodeReviewSuggestionCount.Should().Be(10);
+    }
+
+    [Fact]
+    public void BuildFailurePayload_AlwaysSetsErrorLabel_EvenWithAnalysisRecommendation()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-7",
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            AnalysisRecommendation = "not_ready"
+        };
+
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "unhandled exception");
+
+        payload.FinalLabel.Should().Be(AgentLabels.Error);
     }
 
     // TODO: ExecuteAsync tests below dispose OutputBatcher/HubConnection after assertions.

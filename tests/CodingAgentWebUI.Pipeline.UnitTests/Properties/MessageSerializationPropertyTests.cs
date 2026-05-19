@@ -86,6 +86,7 @@ public class MessageSerializationPropertyTests
         var original = new JobCompletionPayload
         {
             FinalStep = PipelineStep.Completed,
+            FinalLabel = AgentLabels.Done,
             FailureReason = isDraftPr ? "Quality gates failed" : null,
             PullRequestUrl = "https://github.com/test/pr/1",
             PullRequestNumber = "42",
@@ -111,6 +112,7 @@ public class MessageSerializationPropertyTests
         var deserialized = MessagePackSerializer.Deserialize<JobCompletionPayload>(bytes, MsgPackOptions);
 
         deserialized.FinalStep.Should().Be(original.FinalStep);
+        deserialized.FinalLabel.Should().Be(original.FinalLabel);
         deserialized.FailureReason.Should().Be(original.FailureReason);
         deserialized.PullRequestUrl.Should().Be(original.PullRequestUrl);
         deserialized.PullRequestNumber.Should().Be(original.PullRequestNumber);
