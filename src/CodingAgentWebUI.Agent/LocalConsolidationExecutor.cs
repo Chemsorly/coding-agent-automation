@@ -174,7 +174,8 @@ public sealed class LocalConsolidationExecutor
             await agentProvider.ValidateAsync(ct);
 
             var executor = new BrainConsolidationExecutor(_logger);
-            return await executor.ExecuteAsync(job, brainProvider, agentProvider, ct);
+            return await executor.ExecuteAsync(job, brainProvider, agentProvider, ct,
+                line => _logger.Information("Consolidation output: {Line}", line));
         }
         finally
         {
@@ -265,7 +266,8 @@ public sealed class LocalConsolidationExecutor
             await agentProvider.ValidateAsync(ct);
 
             var executor = new RefactoringExecutor(_logger);
-            return await executor.ExecuteAsync(job, repoProvider, brainProvider, issueProvider, agentProvider, ct);
+            return await executor.ExecuteAsync(job, repoProvider, brainProvider, issueProvider, agentProvider, ct,
+                line => _logger.Information("Consolidation output: {Line}", line));
         }
         finally
         {
@@ -302,7 +304,8 @@ public sealed class LocalConsolidationExecutor
             await agentProvider.ValidateAsync(ct);
 
             var executor = new HarnessSuggestionExecutor(_logger);
-            return await executor.ExecuteAsync(job, agentProvider, ct);
+            return await executor.ExecuteAsync(job, agentProvider, ct,
+                line => _logger.Information("Consolidation output: {Line}", line));
         }
         finally
         {

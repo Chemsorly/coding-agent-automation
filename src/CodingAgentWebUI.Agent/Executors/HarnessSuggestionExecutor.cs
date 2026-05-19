@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -33,13 +34,15 @@ public sealed class HarnessSuggestionExecutor
     /// 4. Calculate feedbackCount and successRate from the data
     /// 5. Build prompt via ConsolidationPromptBuilder.BuildHarnessSuggestionPrompt
     /// 6. Execute agent in temp workspace
-    /// 7. Parse agent output into HarnessSuggestions model
-    /// 8. Return result with HarnessSuggestions populated
+    /// 7. Write output to file (UseResume=true), then review via AdversarialReviewHelper
+    /// 8. Parse suggestions from file (or fall back to response text)
+    /// 9. Return result with HarnessSuggestions populated
     /// </summary>
     public async Task<ConsolidationJobResult> ExecuteAsync(
         ConsolidationJobMessage job,
         IAgentProvider agentProvider,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action<string>? onOutputLine = null)
     {
         ArgumentNullException.ThrowIfNull(job);
         ArgumentNullException.ThrowIfNull(agentProvider);
@@ -98,7 +101,8 @@ public sealed class HarnessSuggestionExecutor
                     WorkspacePath = workspacePath,
                     Timeout = job.PipelineConfiguration.AgentTimeout
                 },
-                ct);
+                ct,
+                onOutputLine);
 
             if (!agentResult.Success)
             {
@@ -112,9 +116,133 @@ public sealed class HarnessSuggestionExecutor
                 };
             }
 
-            // 7. Parse agent output into HarnessSuggestions model
+            // 7. Write output to file step + adversarial review
             var responseText = string.Join("\n", agentResult.OutputLines);
-            var suggestions = ParseSuggestions(responseText);
+            var suggestionsOutputPath = Path.Combine(workspacePath, AgentWorkspacePaths.HarnessSuggestionsOutputFilePath);
+            var skipReview = false;
+            TokenUsage? reviewTokenUsage = null;
+            TokenUsage? refinementTokenUsage = null;
+
+            // 7a. Write-to-file step (wrapped in try-catch for error isolation)
+            try
+            {
+                onOutputLine?.Invoke("📄 Instructing agent to write suggestions to file...");
+                var writeResult = await agentProvider.ExecuteAsync(
+                    new AgentRequest
+                    {
+                        Prompt = "Write your harness improvement suggestions as a JSON array to the file `.agent/harness-suggestions-output.json`. Use the same JSON format you used in your response. Do not modify any other files.",
+                        WorkspacePath = workspacePath,
+                        Timeout = job.PipelineConfiguration.AgentTimeout,
+                        UseResume = true
+                    },
+                    ct,
+                    onOutputLine);
+
+                if (!File.Exists(suggestionsOutputPath))
+                {
+                    _logger.Warning("Agent did not write suggestions output file for run {RunId}, falling back to response text parsing", job.JobId);
+                    onOutputLine?.Invoke("⚠️ Suggestions output file not created — falling back to response text parsing");
+                    skipReview = true;
+                }
+                else
+                {
+                    var fileContent = await File.ReadAllTextAsync(suggestionsOutputPath, ct);
+                    if (fileContent.Trim().Length < AdversarialReviewHelper.MinimumContentThreshold)
+                    {
+                        _logger.Warning("Suggestions output file too short ({Length} chars) for run {RunId}, falling back to response text parsing",
+                            fileContent.Trim().Length, job.JobId);
+                        onOutputLine?.Invoke("⚠️ Suggestions output file too short — falling back to response text parsing");
+                        skipReview = true;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Write-to-file step failed for run {RunId}: {Message}, falling back to response text parsing",
+                    job.JobId, ex.Message);
+                onOutputLine?.Invoke($"⚠️ Write-to-file failed: {ex.Message} — falling back to response text parsing");
+                skipReview = true;
+            }
+
+            // 7b. Adversarial review step
+            HarnessSuggestions? suggestions = null;
+            if (!skipReview)
+            {
+                // Delete stale review file before dispatching discriminator
+                var reviewAbsolutePath = Path.Combine(workspacePath, AgentWorkspacePaths.HarnessSuggestionsReviewFilePath);
+                if (File.Exists(reviewAbsolutePath))
+                    File.Delete(reviewAbsolutePath);
+
+                var reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
+                    agentProvider,
+                    workspacePath,
+                    ConsolidationPromptBuilder.BuildHarnessSuggestionsReviewPrompt(),
+                    ConsolidationPromptBuilder.BuildHarnessSuggestionsRefinementPrompt(),
+                    AgentWorkspacePaths.HarnessSuggestionsReviewFilePath,
+                    new AdversarialReviewConfig
+                    {
+                        Enabled = job.PipelineConfiguration.HarnessSuggestionsReviewEnabled,
+                        AgentTimeout = job.PipelineConfiguration.AgentTimeout
+                    },
+                    onOutputLine,
+                    _logger,
+                    ct);
+
+                reviewTokenUsage = reviewResult.ReviewTokenUsage;
+                refinementTokenUsage = reviewResult.RefinementTokenUsage;
+
+                // 7c. If refinement triggered, re-read and re-parse suggestions file
+                if (reviewResult.RefinementTriggered)
+                {
+                    try
+                    {
+                        var refinedJson = await File.ReadAllTextAsync(suggestionsOutputPath, ct);
+                        var refinedSuggestions = ParseSuggestions(refinedJson);
+                        if (refinedSuggestions is not null)
+                        {
+                            suggestions = refinedSuggestions;
+                            _logger.Information("Using refined suggestions for run {RunId}", job.JobId);
+                        }
+                        else
+                        {
+                            _logger.Warning("Refined suggestions file is malformed for run {RunId}, falling back to response text parsing", job.JobId);
+                            onOutputLine?.Invoke("⚠️ Refined suggestions file malformed — falling back to response text parsing");
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.Warning(ex, "Failed to re-read refined suggestions file for run {RunId}, falling back to response text parsing", job.JobId);
+                        onOutputLine?.Invoke("⚠️ Failed to re-read refined suggestions — falling back to response text parsing");
+                    }
+                }
+                else
+                {
+                    // No refinement — parse from the output file written in step 7a
+                    try
+                    {
+                        var fileJson = await File.ReadAllTextAsync(suggestionsOutputPath, ct);
+                        var fileSuggestions = ParseSuggestions(fileJson);
+                        if (fileSuggestions is not null)
+                        {
+                            suggestions = fileSuggestions;
+                        }
+                        else
+                        {
+                            _logger.Warning("Suggestions output file is malformed for run {RunId}, falling back to response text parsing", job.JobId);
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.Warning(ex, "Failed to read suggestions output file for run {RunId}, falling back to response text parsing", job.JobId);
+                    }
+                }
+            }
+
+            // 8. Fall back to response text parsing if no suggestions parsed from file
+            if (suggestions is null)
+            {
+                suggestions = ParseSuggestions(responseText);
+            }
 
             if (suggestions is null)
             {
@@ -123,11 +251,13 @@ public sealed class HarnessSuggestionExecutor
                 {
                     JobId = job.JobId,
                     Success = false,
-                    ErrorMessage = "Failed to parse harness suggestions from agent output"
+                    ErrorMessage = "Failed to parse harness suggestions from agent output",
+                    ReviewTokenUsage = reviewTokenUsage,
+                    RefinementTokenUsage = refinementTokenUsage
                 };
             }
 
-            // 8. Return result with suggestions
+            // 9. Return result with suggestions
             var summary = $"Generated {suggestions.Suggestions.Count} suggestion(s) from {suggestions.BasedOnRunCount} runs ({suggestions.SuccessRate:F1}% success rate)";
             _logger.Information("Harness suggestion run {RunId} completed: {Summary}", job.JobId, summary);
 
@@ -136,7 +266,9 @@ public sealed class HarnessSuggestionExecutor
                 JobId = job.JobId,
                 Success = true,
                 Summary = summary,
-                HarnessSuggestions = suggestions
+                HarnessSuggestions = suggestions,
+                ReviewTokenUsage = reviewTokenUsage,
+                RefinementTokenUsage = refinementTokenUsage
             };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

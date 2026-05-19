@@ -194,130 +194,62 @@ internal partial class AgentExecutionOrchestrator
                 }
             }
 
-            // ── Analysis Review Loop (GAN-style adversarial feedback) ───────────
-            // A second agent reviews the analysis in an isolated session, then the
-            // original agent refines its analysis based on the feedback.
-            if (config.AnalysisReviewEnabled && run.AnalysisContent != null)
+            // ── Analysis Review (GAN-style adversarial feedback via shared helper) ──
+            if (run.AnalysisContent != null)
             {
                 context.Callbacks.TransitionTo(PipelineStep.ReviewingAnalysis);
                 _logger.Information("Pipeline {RunId} starting analysis review (adversarial feedback loop)", run.RunId);
-                context.Callbacks.EmitOutputLine("🔍 Analysis review: sending to isolated reviewer...");
 
-                var analysisReviewFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisReviewFilePath);
-                DeleteIfExists(analysisReviewFilePath);
-
-                try
+                var reviewConfig = new AdversarialReviewConfig
                 {
-                    // Step 1: Send analysis to isolated review agent
-                    var reviewPrompt = PromptBuilder.BuildAnalysisReviewPrompt(
-                        config.AnalysisReviewPrompt, context.Issue, context.ParsedIssue);
-                    _logger.Debug("Pipeline {RunId} analysis review prompt:\n{Prompt}", run.RunId, reviewPrompt);
+                    Enabled = config.AnalysisReviewEnabled,
+                    AgentTimeout = config.AgentTimeout
+                };
 
-                    var reviewResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                        context.AgentProvider,
-                        new AgentRequest
-                        {
-                            Prompt = reviewPrompt,
-                            WorkspacePath = run.WorkspacePath!,
-                            Timeout = config.AgentTimeout,
-                            UseResume = false // Isolated session — no shared context with analysis agent
-                        },
-                        run, config, "Analysis review agent", context.Callbacks.NotifyChange, _logger, ct,
-                        line =>
-                        {
-                            run.OutputLines.Enqueue(line);
-                            context.Callbacks.EmitOutputLine(line);
-                        });
+                var reviewPrompt = PromptBuilder.BuildAnalysisReviewPrompt(
+                    config.AnalysisReviewPrompt, context.Issue, context.ParsedIssue);
+                var refinementPrompt = PromptBuilder.BuildAnalysisRefinementPrompt(config.AnalysisRefinementPrompt);
 
-                    run.AccumulateTokenUsage(reviewResult);
-
-                    // Check if review findings were written and non-trivial
-                    if (File.Exists(analysisReviewFilePath))
+                var reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
+                    context.AgentProvider,
+                    run.WorkspacePath!,
+                    reviewPrompt,
+                    refinementPrompt,
+                    AgentWorkspacePaths.AnalysisReviewFilePath,
+                    reviewConfig,
+                    line =>
                     {
-                        var reviewContent = await File.ReadAllTextAsync(analysisReviewFilePath, ct);
+                        run.OutputLines.Enqueue(line);
+                        context.Callbacks.EmitOutputLine(line);
+                    },
+                    _logger,
+                    ct);
 
-                        if (reviewContent.Trim().Length < 20)
+                // Re-read analysis outputs if refinement was triggered
+                if (reviewResult.RefinementTriggered)
+                {
+                    if (File.Exists(analysisFilePath))
+                    {
+                        var refinedLength = new FileInfo(analysisFilePath).Length;
+                        if (refinedLength >= MinAnalysisLength)
                         {
-                            _logger.Warning("Pipeline {RunId} analysis review file exists but is trivial ({Length} chars), skipping refinement",
-                                run.RunId, reviewContent.Length);
-                            context.Callbacks.EmitOutputLine("⚠️ Analysis review produced trivial output — skipping refinement");
+                            run.AnalysisContent = await File.ReadAllTextAsync(analysisFilePath, ct);
+                            _logger.Information("Pipeline {RunId} re-read refined analysis ({Length} bytes)", run.RunId, refinedLength);
                         }
                         else
                         {
-                            _logger.Information("Pipeline {RunId} analysis review completed ({Length} chars), sending refinement prompt",
-                                run.RunId, reviewContent.Length);
-                            context.Callbacks.EmitOutputLine("📝 Analysis review complete — refining analysis...");
-
-                            // Step 2: Send refinement prompt back to original analysis session (resumed)
-                            var refinementPrompt = PromptBuilder.BuildAnalysisRefinementPrompt(config.AnalysisRefinementPrompt);
-                            _logger.Debug("Pipeline {RunId} analysis refinement prompt:\n{Prompt}", run.RunId, refinementPrompt);
-
-                            var refinementResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                                context.AgentProvider,
-                                new AgentRequest
-                                {
-                                    Prompt = refinementPrompt,
-                                    WorkspacePath = run.WorkspacePath!,
-                                    Timeout = config.AgentTimeout,
-                                    UseResume = true // Resume original analysis session
-                                },
-                                run, config, "Analysis refinement agent", context.Callbacks.NotifyChange, _logger, ct,
-                                line =>
-                                {
-                                    run.OutputLines.Enqueue(line);
-                                    context.Callbacks.EmitOutputLine(line);
-                                });
-
-                            run.AccumulateTokenUsage(refinementResult);
-
-                            // Re-read the refined analysis and assessment
-                            if (File.Exists(analysisFilePath))
-                            {
-                                var refinedLength = new FileInfo(analysisFilePath).Length;
-                                if (refinedLength >= MinAnalysisLength)
-                                {
-                                    run.AnalysisContent = await File.ReadAllTextAsync(analysisFilePath, ct);
-                                    _logger.Information("Pipeline {RunId} re-read refined analysis ({Length} bytes)", run.RunId, refinedLength);
-                                }
-                                else
-                                {
-                                    _logger.Warning("Pipeline {RunId} refined analysis too short ({Length} bytes), keeping original", run.RunId, refinedLength);
-                                }
-                            }
-
-                            // Re-read assessment (may have been updated)
-                            try
-                            {
-                                assessment = await ReadAssessmentAsync(run, ct);
-                            }
-                            catch (AnalysisIncompleteException ex)
-                            {
-                                _logger.Warning(ex, "Pipeline {RunId} failed to re-read assessment after refinement, keeping original", run.RunId);
-                            }
-
-                            context.Callbacks.EmitOutputLine("✅ Analysis refinement complete");
+                            _logger.Warning("Pipeline {RunId} refined analysis too short ({Length} bytes), keeping original", run.RunId, refinedLength);
                         }
                     }
-                    else
+
+                    try
                     {
-                        _logger.Warning("Pipeline {RunId} analysis review agent did not write findings file, skipping refinement", run.RunId);
-                        context.Callbacks.EmitOutputLine("⚠️ Analysis review produced no findings — skipping refinement");
+                        assessment = await ReadAssessmentAsync(run, ct);
                     }
-                }
-                catch (OperationCanceledException) when (context.OrchestratorCts?.IsCancellationRequested == true)
-                {
-                    throw;
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    // Analysis review is non-fatal — log and continue with original analysis
-                    _logger.Warning(ex, "Pipeline {RunId} analysis review failed, continuing with original analysis", run.RunId);
-                    context.Callbacks.EmitOutputLine("⚠️ Analysis review failed — continuing with original analysis");
-                    run.ChatHistory.Enqueue(new ChatEntry
+                    catch (AnalysisIncompleteException ex)
                     {
-                        Role = ChatRole.System,
-                        Content = $"Analysis review failed: {ex.Message}. Continuing with original analysis."
-                    });
+                        _logger.Warning(ex, "Pipeline {RunId} failed to re-read assessment after refinement, keeping original", run.RunId);
+                    }
                 }
             }
 

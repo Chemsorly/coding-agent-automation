@@ -23,6 +23,9 @@ public static class TestPipelineConfig
         AgentTimeout = TimeSpan.FromMinutes(30),
         WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
         AnalysisReviewEnabled = false,
+        RefactoringReviewEnabled = false,
+        BrainConsolidationReviewEnabled = false,
+        HarnessSuggestionsReviewEnabled = false,
         CodeReview = new CodeReviewConfiguration
         {
             MaxIterations = 2,
@@ -54,6 +57,9 @@ public static class TestPipelineConfig
         AgentTimeout = TimeSpan.FromMinutes(30),
         WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
         AnalysisReviewEnabled = false,
+        RefactoringReviewEnabled = false,
+        BrainConsolidationReviewEnabled = false,
+        HarnessSuggestionsReviewEnabled = false,
         CodeReview = new CodeReviewConfiguration
         {
             MaxIterations = 2,

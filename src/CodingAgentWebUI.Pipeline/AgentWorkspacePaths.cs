@@ -79,6 +79,31 @@ public static class AgentWorkspacePaths
     public const string FullDiffFilePath = ".agent/full-diff.txt";
 
     /// <summary>
+    /// The file path (relative to workspace) where the refactoring review agent writes its findings.
+    /// </summary>
+    public const string RefactoringReviewFilePath = ".agent/refactoring-review.md";
+
+    /// <summary>
+    /// The file path (relative to workspace) where the brain consolidation review agent writes its findings.
+    /// </summary>
+    public const string BrainConsolidationReviewFilePath = ".agent/brain-consolidation-review.md";
+
+    /// <summary>
+    /// The file path (relative to workspace) where the harness suggestions review agent writes its findings.
+    /// </summary>
+    public const string HarnessSuggestionsReviewFilePath = ".agent/harness-suggestions-review.md";
+
+    /// <summary>
+    /// The file path (relative to workspace) where the brain consolidation agent writes its diff summary.
+    /// </summary>
+    public const string BrainConsolidationDiffFilePath = ".agent/brain-consolidation-diff.md";
+
+    /// <summary>
+    /// The file path (relative to workspace) where the harness suggestion agent writes its output JSON.
+    /// </summary>
+    public const string HarnessSuggestionsOutputFilePath = ".agent/harness-suggestions-output.json";
+
+    /// <summary>
     /// Returns a per-agent findings file path to prevent sub-agent overwrite conflicts.
     /// Each review agent writes to its own isolated file.
     /// </summary>

@@ -536,6 +536,9 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         _logger.Information("Consolidation job {JobId} completed by agent {AgentId}: success={Success}",
             result.JobId, agent?.AgentId, result.Success);
 
+        // Sum token usage from review, refinement, and diff summary calls
+        var totalTokens = SumTokenUsage(result.ReviewTokenUsage, result.RefinementTokenUsage, result.DiffSummaryTokenUsage);
+
         // Update the consolidation run status
         try
         {
@@ -547,7 +550,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
             // WARNING 9: CancellationToken.None is intentional here — these are fast file I/O
             // operations that should complete even if the agent connection drops. The consolidation
             // run state must be persisted regardless of connection lifecycle.
-            await _consolidationService.UpdateRunAsync(result.JobId, status, summary, CancellationToken.None);
+            await _consolidationService.UpdateRunAsync(result.JobId, status, summary, CancellationToken.None, totalTokens);
         }
         catch (Exception ex)
         {
@@ -683,6 +686,21 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private Task SwapLabelViaIssueProviderAsync(PipelineRun run, string newLabel)
     {
         return _labelSwapper.SwapLabelAsync(run.IssueProviderConfigId, run.IssueIdentifier, newLabel, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Sums the TotalTokens (InputTokens + OutputTokens + ReasoningTokens) from the provided
+    /// token usage records. Null records are treated as zero.
+    /// </summary>
+    private static long SumTokenUsage(params Pipeline.Models.TokenUsage?[] usages)
+    {
+        long total = 0;
+        foreach (var usage in usages)
+        {
+            if (usage is not null)
+                total += usage.TotalTokens;
+        }
+        return total;
     }
 
 }

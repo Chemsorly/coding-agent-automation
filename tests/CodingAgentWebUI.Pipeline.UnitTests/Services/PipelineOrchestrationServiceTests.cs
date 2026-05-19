@@ -795,7 +795,8 @@ public class PipelineOrchestrationServiceTests
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
-                AgentTimeout = TimeSpan.FromMinutes(5)
+                AgentTimeout = TimeSpan.FromMinutes(5),
+                AnalysisReviewEnabled = false
             });
 
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
@@ -838,7 +839,8 @@ public class PipelineOrchestrationServiceTests
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
-                AgentTimeout = TimeSpan.FromMinutes(5)
+                AgentTimeout = TimeSpan.FromMinutes(5),
+                AnalysisReviewEnabled = false
             });
 
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
@@ -881,7 +883,8 @@ public class PipelineOrchestrationServiceTests
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 StallWarningInterval = TimeSpan.FromMilliseconds(100),
                 StallPollInterval = TimeSpan.FromMilliseconds(200),
-                AgentTimeout = TimeSpan.FromHours(1)
+                AgentTimeout = TimeSpan.FromHours(1),
+                AnalysisReviewEnabled = false
             });
 
         _mockAgentProvider.Setup(p => p.GetHealthStatus())

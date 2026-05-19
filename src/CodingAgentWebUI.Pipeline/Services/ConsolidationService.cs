@@ -210,7 +210,8 @@ public sealed class ConsolidationService : IConsolidationService
         string runId,
         ConsolidationRunStatus status,
         string? summary,
-        CancellationToken ct)
+        CancellationToken ct,
+        long totalTokens = 0)
     {
         ArgumentNullException.ThrowIfNull(runId);
 
@@ -242,6 +243,7 @@ public sealed class ConsolidationService : IConsolidationService
             run.Status = status;
             run.Summary = summary;
             run.CompletedAtUtc = DateTime.UtcNow;
+            run.TotalTokens = totalTokens;
 
             // Persist updated run
             await PersistRunAsync(run, ct);

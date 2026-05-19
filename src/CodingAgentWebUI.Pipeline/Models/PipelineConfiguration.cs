@@ -161,6 +161,24 @@ public sealed record PipelineConfiguration
     public string AnalysisRefinementPrompt { get; init; } = DefaultAnalysisRefinementPrompt;
 
     /// <summary>
+    /// When true, refactoring proposals are reviewed by an isolated discriminator agent
+    /// before issues are created. Default: true.
+    /// </summary>
+    public bool RefactoringReviewEnabled { get; init; } = true;
+
+    /// <summary>
+    /// When true, brain consolidation changes are reviewed by an isolated discriminator
+    /// agent before being committed. Default: true.
+    /// </summary>
+    public bool BrainConsolidationReviewEnabled { get; init; } = true;
+
+    /// <summary>
+    /// When true, harness suggestions are reviewed by an isolated discriminator agent
+    /// before being persisted. Default: true.
+    /// </summary>
+    public bool HarnessSuggestionsReviewEnabled { get; init; } = true;
+
+    /// <summary>
     /// When true, the pipeline runs a baseline health check (agent environment + workspace build)
     /// after branch creation and before code analysis. Default: true.
     /// </summary>

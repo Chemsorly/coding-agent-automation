@@ -28,6 +28,18 @@ public sealed class ConsolidationJobResult
     /// <summary>For harness suggestions: the generated suggestions object.</summary>
     [Key(5)]
     public HarnessSuggestions? HarnessSuggestions { get; init; }
+
+    /// <summary>Token usage from the discriminator review agent call.</summary>
+    [Key(6)]
+    public TokenUsage? ReviewTokenUsage { get; init; }
+
+    /// <summary>Token usage from the refinement agent call.</summary>
+    [Key(7)]
+    public TokenUsage? RefinementTokenUsage { get; init; }
+
+    /// <summary>Token usage from the brain consolidation diff summary call (brain phase only).</summary>
+    [Key(8)]
+    public TokenUsage? DiffSummaryTokenUsage { get; init; }
 }
 
 /// <summary>

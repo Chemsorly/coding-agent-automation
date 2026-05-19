@@ -33,8 +33,9 @@ public sealed class RefactoringExecutor
     /// 4. Execute agent — expects .agent/refactoring-proposals.json in workspace
     /// 5. Parse proposals JSON from workspace file
     /// 6. If no proposals: return success with "No refactoring opportunities identified"
-    /// 7. Create GitHub issues via issueProvider.CreateIssueAsync() for each proposal (max 3)
-    /// 8. Return summary with issue count and identifiers
+    /// 7. Adversarial review (if enabled and proposals non-empty)
+    /// 8. Create GitHub issues via issueProvider.CreateIssueAsync() for each proposal (max 3)
+    /// 9. Return summary with issue count and identifiers
     /// </summary>
     public async Task<ConsolidationJobResult> ExecuteAsync(
         ConsolidationJobMessage job,
@@ -42,7 +43,8 @@ public sealed class RefactoringExecutor
         IRepositoryProvider? brainProvider,
         IIssueProvider issueProvider,
         IAgentProvider agentProvider,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action<string>? onOutputLine = null)
     {
         ArgumentNullException.ThrowIfNull(job);
         ArgumentNullException.ThrowIfNull(repoProvider);
@@ -130,7 +132,7 @@ public sealed class RefactoringExecutor
                 };
             }
 
-            // 6. If no proposals: return success
+            // 6. If no proposals: return success (skip review)
             if (proposals.Count == 0)
             {
                 _logger.Information("No refactoring opportunities identified in run {RunId}", job.JobId);
@@ -142,10 +144,43 @@ public sealed class RefactoringExecutor
                 };
             }
 
-            // 7. Create GitHub issues (max 3)
+            // 7. Adversarial review (if enabled and proposals non-empty)
+            var reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
+                agentProvider,
+                workspacePath,
+                ConsolidationPromptBuilder.BuildRefactoringReviewPrompt(),
+                ConsolidationPromptBuilder.BuildRefactoringRefinementPrompt(),
+                AgentWorkspacePaths.RefactoringReviewFilePath,
+                new AdversarialReviewConfig
+                {
+                    Enabled = job.PipelineConfiguration.RefactoringReviewEnabled,
+                    AgentTimeout = job.PipelineConfiguration.AgentTimeout
+                },
+                onOutputLine,
+                _logger,
+                ct);
+
+            // If refinement was triggered, re-read and re-parse proposals
+            if (reviewResult.RefinementTriggered)
+            {
+                var refinedProposals = await ParseProposalsAsync(proposalsFilePath, ct);
+                if (refinedProposals is null)
+                {
+                    _logger.Warning("Refined proposals file is malformed in run {RunId}, keeping original proposals", job.JobId);
+                    // Keep original proposals — don't overwrite
+                }
+                else
+                {
+                    proposals = refinedProposals;
+                    _logger.Information("Using refined proposals ({Count} proposals) in run {RunId}",
+                        proposals.Count, job.JobId);
+                }
+            }
+
+            // 8. Create GitHub issues (max 3)
             var createdIssues = await CreateIssuesAsync(proposals, issueProvider, ct);
 
-            // 8. Return summary — distinguish between "no proposals" and "proposals found but issues failed"
+            // 9. Return summary — distinguish between "no proposals" and "proposals found but issues failed"
             var summary = FormatRefactoringSummary(createdIssues, proposals.Count);
             _logger.Information("Refactoring detection run {RunId} completed: {Summary}", job.JobId, summary);
 
@@ -154,7 +189,9 @@ public sealed class RefactoringExecutor
                 JobId = job.JobId,
                 Success = true,
                 Summary = summary,
-                CreatedIssues = createdIssues
+                CreatedIssues = createdIssues,
+                ReviewTokenUsage = reviewResult.ReviewTokenUsage,
+                RefinementTokenUsage = reviewResult.RefinementTokenUsage
             };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
