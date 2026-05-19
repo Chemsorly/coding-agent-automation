@@ -473,6 +473,15 @@ public static class PromptBuilder
         sb.AppendLine();
         sb.AppendLine("Do NOT commit these changes — the orchestrator handles git operations.");
         sb.AppendLine("Do NOT modify any source code files — only update `.brain/` files.");
+        sb.AppendLine();
+        sb.AppendLine("### Brain Entry Citations");
+        sb.AppendLine();
+        sb.AppendLine("In your session log, include a `## Brain Entries Referenced` section.");
+        sb.AppendLine("List each `.brain/` entry you consulted during this run with its usefulness:");
+        sb.AppendLine("- `{file}#{entry-title}` — **used, helpful** | **read, not applicable** | **used, outdated**");
+        sb.AppendLine();
+        sb.AppendLine("This data helps the consolidation process identify high-value entries and prune unused ones.");
+        sb.AppendLine("If you did not consult any brain entries, write `No brain entries referenced.`");
 
         return sb.ToString().TrimEnd();
     }
@@ -568,6 +577,22 @@ public static class PromptBuilder
         sb.AppendLine("APPEND to existing files — never overwrite. Follow the entry format in `.brain/AGENTS.md`.");
         sb.AppendLine("Include source attribution with typed source tags ([docs], [community], [experience], [verified]).");
         sb.AppendLine("You may create new files and folders as needed.");
+        sb.AppendLine();
+        sb.AppendLine("### Brain Entry Citations");
+        sb.AppendLine();
+        sb.AppendLine("In your session log, include a `## Brain Entries Referenced` section listing which");
+        sb.AppendLine("`.brain/` entries you consulted during this run and their usefulness:");
+        sb.AppendLine();
+        sb.AppendLine("```markdown");
+        sb.AppendLine("## Brain Entries Referenced");
+        sb.AppendLine();
+        sb.AppendLine("- `technology/dotnet.md#entry-title` — **used, helpful** — brief reason");
+        sb.AppendLine("- `general/lessons-learned.md#entry-title` — **read, not applicable** — why it didn't apply");
+        sb.AppendLine("- `technology/blazor.md#entry-title` — **used, outdated** — what was wrong");
+        sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine("Use one of: `used, helpful` | `read, not applicable` | `used, outdated` | `not consulted`.");
+        sb.AppendLine("Only list entries you actually read. If you did not consult the brain, write `No brain entries referenced.`");
         sb.AppendLine();
         sb.AppendLine("Do NOT commit these changes — the orchestrator handles git operations.");
 

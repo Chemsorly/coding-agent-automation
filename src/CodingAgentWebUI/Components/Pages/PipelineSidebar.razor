@@ -19,270 +19,61 @@
     </div>
 
     <div class="sidebar-steps" id="sidebarSteps">
-        @foreach (var step in _steps)
+        @foreach (var phase in _phases)
         {
-            var state = GetStepState(step);
+            var visibleSteps = GetVisibleSteps(phase.Steps);
+            if (visibleSteps.Count == 0) continue;
 
-            // Hide ReviewingAnalysis when it was skipped (feature disabled — step is Pending but pipeline moved past it)
-            if (step == PipelineStep.ReviewingAnalysis && state == StepState.Pending
-                && Run.HighWaterMark > PipelineStep.ReviewingAnalysis)
-            {
-                continue;
-            }
-            var isExpanded = state is StepState.Active or StepState.Failed or StepState.Revisited
-                || _expandedSteps.Contains(step)
-                || (state == StepState.Completed && HasDetails(step));
+            var phaseState = GetPhaseState(visibleSteps);
+            var isPhaseExpanded = IsPhaseExpanded(phase.Name, phaseState);
+            var completedCount = CountCompleted(visibleSteps);
+            var phaseStateClass = PhaseStateCssClass(phaseState);
+            var phaseTestId = phase.TestId;
 
-            <div class="step-card step-card-@state.ToString().ToLowerInvariant()"
-                 id="step-@step.ToString()"
-                 data-testid="pipeline-step-@step"
-                 data-step-state="@state.ToString().ToLowerInvariant()"
-                 @onclick="() => ToggleStep(step, state)">
-                <div class="step-card-header">
-                    <span class="step-card-icon">@GetStepIcon(state)</span>
-                    <span class="step-card-name">@FormatStepName(step)</span>
+            <div @key="phase.Name" class="phase-group phase-group-@phaseStateClass"
+                 data-testid="phase-@phaseTestId"
+                 data-phase-state="@phaseStateClass">
+                <div class="phase-header" @onclick="() => TogglePhase(phase.Name)">
+                    <span class="phase-chevron">@(isPhaseExpanded ? "▾" : "▸")</span>
+                    <span class="phase-icon">@GetPhaseIcon(phaseState)</span>
+                    <span class="phase-name">@phase.Name</span>
+                    <span class="phase-counter">@GetPhaseCounter(phaseState, completedCount, visibleSteps.Count)</span>
                 </div>
 
-                @if (isExpanded)
-                {
-                    <div class="step-card-details">
-                        @if (step == PipelineStep.CloningRepository && !string.IsNullOrEmpty(Run.RepositoryName))
-                        {
-                            <div class="step-detail">@Run.RepositoryName</div>
-                        }
-                        else if (step == PipelineStep.SyncingBrainRepoPreRun && Run.BrainProviderConfigId != null)
-                        {
-                            <div class="step-detail">
-                                @if (state == StepState.Active)
-                                {
-                                    <span>Syncing...</span>
-                                }
-                                else if (Run.BrainContextLoaded)
-                                {
-                                    <span>✅ @Run.BrainKnowledgeFileCount knowledge files loaded</span>
-                                }
-                                else
-                                {
-                                    <span>⚠️ Brain context unavailable</span>
-                                }
-                            </div>
-                        }
-                        else if (step == PipelineStep.Created && !string.IsNullOrEmpty(Run.ModelName))
-                        {
-                            <div class="step-detail">Model: @Run.ModelName</div>
-                        }
-                        else if (step == PipelineStep.CreatingBranch && !string.IsNullOrEmpty(Run.BranchName))
-                        {
-                            <div class="step-detail step-detail-mono">@Truncate(Run.BranchName, 36)</div>
-                        }
-                        else if (step == PipelineStep.VerifyingBaseline && Run.BaselineHealthPassed.HasValue)
-                        {
-                            <div class="step-detail">@(Run.BaselineHealthPassed.Value ? "✅ Baseline healthy" : "⚠️ Pre-existing issues")</div>
-                        }
-                        else if (step == PipelineStep.AnalyzingCode)
-                        {
-                            <div class="step-detail">@(Run.AnalysisSkipped ? "Skipped (existing)" : "Agent analysis")</div>
-                            @if (Run.AnalysisRecommendation == "not_ready")
-                            {
-                                <div class="step-detail">⚠️ Needs refinement</div>
-                            }
-                            else if (Run.AnalysisRecommendation == "wont_do")
-                            {
-                                <div class="step-detail">🚫 Won't do</div>
-                            }
-                        }
-                        else if (step == PipelineStep.ReviewingAnalysis)
-                        {
-                            <div class="step-detail">Adversarial review</div>
-                        }
-                        else if (step == PipelineStep.GeneratingCode)
-                        {
-                            <div class="step-detail-box">
-                                <div>🤖 Agent @(state == StepState.Active ? "active" : "idle")</div>
-                                @if (Run.FilesChangedCount > 0)
-                                {
-                                    <div>Files changed: @Run.FilesChangedCount</div>
-                                }
-                                @if (Run.LinesAdded > 0 || Run.LinesRemoved > 0)
-                                {
-                                    <div>+@Run.LinesAdded -@Run.LinesRemoved</div>
-                                }
-                            </div>
-                        }
-                        else if (step == PipelineStep.ReviewingCode)
-                        {
-                            <div class="step-detail-box">
-                                    @if (state == StepState.Active && Run.CodeReviewIterationInProgress > 0)
-                                    {
-                                        <div>🔍 Iteration @Run.CodeReviewIterationInProgress/@Run.CodeReviewIterationsTotal</div>
-                                        <div class="step-detail-sub">Agent is reviewing &amp; fixing code</div>
-                                    }
-                                    else if (Run.CodeReviewIterationsCompleted > 0)
-                                    {
-                                        <div>@Run.CodeReviewIterationsCompleted/@Run.CodeReviewIterationsTotal iteration(s) done</div>
-                                    }
-                                    @if (Run.CodeReviewAgentsRun.Count > 0)
-                                    {
-                                        <div class="step-detail-sub">Agents: @string.Join(", ", Run.CodeReviewAgentsRun)</div>
-                                    }
-                                    @if (Run.CodeReviewCriticalCount > 0 || Run.CodeReviewWarningCount > 0 || Run.CodeReviewSuggestionCount > 0)
-                                    {
-                                        <div class="step-detail-sub">🔴 @Run.CodeReviewCriticalCount critical · 🟡 @Run.CodeReviewWarningCount warning · 🔵 @Run.CodeReviewSuggestionCount suggestion</div>
-                                    }
-                            </div>
-                        }
-                        else if (step == PipelineStep.RunningQualityGates)
-                        {
-                            @if (Run.LatestQualityReport is { } qr)
-                            {
-                                <div class="step-detail-box">
-                                    @if (qr.AllPassed)
-                                    {
-                                        <div class="qg-header-pass">All gates passed ✅</div>
-                                    }
-                                    else
-                                    {
-                                        <div class="qg-header-fail">Attempt @(Run.QualityGateHistory.Count)/@(MaxRetries + 1)</div>
-                                    }
+                <div class="phase-body @(isPhaseExpanded ? "" : "phase-body-collapsed")"
+                     aria-hidden="@(isPhaseExpanded ? "false" : "true")">
+                    @foreach (var step in visibleSteps)
+                    {
+                        var state = GetStepState(step);
+                        var isExpanded = state is StepState.Active or StepState.Failed or StepState.Revisited
+                            || _expandedSteps.Contains(step)
+                            || (state == StepState.Completed && HasDetails(step));
+                        var stepStateClass = StepStateCssClass(state);
 
-                                    @if (qr.QgcResults.Count > 1)
-                                    {
-                                        @* Multi-QGC mode: show per-QGC sub-items *@
-                                        @foreach (var qgcResult in qr.QgcResults)
-                                        {
-                                            <div class="qgc-sub-item @(qgcResult.Passed ? "qgc-pass" : "qgc-fail")">
-                                                <div class="qgc-sub-header">
-                                                    @(qgcResult.Passed ? "✅" : "❌") @qgcResult.DisplayName
-                                                </div>
-                                                <div class="qgc-sub-details">
-                                                    @if (qgcResult.Compilation is { } comp)
-                                                    {
-                                                        <span class="@(comp.Passed ? "qg-pass" : "qg-fail")">Build: @(comp.Passed ? "OK" : "FAIL")</span>
-                                                    }
-                                                    @if (qgcResult.Tests is { } tests)
-                                                    {
-                                                        <span class="@(tests.Passed ? "qg-pass" : "qg-fail")">Tests: @(tests.TestsPassed ?? 0)/@((tests.TestsPassed ?? 0) + (tests.TestsFailed ?? 0))</span>
-                                                    }
-                                                    @if (qgcResult.Coverage is { } cov)
-                                                    {
-                                                        <span class="@(cov.Passed ? "qg-pass" : "qg-fail")">Cov: @(cov.CoveragePercent?.ToString("F1") ?? "N/A")%</span>
-                                                    }
-                                                </div>
-                                            </div>
-                                        }
-                                    }
-                                    else
-                                    {
-                                        @* Single QGC or legacy flat display *@
-                                        <div class="qg-line @(qr.Compilation.Passed ? "qg-pass" : "qg-fail")">
-                                            @(qr.Compilation.Passed ? "✅" : "❌") Compilation
-                                        </div>
-                                        <div class="qg-line @(qr.Tests.Passed ? "qg-pass" : "qg-fail")">
-                                            @(qr.Tests.Passed ? "✅" : "❌") Tests
-                                            <span class="qg-sub">@(qr.Tests.TestsPassed ?? 0) passed, @(qr.Tests.TestsFailed ?? 0) failed</span>
-                                        </div>
-                                        @if (qr.Coverage is { } cov)
-                                        {
-                                            <div class="qg-line @(cov.Passed ? "qg-pass" : "qg-fail")">
-                                                @(cov.Passed ? "✅" : "❌") Coverage
-                                                <span class="qg-sub">@(cov.CoveragePercent.HasValue ? $"{cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%" : "N/A")</span>
-                                            </div>
-                                        }
-                                        @if (qr.SecurityScan is { } sec)
-                                        {
-                                            <div class="qg-line @(sec.Passed ? "qg-pass" : "qg-fail")">
-                                                @(sec.Passed ? "✅" : "❌") Security
-                                            </div>
-                                        }
-                                        else
-                                        {
-                                            <div class="qg-line qg-skip">— Security</div>
-                                        }
-                                    }
+                        <div @key="step" class="step-card step-card-@stepStateClass"
+                             id="step-@step.ToString()"
+                             data-testid="pipeline-step-@step"
+                             data-step-state="@stepStateClass"
+                             @onclick="() => ToggleStep(step, state)" @onclick:stopPropagation="true">
+                            <div class="step-card-header">
+                                <span class="step-card-icon">@GetStepIcon(state)</span>
+                                <span class="step-card-name">@FormatStepName(step)</span>
+                            </div>
 
-                                    @if (qr.ExternalCi is { } ci)
-                                    {
-                                        <div class="qg-line @(ci.Passed ? "qg-pass" : "qg-fail")">
-                                            @(ci.Passed ? "✅" : "❌") External CI
-                                            @if (!ci.Passed && !string.IsNullOrEmpty(ci.Details))
-                                            {
-                                                <span class="qg-sub">@Truncate(ci.Details, 60)</span>
-                                            }
-                                        </div>
-                                    }
+                            @if (isExpanded)
+                            {
+                                <div class="step-card-details">
+                                    @RenderStepDetails(step, state)
 
-                                    @{
-                                        var history = Run.QualityGateHistory.ToArray();
-                                    }
-                                    @if (history.Length > 1)
+                                    @if (state == StepState.Failed && !string.IsNullOrEmpty(Run.FailureReason))
                                     {
-                                        <div class="qg-history">
-                                            <div class="qg-history-title">Previous attempts:</div>
-                                            @for (var i = 0; i < history.Length - 1; i++)
-                                            {
-                                                var h = history[i];
-                                                var covPct = h.Coverage?.CoveragePercent;
-                                                <div class="qg-history-item">
-                                                    #@(i + 1): @(h.AllPassed ? "Passed ✅" : covPct.HasValue ? $"Coverage {covPct.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}% ❌" : "Failed ❌")
-                                                </div>
-                                            }
-                                        </div>
+                                        <div class="step-detail step-detail-error">@Run.FailureReason</div>
                                     }
                                 </div>
                             }
-                        }
-                        else if (step == PipelineStep.CreatingPullRequest && !string.IsNullOrEmpty(Run.PullRequestUrl))
-                        {
-                            <div class="step-detail-box">
-                                <div>PR @(!string.IsNullOrEmpty(Run.PullRequestNumber) ? $"#{Run.PullRequestNumber}" : "") @(Run.IsDraftPr ? "(draft)" : "(final)")</div>
-                                @if (Run.FilesChangedCount > 0)
-                                {
-                                    <div>@Run.FilesChangedCount files changed</div>
-                                }
-                                @if (Run.BlacklistedFilesDetected.Count > 0)
-                                {
-                                    <div class="step-detail-warning">⚠️ @Run.BlacklistedFilesDetected.Count file(s) excluded (blacklisted)</div>
-                                }
-                                <div><a href="@Run.PullRequestUrl" target="_blank" rel="noopener noreferrer" @onclick:stopPropagation="true">🔗 View on GitHub</a></div>
-                            </div>
-                        }
-                        else if (step == PipelineStep.ReflectingOnRun && Run.BrainProviderConfigId != null)
-                        {
-                            <div class="step-detail">
-                                @if (state == StepState.Active)
-                                {
-                                    <span>Reflecting on run...</span>
-                                }
-                                else
-                                {
-                                    <span>✅ Reflection complete</span>
-                                }
-                            </div>
-                        }
-                        else if (step == PipelineStep.SyncingBrainRepoPostRun && Run.BrainProviderConfigId != null)
-                        {
-                            <div class="step-detail">
-                                @if (state == StepState.Active)
-                                {
-                                    <span>Syncing...</span>
-                                }
-                                else if (Run.BrainUpdatesPushed)
-                                {
-                                    <span>✅ @Run.BrainFilesCommitted file(s) pushed</span>
-                                }
-                                else
-                                {
-                                    <span>⚠️ Brain updates not persisted</span>
-                                }
-                            </div>
-                        }
-
-                        @if (state == StepState.Failed && !string.IsNullOrEmpty(Run.FailureReason))
-                        {
-                            <div class="step-detail step-detail-error">@Run.FailureReason</div>
-                        }
-                    </div>
-                }
+                        </div>
+                    }
+                </div>
             </div>
         }
     </div>
@@ -309,37 +100,206 @@
     [Parameter] public int MaxRetries { get; set; } = 3;
 
     private readonly HashSet<PipelineStep> _expandedSteps = new();
+    /// <summary>Phases manually expanded by the user (overrides auto-collapse for completed/pending).</summary>
+    private readonly HashSet<string> _expandedPhases = new();
+    /// <summary>Phases manually collapsed by the user (overrides auto-expand for active/failed/retry).</summary>
+    private readonly HashSet<string> _collapsedPhases = new();
     private string? _lastRunId;
 
-    private static readonly PipelineStep[] _steps =
+    private static readonly PhaseDefinition[] _phases =
     {
-        PipelineStep.Created,
-        PipelineStep.CloningRepository,
-        PipelineStep.SyncingBrainRepoPreRun,
-        PipelineStep.CreatingBranch,
-        PipelineStep.VerifyingBaseline,
-        PipelineStep.AnalyzingCode,
-        PipelineStep.ReviewingAnalysis,
-        PipelineStep.PostingAnalysis,
-        PipelineStep.GeneratingCode,
-        PipelineStep.ReviewingCode,
-        PipelineStep.RunningQualityGates,
-        PipelineStep.PreparingForPullRequest,
-        PipelineStep.CreatingPullRequest,
-        PipelineStep.ReflectingOnRun,
-        PipelineStep.SyncingBrainRepoPostRun
+        new("Preparation", "preparation", new[] {
+            PipelineStep.Created,
+            PipelineStep.CloningRepository,
+            PipelineStep.SyncingBrainRepoPreRun,
+            PipelineStep.CreatingBranch,
+            PipelineStep.VerifyingBaseline
+        }),
+        new("Analysis", "analysis", new[] {
+            PipelineStep.AnalyzingCode,
+            PipelineStep.ReviewingAnalysis,
+            PipelineStep.PostingAnalysis
+        }),
+        new("Code Generation", "code-generation", new[] {
+            PipelineStep.GeneratingCode,
+            PipelineStep.ReviewingCode,
+            PipelineStep.RunningQualityGates
+        }),
+        new("Finalization", "finalization", new[] {
+            PipelineStep.PreparingForPullRequest,
+            PipelineStep.CreatingPullRequest,
+            PipelineStep.ReflectingOnRun,
+            PipelineStep.SyncingBrainRepoPostRun
+        })
     };
 
     private enum StepState { Completed, Active, Pending, Failed, Cancelled, Revisited }
+    private enum PhaseState { Completed, Active, Pending, Failed, Cancelled, Retry }
+
+    private sealed record PhaseDefinition(string Name, string TestId, PipelineStep[] Steps);
 
     protected override void OnParametersSet()
     {
         if (Run.RunId != _lastRunId)
         {
             _expandedSteps.Clear();
+            _expandedPhases.Clear();
+            _collapsedPhases.Clear();
             _lastRunId = Run.RunId;
         }
     }
+
+    // ─── Phase-level logic ───────────────────────────────────────────────
+
+    /// <summary>Filters out steps that should be hidden (skipped features, disabled brain, etc.).</summary>
+    private List<PipelineStep> GetVisibleSteps(PipelineStep[] steps)
+    {
+        var visible = new List<PipelineStep>(steps.Length);
+        foreach (var step in steps)
+        {
+            // Hide ReviewingAnalysis when skipped
+            if (step == PipelineStep.ReviewingAnalysis
+                && GetStepState(step) == StepState.Pending
+                && Run.HighWaterMark > PipelineStep.ReviewingAnalysis)
+                continue;
+
+            // Hide brain sync steps when brain provider is not configured
+            if (step is PipelineStep.SyncingBrainRepoPreRun or PipelineStep.SyncingBrainRepoPostRun
+                && Run.BrainProviderConfigId == null)
+                continue;
+
+            visible.Add(step);
+        }
+        return visible;
+    }
+
+    /// <summary>Computes the aggregate phase state from its visible sub-steps.</summary>
+    private PhaseState GetPhaseState(List<PipelineStep> visibleSteps)
+    {
+        var hasActive = false;
+        var hasFailed = false;
+        var hasCancelled = false;
+        var hasRevisited = false;
+        var allCompleted = true;
+        var allPending = true;
+
+        foreach (var step in visibleSteps)
+        {
+            var state = GetStepState(step);
+            if (state != StepState.Completed) allCompleted = false;
+            if (state != StepState.Pending) allPending = false;
+            if (state == StepState.Active) hasActive = true;
+            if (state == StepState.Failed) hasFailed = true;
+            if (state == StepState.Cancelled) hasCancelled = true;
+            if (state == StepState.Revisited) hasRevisited = true;
+        }
+
+        if (hasFailed) return PhaseState.Failed;
+        if (hasCancelled) return PhaseState.Cancelled;
+        if (hasActive) return PhaseState.Active;
+        if (hasRevisited) return PhaseState.Retry;
+        if (allCompleted) return PhaseState.Completed;
+        if (allPending) return PhaseState.Pending;
+
+        // Mix of completed and pending (partially done) — treat as active
+        return PhaseState.Active;
+    }
+
+    /// <summary>Determines if a phase should be visually expanded, considering both auto-expansion and user overrides.</summary>
+    private bool IsPhaseExpanded(string phaseName, PhaseState state)
+    {
+        // User explicitly collapsed an auto-expanded phase
+        if (_collapsedPhases.Contains(phaseName)) return false;
+        // User explicitly expanded a normally-collapsed phase
+        if (_expandedPhases.Contains(phaseName)) return true;
+        // Auto-expand active, failed, and retry phases
+        return state is PhaseState.Active or PhaseState.Failed or PhaseState.Retry;
+    }
+
+    private static string GetPhaseIcon(PhaseState state) => state switch
+    {
+        PhaseState.Completed => "✅",
+        PhaseState.Active => "▶",
+        PhaseState.Failed => "❌",
+        PhaseState.Cancelled => "⊘",
+        PhaseState.Retry => "🔄",
+        _ => "○"
+    };
+
+    private static string GetPhaseCounter(PhaseState state, int completed, int total) => state switch
+    {
+        PhaseState.Completed => $"{total}/{total} ✓",
+        PhaseState.Active => $"{completed}/{total} in progress",
+        PhaseState.Failed => $"{completed}/{total} failed",
+        PhaseState.Retry => "(retry)",
+        PhaseState.Cancelled => $"{completed}/{total} cancelled",
+        _ => $"0/{total}"
+    };
+
+    /// <summary>Toggles phase expansion. Works for all non-pending phases including auto-expanded ones.</summary>
+    private void TogglePhase(string phaseName)
+    {
+        // If currently in the collapsed override set, remove it (re-expand)
+        if (_collapsedPhases.Remove(phaseName)) return;
+        // If currently in the expanded override set, remove it (re-collapse)
+        if (_expandedPhases.Remove(phaseName)) return;
+
+        // No override exists — determine current visual state and toggle
+        // Find the phase to check its auto-expand state
+        var phase = _phases.FirstOrDefault(p => p.Name == phaseName);
+        if (phase == null) return;
+
+        var visibleSteps = GetVisibleSteps(phase.Steps);
+        var phaseState = GetPhaseState(visibleSteps);
+
+        if (phaseState == PhaseState.Pending) return; // Can't toggle pending phases
+
+        if (phaseState is PhaseState.Active or PhaseState.Failed or PhaseState.Retry)
+        {
+            // Auto-expanded → user wants to collapse
+            _collapsedPhases.Add(phaseName);
+        }
+        else
+        {
+            // Auto-collapsed (Completed, Cancelled) → user wants to expand
+            _expandedPhases.Add(phaseName);
+        }
+    }
+
+    /// <summary>Counts completed steps without LINQ allocation.</summary>
+    private int CountCompleted(List<PipelineStep> visibleSteps)
+    {
+        var count = 0;
+        foreach (var step in visibleSteps)
+            if (GetStepState(step) == StepState.Completed) count++;
+        return count;
+    }
+
+    // ─── CSS class helpers (avoid ToString + ToLowerInvariant allocations) ─
+
+    private static string PhaseStateCssClass(PhaseState state) => state switch
+    {
+        PhaseState.Completed => "completed",
+        PhaseState.Active => "active",
+        PhaseState.Pending => "pending",
+        PhaseState.Failed => "failed",
+        PhaseState.Cancelled => "cancelled",
+        PhaseState.Retry => "retry",
+        _ => "pending"
+    };
+
+    private static string StepStateCssClass(StepState state) => state switch
+    {
+        StepState.Completed => "completed",
+        StepState.Active => "active",
+        StepState.Pending => "pending",
+        StepState.Failed => "failed",
+        StepState.Cancelled => "cancelled",
+        StepState.Revisited => "revisited",
+        _ => "pending"
+    };
+
+    // ─── Step-level logic (unchanged) ────────────────────────────────────
 
     private StepState GetStepState(PipelineStep step)
     {
@@ -347,7 +307,6 @@
 
         if (current is PipelineStep.Failed or PipelineStep.Cancelled)
         {
-            // GetLastReachedStep returns the step that was active when the pipeline ended.
             var last = GetLastReachedStep();
             if ((int)step < (int)last) return StepState.Completed;
             if ((int)step == (int)last)
@@ -405,10 +364,6 @@
             _expandedSteps.Add(step);
     }
 
-    /// <summary>
-    /// Returns true if a completed step has meaningful details worth showing by default.
-    /// Steps without data (e.g. Created, PostingAnalysis) stay collapsed.
-    /// </summary>
     private bool HasDetails(PipelineStep step) => step switch
     {
         PipelineStep.Created => !string.IsNullOrEmpty(Run.ModelName),
@@ -427,6 +382,242 @@
         PipelineStep.SyncingBrainRepoPostRun => Run.BrainProviderConfigId != null,
         _ => false
     };
+
+    // ─── Step detail rendering ───────────────────────────────────────────
+
+    private RenderFragment RenderStepDetails(PipelineStep step, StepState state) => __builder =>
+    {
+        if (step == PipelineStep.CloningRepository && !string.IsNullOrEmpty(Run.RepositoryName))
+        {
+            <div class="step-detail">@Run.RepositoryName</div>
+        }
+        else if (step == PipelineStep.SyncingBrainRepoPreRun && Run.BrainProviderConfigId != null)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>Syncing...</span>
+                }
+                else if (Run.BrainContextLoaded)
+                {
+                    <span>✅ @Run.BrainKnowledgeFileCount knowledge files loaded</span>
+                }
+                else
+                {
+                    <span>⚠️ Brain context unavailable</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.Created && !string.IsNullOrEmpty(Run.ModelName))
+        {
+            <div class="step-detail">Model: @Run.ModelName</div>
+        }
+        else if (step == PipelineStep.CreatingBranch && !string.IsNullOrEmpty(Run.BranchName))
+        {
+            <div class="step-detail step-detail-mono">@Truncate(Run.BranchName, 36)</div>
+        }
+        else if (step == PipelineStep.VerifyingBaseline && Run.BaselineHealthPassed.HasValue)
+        {
+            <div class="step-detail">@(Run.BaselineHealthPassed.Value ? "✅ Baseline healthy" : "⚠️ Pre-existing issues")</div>
+        }
+        else if (step == PipelineStep.AnalyzingCode)
+        {
+            <div class="step-detail">@(Run.AnalysisSkipped ? "Skipped (existing)" : "Agent analysis")</div>
+            if (Run.AnalysisRecommendation == "not_ready")
+            {
+                <div class="step-detail">⚠️ Needs refinement</div>
+            }
+            else if (Run.AnalysisRecommendation == "wont_do")
+            {
+                <div class="step-detail">🚫 Won't do</div>
+            }
+        }
+        else if (step == PipelineStep.ReviewingAnalysis)
+        {
+            <div class="step-detail">Adversarial review</div>
+        }
+        else if (step == PipelineStep.GeneratingCode)
+        {
+            <div class="step-detail-box">
+                <div>🤖 Agent @(state == StepState.Active ? "active" : "idle")</div>
+                @if (Run.FilesChangedCount > 0)
+                {
+                    <div>Files changed: @Run.FilesChangedCount</div>
+                }
+                @if (Run.LinesAdded > 0 || Run.LinesRemoved > 0)
+                {
+                    <div>+@Run.LinesAdded -@Run.LinesRemoved</div>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.ReviewingCode)
+        {
+            <div class="step-detail-box">
+                @if (state == StepState.Active && Run.CodeReviewIterationInProgress > 0)
+                {
+                    <div>🔍 Iteration @Run.CodeReviewIterationInProgress/@Run.CodeReviewIterationsTotal</div>
+                    <div class="step-detail-sub">Agent is reviewing &amp; fixing code</div>
+                }
+                else if (Run.CodeReviewIterationsCompleted > 0)
+                {
+                    <div>@Run.CodeReviewIterationsCompleted/@Run.CodeReviewIterationsTotal iteration(s) done</div>
+                }
+                @if (Run.CodeReviewAgentsRun.Count > 0)
+                {
+                    <div class="step-detail-sub">Agents: @string.Join(", ", Run.CodeReviewAgentsRun)</div>
+                }
+                @if (Run.CodeReviewCriticalCount > 0 || Run.CodeReviewWarningCount > 0 || Run.CodeReviewSuggestionCount > 0)
+                {
+                    <div class="step-detail-sub">🔴 @Run.CodeReviewCriticalCount critical · 🟡 @Run.CodeReviewWarningCount warning · 🔵 @Run.CodeReviewSuggestionCount suggestion</div>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.RunningQualityGates)
+        {
+            if (Run.LatestQualityReport is { } qr)
+            {
+                <div class="step-detail-box">
+                    @if (qr.AllPassed)
+                    {
+                        <div class="qg-header-pass">All gates passed ✅</div>
+                    }
+                    else
+                    {
+                        <div class="qg-header-fail">Attempt @(Run.QualityGateHistory.Count)/@(MaxRetries + 1)</div>
+                    }
+
+                    @if (qr.QgcResults.Count > 1)
+                    {
+                        @foreach (var qgcResult in qr.QgcResults)
+                        {
+                            <div class="qgc-sub-item @(qgcResult.Passed ? "qgc-pass" : "qgc-fail")">
+                                <div class="qgc-sub-header">
+                                    @(qgcResult.Passed ? "✅" : "❌") @qgcResult.DisplayName
+                                </div>
+                                <div class="qgc-sub-details">
+                                    @if (qgcResult.Compilation is { } comp)
+                                    {
+                                        <span class="@(comp.Passed ? "qg-pass" : "qg-fail")">Build: @(comp.Passed ? "OK" : "FAIL")</span>
+                                    }
+                                    @if (qgcResult.Tests is { } tests)
+                                    {
+                                        <span class="@(tests.Passed ? "qg-pass" : "qg-fail")">Tests: @(tests.TestsPassed ?? 0)/@((tests.TestsPassed ?? 0) + (tests.TestsFailed ?? 0))</span>
+                                    }
+                                    @if (qgcResult.Coverage is { } cov)
+                                    {
+                                        <span class="@(cov.Passed ? "qg-pass" : "qg-fail")">Cov: @(cov.CoveragePercent?.ToString("F1") ?? "N/A")%</span>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <div class="qg-line @(qr.Compilation.Passed ? "qg-pass" : "qg-fail")">
+                            @(qr.Compilation.Passed ? "✅" : "❌") Compilation
+                        </div>
+                        <div class="qg-line @(qr.Tests.Passed ? "qg-pass" : "qg-fail")">
+                            @(qr.Tests.Passed ? "✅" : "❌") Tests
+                            <span class="qg-sub">@(qr.Tests.TestsPassed ?? 0) passed, @(qr.Tests.TestsFailed ?? 0) failed</span>
+                        </div>
+                        @if (qr.Coverage is { } cov)
+                        {
+                            <div class="qg-line @(cov.Passed ? "qg-pass" : "qg-fail")">
+                                @(cov.Passed ? "✅" : "❌") Coverage
+                                <span class="qg-sub">@(cov.CoveragePercent.HasValue ? $"{cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%" : "N/A")</span>
+                            </div>
+                        }
+                        @if (qr.SecurityScan is { } sec)
+                        {
+                            <div class="qg-line @(sec.Passed ? "qg-pass" : "qg-fail")">
+                                @(sec.Passed ? "✅" : "❌") Security
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="qg-line qg-skip">— Security</div>
+                        }
+                    }
+
+                    @if (qr.ExternalCi is { } ci)
+                    {
+                        <div class="qg-line @(ci.Passed ? "qg-pass" : "qg-fail")">
+                            @(ci.Passed ? "✅" : "❌") External CI
+                            @if (!ci.Passed && !string.IsNullOrEmpty(ci.Details))
+                            {
+                                <span class="qg-sub">@Truncate(ci.Details, 60)</span>
+                            }
+                        </div>
+                    }
+
+                    @{
+                        var history = Run.QualityGateHistory.ToArray();
+                    }
+                    @if (history.Length > 1)
+                    {
+                        <div class="qg-history">
+                            <div class="qg-history-title">Previous attempts:</div>
+                            @for (var i = 0; i < history.Length - 1; i++)
+                            {
+                                var h = history[i];
+                                var covPct = h.Coverage?.CoveragePercent;
+                                <div class="qg-history-item">
+                                    #@(i + 1): @(h.AllPassed ? "Passed ✅" : covPct.HasValue ? $"Coverage {covPct.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}% ❌" : "Failed ❌")
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        }
+        else if (step == PipelineStep.CreatingPullRequest && !string.IsNullOrEmpty(Run.PullRequestUrl))
+        {
+            <div class="step-detail-box">
+                <div>PR @(!string.IsNullOrEmpty(Run.PullRequestNumber) ? $"#{Run.PullRequestNumber}" : "") @(Run.IsDraftPr ? "(draft)" : "(final)")</div>
+                @if (Run.FilesChangedCount > 0)
+                {
+                    <div>@Run.FilesChangedCount files changed</div>
+                }
+                @if (Run.BlacklistedFilesDetected.Count > 0)
+                {
+                    <div class="step-detail-warning">⚠️ @Run.BlacklistedFilesDetected.Count file(s) excluded (blacklisted)</div>
+                }
+                <div><a href="@Run.PullRequestUrl" target="_blank" rel="noopener noreferrer" @onclick:stopPropagation="true">🔗 View on GitHub</a></div>
+            </div>
+        }
+        else if (step == PipelineStep.ReflectingOnRun && Run.BrainProviderConfigId != null)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>Reflecting on run...</span>
+                }
+                else
+                {
+                    <span>✅ Reflection complete</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.SyncingBrainRepoPostRun && Run.BrainProviderConfigId != null)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>Syncing...</span>
+                }
+                else if (Run.BrainUpdatesPushed)
+                {
+                    <span>✅ @Run.BrainFilesCommitted file(s) pushed</span>
+                }
+                else
+                {
+                    <span>⚠️ Brain updates not persisted</span>
+                }
+            </div>
+        }
+    };
+
+    // ─── Utilities ───────────────────────────────────────────────────────
 
     private string GetElapsedTime()
     {

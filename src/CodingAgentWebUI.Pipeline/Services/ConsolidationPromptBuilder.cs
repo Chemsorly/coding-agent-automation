@@ -59,6 +59,18 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- Relative date references (e.g., \"yesterday\", \"last week\") that should be absolute");
         sb.AppendLine("- Entries that reference removed or renamed components");
         sb.AppendLine("- Contradictions between different knowledge files");
+        sb.AppendLine("- **Citation data:** Which entries were referenced in session logs and how (helpful, not applicable, outdated)");
+        sb.AppendLine();
+        sb.AppendLine("### Citation Aggregation");
+        sb.AppendLine();
+        sb.AppendLine("Session logs contain a `## Brain Entries Referenced` section listing which knowledge entries");
+        sb.AppendLine("were consulted and their usefulness (`used, helpful` | `read, not applicable` | `used, outdated`).");
+        sb.AppendLine("Aggregate this data across all session logs since the last consolidation:");
+        sb.AppendLine("- Count how many sessions cite each entry as **helpful**");
+        sb.AppendLine("- Note entries cited as **outdated** by any session (candidates for correction)");
+        sb.AppendLine("- Identify entries in `general/`, `technology/`, and `projects/` that are **never cited** in any session log");
+        sb.AppendLine();
+        sb.AppendLine("Use this citation data to inform decisions in Phase 3 (Consolidate) and Phase 4 (Prune).");
         sb.AppendLine();
 
         // Phase 2.5: Research & Verify
@@ -92,6 +104,15 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- Session logs older than 30 days that have already been distilled into lessons");
         sb.AppendLine("- Redundant entries that were merged in Phase 3");
         sb.AppendLine("- Empty or placeholder files");
+        sb.AppendLine();
+        sb.AppendLine("Use citation data from Phase 2 to inform pruning decisions:");
+        sb.AppendLine("- **High-value (keep):** Entries cited as helpful in 3+ sessions — these are proven useful");
+        sb.AppendLine("- **Outdated (correct or remove):** Entries cited as outdated by any session — verify and either update or mark ⚠️ OUTDATED");
+        sb.AppendLine("- **Uncited + stale (prune candidates):** Entries never cited in any session log AND older than their verification window");
+        sb.AppendLine("- **Recently written (keep):** Entries written since the last consolidation should be kept regardless of citation count — they haven't had time to be cited yet");
+        sb.AppendLine();
+        sb.AppendLine("When pruning an entry, check whether it has only `[experience]` sources and was never verified.");
+        sb.AppendLine("Entries with `[docs]` sources are more likely to be correct even if uncited — prefer re-verification over pruning.");
         sb.AppendLine();
         sb.AppendLine("Keep the index files (README.md) concise and up-to-date with the current structure.");
         sb.AppendLine();

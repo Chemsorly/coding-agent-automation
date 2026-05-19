@@ -207,6 +207,19 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                         .Select(line => StripAnsiEscapes(line))
                         .ToList();
 
+                    // Emit final response lines to the output callback so they appear
+                    // in the UI output panel. SSE events only capture tool calls and
+                    // partial text — the final consolidated response from the HTTP POST
+                    // body would otherwise be invisible in the output display.
+                    if (onOutputLine is not null)
+                    {
+                        foreach (var line in outputLines)
+                        {
+                            if (!string.IsNullOrWhiteSpace(line))
+                                onOutputLine(line);
+                        }
+                    }
+
                     result = new AgentResult
                     {
                         ExitCode = ExitCodes.Success,
@@ -255,7 +268,9 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             }
             finally
             {
-                // Cancel and await SSE task before disposing to prevent ObjectDisposedException
+                // Allow a brief window for late-arriving SSE events (e.g., final
+                // message.part.updated) to be processed before tearing down the stream.
+                try { await Task.Delay(500, CancellationToken.None); } catch { }
                 sseCts.Cancel();
                 try { await sseTask.ConfigureAwait(false); } catch { /* expected cancellation */ }
                 sseCts.Dispose();
