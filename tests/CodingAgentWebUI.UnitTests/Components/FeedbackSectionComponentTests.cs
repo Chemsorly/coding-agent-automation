@@ -324,7 +324,7 @@ public class FeedbackSectionComponentTests : BunitContext
         RegisterDefaults(history);
         var cut = Render<AgentMonitoring>();
 
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
+        cut.InvokeAsync(() => cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click());
 
         cut.WaitForAssertion(() =>
         {
