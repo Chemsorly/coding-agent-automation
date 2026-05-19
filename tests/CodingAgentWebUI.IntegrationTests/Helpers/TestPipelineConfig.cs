@@ -20,6 +20,9 @@ public static class TestPipelineConfig
         AgentTimeout = TimeSpan.FromMinutes(30),
         WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
         AnalysisReviewEnabled = false,
+        RefactoringReviewEnabled = false,
+        BrainConsolidationReviewEnabled = false,
+        HarnessSuggestionsReviewEnabled = false,
         CodeReview = new CodeReviewConfiguration
         {
             MaxIterations = 2,
@@ -38,9 +41,6 @@ public static class TestPipelineConfig
         ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15),
         ClosedLoopMaxPagesToFetch = 10,
         MaxRefactoringProposals = 3,
-        RefactoringReviewEnabled = false,
-        BrainConsolidationReviewEnabled = false,
-        HarnessSuggestionsReviewEnabled = false,
     };
 
     /// <summary>
@@ -55,6 +55,9 @@ public static class TestPipelineConfig
         AgentTimeout = TimeSpan.FromMinutes(30),
         WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
         AnalysisReviewEnabled = false,
+        RefactoringReviewEnabled = false,
+        BrainConsolidationReviewEnabled = false,
+        HarnessSuggestionsReviewEnabled = false,
         CodeReview = new CodeReviewConfiguration
         {
             MaxIterations = 2,
@@ -73,8 +76,5 @@ public static class TestPipelineConfig
         ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15),
         ClosedLoopMaxPagesToFetch = 10,
         MaxRefactoringProposals = 3,
-        RefactoringReviewEnabled = false,
-        BrainConsolidationReviewEnabled = false,
-        HarnessSuggestionsReviewEnabled = false,
     };
 }

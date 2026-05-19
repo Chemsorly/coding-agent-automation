@@ -259,4 +259,262 @@ public static class ConsolidationPromptBuilder
     {
         return $"Files modified: {filesModified}, Entries merged: {entriesMerged}, Contradictions resolved: {contradictionsResolved}, Entries pruned: {entriesPruned}";
     }
+
+    /// <summary>
+    /// Review prompt for refactoring proposals.
+    /// Instructs discriminator to read .agent/refactoring-proposals.json and write
+    /// findings to .agent/refactoring-review.md.
+    /// </summary>
+    public static string BuildRefactoringReviewPrompt()
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine("# Refactoring Proposals Review");
+        sb.AppendLine();
+        sb.AppendLine("You are an independent reviewer evaluating refactoring proposals produced by another agent.");
+        sb.AppendLine("Your review must be based solely on the proposals file and the actual codebase — you have no shared context with the generator.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Input");
+        sb.AppendLine();
+        sb.AppendLine($"Read the proposals file at `{AgentWorkspacePaths.RefactoringProposalsFilePath}` from the workspace.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Evaluation Guidance");
+        sb.AppendLine();
+        sb.AppendLine("Evaluate each proposal holistically. Areas to consider include (but are not limited to):");
+        sb.AppendLine("- Non-existent `affectedFiles` paths — verify the referenced files actually exist in the repository");
+        sb.AppendLine("- Proposals not supported by evidence in the codebase");
+        sb.AppendLine("- Bundled concerns that should be separate proposals");
+        sb.AppendLine("- Abstract rationales lacking concrete code references");
+        sb.AppendLine();
+        sb.AppendLine("You are not limited to this checklist. Flag any quality issue you identify.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Output");
+        sb.AppendLine();
+        sb.AppendLine($"Write your findings to `{AgentWorkspacePaths.RefactoringReviewFilePath}` using the following severity markers:");
+        sb.AppendLine();
+        sb.AppendLine("- `[CRITICAL]` — The output is wrong or will cause downstream failures");
+        sb.AppendLine("- `[WARNING]` — The output is incomplete but not incorrect");
+        sb.AppendLine("- `[SUGGESTION]` — Optional improvement, not required");
+        sb.AppendLine();
+        sb.AppendLine("Only `[CRITICAL]` and `[WARNING]` findings will trigger a refinement pass. `[SUGGESTION]` findings are informational only.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Important Rules");
+        sb.AppendLine();
+        sb.AppendLine("- If the proposals are thorough and correct, state that explicitly (e.g., \"No issues found\"). Do NOT invent findings.");
+        sb.AppendLine("- When stating no issues were found, do NOT echo severity marker syntax. Write \"No issues found\" — not \"No [CRITICAL] issues found\".");
+        sb.AppendLine("- Do NOT modify source files, configuration files, or the proposals file. Only read the input and write the review findings file.");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Review prompt for brain consolidation changes.
+    /// Instructs discriminator to read .agent/brain-consolidation-diff.md and write
+    /// findings to .agent/brain-consolidation-review.md.
+    /// </summary>
+    public static string BuildBrainConsolidationReviewPrompt()
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine("# Brain Consolidation Review");
+        sb.AppendLine();
+        sb.AppendLine("You are an independent reviewer evaluating brain consolidation changes produced by another agent.");
+        sb.AppendLine("Your review must be based solely on the diff summary file — you have no shared context with the generator.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Input");
+        sb.AppendLine();
+        sb.AppendLine($"Read the diff summary file at `{AgentWorkspacePaths.BrainConsolidationDiffFilePath}` from the workspace.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Evaluation Guidance");
+        sb.AppendLine();
+        sb.AppendLine("Evaluate the consolidation changes holistically. Areas to consider include (but are not limited to):");
+        sb.AppendLine("- Incorrectly removed valuable entries that should have been kept");
+        sb.AppendLine("- Merged entries that lost important information in the process");
+        sb.AppendLine("- Contradictions resolved by keeping the wrong version");
+        sb.AppendLine("- Inaccurate factual updates");
+        sb.AppendLine("- New contradictions introduced by the consolidation itself");
+        sb.AppendLine();
+        sb.AppendLine("You are not limited to this checklist. Flag any quality issue you identify.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Output");
+        sb.AppendLine();
+        sb.AppendLine($"Write your findings to `{AgentWorkspacePaths.BrainConsolidationReviewFilePath}` using the following severity markers:");
+        sb.AppendLine();
+        sb.AppendLine("- `[CRITICAL]` — The output is wrong or will cause downstream failures");
+        sb.AppendLine("- `[WARNING]` — The output is incomplete but not incorrect");
+        sb.AppendLine("- `[SUGGESTION]` — Optional improvement, not required");
+        sb.AppendLine();
+        sb.AppendLine("Only `[CRITICAL]` and `[WARNING]` findings will trigger a refinement pass. `[SUGGESTION]` findings are informational only.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Important Rules");
+        sb.AppendLine();
+        sb.AppendLine("- If the consolidation changes are thorough and correct, state that explicitly (e.g., \"No issues found\"). Do NOT invent findings.");
+        sb.AppendLine("- When stating no issues were found, do NOT echo severity marker syntax. Write \"No issues found\" — not \"No [CRITICAL] issues found\".");
+        sb.AppendLine("- Do NOT modify source files, configuration files, or the `.brain/` files being reviewed. Only read the input and write the review findings file.");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Review prompt for harness suggestions.
+    /// Instructs discriminator to read .agent/harness-suggestions-output.json and
+    /// feedback-data.json, then write findings to .agent/harness-suggestions-review.md.
+    /// </summary>
+    public static string BuildHarnessSuggestionsReviewPrompt()
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine("# Harness Suggestions Review");
+        sb.AppendLine();
+        sb.AppendLine("You are an independent reviewer evaluating harness improvement suggestions produced by another agent.");
+        sb.AppendLine("Your review must be based solely on the suggestions file and the original feedback data — you have no shared context with the generator.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Input");
+        sb.AppendLine();
+        sb.AppendLine($"Read the suggestions file at `{AgentWorkspacePaths.HarnessSuggestionsOutputFilePath}` from the workspace.");
+        sb.AppendLine("Also read `feedback-data.json` from the workspace root to cross-reference suggestions against actual feedback data.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Evaluation Guidance");
+        sb.AppendLine();
+        sb.AppendLine("Evaluate the suggestions holistically. Areas to consider include (but are not limited to):");
+        sb.AppendLine("- Suggestions not grounded in specific feedback patterns from the data");
+        sb.AppendLine("- Abstract or non-actionable suggestions that lack specificity");
+        sb.AppendLine("- Implausible frequency counts that don't match the feedback data");
+        sb.AppendLine("- Bundled concerns that should be separate suggestions");
+        sb.AppendLine("- Rationales lacking specific evidence from feedback entries");
+        sb.AppendLine();
+        sb.AppendLine("You are not limited to this checklist. Flag any quality issue you identify.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Output");
+        sb.AppendLine();
+        sb.AppendLine($"Write your findings to `{AgentWorkspacePaths.HarnessSuggestionsReviewFilePath}` using the following severity markers:");
+        sb.AppendLine();
+        sb.AppendLine("- `[CRITICAL]` — The output is wrong or will cause downstream failures");
+        sb.AppendLine("- `[WARNING]` — The output is incomplete but not incorrect");
+        sb.AppendLine("- `[SUGGESTION]` — Optional improvement, not required");
+        sb.AppendLine();
+        sb.AppendLine("Only `[CRITICAL]` and `[WARNING]` findings will trigger a refinement pass. `[SUGGESTION]` findings are informational only.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Important Rules");
+        sb.AppendLine();
+        sb.AppendLine("- If the suggestions are thorough and correct, state that explicitly (e.g., \"No issues found\"). Do NOT invent findings.");
+        sb.AppendLine("- When stating no issues were found, do NOT echo severity marker syntax. Write \"No issues found\" — not \"No [CRITICAL] issues found\".");
+        sb.AppendLine("- Do NOT modify source files, configuration files, or the suggestions file being reviewed. Only read the input files and write the review findings file.");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Refinement prompt for refactoring proposals.
+    /// Instructs generator to read .agent/refactoring-review.md and update
+    /// .agent/refactoring-proposals.json accordingly.
+    /// </summary>
+    public static string BuildRefactoringRefinementPrompt()
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine("# Refactoring Proposals Refinement");
+        sb.AppendLine();
+        sb.AppendLine("A review of your refactoring proposals has been completed.");
+        sb.AppendLine();
+        sb.AppendLine($"Read the review findings at `{AgentWorkspacePaths.RefactoringReviewFilePath}`.");
+        sb.AppendLine();
+        sb.AppendLine("Address all `[CRITICAL]` and `[WARNING]` findings by updating `" + AgentWorkspacePaths.RefactoringProposalsFilePath + "`.");
+        sb.AppendLine();
+        sb.AppendLine("Guidelines:");
+        sb.AppendLine("- You may remove proposals that the reviewer correctly identified as invalid");
+        sb.AppendLine("- You may reduce the proposal count if warranted");
+        sb.AppendLine("- Do not add new proposals — only refine or remove existing ones");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Refinement prompt for brain consolidation.
+    /// Instructs generator to read .agent/brain-consolidation-review.md and revise
+    /// its .brain/ modifications accordingly.
+    /// </summary>
+    public static string BuildBrainConsolidationRefinementPrompt()
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine("# Brain Consolidation Refinement");
+        sb.AppendLine();
+        sb.AppendLine("A review of your brain consolidation changes has been completed.");
+        sb.AppendLine();
+        sb.AppendLine($"Read the review findings at `{AgentWorkspacePaths.BrainConsolidationReviewFilePath}`.");
+        sb.AppendLine();
+        sb.AppendLine("Address all `[CRITICAL]` and `[WARNING]` findings by revising the `.brain/` files.");
+        sb.AppendLine();
+        sb.AppendLine("Guidelines:");
+        sb.AppendLine("- Restore incorrectly removed entries");
+        sb.AppendLine("- Fix incorrect merges");
+        sb.AppendLine("- Correct factual errors");
+        sb.AppendLine($"- Update `{AgentWorkspacePaths.BrainConsolidationDiffFilePath}` with a note about what was revised");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Refinement prompt for harness suggestions.
+    /// Instructs generator to read .agent/harness-suggestions-review.md and update
+    /// .agent/harness-suggestions-output.json accordingly.
+    /// </summary>
+    public static string BuildHarnessSuggestionsRefinementPrompt()
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine("# Harness Suggestions Refinement");
+        sb.AppendLine();
+        sb.AppendLine("A review of your harness suggestions has been completed.");
+        sb.AppendLine();
+        sb.AppendLine($"Read the review findings at `{AgentWorkspacePaths.HarnessSuggestionsReviewFilePath}`.");
+        sb.AppendLine();
+        sb.AppendLine("Address all `[CRITICAL]` and `[WARNING]` findings by updating `" + AgentWorkspacePaths.HarnessSuggestionsOutputFilePath + "`.");
+        sb.AppendLine();
+        sb.AppendLine("Guidelines:");
+        sb.AppendLine("- Make suggestions more concrete, add specific evidence references, correct frequency counts");
+        sb.AppendLine("- You may remove suggestions that the reviewer correctly identified as unfounded");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Prompt instructing the generator to produce a diff summary after brain consolidation.
+    /// Sent with UseResume=true to the generator's session.
+    /// </summary>
+    public static string BuildBrainConsolidationDiffPrompt()
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine("# Brain Consolidation Diff Summary");
+        sb.AppendLine();
+        sb.AppendLine("You have completed your brain consolidation modifications.");
+        sb.AppendLine();
+        sb.AppendLine($"Produce a summary of all changes at `{AgentWorkspacePaths.BrainConsolidationDiffFilePath}`.");
+        sb.AppendLine();
+        sb.AppendLine("Include the following in your summary:");
+        sb.AppendLine("- Files created, modified, or deleted");
+        sb.AppendLine("- Entries merged (before/after)");
+        sb.AppendLine("- Contradictions resolved (which version was kept)");
+        sb.AppendLine("- Factual updates (with sources)");
+        sb.AppendLine();
+        sb.AppendLine("This summary will be reviewed by an independent agent — be thorough and specific.");
+        sb.AppendLine();
+        sb.AppendLine("Do NOT make additional modifications to `.brain/` files in this step.");
+
+        return sb.ToString();
+    }
 }

@@ -39,7 +39,8 @@ public interface IConsolidationService
     /// <param name="status">The new status for the run.</param>
     /// <param name="summary">Optional summary text describing the outcome.</param>
     /// <param name="ct">Cancellation token.</param>
-    Task UpdateRunAsync(string runId, ConsolidationRunStatus status, string? summary, CancellationToken ct);
+    /// <param name="totalTokens">Total token count from review/refinement/diff summary calls.</param>
+    Task UpdateRunAsync(string runId, ConsolidationRunStatus status, string? summary, CancellationToken ct, long totalTokens = 0);
 
     /// <summary>
     /// Returns the current harness suggestions from the persisted file

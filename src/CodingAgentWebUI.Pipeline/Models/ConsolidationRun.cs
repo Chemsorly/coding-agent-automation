@@ -39,4 +39,12 @@ public sealed class ConsolidationRun
     public DateTime? CompletedAtUtc { get; set; }
     public ConsolidationRunStatus Status { get; set; }
     public string? Summary { get; set; }
+
+    /// <summary>
+    /// Total token count from review, refinement, and diff summary agent calls.
+    /// Summed from <see cref="ConsolidationJobResult.ReviewTokenUsage"/>,
+    /// <see cref="ConsolidationJobResult.RefinementTokenUsage"/>, and
+    /// <see cref="ConsolidationJobResult.DiffSummaryTokenUsage"/>.
+    /// </summary>
+    public long TotalTokens { get; set; }
 }

@@ -112,8 +112,12 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     {
         using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
 
-        var title = Path.GetFileName(workspacePath) ?? workspacePath;
-        var request = new CreateSessionRequest { Title = title, Path = workspacePath };
+        // OpenCode requires an absolute path for the session directory.
+        // Consolidation jobs pass relative paths (e.g., "./workspaces/consolidation/{guid}/refactoring")
+        // which would otherwise resolve to the wrong directory on the server.
+        var absolutePath = Path.GetFullPath(workspacePath);
+        var title = Path.GetFileName(absolutePath) ?? absolutePath;
+        var request = new CreateSessionRequest { Title = title, Path = absolutePath };
 
         var response = await client.PostAsJsonAsync("/session", request, OpenCodeJson.JsonOptions, ct);
         response.EnsureSuccessStatusCode();
