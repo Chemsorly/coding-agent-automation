@@ -1,6 +1,5 @@
 using CodingAgentWebUI.Agent.Executors;
 using CodingAgentWebUI.Pipeline;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -27,8 +26,7 @@ namespace CodingAgentWebUI.Agent;
 /// </remarks>
 public sealed class LocalConsolidationExecutor
 {
-    private readonly IKiroCliOrchestrator _orchestrator;
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ConsolidationProviderResolver _resolver;
     private readonly Serilog.ILogger _logger;
 
     public LocalConsolidationExecutor(
@@ -40,8 +38,7 @@ public sealed class LocalConsolidationExecutor
         ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _orchestrator = orchestrator;
-        _httpClientFactory = httpClientFactory;
+        _resolver = new ConsolidationProviderResolver(orchestrator, httpClientFactory, logger);
         _logger = logger;
     }
 
@@ -133,205 +130,43 @@ public sealed class LocalConsolidationExecutor
     private async Task<ConsolidationJobResult> ExecuteBrainConsolidationAsync(
         ConsolidationJobMessage job, CancellationToken ct)
     {
-        var config = job.PipelineConfiguration;
-        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config);
+        var resolution = await _resolver.ResolveBrainConsolidationProvidersAsync(job, ct);
+        if (!resolution.IsSuccess)
+            return resolution.Failure!;
 
-        // Resolve brain provider (repository provider with Brain role)
-        var brainConfig = job.ProviderConfigs.FirstOrDefault(c =>
-            c.Kind == ProviderKind.Repository && c.RepositoryRole == RepositoryRole.Brain);
+        await using var providers = resolution.Providers!;
 
-        if (brainConfig is null)
-        {
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = "No brain repository provider configuration found in job"
-            };
-        }
-
-        // Resolve agent provider
-        var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Kind == ProviderKind.Agent);
-        if (agentConfig is null)
-        {
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = "No agent provider configuration found in job"
-            };
-        }
-
-        IRepositoryProvider? brainProvider = null;
-        IAgentProvider? agentProvider = null;
-
-        try
-        {
-            brainProvider = providerFactory.CreateRepositoryProvider(brainConfig);
-            agentProvider = providerFactory.CreateAgentProvider(agentConfig);
-
-            await brainProvider.ValidateAsync(ct);
-            await agentProvider.ValidateAsync(ct);
-
-            var executor = new BrainConsolidationExecutor(_logger);
-            return await executor.ExecuteAsync(job, brainProvider, agentProvider, ct,
-                line => _logger.Information("Consolidation output: {Line}", line));
-        }
-        finally
-        {
-            if (brainProvider is IAsyncDisposable bd) await bd.DisposeAsync();
-            if (agentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
-        }
+        var executor = new BrainConsolidationExecutor(_logger);
+        return await executor.ExecuteAsync(job, providers.BrainProvider, providers.AgentProvider, ct,
+            line => _logger.Information("Consolidation output: {Line}", line));
     }
 
     private async Task<ConsolidationJobResult> ExecuteRefactoringDetectionAsync(
         ConsolidationJobMessage job, CancellationToken ct)
     {
-        var config = job.PipelineConfiguration;
-        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config);
+        var resolution = await _resolver.ResolveRefactoringProvidersAsync(job, ct);
+        if (!resolution.IsSuccess)
+            return resolution.Failure!;
 
-        // Resolve code repo provider (repository provider with Work role)
-        var repoConfig = job.ProviderConfigs.FirstOrDefault(c =>
-            c.Kind == ProviderKind.Repository && c.RepositoryRole == RepositoryRole.Work);
+        await using var providers = resolution.Providers!;
 
-        if (repoConfig is null)
-        {
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = "No code repository provider configuration found in job"
-            };
-        }
-
-        // Resolve agent provider
-        var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Kind == ProviderKind.Agent);
-        if (agentConfig is null)
-        {
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = "No agent provider configuration found in job"
-            };
-        }
-
-        // Resolve issue provider config (for creating issues)
-        var issueConfig = job.ProviderConfigs.FirstOrDefault(c => c.Kind == ProviderKind.Issue);
-        if (issueConfig is null)
-        {
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = "No issue provider configuration found in job"
-            };
-        }
-
-        // Optionally resolve brain provider for architectural context
-        var brainConfig = job.ProviderConfigs.FirstOrDefault(c =>
-            c.Kind == ProviderKind.Repository && c.RepositoryRole == RepositoryRole.Brain);
-
-        IRepositoryProvider? repoProvider = null;
-        IAgentProvider? agentProvider = null;
-        IIssueProvider? issueProvider = null;
-        IRepositoryProvider? brainProvider = null;
-
-        try
-        {
-            repoProvider = providerFactory.CreateRepositoryProvider(repoConfig);
-            agentProvider = providerFactory.CreateAgentProvider(agentConfig);
-
-            // For refactoring, we need an issue provider — use the factory from Infrastructure
-            // The agent-side factory doesn't support IIssueProvider (issue ops go through orchestrator),
-            // but for consolidation we need direct issue creation. Create via the infrastructure factory.
-            issueProvider = CreateIssueProviderForConsolidation(issueConfig);
-
-            if (brainConfig is not null)
-            {
-                try
-                {
-                    brainProvider = providerFactory.CreateRepositoryProvider(brainConfig);
-                    await brainProvider.ValidateAsync(ct);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Brain provider validation failed for consolidation job {JobId}, continuing without it", job.JobId);
-                    if (brainProvider is IAsyncDisposable bd2) await bd2.DisposeAsync();
-                    brainProvider = null;
-                }
-            }
-
-            await repoProvider.ValidateAsync(ct);
-            await agentProvider.ValidateAsync(ct);
-
-            var executor = new RefactoringExecutor(_logger);
-            return await executor.ExecuteAsync(job, repoProvider, brainProvider, issueProvider, agentProvider, ct,
-                line => _logger.Information("Consolidation output: {Line}", line));
-        }
-        finally
-        {
-            if (repoProvider is IAsyncDisposable rd) await rd.DisposeAsync();
-            if (agentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
-            if (issueProvider is IAsyncDisposable id) await id.DisposeAsync();
-            if (brainProvider is IAsyncDisposable bd) await bd.DisposeAsync();
-        }
+        var executor = new RefactoringExecutor(_logger);
+        return await executor.ExecuteAsync(job, providers.RepoProvider, providers.BrainProvider,
+            providers.IssueProvider, providers.AgentProvider, ct,
+            line => _logger.Information("Consolidation output: {Line}", line));
     }
 
     private async Task<ConsolidationJobResult> ExecuteHarnessSuggestionsAsync(
         ConsolidationJobMessage job, CancellationToken ct)
     {
-        var config = job.PipelineConfiguration;
-        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config);
+        var resolution = await _resolver.ResolveHarnessProvidersAsync(job, ct);
+        if (!resolution.IsSuccess)
+            return resolution.Failure!;
 
-        // Resolve agent provider
-        var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Kind == ProviderKind.Agent);
-        if (agentConfig is null)
-        {
-            return new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = "No agent provider configuration found in job"
-            };
-        }
+        await using var providers = resolution.Providers!;
 
-        IAgentProvider? agentProvider = null;
-
-        try
-        {
-            agentProvider = providerFactory.CreateAgentProvider(agentConfig);
-            await agentProvider.ValidateAsync(ct);
-
-            var executor = new HarnessSuggestionExecutor(_logger);
-            return await executor.ExecuteAsync(job, agentProvider, ct,
-                line => _logger.Information("Consolidation output: {Line}", line));
-        }
-        finally
-        {
-            if (agentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
-        }
-    }
-
-    /// <summary>
-    /// Creates an issue provider for consolidation runs. Unlike regular pipeline jobs where
-    /// issue operations are proxied through the orchestrator, consolidation runs need direct
-    /// issue creation capability for refactoring proposals.
-    /// </summary>
-    private IIssueProvider CreateIssueProviderForConsolidation(ProviderConfig issueConfig)
-    {
-        // Use the Infrastructure layer's GitHubIssueProvider directly
-        var apiUrl = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, "https://api.github.com");
-        var token = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Token)
-            ?? throw new InvalidOperationException(
-                $"Issue provider '{issueConfig.DisplayName}' is missing 'token' setting for consolidation");
-        var owner = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Owner)
-            ?? throw new InvalidOperationException(
-                $"Issue provider '{issueConfig.DisplayName}' is missing 'owner' setting for consolidation");
-        var repo = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Repo)
-            ?? throw new InvalidOperationException(
-                $"Issue provider '{issueConfig.DisplayName}' is missing 'repo' setting for consolidation");
-
-        return new CodingAgentWebUI.Infrastructure.GitHub.GitHubIssueProvider(apiUrl, token, owner, repo);
+        var executor = new HarnessSuggestionExecutor(_logger);
+        return await executor.ExecuteAsync(job, providers.AgentProvider, ct,
+            line => _logger.Information("Consolidation output: {Line}", line));
     }
 }
