@@ -66,6 +66,9 @@ public sealed class PipelineRun
     /// <summary>Analysis gate recommendation: "ready", "not_ready", "wont_do", or null (no assessment).</summary>
     public string? AnalysisRecommendation { get; set; }
 
+    /// <summary>The authoritative label the agent applied for this run's terminal state (e.g. "agent:needs-refinement", "agent:wont-do"). Null if not explicitly set.</summary>
+    public string? FinalLabel { get; set; }
+
     /// <summary>Non-blocking concerns from the analysis assessment.</summary>
     public IReadOnlyList<string> AnalysisConcerns { get; set; } = Array.Empty<string>();
 
