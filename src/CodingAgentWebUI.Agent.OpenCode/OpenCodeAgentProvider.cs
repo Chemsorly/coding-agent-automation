@@ -20,6 +20,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     private readonly string? _model;
     private volatile string? _currentSessionId;
     private volatile bool _isExecuting;
+    private volatile bool _sseEmittedAssistantContent;
     private long _lastOutputTimeTicks; // Interlocked access for DateTime
     private readonly Dictionary<string, (long Input, long Output, long Reasoning, long CacheRead, long CacheWrite, double Cost)> _lastSessionTokens = new();
 
@@ -132,6 +133,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     public async Task<AgentResult> ExecuteAsync(AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null)
     {
         _isExecuting = true;
+        _sseEmittedAssistantContent = false;
         LastOutputTime = DateTime.UtcNow; // Reset so stall monitor measures from this call's start
         try
         {
@@ -207,11 +209,13 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                         .Select(line => StripAnsiEscapes(line))
                         .ToList();
 
-                    // Emit final response lines to the output callback so they appear
-                    // in the UI output panel. SSE events only capture tool calls and
-                    // partial text — the final consolidated response from the HTTP POST
-                    // body would otherwise be invisible in the output display.
-                    if (onOutputLine is not null)
+                    // Dedup: Only emit HTTP response lines to the output callback if
+                    // SSE did not already stream assistant content. When SSE is active,
+                    // message.part.updated events provide real-time [assistant] prefixed
+                    // lines — emitting the HTTP response too would duplicate the content.
+                    // The HTTP response fallback ensures output still appears when SSE
+                    // fails to connect or drops before streaming any assistant text.
+                    if (onOutputLine is not null && !_sseEmittedAssistantContent)
                     {
                         foreach (var line in outputLines)
                         {
@@ -595,6 +599,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 {
                     case "message.part.updated":
                         LastOutputTime = DateTime.UtcNow;
+                        _sseEmittedAssistantContent = true;
                         onOutputLine?.Invoke(StripAnsiEscapes($"[assistant] {sseEvent.Part?.Text}"));
                         break;
 
