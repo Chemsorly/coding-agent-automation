@@ -60,8 +60,6 @@ public static class ProviderSettingKeys
     /// <summary>Default base branch name.</summary>
     public const string DefaultBaseBranch = "main";
 
-
-
     // ── Token vending (written by orchestrator) ──────────────────────────
 
     /// <summary>Token expiration timestamp (written to provider settings at runtime).</summary>
