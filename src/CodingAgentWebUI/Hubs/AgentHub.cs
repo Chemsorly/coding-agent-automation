@@ -208,7 +208,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
             // The agent may also attempt a label swap via RequestLabelChange during its own
             // error handling, but that call can race with this handler (run already removed).
             // This is the authoritative swap that guarantees correctness.
-            // TODO: Validate payload.FinalLabel against AgentLabels.All to prevent arbitrary label injection
+            // Only accept FinalLabel if it is a known agent label; ignore arbitrary values.
             var finalLabel = payload.FinalLabel is not null && AgentLabels.All.Contains(payload.FinalLabel)
                 ? payload.FinalLabel
                 : null;
