@@ -116,6 +116,7 @@ public sealed class AgentWorkerService : BackgroundService
         _hubManager.OnCancelChat += HandleCancelChatAsync;
         _hubManager.OnFetchModels += HandleFetchModelsAsync;
         _hubManager.OnAssignConsolidationJob += HandleAssignConsolidationJobAsync;
+        _hubManager.OnReconnected += HandleReconnectedAsync;
 
         try
         {
@@ -477,6 +478,36 @@ public sealed class AgentWorkerService : BackgroundService
         catch (Exception ex)
         {
             _logger.Warning(ex, "Failed to send AgentReady signal after chat cancellation");
+        }
+    }
+
+    /// <summary>
+    /// Re-registers the agent with the orchestrator after a SignalR reconnection.
+    /// This is critical when the orchestrator pod rolls over — the new pod has no
+    /// prior state and won't recognize heartbeats from unregistered agents.
+    /// </summary>
+    private async Task HandleReconnectedAsync(string? connectionId)
+    {
+        _logger.Information("Re-registering agent {AgentId} after reconnection (connectionId={ConnectionId})",
+            _agentId, connectionId);
+
+        var registration = new AgentRegistrationMessage
+        {
+            AgentId = _agentId,
+            Hostname = Environment.MachineName,
+            AgentType = _agentType,
+            Labels = _labels
+        };
+
+        try
+        {
+            await _signalRPipeline.ExecuteAsync(async token =>
+                await _hubManager.Connection.InvokeAsync("RegisterAgent", registration, token), CancellationToken.None);
+            _logger.Information("Agent {AgentId} re-registered successfully after reconnection", _agentId);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to re-register agent {AgentId} after reconnection", _agentId);
         }
     }
 

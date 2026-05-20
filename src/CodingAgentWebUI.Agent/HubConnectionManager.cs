@@ -72,6 +72,13 @@ public sealed class HubConnectionManager : IAsyncDisposable
     public event Func<FetchModelsRequest, Task>? OnFetchModels;
 
     /// <summary>
+    /// Fired when the SignalR connection is re-established after a disconnection.
+    /// Subscribers should use this to re-register with the orchestrator, since the
+    /// new connection may target a different orchestrator pod with no prior state.
+    /// </summary>
+    public event Func<string?, Task>? OnReconnected;
+
+    /// <summary>
     /// Fired when the orchestrator assigns a consolidation job to this agent.
     /// </summary>
     public event Func<ConsolidationJobMessage, Task>? OnAssignConsolidationJob;
@@ -108,10 +115,20 @@ public sealed class HubConnectionManager : IAsyncDisposable
             return Task.CompletedTask;
         };
 
-        _connection.Reconnected += connectionId =>
+        _connection.Reconnected += async connectionId =>
         {
             _logger.Information("SignalR reconnected with connection ID {ConnectionId}", connectionId);
-            return Task.CompletedTask;
+            if (OnReconnected is not null)
+            {
+                try
+                {
+                    await OnReconnected(connectionId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "OnReconnected handler failed");
+                }
+            }
         };
 
         _connection.Closed += error =>
