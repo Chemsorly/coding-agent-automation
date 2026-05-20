@@ -388,6 +388,87 @@ public class LocalPipelineExecutorTests : IDisposable
         payload.BlacklistedFilesDetected.Should().ContainSingle().Which.Should().Be("secret.env");
         payload.CodeReviewAgentsRun.Should().ContainSingle().Which.Should().Be("Correctness");
         payload.CompletedAt.Should().Be(new DateTimeOffset(2026, 5, 15, 12, 0, 0, TimeSpan.Zero));
+        payload.FinalLabel.Should().Be(AgentLabels.Done);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_NotReadyRecommendation_SetsNeedsRefinementLabel()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-nr",
+            IssueIdentifier = "owner/repo#10",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.Failed,
+            CompletedAt = DateTime.UtcNow,
+            AnalysisRecommendation = "not_ready"
+        };
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.FinalLabel.Should().Be(AgentLabels.NeedsRefinement);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_WontDoRecommendation_SetsWontDoLabel()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-wd",
+            IssueIdentifier = "owner/repo#11",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.Completed,
+            CompletedAt = DateTime.UtcNow,
+            AnalysisRecommendation = "wont_do"
+        };
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.FinalLabel.Should().Be(AgentLabels.WontDo);
+    }
+
+    [Fact]
+    public void BuildFailurePayload_NotReadyRecommendation_SetsNeedsRefinementLabel()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-fnr",
+            IssueIdentifier = "owner/repo#12",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            AnalysisRecommendation = "not_ready"
+        };
+
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "Analysis gate: needs refinement");
+
+        payload.FinalLabel.Should().Be(AgentLabels.NeedsRefinement);
+        payload.FinalStep.Should().Be(PipelineStep.Failed);
+    }
+
+    [Fact]
+    public void BuildFailurePayload_NoRecommendation_SetsErrorLabel()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-fe",
+            IssueIdentifier = "owner/repo#13",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow
+        };
+
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "Build failed");
+
+        payload.FinalLabel.Should().Be(AgentLabels.Error);
     }
 
     [Fact]

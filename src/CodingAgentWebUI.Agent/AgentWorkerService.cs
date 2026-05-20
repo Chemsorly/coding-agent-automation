@@ -231,7 +231,8 @@ public sealed class AgentWorkerService : BackgroundService
                 {
                     FinalStep = PipelineStep.Cancelled,
                     CompletedAt = DateTimeOffset.UtcNow,
-                    IsRework = message.LinkedPullRequest is not null
+                    IsRework = message.LinkedPullRequest is not null,
+                    FinalLabel = AgentLabels.Cancelled
                 };
             }
             catch (Exception ex)
@@ -242,7 +243,8 @@ public sealed class AgentWorkerService : BackgroundService
                     FinalStep = PipelineStep.Failed,
                     FailureReason = ex.Message,
                     CompletedAt = DateTimeOffset.UtcNow,
-                    IsRework = message.LinkedPullRequest is not null
+                    IsRework = message.LinkedPullRequest is not null,
+                    FinalLabel = AgentLabels.Error
                 };
             }
             finally

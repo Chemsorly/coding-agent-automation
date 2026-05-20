@@ -324,7 +324,8 @@ public sealed class LocalPipelineExecutor
                 FinalStep = PipelineStep.Cancelled,
                 CompletedAt = DateTimeOffset.UtcNow,
                 RetryCount = run.RetryCount,
-                IsRework = run.LinkedPullRequest is not null
+                IsRework = run.LinkedPullRequest is not null,
+                FinalLabel = AgentLabels.Cancelled
             };
         }
         catch (Exception ex)
@@ -483,7 +484,8 @@ public sealed class LocalPipelineExecutor
         CodeReviewSuggestionCount = run.CodeReviewSuggestionCount,
         Feedback = run.Feedback,
         TotalTokens = run.TotalTokens,
-        TotalCost = run.TotalCost
+        TotalCost = run.TotalCost,
+        FinalLabel = DeriveLabel(run.CurrentStep, run.AnalysisRecommendation)
     };
 
     internal static JobCompletionPayload BuildFailurePayload(PipelineRun run, string reason) => new()
@@ -505,8 +507,26 @@ public sealed class LocalPipelineExecutor
         CodeReviewSuggestionCount = run.CodeReviewSuggestionCount,
         Feedback = run.Feedback,
         TotalTokens = run.TotalTokens,
-        TotalCost = run.TotalCost
+        TotalCost = run.TotalCost,
+        FinalLabel = DeriveLabel(PipelineStep.Failed, run.AnalysisRecommendation)
     };
+
+    /// <summary>
+    /// Derives the authoritative label from the terminal step and analysis recommendation.
+    /// </summary>
+    internal static string DeriveLabel(PipelineStep finalStep, string? analysisRecommendation) =>
+        analysisRecommendation switch
+        {
+            "not_ready" => AgentLabels.NeedsRefinement,
+            "wont_do" => AgentLabels.WontDo,
+            _ => finalStep switch
+            {
+                PipelineStep.Failed => AgentLabels.Error,
+                PipelineStep.Completed => AgentLabels.Done,
+                PipelineStep.Cancelled => AgentLabels.Cancelled,
+                _ => AgentLabels.Error
+            }
+        };
 
     /// <summary>
     /// Writes the MCP server configuration to the workspace at the path specified by

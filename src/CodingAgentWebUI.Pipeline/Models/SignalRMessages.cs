@@ -180,6 +180,14 @@ public sealed record JobCompletionPayload
 
     [Key(22)]
     public decimal? TotalCost { get; init; }
+
+    /// <summary>
+    /// The authoritative label the orchestrator should apply to the issue.
+    /// When present, takes precedence over <see cref="FinalStep"/>-based inference.
+    /// Null for backward compatibility with older agents (falls back to FinalStep inference).
+    /// </summary>
+    [Key(23)]
+    public string? FinalLabel { get; init; }
 }
 
 /// <summary>
