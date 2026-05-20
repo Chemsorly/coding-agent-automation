@@ -236,7 +236,7 @@
         _ => $"0/{total}"
     };
 
-    /// <summary>Toggles phase expansion. Works for all non-pending phases including auto-expanded ones.</summary>
+    /// <summary>Toggles phase expansion. Works for all phases including auto-expanded ones.</summary>
     private void TogglePhase(string phaseName)
     {
         // If currently in the collapsed override set, remove it (re-expand)
@@ -245,14 +245,11 @@
         if (_expandedPhases.Remove(phaseName)) return;
 
         // No override exists — determine current visual state and toggle
-        // Find the phase to check its auto-expand state
         var phase = _phases.FirstOrDefault(p => p.Name == phaseName);
         if (phase == null) return;
 
         var visibleSteps = GetVisibleSteps(phase.Steps);
         var phaseState = GetPhaseState(visibleSteps);
-
-        if (phaseState == PhaseState.Pending) return; // Can't toggle pending phases
 
         if (phaseState is PhaseState.Active or PhaseState.Failed or PhaseState.Retry)
         {
@@ -261,7 +258,7 @@
         }
         else
         {
-            // Auto-collapsed (Completed, Cancelled) → user wants to expand
+            // Auto-collapsed (Completed, Cancelled, Pending) → user wants to expand
             _expandedPhases.Add(phaseName);
         }
     }

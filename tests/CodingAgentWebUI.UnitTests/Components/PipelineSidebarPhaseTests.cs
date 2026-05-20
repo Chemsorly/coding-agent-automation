@@ -213,7 +213,7 @@ public class PipelineSidebarPhaseTests : BunitContext
     }
 
     [Fact]
-    public void ClickingPendingPhaseHeader_DoesNothing()
+    public void ClickingPendingPhaseHeader_ExpandsIt()
     {
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
@@ -225,9 +225,9 @@ public class PipelineSidebarPhaseTests : BunitContext
         // Click the header
         cut.Find("[data-testid='phase-finalization'] .phase-header").Click();
 
-        // Still collapsed
+        // Now expanded
         phaseBody = cut.Find("[data-testid='phase-finalization'] .phase-body");
-        Assert.Contains("phase-body-collapsed", phaseBody.GetAttribute("class"));
+        Assert.DoesNotContain("phase-body-collapsed", phaseBody.GetAttribute("class"));
     }
 
     // ─── Phase counters ──────────────────────────────────────────────────
