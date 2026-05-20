@@ -363,6 +363,7 @@ public class LocalPipelineExecutorTests : IDisposable
             LinesRemoved = 20,
             BrainUpdatesPushed = true,
             AnalysisRecommendation = "ready",
+            FinalLabel = AgentLabels.Done,
             LinkedPullRequest = new LinkedPullRequest { Url = "https://github.com/owner/repo/pull/41", Number = 41, BranchName = "agent/issue-41", IsDraft = false }
         };
         run.AnalysisConcerns = ["concern-1"];
@@ -388,6 +389,7 @@ public class LocalPipelineExecutorTests : IDisposable
         payload.BlacklistedFilesDetected.Should().ContainSingle().Which.Should().Be("secret.env");
         payload.CodeReviewAgentsRun.Should().ContainSingle().Which.Should().Be("Correctness");
         payload.CompletedAt.Should().Be(new DateTimeOffset(2026, 5, 15, 12, 0, 0, TimeSpan.Zero));
+        payload.FinalLabel.Should().Be(AgentLabels.Done);
     }
 
     [Fact]
@@ -503,6 +505,46 @@ public class LocalPipelineExecutorTests : IDisposable
         payload.CodeReviewCriticalCount.Should().Be(2);
         payload.CodeReviewWarningCount.Should().Be(5);
         payload.CodeReviewSuggestionCount.Should().Be(10);
+    }
+
+    [Fact]
+    public void BuildFailurePayload_WithFinalLabel_PropagatesLabel()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-7",
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            FinalLabel = AgentLabels.NeedsRefinement
+        };
+
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "Analysis gate: needs refinement");
+
+        payload.FinalLabel.Should().Be(AgentLabels.NeedsRefinement);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_WithFinalLabelWontDo_PropagatesLabel()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-8",
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.Completed,
+            CompletedAt = DateTime.UtcNow,
+            FinalLabel = AgentLabels.WontDo
+        };
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.FinalLabel.Should().Be(AgentLabels.WontDo);
     }
 
     // TODO: ExecuteAsync tests below dispose OutputBatcher/HubConnection after assertions.

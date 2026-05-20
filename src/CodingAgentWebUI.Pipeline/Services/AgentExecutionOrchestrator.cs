@@ -151,6 +151,7 @@ internal partial class AgentExecutionOrchestrator : IAgentPhaseExecutor
         CancellationToken ct)
     {
         run.FailureReason = failureReason;
+        run.FinalLabel = label;
         run.CompletedAt = DateTime.UtcNow;
         await issueOps.SwapLabelAsync(run.IssueIdentifier, label, ct);
         callbacks.TransitionTo(step);

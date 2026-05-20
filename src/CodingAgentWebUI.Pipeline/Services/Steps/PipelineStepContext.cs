@@ -117,6 +117,7 @@ internal sealed class PipelineStepContext
     {
         Run.FailureReason = reason;
         Run.CompletedAt = DateTime.UtcNow;
+        // TODO: Set Run.FinalLabel = AgentLabels.Error here for consistency (currently relies on fallback inference)
         await Callbacks.SwapAgentLabel(Run.IssueIdentifier, AgentLabels.Error, ct);
         Callbacks.EmitOutputLine($"❌ Pipeline failed: {reason}");
         Callbacks.TransitionTo(PipelineStep.Failed);

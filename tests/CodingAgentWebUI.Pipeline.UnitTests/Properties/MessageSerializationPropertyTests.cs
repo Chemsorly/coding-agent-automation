@@ -104,7 +104,8 @@ public class MessageSerializationPropertyTests
             CodeReviewAgentsRun = new[] { "Correctness" },
             CodeReviewCriticalCount = 0,
             CodeReviewWarningCount = 1,
-            CodeReviewSuggestionCount = 3
+            CodeReviewSuggestionCount = 3,
+            FinalLabel = isDraftPr ? AgentLabels.Error : AgentLabels.Done
         };
 
         var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
@@ -123,6 +124,7 @@ public class MessageSerializationPropertyTests
         deserialized.AnalysisConcerns.Should().BeEquivalentTo(original.AnalysisConcerns);
         deserialized.BlacklistedFilesDetected.Should().BeEquivalentTo(original.BlacklistedFilesDetected);
         deserialized.CodeReviewAgentsRun.Should().BeEquivalentTo(original.CodeReviewAgentsRun);
+        deserialized.FinalLabel.Should().Be(original.FinalLabel);
     }
 
     /// <summary>

@@ -319,6 +319,7 @@ public sealed class LocalPipelineExecutor
             TransitionTo(PipelineStep.Cancelled);
             EmitOutputLine("🚫 Pipeline cancelled");
 
+            // TODO: Set run.FinalLabel = AgentLabels.Cancelled here for consistency (currently relies on fallback inference)
             return new JobCompletionPayload
             {
                 FinalStep = PipelineStep.Cancelled,
@@ -457,6 +458,7 @@ public sealed class LocalPipelineExecutor
 
         run.CompletedAt = DateTime.UtcNow;
         run.CurrentStep = finalStep;
+        // TODO: Set run.FinalLabel explicitly for success/draft paths (currently relies on fallback inference in AgentHub)
     }
 
     internal static JobCompletionPayload BuildCompletionPayload(PipelineRun run) => new()
@@ -483,7 +485,8 @@ public sealed class LocalPipelineExecutor
         CodeReviewSuggestionCount = run.CodeReviewSuggestionCount,
         Feedback = run.Feedback,
         TotalTokens = run.TotalTokens,
-        TotalCost = run.TotalCost
+        TotalCost = run.TotalCost,
+        FinalLabel = run.FinalLabel
     };
 
     internal static JobCompletionPayload BuildFailurePayload(PipelineRun run, string reason) => new()
@@ -505,7 +508,8 @@ public sealed class LocalPipelineExecutor
         CodeReviewSuggestionCount = run.CodeReviewSuggestionCount,
         Feedback = run.Feedback,
         TotalTokens = run.TotalTokens,
-        TotalCost = run.TotalCost
+        TotalCost = run.TotalCost,
+        FinalLabel = run.FinalLabel
     };
 
     /// <summary>
