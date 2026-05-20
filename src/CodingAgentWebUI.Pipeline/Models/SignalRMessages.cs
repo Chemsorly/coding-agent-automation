@@ -180,6 +180,9 @@ public sealed record JobCompletionPayload
 
     [Key(22)]
     public decimal? TotalCost { get; init; }
+
+    [Key(23)]
+    public string? FinalLabel { get; init; }
 }
 
 /// <summary>

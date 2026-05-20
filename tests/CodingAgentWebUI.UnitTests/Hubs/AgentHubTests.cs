@@ -74,7 +74,8 @@ public class AgentHubTests
             CodeReviewAgentsRun = new[] { "Correctness", "Security" },
             CodeReviewCriticalCount = 0,
             CodeReviewWarningCount = 1,
-            CodeReviewSuggestionCount = 3
+            CodeReviewSuggestionCount = 3,
+            FinalLabel = AgentLabels.Done
         };
 
         payload.FinalStep.Should().Be(PipelineStep.Completed);
@@ -92,6 +93,7 @@ public class AgentHubTests
         payload.CodeReviewCriticalCount.Should().Be(0);
         payload.CodeReviewWarningCount.Should().Be(1);
         payload.CodeReviewSuggestionCount.Should().Be(3);
+        payload.FinalLabel.Should().Be(AgentLabels.Done);
     }
 
     [Fact]
