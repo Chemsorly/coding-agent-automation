@@ -1,9 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Text.RegularExpressions;
-using System.Xml.Linq;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services.Parsers;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -195,7 +194,7 @@ public class QualityGateValidator : IQualityGateValidator
         }
         else
         {
-            var (errors, warnings) = ParseBuildErrorCounts(stdout + "\n" + stderr);
+            var (errors, warnings) = BuildOutputParser.ParseBuildErrorCounts(stdout + "\n" + stderr);
             details = $"Build failed with exit code {exitCode}. {errors} error(s), {warnings} warning(s).";
         }
 
@@ -254,20 +253,20 @@ public class QualityGateValidator : IQualityGateValidator
         if (isDotnet && resultsDir != null)
         {
             // Parse TRX files for accurate test counts
-            (passed, failed, skipped) = ParseTestCountsFromTrx(resultsDir);
+            (passed, failed, skipped) = TrxTestResultParser.ParseTestCountsFromTrx(resultsDir);
 
             // If TRX parsing found nothing, fall back to stdout parsing
             if (passed == 0 && failed == 0 && skipped == 0)
             {
                 _logger.Warning("No TRX results found in {ResultsDir} for QGC {QgcName}, falling back to stdout parsing",
                     resultsDir, qgc.DisplayName);
-                (passed, failed, skipped) = ParseTestCountsFromStdout(stdout);
+                (passed, failed, skipped) = StdoutTestResultParser.ParseTestCountsFromStdout(stdout);
             }
         }
         else
         {
             // Non-.NET: parse test counts from stdout
-            (passed, failed, skipped) = ParseTestCountsFromStdout(stdout);
+            (passed, failed, skipped) = StdoutTestResultParser.ParseTestCountsFromStdout(stdout);
         }
 
         _logger.Information("QGC {QgcName} test results: {Passed} passed, {Failed} failed, {Skipped} skipped",
@@ -316,45 +315,6 @@ public class QualityGateValidator : IQualityGateValidator
     }
 
     /// <summary>
-    /// Parses all .trx files in the results directory and sums up test counts across all assemblies.
-    /// TRX files contain a ResultSummary/Counters element with total/passed/failed/etc attributes.
-    /// </summary>
-    internal static (int Passed, int Failed, int Skipped) ParseTestCountsFromTrx(string resultsDir)
-    {
-        if (!Directory.Exists(resultsDir))
-            return (0, 0, 0);
-
-        var trxFiles = Directory.GetFiles(resultsDir, "*.trx", SearchOption.AllDirectories);
-        if (trxFiles.Length == 0)
-            return (0, 0, 0);
-
-        var totalPassed = 0;
-        var totalFailed = 0;
-        var totalSkipped = 0;
-
-        foreach (var trxFile in trxFiles)
-        {
-            try
-            {
-                var doc = XDocument.Load(trxFile);
-                var ns = doc.Root?.Name.Namespace ?? XNamespace.None;
-                var counters = doc.Descendants(ns + "Counters").FirstOrDefault();
-                if (counters == null) continue;
-
-                totalPassed += ParseIntAttribute(counters, "passed");
-                totalFailed += ParseIntAttribute(counters, "failed") + ParseIntAttribute(counters, "error");
-                totalSkipped += ParseIntAttribute(counters, "notExecuted");
-            }
-            catch
-            {
-                // Skip malformed TRX files
-            }
-        }
-
-        return (totalPassed, totalFailed, totalSkipped);
-    }
-
-    /// <summary>
     /// Locates and parses coverage reports based on the QGC configuration.
     /// Supports Cobertura XML (default) and JaCoCo XML formats.
     /// Uses CoverageReportPaths if specified, otherwise falls back to convention-based discovery.
@@ -382,8 +342,8 @@ public class QualityGateValidator : IQualityGateValidator
 
         // Parse based on format
         var coveragePercent = string.Equals(format, "jacoco", StringComparison.OrdinalIgnoreCase)
-            ? ParseCoverageFromJacoco(reportFiles)
-            : ParseCoverageFromCobertura(reportFiles);
+            ? JacocoParser.ParseCoverageFromJacoco(reportFiles)
+            : CoberturaParser.ParseCoverageFromCobertura(reportFiles);
 
         _logger.Information("Coverage ({Format}): {CoveragePercent:F1}% (threshold: {Threshold:F1}%)",
             format, coveragePercent, threshold);
@@ -455,211 +415,6 @@ public class QualityGateValidator : IQualityGateValidator
     }
 
     /// <summary>
-    /// Parses Cobertura XML files and returns the merged line coverage percentage.
-    /// When multiple reports cover the same source file, line-level hits are merged
-    /// (max hit count per line) to avoid double-counting in multi-project solutions.
-    /// </summary>
-    internal static double ParseCoverageFromCobertura(string[] coberturaFiles)
-    {
-        // Track per-line coverage: sourceFile -> (lineNumber -> hits)
-        var lineCoverage = new Dictionary<string, Dictionary<int, int>>();
-
-        foreach (var file in coberturaFiles)
-        {
-            try
-            {
-                var doc = XDocument.Load(file);
-                if (doc.Root == null) continue;
-
-                foreach (var cls in doc.Descendants("class"))
-                {
-                    var filename = cls.Attribute("filename")?.Value;
-                    if (string.IsNullOrEmpty(filename)) continue;
-
-                    if (!lineCoverage.TryGetValue(filename, out var fileLines))
-                    {
-                        fileLines = new Dictionary<int, int>();
-                        lineCoverage[filename] = fileLines;
-                    }
-
-                    foreach (var line in cls.Descendants("line"))
-                    {
-                        var number = (int?)line.Attribute("number");
-                        var hits = (int?)line.Attribute("hits");
-                        if (number == null) continue;
-
-                        var lineNum = number.Value;
-                        var lineHits = hits ?? 0;
-
-                        // Take the max hits across reports for the same line
-                        if (fileLines.TryGetValue(lineNum, out var existing))
-                            fileLines[lineNum] = Math.Max(existing, lineHits);
-                        else
-                            fileLines[lineNum] = lineHits;
-                    }
-                }
-            }
-            catch
-            {
-                // Skip malformed files
-            }
-        }
-
-        var totalLines = 0L;
-        var coveredLines = 0L;
-        foreach (var fileLines in lineCoverage.Values)
-        {
-            foreach (var hits in fileLines.Values)
-            {
-                totalLines++;
-                if (hits > 0) coveredLines++;
-            }
-        }
-
-        return totalLines > 0 ? (double)coveredLines / totalLines * 100.0 : 0.0;
-    }
-
-    /// <summary>
-    /// Parses JaCoCo XML files and returns the aggregate line coverage percentage.
-    /// JaCoCo uses counter elements with type="LINE" at the class level:
-    /// <![CDATA[<counter type="LINE" missed="6" covered="10"/>]]>
-    /// When multiple reports cover the same source file, counters are summed.
-    /// </summary>
-    internal static double ParseCoverageFromJacoco(string[] jacocoFiles)
-    {
-        var totalMissed = 0L;
-        var totalCovered = 0L;
-
-        foreach (var file in jacocoFiles)
-        {
-            try
-            {
-                var doc = XDocument.Load(file);
-                if (doc.Root == null) continue;
-
-                // Sum LINE counters from all class elements
-                foreach (var counter in doc.Descendants("counter"))
-                {
-                    var type = counter.Attribute("type")?.Value;
-                    if (!string.Equals(type, "LINE", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    var missed = (long?)counter.Attribute("missed") ?? 0;
-                    var covered = (long?)counter.Attribute("covered") ?? 0;
-
-                    // Only count class-level counters (direct children of <class> elements)
-                    // to avoid double-counting from package/report-level summaries
-                    var parent = counter.Parent;
-                    if (parent?.Name.LocalName == "class")
-                    {
-                        totalMissed += missed;
-                        totalCovered += covered;
-                    }
-                }
-            }
-            catch
-            {
-                // Skip malformed files
-            }
-        }
-
-        var totalLines = totalMissed + totalCovered;
-        return totalLines > 0 ? (double)totalCovered / totalLines * 100.0 : 0.0;
-    }
-
-    /// <summary>
-    /// Fallback: parses test counts from stdout when TRX files are not available.
-    /// Handles .NET per-assembly format, .NET 10 summary line, pytest output, and Maven/JUnit output.
-    /// </summary>
-    internal static (int Passed, int Failed, int Skipped) ParseTestCountsFromStdout(string output)
-    {
-        if (string.IsNullOrWhiteSpace(output))
-            return (0, 0, 0);
-
-        // Try .NET 10 summary line first: "Test summary: total: 47; failed: 0; succeeded: 47; skipped: 0"
-        var summaryMatch = System.Text.RegularExpressions.Regex.Match(output,
-            @"Test summary:.*?failed:\s*(\d+).*?succeeded:\s*(\d+).*?skipped:\s*(\d+)",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (summaryMatch.Success)
-        {
-            int.TryParse(summaryMatch.Groups[2].Value, out var succeeded);
-            int.TryParse(summaryMatch.Groups[1].Value, out var summaryFailed);
-            int.TryParse(summaryMatch.Groups[3].Value, out var summarySkipped);
-            return (succeeded, summaryFailed, summarySkipped);
-        }
-
-        // Try pytest format: "5 passed, 2 failed, 1 skipped in 3.45s" or "5 passed in 1.23s"
-        var pytestMatch = Regex.Match(output,
-            @"=+\s*(.*?)\s*in\s+[\d.]+s\s*=+",
-            RegexOptions.IgnoreCase);
-        if (pytestMatch.Success)
-        {
-            var pytestSummary = pytestMatch.Groups[1].Value;
-            var pytestPassed = 0;
-            var pytestFailed = 0;
-            var pytestSkipped = 0;
-
-            var passedMatch = Regex.Match(pytestSummary, @"(\d+)\s+passed", RegexOptions.IgnoreCase);
-            if (passedMatch.Success) int.TryParse(passedMatch.Groups[1].Value, out pytestPassed);
-
-            var failedMatch = Regex.Match(pytestSummary, @"(\d+)\s+failed", RegexOptions.IgnoreCase);
-            if (failedMatch.Success) int.TryParse(failedMatch.Groups[1].Value, out pytestFailed);
-
-            var skippedMatch = Regex.Match(pytestSummary, @"(\d+)\s+skipped", RegexOptions.IgnoreCase);
-            if (skippedMatch.Success) int.TryParse(skippedMatch.Groups[1].Value, out pytestSkipped);
-
-            var errorMatch = Regex.Match(pytestSummary, @"(\d+)\s+error", RegexOptions.IgnoreCase);
-            if (errorMatch.Success && int.TryParse(errorMatch.Groups[1].Value, out var pytestErrors))
-                pytestFailed += pytestErrors;
-
-            if (pytestPassed > 0 || pytestFailed > 0 || pytestSkipped > 0)
-                return (pytestPassed, pytestFailed, pytestSkipped);
-        }
-
-        // Try Maven/JUnit format: "Tests run: 10, Failures: 2, Errors: 1, Skipped: 3"
-        var mavenPassed = 0;
-        var mavenFailed = 0;
-        var mavenSkipped = 0;
-        var mavenMatched = false;
-
-        foreach (var match in Regex.Matches(output,
-            @"Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+)",
-            RegexOptions.IgnoreCase)
-            .Cast<Match>())
-        {
-            mavenMatched = true;
-            int.TryParse(match.Groups[1].Value, out var run);
-            int.TryParse(match.Groups[2].Value, out var failures);
-            int.TryParse(match.Groups[3].Value, out var errors);
-            int.TryParse(match.Groups[4].Value, out var skip);
-
-            mavenPassed += run - failures - errors - skip;
-            mavenFailed += failures + errors;
-            mavenSkipped += skip;
-        }
-
-        if (mavenMatched)
-            return (mavenPassed, mavenFailed, mavenSkipped);
-
-        // Fall back to summing per-assembly lines: "Passed:  10, Failed:   2, Skipped:   1"
-        var passed = 0;
-        var failed = 0;
-        var skipped = 0;
-
-        foreach (var match in System.Text.RegularExpressions.Regex.Matches(output,
-            @"Passed:\s*(\d+),\s*Failed:\s*(\d+),\s*Skipped:\s*(\d+)",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase)
-            .Cast<System.Text.RegularExpressions.Match>())
-        {
-            if (int.TryParse(match.Groups[1].Value, out var p)) passed += p;
-            if (int.TryParse(match.Groups[2].Value, out var f)) failed += f;
-            if (int.TryParse(match.Groups[3].Value, out var s)) skipped += s;
-        }
-
-        return (passed, failed, skipped);
-    }
-
-    /// <summary>
     /// Writes gate stdout/stderr to .agent/quality-gates/{gateName}-stdout.txt and
     /// {gateName}-stderr.txt so the agent can read them on demand.
     /// </summary>
@@ -678,29 +433,6 @@ public class QualityGateValidator : IQualityGateValidator
         {
             _logger.Warning(ex, "Failed to write quality gate output for {GateName}", gateName);
         }
-    }
-
-    /// <summary>
-    /// Parses error and warning counts from MSBuild output.
-    /// Looks for the summary line pattern: "X Error(s)" and "Y Warning(s)".
-    /// </summary>
-    internal static (int Errors, int Warnings) ParseBuildErrorCounts(string output)
-    {
-        var errors = 0;
-        var warnings = 0;
-
-        if (string.IsNullOrWhiteSpace(output))
-            return (errors, warnings);
-
-        var errorMatch = Regex.Match(output, @"(\d+)\s+Error\(s\)", RegexOptions.IgnoreCase);
-        if (errorMatch.Success)
-            int.TryParse(errorMatch.Groups[1].Value, out errors);
-
-        var warningMatch = Regex.Match(output, @"(\d+)\s+Warning\(s\)", RegexOptions.IgnoreCase);
-        if (warningMatch.Success)
-            int.TryParse(warningMatch.Groups[1].Value, out warnings);
-
-        return (errors, warnings);
     }
 
     private protected virtual async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
@@ -729,11 +461,5 @@ public class QualityGateValidator : IQualityGateValidator
         var stderr = await stderrTask;
 
         return (process.ExitCode, stdout, stderr);
-    }
-
-    private static int ParseIntAttribute(XElement element, string name)
-    {
-        var attr = element.Attribute(name);
-        return attr != null && int.TryParse(attr.Value, out var val) ? val : 0;
     }
 }

@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Services.Parsers;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests;
 
@@ -68,7 +69,7 @@ public class QualityGateValidatorTests
         {
             WriteTrxFile(dir, "results.trx", passed: 10, failed: 2, notExecuted: 1);
 
-            var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromTrx(dir);
+            var (passed, failed, skipped) = TrxTestResultParser.ParseTestCountsFromTrx(dir);
 
             passed.Should().Be(10);
             failed.Should().Be(2);
@@ -86,7 +87,7 @@ public class QualityGateValidatorTests
             WriteTrxFile(dir, "assembly1.trx", passed: 10, failed: 0, notExecuted: 1);
             WriteTrxFile(dir, "assembly2.trx", passed: 25, failed: 3, notExecuted: 0);
 
-            var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromTrx(dir);
+            var (passed, failed, skipped) = TrxTestResultParser.ParseTestCountsFromTrx(dir);
 
             passed.Should().Be(35);
             failed.Should().Be(3);
@@ -103,7 +104,7 @@ public class QualityGateValidatorTests
         {
             WriteTrxFile(dir, "results.trx", passed: 8, failed: 1, notExecuted: 0, error: 2);
 
-            var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromTrx(dir);
+            var (passed, failed, skipped) = TrxTestResultParser.ParseTestCountsFromTrx(dir);
 
             passed.Should().Be(8);
             failed.Should().Be(3); // 1 failed + 2 error
@@ -115,7 +116,7 @@ public class QualityGateValidatorTests
     [Fact]
     public void ParseTestCountsFromTrx_WithNoDirectory_ReturnsZeros()
     {
-        var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromTrx("/nonexistent/path");
+        var (passed, failed, skipped) = TrxTestResultParser.ParseTestCountsFromTrx("/nonexistent/path");
 
         passed.Should().Be(0);
         failed.Should().Be(0);
@@ -128,7 +129,7 @@ public class QualityGateValidatorTests
         var dir = CreateTempDir();
         try
         {
-            var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromTrx(dir);
+            var (passed, failed, skipped) = TrxTestResultParser.ParseTestCountsFromTrx(dir);
 
             passed.Should().Be(0);
             failed.Should().Be(0);
@@ -145,7 +146,7 @@ public class QualityGateValidatorTests
         {
             File.WriteAllText(Path.Combine(dir, "bad.trx"), "not xml at all");
 
-            var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromTrx(dir);
+            var (passed, failed, skipped) = TrxTestResultParser.ParseTestCountsFromTrx(dir);
 
             passed.Should().Be(0);
             failed.Should().Be(0);
@@ -163,7 +164,7 @@ public class QualityGateValidatorTests
             WriteTrxFile(dir, "good.trx", passed: 10, failed: 1, notExecuted: 0);
             File.WriteAllText(Path.Combine(dir, "bad.trx"), "not xml");
 
-            var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromTrx(dir);
+            var (passed, failed, skipped) = TrxTestResultParser.ParseTestCountsFromTrx(dir);
 
             passed.Should().Be(10);
             failed.Should().Be(1);
@@ -182,7 +183,7 @@ public class QualityGateValidatorTests
         {
             var file = WriteCoberturaFile(dir, "coverage.cobertura.xml", lineRate: 0.85, linesValid: 200);
 
-            var coverage = QualityGateValidator.ParseCoverageFromCobertura([file]);
+            var coverage = CoberturaParser.ParseCoverageFromCobertura([file]);
 
             coverage.Should().BeApproximately(85.0, 0.5);
         }
@@ -199,7 +200,7 @@ public class QualityGateValidatorTests
             var file2 = WriteCoberturaFile(dir, "cov2.xml", lineRate: 0.6, linesValid: 300);
 
             // Weighted: (90 + 180) / 400 = 67.5%
-            var coverage = QualityGateValidator.ParseCoverageFromCobertura([file1, file2]);
+            var coverage = CoberturaParser.ParseCoverageFromCobertura([file1, file2]);
 
             coverage.Should().BeApproximately(67.5, 0.5);
         }
@@ -209,7 +210,7 @@ public class QualityGateValidatorTests
     [Fact]
     public void ParseCoverageFromCobertura_WithNoFiles_ReturnsZero()
     {
-        var coverage = QualityGateValidator.ParseCoverageFromCobertura([]);
+        var coverage = CoberturaParser.ParseCoverageFromCobertura([]);
 
         coverage.Should().Be(0.0);
     }
@@ -224,7 +225,7 @@ public class QualityGateValidatorTests
     public void ParseTestCountsFromStdout_PerAssemblyFormat_ExtractsCorrectValues(
         string output, int expectedPassed, int expectedFailed, int expectedSkipped)
     {
-        var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromStdout(output);
+        var (passed, failed, skipped) = StdoutTestResultParser.ParseTestCountsFromStdout(output);
 
         passed.Should().Be(expectedPassed);
         failed.Should().Be(expectedFailed);
@@ -242,7 +243,7 @@ public class QualityGateValidatorTests
     public void ParseBuildErrorCounts_ExtractsCorrectValues(
         string output, int expectedErrors, int expectedWarnings)
     {
-        var (errors, warnings) = QualityGateValidator.ParseBuildErrorCounts(output);
+        var (errors, warnings) = BuildOutputParser.ParseBuildErrorCounts(output);
 
         errors.Should().Be(expectedErrors);
         warnings.Should().Be(expectedWarnings);
@@ -280,7 +281,7 @@ public class QualityGateValidatorTests
             Passed:  25, Failed:   3, Skipped:   0 - Assembly2.dll
             """;
 
-        var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromStdout(output);
+        var (passed, failed, skipped) = StdoutTestResultParser.ParseTestCountsFromStdout(output);
 
         passed.Should().Be(35);
         failed.Should().Be(3);
@@ -292,7 +293,7 @@ public class QualityGateValidatorTests
     {
         var output = "Test summary: total: 47; failed: 0; succeeded: 47; skipped: 0; duration: 1.4s";
 
-        var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromStdout(output);
+        var (passed, failed, skipped) = StdoutTestResultParser.ParseTestCountsFromStdout(output);
 
         passed.Should().Be(47);
         failed.Should().Be(0);
@@ -305,7 +306,7 @@ public class QualityGateValidatorTests
     public void ParseTestCountsFromStdout_PytestAllPassed_ParsesCorrectly()
     {
         var output = "========================= 5 passed in 1.23s =========================";
-        var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromStdout(output);
+        var (passed, failed, skipped) = StdoutTestResultParser.ParseTestCountsFromStdout(output);
         passed.Should().Be(5);
         failed.Should().Be(0);
         skipped.Should().Be(0);
@@ -315,7 +316,7 @@ public class QualityGateValidatorTests
     public void ParseTestCountsFromStdout_PytestMixed_ParsesCorrectly()
     {
         var output = "=================== 3 passed, 2 failed, 1 skipped in 4.56s ===================";
-        var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromStdout(output);
+        var (passed, failed, skipped) = StdoutTestResultParser.ParseTestCountsFromStdout(output);
         passed.Should().Be(3);
         failed.Should().Be(2);
         skipped.Should().Be(1);
@@ -325,7 +326,7 @@ public class QualityGateValidatorTests
     public void ParseTestCountsFromStdout_PytestWithErrors_CountsErrorsAsFailed()
     {
         var output = "=================== 5 passed, 1 error in 2.00s ===================";
-        var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromStdout(output);
+        var (passed, failed, skipped) = StdoutTestResultParser.ParseTestCountsFromStdout(output);
         passed.Should().Be(5);
         failed.Should().Be(1);
         skipped.Should().Be(0);
@@ -337,7 +338,7 @@ public class QualityGateValidatorTests
     public void ParseTestCountsFromStdout_MavenSingleModule_ParsesCorrectly()
     {
         var output = "Tests run: 10, Failures: 2, Errors: 1, Skipped: 3";
-        var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromStdout(output);
+        var (passed, failed, skipped) = StdoutTestResultParser.ParseTestCountsFromStdout(output);
         passed.Should().Be(4); // 10 - 2 - 1 - 3
         failed.Should().Be(3); // 2 failures + 1 error
         skipped.Should().Be(3);
@@ -352,7 +353,7 @@ public class QualityGateValidatorTests
             [INFO] Results:
             Tests run: 8, Failures: 1, Errors: 0, Skipped: 2
             """;
-        var (passed, failed, skipped) = QualityGateValidator.ParseTestCountsFromStdout(output);
+        var (passed, failed, skipped) = StdoutTestResultParser.ParseTestCountsFromStdout(output);
         passed.Should().Be(10); // (5-0-0-0) + (8-1-0-2) = 5 + 5
         failed.Should().Be(1);
         skipped.Should().Be(2);
@@ -387,7 +388,7 @@ public class QualityGateValidatorTests
             File.WriteAllText(f1, xml1);
             File.WriteAllText(f2, xml2);
 
-            var result = QualityGateValidator.ParseCoverageFromCobertura([f1, f2]);
+            var result = CoberturaParser.ParseCoverageFromCobertura([f1, f2]);
             result.Should().Be(100.0); // Both lines covered after merge
         }
         finally { Directory.Delete(dir, true); }
@@ -412,7 +413,7 @@ public class QualityGateValidatorTests
             var goodFile = Path.Combine(dir, "good.xml");
             File.WriteAllText(goodFile, goodXml);
 
-            var result = QualityGateValidator.ParseCoverageFromCobertura([badFile, goodFile]);
+            var result = CoberturaParser.ParseCoverageFromCobertura([badFile, goodFile]);
             result.Should().Be(100.0);
         }
         finally { Directory.Delete(dir, true); }
@@ -435,7 +436,7 @@ public class QualityGateValidatorTests
             var filePath = Path.Combine(dir, "nohits.xml");
             File.WriteAllText(filePath, xml);
 
-            var result = QualityGateValidator.ParseCoverageFromCobertura([filePath]);
+            var result = CoberturaParser.ParseCoverageFromCobertura([filePath]);
             result.Should().Be(50.0); // 1 of 2 lines covered
         }
         finally { Directory.Delete(dir, true); }
@@ -507,7 +508,7 @@ public class QualityGateValidatorTests
             var filePath = Path.Combine(dir, "jacoco.xml");
             File.WriteAllText(filePath, jacocoXml);
 
-            var result = QualityGateValidator.ParseCoverageFromJacoco([filePath]);
+            var result = JacocoParser.ParseCoverageFromJacoco([filePath]);
             result.Should().Be(80.0);
         }
         finally { Directory.Delete(dir, true); }
@@ -535,7 +536,7 @@ public class QualityGateValidatorTests
             var filePath = Path.Combine(dir, "jacoco.xml");
             File.WriteAllText(filePath, jacocoXml);
 
-            var result = QualityGateValidator.ParseCoverageFromJacoco([filePath]);
+            var result = JacocoParser.ParseCoverageFromJacoco([filePath]);
             result.Should().Be(62.5);
         }
         finally { Directory.Delete(dir, true); }
@@ -562,7 +563,7 @@ public class QualityGateValidatorTests
             var filePath = Path.Combine(dir, "jacoco.xml");
             File.WriteAllText(filePath, jacocoXml);
 
-            var result = QualityGateValidator.ParseCoverageFromJacoco([filePath]);
+            var result = JacocoParser.ParseCoverageFromJacoco([filePath]);
             result.Should().Be(70.0);
         }
         finally { Directory.Delete(dir, true); }
@@ -571,7 +572,7 @@ public class QualityGateValidatorTests
     [Fact]
     public void ParseCoverageFromJacoco_EmptyFiles_ReturnsZero()
     {
-        var result = QualityGateValidator.ParseCoverageFromJacoco([]);
+        var result = JacocoParser.ParseCoverageFromJacoco([]);
         result.Should().Be(0.0);
     }
 
@@ -597,7 +598,7 @@ public class QualityGateValidatorTests
             var goodFile = Path.Combine(dir, "good.xml");
             File.WriteAllText(goodFile, goodXml);
 
-            var result = QualityGateValidator.ParseCoverageFromJacoco([badFile, goodFile]);
+            var result = JacocoParser.ParseCoverageFromJacoco([badFile, goodFile]);
             result.Should().Be(100.0);
         }
         finally { Directory.Delete(dir, true); }
@@ -634,7 +635,7 @@ public class QualityGateValidatorTests
             File.WriteAllText(f1, xml1);
             File.WriteAllText(f2, xml2);
 
-            var result = QualityGateValidator.ParseCoverageFromJacoco([f1, f2]);
+            var result = JacocoParser.ParseCoverageFromJacoco([f1, f2]);
             result.Should().Be(50.0);
         }
         finally { Directory.Delete(dir, true); }
@@ -663,7 +664,7 @@ public class QualityGateValidatorTests
             var filePath = Path.Combine(dir, "jacoco.xml");
             File.WriteAllText(filePath, jacocoXml);
 
-            var result = QualityGateValidator.ParseCoverageFromJacoco([filePath]);
+            var result = JacocoParser.ParseCoverageFromJacoco([filePath]);
             result.Should().Be(80.0);
         }
         finally { Directory.Delete(dir, true); }
