@@ -1,0 +1,46 @@
+using System.Text.Json.Serialization;
+
+namespace CodingAgentWebUI.Pipeline.Models;
+
+/// <summary>
+/// Controls how blacklisted path violations are handled during commits.
+/// </summary>
+public enum BlacklistMode
+{
+    /// <summary>Unstage blacklisted files, log a warning, and continue the pipeline.</summary>
+    WarnAndExclude,
+
+    /// <summary>Fail the pipeline with a clear error listing the violating files.</summary>
+    Fail
+}
+
+/// <summary>
+/// Controls whether review agents share the codegen session or run in isolation.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum ReviewIsolation
+{
+    /// <summary>Review agents share the codegen session (legacy behavior).</summary>
+    Shared,
+
+    /// <summary>Review agents run in fresh sessions with no shared context.</summary>
+    Isolated
+}
+
+public sealed record CodeReviewConfiguration
+{
+    public int MaxIterations { get; init; } = 2;
+
+    /// <summary>
+    /// When set, the review step splits into find-then-fix: the review prompt reports findings
+    /// with severity markers, then this fix prompt is sent only if [CRITICAL] findings exist.
+    /// When null/empty, falls back to single-pass behavior (review prompt does both find and fix).
+    /// </summary>
+    public string? FixPrompt { get; init; }
+
+    /// <summary>
+    /// Controls whether review agents share the codegen session or run in fresh isolated sessions.
+    /// Default is Isolated to eliminate self-attribution bias.
+    /// </summary>
+    public ReviewIsolation ReviewIsolation { get; init; } = ReviewIsolation.Isolated;
+}
