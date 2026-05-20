@@ -19,7 +19,7 @@ public interface IAgentHub
     Task AgentReady(string agentId);
 
     // Real-time status
-    Task ReportStepTransition(string jobId, PipelineStep step, DateTimeOffset timestamp);
+    Task ReportStepTransition(string jobId, PipelineStep step, DateTimeOffset timestamp, Dictionary<string, string>? metadata = null);
     Task ReportOutputLines(string jobId, IReadOnlyList<string> lines);
     Task ReportChatEntry(string jobId, ChatRole role, string content);
     Task ReportQualityGateResult(string jobId, QualityGateReport report);

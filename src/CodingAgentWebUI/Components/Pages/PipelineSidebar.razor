@@ -197,7 +197,23 @@
         if (hasFailed) return PhaseState.Failed;
         if (hasCancelled) return PhaseState.Cancelled;
         if (hasActive) return PhaseState.Active;
-        if (hasRevisited) return PhaseState.Retry;
+
+        if (hasRevisited)
+        {
+            // Distinguish genuine retries from sub-operations:
+            // A genuine retry means the pipeline went back to fix something (RetryCount > 0
+            // or quality gates failed). A sub-operation means the current step is running
+            // a child operation (e.g., PreparingForPullRequest runs final quality gates,
+            // temporarily setting CurrentStep back to RunningQualityGates).
+            // Show as Retry only when there's evidence of an actual retry attempt.
+            if (Run.RetryCount > 0) return PhaseState.Retry;
+
+            // If the first visible step in this phase was already reached (is Revisited)
+            // and the current step is in a preceding phase, this is likely a sub-operation.
+            // Show as Active (in progress) rather than Retry.
+            return PhaseState.Active;
+        }
+
         if (allCompleted) return PhaseState.Completed;
         if (allPending) return PhaseState.Pending;
 
@@ -370,8 +386,8 @@
         PipelineStep.VerifyingBaseline => Run.BaselineHealthPassed.HasValue,
         PipelineStep.AnalyzingCode => true,
         PipelineStep.ReviewingAnalysis => true,
-        PipelineStep.GeneratingCode => Run.FilesChangedCount > 0 || Run.LinesAdded > 0 || Run.LinesRemoved > 0,
-        PipelineStep.ReviewingCode => Run.CodeReviewIterationsCompleted > 0,
+        PipelineStep.GeneratingCode => true,
+        PipelineStep.ReviewingCode => true,
         PipelineStep.RunningQualityGates => Run.LatestQualityReport != null,
         PipelineStep.PreparingForPullRequest => false,
         PipelineStep.CreatingPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
@@ -436,7 +452,10 @@
         else if (step == PipelineStep.GeneratingCode)
         {
             <div class="step-detail-box">
-                <div>🤖 Agent @(state == StepState.Active ? "active" : "idle")</div>
+                @if (state == StepState.Active)
+                {
+                    <div>🤖 Agent active</div>
+                }
                 @if (Run.FilesChangedCount > 0)
                 {
                     <div>Files changed: @Run.FilesChangedCount</div>
@@ -444,6 +463,10 @@
                 @if (Run.LinesAdded > 0 || Run.LinesRemoved > 0)
                 {
                     <div>+@Run.LinesAdded -@Run.LinesRemoved</div>
+                }
+                @if (state != StepState.Active && Run.FilesChangedCount == 0 && Run.LinesAdded == 0 && Run.LinesRemoved == 0)
+                {
+                    <div>No file changes recorded</div>
                 }
             </div>
         }
@@ -458,6 +481,10 @@
                 else if (Run.CodeReviewIterationsCompleted > 0)
                 {
                     <div>@Run.CodeReviewIterationsCompleted/@Run.CodeReviewIterationsTotal iteration(s) done</div>
+                }
+                else if (state != StepState.Active && state != StepState.Pending)
+                {
+                    <div>Review complete</div>
                 }
                 @if (Run.CodeReviewAgentsRun.Count > 0)
                 {
