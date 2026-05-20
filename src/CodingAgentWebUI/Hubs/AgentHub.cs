@@ -267,10 +267,10 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     // ── Real-time status ────────────────────────────────────────────────
 
     /// <summary>
-    /// Updates the PipelineRun's CurrentStep and HighWaterMark, notifies UI.
+    /// Updates the PipelineRun's CurrentStep and HighWaterMark, applies optional step metadata, notifies UI.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportStepTransition(string jobId, PipelineStep step, DateTimeOffset timestamp)
+    public Task ReportStepTransition(string jobId, PipelineStep step, DateTimeOffset timestamp, Dictionary<string, string>? metadata = null)
     {
         var run = _facade.GetRun(jobId);
         if (run is not null)
@@ -282,11 +282,56 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
             if (step < PipelineStep.Completed && step > run.HighWaterMark)
                 run.HighWaterMark = step;
 
+            // Apply step metadata from the agent (carries data from the just-completed step)
+            if (metadata is { Count: > 0 })
+                ApplyStepMetadata(run, metadata);
+
             _logger.Debug("Job {JobId} step transition → {Step}", jobId, step);
             _orchestration.NotifyChange();
         }
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Applies key-value metadata from step transitions to the PipelineRun.
+    /// Keys use a flat naming convention (e.g., "BranchName", "BaselineHealthPassed").
+    /// </summary>
+    private static void ApplyStepMetadata(PipelineRun run, Dictionary<string, string> metadata)
+    {
+        foreach (var (key, value) in metadata)
+        {
+            switch (key)
+            {
+                case "BranchName":
+                    run.BranchName = value;
+                    break;
+                case "BaselineHealthPassed":
+                    run.BaselineHealthPassed = bool.TryParse(value, out var bhp) ? bhp : null;
+                    break;
+                case "AnalysisSkipped":
+                    run.AnalysisSkipped = bool.TryParse(value, out var ask) && ask;
+                    break;
+                case "FilesChangedCount":
+                    if (int.TryParse(value, out var fcc)) run.FilesChangedCount = fcc;
+                    break;
+                case "LinesAdded":
+                    if (int.TryParse(value, out var la)) run.LinesAdded = la;
+                    break;
+                case "LinesRemoved":
+                    if (int.TryParse(value, out var lr)) run.LinesRemoved = lr;
+                    break;
+                case "CodeReviewIterationsCompleted":
+                    if (int.TryParse(value, out var cric)) run.CodeReviewIterationsCompleted = cric;
+                    break;
+                case "CodeReviewIterationsTotal":
+                    if (int.TryParse(value, out var crit)) run.CodeReviewIterationsTotal = crit;
+                    break;
+                case "CodeReviewIterationInProgress":
+                    if (int.TryParse(value, out var crip)) run.CodeReviewIterationInProgress = crip;
+                    break;
+            }
+        }
     }
 
     /// <summary>

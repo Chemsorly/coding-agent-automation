@@ -231,7 +231,8 @@ public sealed class LocalPipelineExecutor
 
                 onStepChanged?.Invoke(step);
 
-                await connection.InvokeAsync("ReportStepTransition", job.JobId, step, DateTimeOffset.UtcNow, ct);
+                var metadata = BuildStepMetadata(run, step);
+                await connection.InvokeAsync("ReportStepTransition", job.JobId, step, DateTimeOffset.UtcNow, metadata, ct);
             }
             catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", step); }
         }
@@ -398,7 +399,7 @@ public sealed class LocalPipelineExecutor
         // during its cleanup phase, so we skip that transition here to avoid duplicates.
 
         run.CurrentStep = PipelineStep.CreatingPullRequest;
-        try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.CreatingPullRequest, DateTimeOffset.UtcNow, ct); }
+        try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.CreatingPullRequest, DateTimeOffset.UtcNow, (Dictionary<string, string>?)null, ct); }
         catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", PipelineStep.CreatingPullRequest); }
 
         if (run.LinkedPullRequest is not null)
@@ -438,13 +439,13 @@ public sealed class LocalPipelineExecutor
         if (!isDraft && brainProvider is not null && brainSync is not null && !config.BrainReadOnly)
         {
             run.CurrentStep = PipelineStep.ReflectingOnRun;
-            try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.ReflectingOnRun, DateTimeOffset.UtcNow, ct); }
+            try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.ReflectingOnRun, DateTimeOffset.UtcNow, (Dictionary<string, string>?)null, ct); }
             catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", PipelineStep.ReflectingOnRun); }
 
             await _finalization.RunReflectionAsync(run, agentProvider, config, emitOutputLine, ct);
 
             run.CurrentStep = PipelineStep.SyncingBrainRepoPostRun;
-            try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.SyncingBrainRepoPostRun, DateTimeOffset.UtcNow, ct); }
+            try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.SyncingBrainRepoPostRun, DateTimeOffset.UtcNow, (Dictionary<string, string>?)null, ct); }
             catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", PipelineStep.SyncingBrainRepoPostRun); }
 
             await _finalization.SyncBrainPostRunAsync(run, brainSync, brainProvider, config, emitOutputLine, ct);
@@ -459,6 +460,57 @@ public sealed class LocalPipelineExecutor
         run.CompletedAt = DateTime.UtcNow;
         run.CurrentStep = finalStep;
         // TODO: Set run.FinalLabel explicitly for success/draft paths (currently relies on fallback inference in AgentHub)
+    }
+
+    /// <summary>
+    /// Builds metadata dictionary from the current run state to send with step transitions.
+    /// Includes data from the just-completed step so the UI can display it in real-time.
+    /// </summary>
+    internal static Dictionary<string, string>? BuildStepMetadata(PipelineRun run, PipelineStep newStep)
+    {
+        // When transitioning TO a new step, the previous step just completed.
+        // Include data that the previous step produced.
+        Dictionary<string, string>? metadata = null;
+
+        void Add(string key, string? value)
+        {
+            if (value is null) return;
+            metadata ??= new Dictionary<string, string>();
+            metadata[key] = value;
+        }
+
+        // CreatingBranch completed → include branch name
+        if (newStep > PipelineStep.CreatingBranch && !string.IsNullOrEmpty(run.BranchName))
+            Add("BranchName", run.BranchName);
+
+        // VerifyingBaseline completed → include result
+        if (newStep > PipelineStep.VerifyingBaseline && run.BaselineHealthPassed.HasValue)
+            Add("BaselineHealthPassed", run.BaselineHealthPassed.Value.ToString());
+
+        // AnalyzingCode completed → include skip status
+        if (newStep > PipelineStep.AnalyzingCode && run.AnalysisSkipped)
+            Add("AnalysisSkipped", "true");
+
+        // GeneratingCode completed → include file change stats
+        if (newStep > PipelineStep.GeneratingCode && run.FilesChangedCount > 0)
+        {
+            Add("FilesChangedCount", run.FilesChangedCount.ToString());
+            Add("LinesAdded", run.LinesAdded.ToString());
+            Add("LinesRemoved", run.LinesRemoved.ToString());
+        }
+
+        // ReviewingCode progress/completion
+        if (newStep >= PipelineStep.ReviewingCode)
+        {
+            if (run.CodeReviewIterationsTotal > 0)
+                Add("CodeReviewIterationsTotal", run.CodeReviewIterationsTotal.ToString());
+            if (run.CodeReviewIterationsCompleted > 0)
+                Add("CodeReviewIterationsCompleted", run.CodeReviewIterationsCompleted.ToString());
+            if (run.CodeReviewIterationInProgress > 0)
+                Add("CodeReviewIterationInProgress", run.CodeReviewIterationInProgress.ToString());
+        }
+
+        return metadata;
     }
 
     internal static JobCompletionPayload BuildCompletionPayload(PipelineRun run) => new()

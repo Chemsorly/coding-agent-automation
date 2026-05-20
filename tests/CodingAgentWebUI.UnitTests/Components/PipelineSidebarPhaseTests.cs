@@ -89,15 +89,30 @@ public class PipelineSidebarPhaseTests : BunitContext
     }
 
     [Fact]
-    public void PhaseState_OnlyRevisitedSteps_ShowsRetry()
+    public void PhaseState_OnlyRevisitedSteps_WithRetryCount_ShowsRetry()
     {
-        // CurrentStep=GeneratingCode, HighWaterMark=PreparingForPullRequest
+        // CurrentStep=GeneratingCode, HighWaterMark=PreparingForPullRequest, RetryCount=1
         // → Finalization phase has PreparingForPullRequest=Revisited, rest=Pending
+        // → With RetryCount > 0, this is a genuine retry
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.PreparingForPullRequest);
+        run.RetryCount = 1;
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
         var phase = cut.Find("[data-testid='phase-finalization']");
         Assert.Contains("phase-group-retry", phase.GetAttribute("class"));
+    }
+
+    [Fact]
+    public void PhaseState_OnlyRevisitedSteps_WithoutRetry_ShowsActive()
+    {
+        // CurrentStep=RunningQualityGates, HighWaterMark=PreparingForPullRequest, RetryCount=0
+        // → Finalization phase has PreparingForPullRequest=Revisited, rest=Pending
+        // → Without RetryCount, this is a sub-operation (final QG run), not a retry
+        var run = CreateRun(PipelineStep.RunningQualityGates, PipelineStep.PreparingForPullRequest);
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        var phase = cut.Find("[data-testid='phase-finalization']");
+        Assert.Contains("phase-group-active", phase.GetAttribute("class"));
     }
 
     [Fact]
@@ -267,6 +282,7 @@ public class PipelineSidebarPhaseTests : BunitContext
     public void RetryPhase_ShowsRetryCounter()
     {
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.PreparingForPullRequest);
+        run.RetryCount = 1;
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
         var counter = cut.Find("[data-testid='phase-finalization'] .phase-counter").TextContent;
