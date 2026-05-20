@@ -1184,4 +1184,96 @@ public class LocalPipelineExecutorTests : IDisposable
             HttpRequestMessage request, CancellationToken cancellationToken)
             => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
     }
+
+    // ── BuildStepMetadata ───────────────────────────────────────────────
+
+    [Fact]
+    public void BuildStepMetadata_AfterCreatingBranch_IncludesBranchName()
+    {
+        var run = CreateMinimalRun();
+        run.BranchName = "feature/auto-42-fix-bug";
+
+        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.VerifyingBaseline);
+
+        metadata.Should().NotBeNull();
+        metadata!["BranchName"].Should().Be("feature/auto-42-fix-bug");
+    }
+
+    [Fact]
+    public void BuildStepMetadata_AfterVerifyingBaseline_IncludesBaselineHealth()
+    {
+        var run = CreateMinimalRun();
+        run.BranchName = "feature/test";
+        run.BaselineHealthPassed = true;
+
+        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.AnalyzingCode);
+
+        metadata.Should().NotBeNull();
+        metadata!["BaselineHealthPassed"].Should().Be("True");
+    }
+
+    [Fact]
+    public void BuildStepMetadata_AfterGeneratingCode_IncludesFileStats()
+    {
+        var run = CreateMinimalRun();
+        run.BranchName = "feature/test";
+        run.BaselineHealthPassed = true;
+        run.FilesChangedCount = 5;
+        run.LinesAdded = 100;
+        run.LinesRemoved = 20;
+
+        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.ReviewingCode);
+
+        metadata.Should().NotBeNull();
+        metadata!["FilesChangedCount"].Should().Be("5");
+        metadata["LinesAdded"].Should().Be("100");
+        metadata["LinesRemoved"].Should().Be("20");
+    }
+
+    [Fact]
+    public void BuildStepMetadata_WithCodeReviewProgress_IncludesIterations()
+    {
+        var run = CreateMinimalRun();
+        run.BranchName = "feature/test";
+        run.BaselineHealthPassed = true;
+        run.CodeReviewIterationsTotal = 3;
+        run.CodeReviewIterationsCompleted = 2;
+
+        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.RunningQualityGates);
+
+        metadata.Should().NotBeNull();
+        metadata!["CodeReviewIterationsTotal"].Should().Be("3");
+        metadata["CodeReviewIterationsCompleted"].Should().Be("2");
+    }
+
+    [Fact]
+    public void BuildStepMetadata_EarlyStep_ReturnsNull()
+    {
+        var run = CreateMinimalRun();
+
+        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.CloningRepository);
+
+        metadata.Should().BeNull();
+    }
+
+    [Fact]
+    public void BuildStepMetadata_NoDataSet_ReturnsNull()
+    {
+        var run = CreateMinimalRun();
+
+        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.AnalyzingCode);
+
+        metadata.Should().BeNull();
+    }
+
+    private static PipelineRun CreateMinimalRun() => new()
+    {
+        RunId = "run-meta",
+        IssueIdentifier = "owner/repo#1",
+        IssueTitle = "Test",
+        IssueProviderConfigId = "ip",
+        RepoProviderConfigId = "rp",
+        StartedAt = DateTime.UtcNow,
+        CurrentStep = PipelineStep.Created
+    };
 }

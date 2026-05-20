@@ -448,4 +448,207 @@ public sealed class AgentHubBehaviorTests
     }
 
     #endregion
+
+    #region ReportStepTransition
+
+    [Fact]
+    public async Task ReportStepTransition_UpdatesCurrentStepAndHighWaterMark()
+    {
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.Created;
+        run.HighWaterMark = PipelineStep.Created;
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow);
+
+        run.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
+        run.HighWaterMark.Should().Be(PipelineStep.GeneratingCode);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesBranchName()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var metadata = new Dictionary<string, string> { ["BranchName"] = "feature/test-123" };
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.VerifyingBaseline, DateTimeOffset.UtcNow, metadata);
+
+        run.BranchName.Should().Be("feature/test-123");
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesBaselineHealthPassed()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var metadata = new Dictionary<string, string> { ["BaselineHealthPassed"] = "True" };
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.AnalyzingCode, DateTimeOffset.UtcNow, metadata);
+
+        run.BaselineHealthPassed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesFileChangeStats()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var metadata = new Dictionary<string, string>
+        {
+            ["FilesChangedCount"] = "7",
+            ["LinesAdded"] = "120",
+            ["LinesRemoved"] = "30"
+        };
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.ReviewingCode, DateTimeOffset.UtcNow, metadata);
+
+        run.FilesChangedCount.Should().Be(7);
+        run.LinesAdded.Should().Be(120);
+        run.LinesRemoved.Should().Be(30);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesCodeReviewProgress()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var metadata = new Dictionary<string, string>
+        {
+            ["CodeReviewIterationsCompleted"] = "2",
+            ["CodeReviewIterationsTotal"] = "3"
+        };
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow, metadata);
+
+        run.CodeReviewIterationsCompleted.Should().Be(2);
+        run.CodeReviewIterationsTotal.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_NullMetadata_DoesNotThrow()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, null);
+
+        run.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_EmptyMetadata_DoesNotThrow()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, new Dictionary<string, string>());
+
+        run.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_UnknownMetadataKeys_AreIgnored()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var metadata = new Dictionary<string, string>
+        {
+            ["UnknownKey"] = "some-value",
+            ["AnotherFakeKey"] = "123"
+        };
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, metadata);
+
+        // Run state should be unchanged (only CurrentStep updated by the transition itself)
+        run.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
+        run.BranchName.Should().BeNull();
+        run.BaselineHealthPassed.Should().BeNull();
+        run.FilesChangedCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_MalformedBooleanValue_DoesNotThrow()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var metadata = new Dictionary<string, string> { ["BaselineHealthPassed"] = "not-a-bool" };
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.AnalyzingCode, DateTimeOffset.UtcNow, metadata);
+
+        // Malformed bool should result in null (TryParse fails)
+        run.BaselineHealthPassed.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_MalformedIntegerValue_DoesNotThrow()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var metadata = new Dictionary<string, string>
+        {
+            ["FilesChangedCount"] = "abc",
+            ["LinesAdded"] = "",
+            ["LinesRemoved"] = "not-a-number"
+        };
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.ReviewingCode, DateTimeOffset.UtcNow, metadata);
+
+        // Malformed ints should leave values at default (0)
+        run.FilesChangedCount.Should().Be(0);
+        run.LinesAdded.Should().Be(0);
+        run.LinesRemoved.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_NullRun_DoesNotThrow()
+    {
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var metadata = new Dictionary<string, string> { ["BranchName"] = "feature/test" };
+        var hub = CreateHubWithOrchestration();
+
+        // Should not throw even when run is not found
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, metadata);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_HighWaterMark_DoesNotGoBackward()
+    {
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.RunningQualityGates;
+        run.HighWaterMark = PipelineStep.RunningQualityGates;
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var hub = CreateHubWithOrchestration();
+        // Transition backward (retry scenario)
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow);
+
+        run.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
+        run.HighWaterMark.Should().Be(PipelineStep.RunningQualityGates); // Should NOT go backward
+    }
+
+    #endregion
 }

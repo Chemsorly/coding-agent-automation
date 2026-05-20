@@ -80,24 +80,60 @@ public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixtur
         Assert.NotNull(assignment);
         Assert.Equal("42", assignment.IssueIdentifier);
 
-        // Agent accepts the job and reports step transition to CloningRepository
+        // Agent accepts the job and reports step transitions with metadata
         await fakeAgent.AcceptJobAsync(assignment.JobId);
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.CloningRepository);
+        await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.CreatingBranch);
 
-        // Wait briefly for the hub to process the step transition
+        // Transition to VerifyingBaseline with BranchName metadata (from completed CreatingBranch)
+        await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.VerifyingBaseline,
+            new Dictionary<string, string> { ["BranchName"] = "feature/auto-42-add-validation" });
+
+        // Transition to AnalyzingCode with BaselineHealthPassed metadata
+        await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.AnalyzingCode,
+            new Dictionary<string, string>
+            {
+                ["BranchName"] = "feature/auto-42-add-validation",
+                ["BaselineHealthPassed"] = "True"
+            });
+
+        // Wait briefly for the hub to process the step transitions
         await Task.Delay(200);
 
-        // Assert: the run appears in active runs at the correct step
+        // Assert: the run appears in active runs with metadata applied
         var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
         var activeRuns = runService.GetActiveRuns();
         Assert.True(activeRuns.Count > 0, "Expected at least one active run");
 
         var activeRun = activeRuns.FirstOrDefault(r => r.IssueIdentifier == "42");
         Assert.NotNull(activeRun);
-        Assert.Equal(PipelineStep.CloningRepository, activeRun.CurrentStep);
+        Assert.Equal(PipelineStep.AnalyzingCode, activeRun.CurrentStep);
+        Assert.Equal("feature/auto-42-add-validation", activeRun.BranchName);
+        Assert.True(activeRun.BaselineHealthPassed);
 
-        // Now complete the job normally
+        // Report file change stats via metadata when transitioning to ReviewingCode
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
+        await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.ReviewingCode,
+            new Dictionary<string, string>
+            {
+                ["BranchName"] = "feature/auto-42-add-validation",
+                ["BaselineHealthPassed"] = "True",
+                ["FilesChangedCount"] = "3",
+                ["LinesAdded"] = "50",
+                ["LinesRemoved"] = "10"
+            });
+
+        await Task.Delay(200);
+
+        // Assert: file change stats are now available on the active run
+        activeRuns = runService.GetActiveRuns();
+        activeRun = activeRuns.FirstOrDefault(r => r.IssueIdentifier == "42");
+        Assert.NotNull(activeRun);
+        Assert.Equal(3, activeRun.FilesChangedCount);
+        Assert.Equal(50, activeRun.LinesAdded);
+        Assert.Equal(10, activeRun.LinesRemoved);
+
+        // Complete the job
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.Completed);
         await fakeAgent.ReportCompletionAsync(assignment.JobId, new JobCompletionPayload
         {

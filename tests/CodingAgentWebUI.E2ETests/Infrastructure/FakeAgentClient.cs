@@ -88,10 +88,10 @@ public sealed class FakeAgentClient : IAsyncDisposable
     /// <summary>
     /// Reports a single step transition for a job. Use after <see cref="AcceptJobAsync"/> for fine-grained control.
     /// </summary>
-    public async Task ReportStepAsync(string jobId, PipelineStep step)
+    public async Task ReportStepAsync(string jobId, PipelineStep step, Dictionary<string, string>? metadata = null)
     {
         if (_connection is null) throw new InvalidOperationException("Not connected");
-        await _connection.InvokeAsync("ReportStepTransition", jobId, step, DateTimeOffset.UtcNow);
+        await _connection.InvokeAsync("ReportStepTransition", jobId, step, DateTimeOffset.UtcNow, metadata);
     }
 
     /// <summary>
@@ -105,6 +105,7 @@ public sealed class FakeAgentClient : IAsyncDisposable
 
     /// <summary>
     /// Accepts a job and reports completion with the given final step.
+    /// Includes step metadata to simulate real agent behavior.
     /// </summary>
     public async Task AcceptAndCompleteJobAsync(
         string jobId,
@@ -116,10 +117,22 @@ public sealed class FakeAgentClient : IAsyncDisposable
         // Accept the job
         await _connection.InvokeAsync("JobAccepted", jobId);
 
-        // Report a few step transitions
-        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.CloningRepository, DateTimeOffset.UtcNow);
-        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.GeneratingCode, DateTimeOffset.UtcNow);
-        await _connection.InvokeAsync("ReportStepTransition", jobId, finalStep, DateTimeOffset.UtcNow);
+        // Report step transitions with metadata (simulating real agent behavior)
+        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.CloningRepository, DateTimeOffset.UtcNow,
+            (Dictionary<string, string>?)null);
+        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.GeneratingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string>
+            {
+                ["BranchName"] = "feature/auto-42-add-input-validation",
+                ["BaselineHealthPassed"] = "True"
+            });
+        await _connection.InvokeAsync("ReportStepTransition", jobId, finalStep, DateTimeOffset.UtcNow,
+            new Dictionary<string, string>
+            {
+                ["FilesChangedCount"] = "3",
+                ["LinesAdded"] = "50",
+                ["LinesRemoved"] = "10"
+            });
 
         // Report completion
         await _connection.InvokeAsync("ReportJobCompleted", jobId, new JobCompletionPayload
@@ -154,11 +167,24 @@ public sealed class FakeAgentClient : IAsyncDisposable
         // Accept the job
         await _connection.InvokeAsync("JobAccepted", jobId);
 
-        // Report step transitions leading up to the final step
-        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.CloningRepository, DateTimeOffset.UtcNow);
-        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.GeneratingCode, DateTimeOffset.UtcNow);
-        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow);
-        await _connection.InvokeAsync("ReportStepTransition", jobId, payload.FinalStep, DateTimeOffset.UtcNow);
+        // Report step transitions leading up to the final step (with metadata)
+        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.CloningRepository, DateTimeOffset.UtcNow,
+            (Dictionary<string, string>?)null);
+        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.GeneratingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string>
+            {
+                ["BranchName"] = "feature/auto-42-test",
+                ["BaselineHealthPassed"] = "True"
+            });
+        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow,
+            new Dictionary<string, string>
+            {
+                ["FilesChangedCount"] = payload.FilesChangedCount.ToString(),
+                ["LinesAdded"] = payload.LinesAdded.ToString(),
+                ["LinesRemoved"] = payload.LinesRemoved.ToString()
+            });
+        await _connection.InvokeAsync("ReportStepTransition", jobId, payload.FinalStep, DateTimeOffset.UtcNow,
+            (Dictionary<string, string>?)null);
 
         // Report completion with the provided payload
         await _connection.InvokeAsync("ReportJobCompleted", jobId, payload);
