@@ -51,7 +51,7 @@ public class PipelineOrchestrationServiceTests
             _mockFactory.Object,
             new IssueDescriptionParser(),
             new AgentExecutionOrchestrator(_mockLogger.Object),
-            new QualityGateOrchestrator(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
+            new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
             _mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: mockHistoryService.Object);
@@ -1606,7 +1606,7 @@ public class PipelineOrchestrationServiceTests
             mockFactory.Object,
             new IssueDescriptionParser(),
             new AgentExecutionOrchestrator(mockLogger.Object),
-            new QualityGateOrchestrator(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
+            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
             mockLogger.Object,
             brainUpdateService: mockBrainUpdateService.Object,
             historyService: mockHistoryService.Object);
@@ -2524,7 +2524,7 @@ public class PipelineOrchestrationServiceTests
         run.FailureReason.Should().Contain("Quality gate validation error");
         run.FailureReason.Should().Contain("Disk full");
 
-        // Note: CompletedAt is not set by QualityGateOrchestrator's exception handler
+        // Note: CompletedAt is not set by QualityGateExecutor's exception handler
         // (unlike FailRunAsync which sets it). This is the actual production behavior.
         // NOTE: Consider fixing production code to set CompletedAt on all terminal states.
 
@@ -3446,7 +3446,7 @@ public class PipelineOrchestrationServiceTests
             _mockFactory.Object,
             new IssueDescriptionParser(),
             new AgentExecutionOrchestrator(_mockLogger.Object),
-            new QualityGateOrchestrator(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
+            new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
             _mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: mockHistoryService.Object,

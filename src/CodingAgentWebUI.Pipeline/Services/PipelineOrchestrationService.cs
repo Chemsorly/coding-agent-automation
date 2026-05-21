@@ -26,7 +26,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     private readonly IProviderFactory _providerFactory;
     private readonly IIssueProviderLabelSwapper _labelSwapper;
     private readonly IssueDescriptionParser _issueParser;
-    private readonly BrainSyncOrchestrator _brainSync;
+    private readonly BrainSyncService _brainSync;
     private readonly PullRequestOrchestrator _prOrchestrator;
     private readonly PullRequestFinalizationService _finalization;
     private readonly IPipelineRunHistoryService _historyService;
@@ -132,7 +132,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         _providerManager = new PipelineProviderManager(configStore, providerFactory, logger);
 
         ArgumentNullException.ThrowIfNull(brainUpdateService);
-        _brainSync = new BrainSyncOrchestrator(brainUpdateService, logger);
+        _brainSync = new BrainSyncService(brainUpdateService, logger);
         _prOrchestrator = new PullRequestOrchestrator(logger);
         _finalization = new PullRequestFinalizationService(logger);
         _historyService = historyService ?? throw new ArgumentNullException(nameof(historyService));

@@ -56,7 +56,7 @@ internal partial class AgentExecutionOrchestrator : IAgentPhaseExecutor
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This helper consolidates the repeated agent execution pattern found across QualityGateOrchestrator retry loops,
+    /// This helper consolidates the repeated agent execution pattern found across QualityGateExecutor retry loops,
     /// CodeReview fix agent calls, and similar sites. It handles:
     /// </para>
     /// <list type="bullet">

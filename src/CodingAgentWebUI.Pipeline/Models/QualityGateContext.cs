@@ -3,7 +3,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
-/// Groups all parameters needed by <see cref="Services.QualityGateOrchestrator.ProceedToQualityGatesAsync"/>
+/// Groups all parameters needed by <see cref="Services.QualityGateExecutor.ProceedToQualityGatesAsync"/>
 /// into a single context object.
 /// </summary>
 public sealed record QualityGateContext : PipelineContextBase

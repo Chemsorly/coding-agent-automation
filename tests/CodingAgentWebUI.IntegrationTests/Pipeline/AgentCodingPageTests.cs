@@ -42,7 +42,7 @@ public class AgentCodingPageTests
             _mockFactory.Object,
             new IssueDescriptionParser(),
             new AgentExecutionOrchestrator(_mockLogger.Object),
-            new QualityGateOrchestrator(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
+            new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
             _mockLogger.Object,
             brainUpdateService: new BrainUpdateService(_mockLogger.Object),
             historyService: new PipelineRunHistoryService(_mockLogger.Object, Path.Combine(Path.GetTempPath(), $"test-runs-{Guid.NewGuid()}")));

@@ -7,10 +7,10 @@ using CodingAgentWebUI.Pipeline.Services;
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
 /// <summary>
-/// Unit tests for failure feedback integration in QualityGateOrchestrator.
+/// Unit tests for failure feedback integration in QualityGateExecutor.
 /// Validates: Requirements 3.1, 3.9, 3.10, 8.1, 8.3, 8.4
 /// </summary>
-public class QualityGateOrchestratorFeedbackTests
+public class QualityGateExecutorFeedbackTests
 {
     private readonly Mock<IQualityGateValidator> _mockValidator;
     private readonly Mock<IAgentProvider> _mockAgent;
@@ -21,7 +21,7 @@ public class QualityGateOrchestratorFeedbackTests
     private readonly Mock<Serilog.ILogger> _mockLogger;
     private readonly PipelineRun _run;
     private readonly PipelineConfiguration _config;
-    private readonly QualityGateOrchestrator _orchestrator;
+    private readonly QualityGateExecutor _orchestrator;
 
     private static readonly QualityGateReport FailingReport = new()
     {
@@ -29,7 +29,7 @@ public class QualityGateOrchestratorFeedbackTests
         Tests = new GateResult { GateName = "Tests", Passed = false, Details = "3 tests failed" }
     };
 
-    public QualityGateOrchestratorFeedbackTests()
+    public QualityGateExecutorFeedbackTests()
     {
         _mockValidator = new Mock<IQualityGateValidator>();
         _mockAgent = new Mock<IAgentProvider>();
@@ -58,7 +58,7 @@ public class QualityGateOrchestratorFeedbackTests
             StallWarningInterval = TimeSpan.FromHours(1)
         };
 
-        _orchestrator = new QualityGateOrchestrator(
+        _orchestrator = new QualityGateExecutor(
             _mockValidator.Object,
             new PullRequestOrchestrator(_mockLogger.Object),
             _mockLogger.Object,

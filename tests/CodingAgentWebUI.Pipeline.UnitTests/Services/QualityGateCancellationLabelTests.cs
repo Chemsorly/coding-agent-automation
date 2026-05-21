@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 
 /// <summary>
 /// Regression test for: cancellation during quality gates must set agent:cancelled label.
-/// Bug: QualityGateOrchestrator.RetryLoop previously called RemoveAllAgentLabels (which sends
+/// Bug: QualityGateExecutor.RetryLoop previously called RemoveAllAgentLabels (which sends
 /// an empty string to GitHub → 422 error) instead of SwapAgentLabel with AgentLabels.Cancelled.
 /// </summary>
 public class QualityGateCancellationLabelTests
@@ -21,7 +21,7 @@ public class QualityGateCancellationLabelTests
     private readonly Mock<Serilog.ILogger> _mockLogger;
     private readonly PipelineRun _run;
     private readonly PipelineConfiguration _config;
-    private readonly QualityGateOrchestrator _orchestrator;
+    private readonly QualityGateExecutor _orchestrator;
 
     public QualityGateCancellationLabelTests()
     {
@@ -50,7 +50,7 @@ public class QualityGateCancellationLabelTests
             StallWarningInterval = TimeSpan.FromHours(1)
         };
 
-        _orchestrator = new QualityGateOrchestrator(
+        _orchestrator = new QualityGateExecutor(
             _mockValidator.Object,
             new PullRequestOrchestrator(_mockLogger.Object),
             _mockLogger.Object);

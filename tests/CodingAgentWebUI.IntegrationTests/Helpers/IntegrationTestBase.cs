@@ -120,7 +120,7 @@ public class IntegrationTestBase : IDisposable
             MockFactory.Object,
             new IssueDescriptionParser(),
             new AgentExecutionOrchestrator(MockLogger.Object),
-            new QualityGateOrchestrator(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), MockLogger.Object),
+            new QualityGateExecutor(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), MockLogger.Object),
             MockLogger.Object,
             brainUpdateService: new BrainUpdateService(MockLogger.Object),
             historyService: new PipelineRunHistoryService(MockLogger.Object, RunsDir));

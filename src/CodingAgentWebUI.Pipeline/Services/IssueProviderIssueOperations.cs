@@ -5,7 +5,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 
 /// <summary>
 /// Adapts <see cref="IIssueProvider"/> to <see cref="IAgentIssueOperations"/> for use
-/// by <see cref="AgentExecutionOrchestrator"/> and <see cref="QualityGateOrchestrator"/>.
+/// by <see cref="AgentExecutionOrchestrator"/> and <see cref="QualityGateExecutor"/>.
 /// Implements the label swap logic (remove all agent labels, add new label) inline.
 /// </summary>
 internal sealed class IssueProviderIssueOperations : IAgentIssueOperations

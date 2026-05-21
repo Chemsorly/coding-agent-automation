@@ -36,7 +36,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IAgentPhaseExecutor>(sp => new AgentExecutionOrchestrator(logger));
 
-        services.AddSingleton<IQualityGateExecutor>(sp => new QualityGateOrchestrator(
+        services.AddSingleton<IQualityGateExecutor>(sp => new QualityGateExecutor(
             sp.GetRequiredService<IQualityGateValidator>(),
             new PullRequestOrchestrator(logger),
             logger,
