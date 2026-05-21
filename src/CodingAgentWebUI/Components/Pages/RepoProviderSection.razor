@@ -157,7 +157,7 @@
             Repo = p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, ""),
             BaseBranch = p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseBranch, ProviderSettingKeys.DefaultBaseBranch),
             RepositoryRole = p.RepositoryRole.ToString(),
-            RequiredLabels = p.RequiredLabels != null ? string.Join(", ", p.RequiredLabels) : p.Settings.GetValueOrDefault(ProviderSettingsKeys.RequiredAgentLabels, ""),
+            RequiredLabels = p.RequiredLabels != null ? string.Join(", ", p.RequiredLabels) : p.Settings.GetValueOrDefault(ProviderSettingKeys.RequiredAgentLabels, ""),
             BlacklistedPaths = p.BlacklistedPaths != null ? string.Join(", ", p.BlacklistedPaths) : "",
             BlacklistMode = p.BlacklistMode?.ToString() ?? ""
         };

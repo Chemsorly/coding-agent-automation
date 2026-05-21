@@ -26,7 +26,7 @@ public static class LabelResolver
         }
 
         // 1. Check repo-level setting (legacy dictionary approach)
-        if (repoConfig?.Settings.TryGetValue(ProviderSettingsKeys.RequiredAgentLabels, out var repoLabels) == true
+        if (repoConfig?.Settings.TryGetValue(ProviderSettingKeys.RequiredAgentLabels, out var repoLabels) == true
             && !string.IsNullOrWhiteSpace(repoLabels))
         {
             return repoLabels.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

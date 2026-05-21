@@ -34,7 +34,7 @@ public class LabelRoutingFallbackPropertyTests
             DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingsKeys.RequiredAgentLabels] = $"{l1},{l2}"
+                [ProviderSettingKeys.RequiredAgentLabels] = $"{l1},{l2}"
             }
         };
 

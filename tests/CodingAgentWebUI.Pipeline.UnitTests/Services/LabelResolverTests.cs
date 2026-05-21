@@ -17,7 +17,7 @@ public class LabelResolverTests
             RequiredLabels = new List<string> { "kiro", "dotnet", "dotnet10" },
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingsKeys.RequiredAgentLabels] = "python,java"
+                [ProviderSettingKeys.RequiredAgentLabels] = "python,java"
             }
         };
         var pipelineConfig = new PipelineConfiguration
@@ -40,7 +40,7 @@ public class LabelResolverTests
             DisplayName = "Test Repo",
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingsKeys.RequiredAgentLabels] = "kiro, dotnet"
+                [ProviderSettingKeys.RequiredAgentLabels] = "kiro, dotnet"
             }
         };
         var pipelineConfig = new PipelineConfiguration
@@ -121,7 +121,7 @@ public class LabelResolverTests
             DisplayName = "Test Repo",
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingsKeys.RequiredAgentLabels] = "  kiro  ,  dotnet  ,  linux  "
+                [ProviderSettingKeys.RequiredAgentLabels] = "  kiro  ,  dotnet  ,  linux  "
             }
         };
         var pipelineConfig = new PipelineConfiguration();
@@ -142,7 +142,7 @@ public class LabelResolverTests
             RequiredLabels = new List<string>(), // Empty list, not null
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingsKeys.RequiredAgentLabels] = "kiro,dotnet"
+                [ProviderSettingKeys.RequiredAgentLabels] = "kiro,dotnet"
             }
         };
         var pipelineConfig = new PipelineConfiguration();
@@ -162,7 +162,7 @@ public class LabelResolverTests
             DisplayName = "Test Repo",
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingsKeys.RequiredAgentLabels] = "   "
+                [ProviderSettingKeys.RequiredAgentLabels] = "   "
             }
         };
         var pipelineConfig = new PipelineConfiguration

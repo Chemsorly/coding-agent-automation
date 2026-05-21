@@ -341,7 +341,7 @@ public class LabelMappingIntegrationTests
             RequiredLabels = new List<string> { "kiro", "dotnet", "dotnet10" },
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingsKeys.RequiredAgentLabels] = "kiro,python"
+                [ProviderSettingKeys.RequiredAgentLabels] = "kiro,python"
             }
         };
         var pipelineConfig = new PipelineConfiguration();
@@ -392,7 +392,7 @@ public class LabelMappingIntegrationTests
             RequiredLabels = null,
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingsKeys.RequiredAgentLabels] = "kiro,dotnet"
+                [ProviderSettingKeys.RequiredAgentLabels] = "kiro,dotnet"
             }
         };
         var pipelineConfig = new PipelineConfiguration();

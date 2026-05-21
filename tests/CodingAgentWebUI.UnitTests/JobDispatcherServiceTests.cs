@@ -3,6 +3,7 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Moq;
@@ -428,7 +429,7 @@ public class JobDispatcherServiceTests
             DisplayName = "Test Repo",
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingsKeys.RequiredAgentLabels] = "dotnet, linux"
+                [ProviderSettingKeys.RequiredAgentLabels] = "dotnet, linux"
             }
         };
         var pipelineConfig = new PipelineConfiguration();
