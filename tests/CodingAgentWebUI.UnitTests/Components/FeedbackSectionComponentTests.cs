@@ -45,7 +45,7 @@ public class FeedbackSectionComponentTests : BunitContext
         var pipelineService = new PipelineOrchestrationService(
             _mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
             new AgentExecutionOrchestrator(mockLogger.Object),
-            new QualityGateOrchestrator(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
+            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
             mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: _mockHistoryService.Object);

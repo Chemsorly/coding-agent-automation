@@ -52,7 +52,7 @@ public class AgentJobDispatcherTests
             _mockProviderFactory.Object,
             issueParser,
             new AgentExecutionOrchestrator(_mockLogger.Object),
-            new QualityGateOrchestrator(mockQualityGateValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
+            new QualityGateExecutor(mockQualityGateValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
             _mockLogger.Object,
             mockBrainUpdateService.Object,
             _mockHistoryService.Object,

@@ -414,7 +414,7 @@ public class PromptConstructionPropertyTests
             Coverage = new GateResult { GateName = "Coverage", Passed = true, Details = "Coverage 85.0% meets threshold 40.0%" }
         };
 
-        var prompt = QualityGateOrchestrator.BuildQualityGateRetryPrompt(report, 1, 3);
+        var prompt = QualityGateExecutor.BuildQualityGateRetryPrompt(report, 1, 3);
 
         prompt.Should().Contain("Quality gates failed (attempt 1/3):");
         prompt.Should().Contain("- Compilation: FAILED");
@@ -433,7 +433,7 @@ public class PromptConstructionPropertyTests
             Tests = new GateResult { GateName = "Tests", Passed = false, Details = "Tests failed: 10 passed, 2 failed, 0 skipped." }
         };
 
-        var prompt = QualityGateOrchestrator.BuildQualityGateRetryPrompt(report, 2, 3);
+        var prompt = QualityGateExecutor.BuildQualityGateRetryPrompt(report, 2, 3);
 
         prompt.Should().Contain("- Compilation: PASSED");
         prompt.Should().Contain("- Tests: FAILED");

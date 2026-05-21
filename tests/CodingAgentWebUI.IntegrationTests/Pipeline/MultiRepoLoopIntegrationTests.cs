@@ -101,7 +101,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         var orchestration = new PipelineOrchestrationService(
             ConfigStore, MockFactory.Object, new IssueDescriptionParser(),
             new AgentExecutionOrchestrator(MockLogger.Object),
-            new QualityGateOrchestrator(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), MockLogger.Object),
+            new QualityGateExecutor(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), MockLogger.Object),
             MockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
@@ -231,7 +231,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         var orchestration = new PipelineOrchestrationService(
             ConfigStore, MockFactory.Object, new IssueDescriptionParser(),
             new AgentExecutionOrchestrator(MockLogger.Object),
-            new QualityGateOrchestrator(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), MockLogger.Object),
+            new QualityGateExecutor(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), MockLogger.Object),
             MockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);

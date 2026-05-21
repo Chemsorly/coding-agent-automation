@@ -7,10 +7,10 @@ using CodingAgentWebUI.Pipeline.Services;
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
 /// <summary>
-/// Unit tests for blacklisted file detection in QualityGateOrchestrator.
+/// Unit tests for blacklisted file detection in QualityGateExecutor.
 /// Validates: RecordBlacklistedFiles behavior via AppendExternalCiIfNeededAsync.
 /// </summary>
-public class QualityGateOrchestratorBlacklistTests
+public class QualityGateExecutorBlacklistTests
 {
     private readonly Mock<IQualityGateValidator> _mockValidator;
     private readonly Mock<IPipelineCallbacks> _mockCallbacks;
@@ -18,7 +18,7 @@ public class QualityGateOrchestratorBlacklistTests
     private readonly Mock<IRepositoryProvider> _mockRepoProvider;
     private readonly Mock<IPipelineProvider> _mockPipelineProvider;
     private readonly Mock<Serilog.ILogger> _mockLogger;
-    private readonly QualityGateOrchestrator _orchestrator;
+    private readonly QualityGateExecutor _orchestrator;
 
     private static readonly QualityGateReport PassingReport = new()
     {
@@ -26,7 +26,7 @@ public class QualityGateOrchestratorBlacklistTests
         Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
     };
 
-    public QualityGateOrchestratorBlacklistTests()
+    public QualityGateExecutorBlacklistTests()
     {
         _mockValidator = new Mock<IQualityGateValidator>();
         _mockCallbacks = new Mock<IPipelineCallbacks>();
@@ -35,7 +35,7 @@ public class QualityGateOrchestratorBlacklistTests
         _mockPipelineProvider = new Mock<IPipelineProvider>();
         _mockLogger = new Mock<Serilog.ILogger>();
 
-        _orchestrator = new QualityGateOrchestrator(
+        _orchestrator = new QualityGateExecutor(
             _mockValidator.Object,
             new PullRequestOrchestrator(_mockLogger.Object),
             _mockLogger.Object);

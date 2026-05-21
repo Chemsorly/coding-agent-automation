@@ -3,7 +3,7 @@ using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
-internal partial class QualityGateOrchestrator
+internal partial class QualityGateExecutor
 {
     /// <summary>
     /// Runs quality gate validation with retry logic and PR creation.

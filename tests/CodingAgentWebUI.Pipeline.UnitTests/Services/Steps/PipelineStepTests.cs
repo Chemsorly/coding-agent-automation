@@ -47,7 +47,7 @@ public class PipelineStepTests
 
     private PipelineStepContext BuildContext(
         IRepositoryProvider? brainProvider = null,
-        BrainSyncOrchestrator? brainSync = null)
+        BrainSyncService? brainSync = null)
     {
         var prOrchestrator = new PullRequestOrchestrator(_logger);
         var callbacks = new TestCallbacks(_transitions, _outputLines);
@@ -65,7 +65,7 @@ public class PipelineStepTests
             Callbacks = callbacks,
             IssueOps = _issueOps.Object,
             AgentExecution = new AgentExecutionOrchestrator(_logger),
-            QualityGates = new QualityGateOrchestrator(
+            QualityGates = new QualityGateExecutor(
                 Mock.Of<IQualityGateValidator>(), prOrchestrator, _logger),
             BrainSync = brainSync,
             PrOrchestrator = prOrchestrator,
@@ -199,7 +199,7 @@ public class PipelineStepTests
     public async Task SyncBrainPreRunStep_WithBrainProvider_Transitions()
     {
         var brainProvider = Mock.Of<IRepositoryProvider>();
-        var brainSync = new BrainSyncOrchestrator(Mock.Of<IBrainUpdateService>(), _logger);
+        var brainSync = new BrainSyncService(Mock.Of<IBrainUpdateService>(), _logger);
         _run.WorkspacePath = "/tmp/test";
 
         var step = new SyncBrainPreRunStep();
@@ -225,7 +225,7 @@ public class PipelineStepTests
     public async Task SyncBrainPreRunStep_WithBrainProvider_ReportsBrainSyncResult()
     {
         var brainProvider = Mock.Of<IRepositoryProvider>();
-        var brainSync = new BrainSyncOrchestrator(Mock.Of<IBrainUpdateService>(), _logger);
+        var brainSync = new BrainSyncService(Mock.Of<IBrainUpdateService>(), _logger);
         _run.WorkspacePath = "/tmp/test";
 
         var step = new SyncBrainPreRunStep();
@@ -242,7 +242,7 @@ public class PipelineStepTests
         var mockBrainProvider = new Mock<IRepositoryProvider>();
         mockBrainProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("clone failed"));
-        var brainSync = new BrainSyncOrchestrator(Mock.Of<IBrainUpdateService>(), _logger);
+        var brainSync = new BrainSyncService(Mock.Of<IBrainUpdateService>(), _logger);
         _run.WorkspacePath = "/tmp/test";
 
         var step = new SyncBrainPreRunStep();
@@ -438,7 +438,7 @@ public class PipelineStepTests
     {
         _run.BrainContextLoaded = false;
         var brainProvider = Mock.Of<IRepositoryProvider>();
-        var brainSync = new BrainSyncOrchestrator(Mock.Of<IBrainUpdateService>(), _logger);
+        var brainSync = new BrainSyncService(Mock.Of<IBrainUpdateService>(), _logger);
 
         var step = new BrainPullBeforeWriteStep();
         var context = BuildContext(brainProvider: brainProvider, brainSync: brainSync);

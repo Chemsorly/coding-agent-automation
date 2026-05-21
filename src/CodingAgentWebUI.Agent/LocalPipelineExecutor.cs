@@ -213,9 +213,9 @@ public sealed class LocalPipelineExecutor
         // Orchestrators
         var agentExecution = new AgentExecutionOrchestrator(_logger);
         var prOrchestrator = new PullRequestOrchestrator(_logger);
-        var qualityGates = new QualityGateOrchestrator(_qualityGateValidator, prOrchestrator, _logger, _historyService);
-        BrainSyncOrchestrator? brainSync = _brainUpdateService is not null
-            ? new BrainSyncOrchestrator(_brainUpdateService, _logger)
+        var qualityGates = new QualityGateExecutor(_qualityGateValidator, prOrchestrator, _logger, _historyService);
+        BrainSyncService? brainSync = _brainUpdateService is not null
+            ? new BrainSyncService(_brainUpdateService, _logger)
             : null;
 
         // Local helpers for reporting — use async Task with fire-and-forget discard
@@ -383,7 +383,7 @@ public sealed class LocalPipelineExecutor
     private async Task CreatePullRequestAsync(
         PipelineRun run, QualityGateReport report, bool isDraft,
         IRepositoryProvider repoProvider, IAgentProvider agentProvider,
-        IRepositoryProvider? brainProvider, BrainSyncOrchestrator? brainSync,
+        IRepositoryProvider? brainProvider, BrainSyncService? brainSync,
         PipelineConfiguration config, OrchestratorProxy issueOps,
         HubConnection connection, JobAssignmentMessage job,
         Action<string> emitOutputLine, CancellationToken ct)
@@ -395,7 +395,7 @@ public sealed class LocalPipelineExecutor
 
         var prOrchestrator = new PullRequestOrchestrator(_logger);
 
-        // NOTE: QualityGateOrchestrator already transitions to PreparingForPullRequest
+        // NOTE: QualityGateExecutor already transitions to PreparingForPullRequest
         // during its cleanup phase, so we skip that transition here to avoid duplicates.
 
         run.CurrentStep = PipelineStep.CreatingPullRequest;

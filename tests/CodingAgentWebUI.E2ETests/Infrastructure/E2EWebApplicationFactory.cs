@@ -104,7 +104,7 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
             FakeProviders,
             new IssueDescriptionParser(),
             new AgentExecutionOrchestrator(Serilog.Log.Logger),
-            new QualityGateOrchestrator(QualityGateValidator, new PullRequestOrchestrator(Serilog.Log.Logger), Serilog.Log.Logger),
+            new QualityGateExecutor(QualityGateValidator, new PullRequestOrchestrator(Serilog.Log.Logger), Serilog.Log.Logger),
             Serilog.Log.Logger,
             new BrainUpdateService(Serilog.Log.Logger),
             HistoryService,

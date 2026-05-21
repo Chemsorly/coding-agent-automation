@@ -26,7 +26,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _orchestration = new PipelineOrchestrationService(
             _mockStore.Object, _mockFactory.Object, new IssueDescriptionParser(),
             new AgentExecutionOrchestrator(_mockLogger.Object),
-            new QualityGateOrchestrator(mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
+            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
             _mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);

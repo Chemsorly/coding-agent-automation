@@ -4,7 +4,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
 /// Executes quality gate validation with retry logic and external CI integration.
-/// Abstraction over <c>QualityGateOrchestrator</c> for testability.
+/// Abstraction over <c>QualityGateExecutor</c> for testability.
 /// </summary>
 public interface IQualityGateExecutor
 {
