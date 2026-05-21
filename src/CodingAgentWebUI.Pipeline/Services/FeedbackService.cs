@@ -1,7 +1,6 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services.Parsers;
 using Serilog;
 
 namespace CodingAgentWebUI.Pipeline.Services;
@@ -10,16 +9,13 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// Stateless service responsible for parsing agent responses into <see cref="RunFeedback"/> objects,
 /// applying validation/truncation, and providing fallback records when parsing fails.
 /// </summary>
-public sealed class FeedbackService
+public sealed partial class FeedbackService
 {
     private readonly ILogger _logger;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        Converters = { new JsonStringEnumConverter() },
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
+    // Matches a fenced JSON code block: ```json ... ```
+    [GeneratedRegex(@"```json\s*\n([\s\S]*?)\n\s*```", RegexOptions.Multiline, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex FencedJsonBlockPattern();
 
     public FeedbackService(ILogger logger)
     {
@@ -40,7 +36,7 @@ public sealed class FeedbackService
     {
         ArgumentNullException.ThrowIfNull(responseText);
 
-        var jsonBlock = JsonBlockExtractor.Extract(responseText, LooksLikeFeedbackJson);
+        var jsonBlock = ExtractJsonBlock(responseText);
 
         if (jsonBlock is null)
         {
@@ -82,6 +78,82 @@ public sealed class FeedbackService
         };
     }
 
+    /// <summary>
+    /// Extracts the first JSON block from the response text.
+    /// Prefers fenced code blocks (```json ... ```) over bare JSON objects.
+    /// Uses brace-depth tracking for bare JSON to avoid capturing too much.
+    /// </summary>
+    internal static string? ExtractJsonBlock(string responseText)
+    {
+        // Try fenced JSON block first
+        var fencedMatch = FencedJsonBlockPattern().Match(responseText);
+        if (fencedMatch.Success)
+        {
+            return fencedMatch.Groups[1].Value.Trim();
+        }
+
+        // Fall back to bare JSON object using brace-depth tracking
+        // Search all balanced blocks until one matches the feedback schema
+        var searchStart = 0;
+        while (searchStart < responseText.Length)
+        {
+            var braceStart = responseText.IndexOf('{', searchStart);
+            if (braceStart < 0)
+                break;
+
+            var depth = 0;
+            var inString = false;
+            var escaped = false;
+            var foundEnd = false;
+
+            for (var i = braceStart; i < responseText.Length; i++)
+            {
+                var c = responseText[i];
+
+                if (escaped)
+                {
+                    escaped = false;
+                    continue;
+                }
+
+                if (c == '\\' && inString)
+                {
+                    escaped = true;
+                    continue;
+                }
+
+                if (c == '"')
+                {
+                    inString = !inString;
+                    continue;
+                }
+
+                if (inString)
+                    continue;
+
+                if (c == '{') depth++;
+                else if (c == '}') depth--;
+
+                if (depth == 0)
+                {
+                    var candidate = responseText[braceStart..(i + 1)];
+                    if (LooksLikeFeedbackJson(candidate))
+                        return candidate;
+                    // Not a match — continue searching from after this block
+                    searchStart = i + 1;
+                    foundEnd = true;
+                    break;
+                }
+            }
+
+            // If we never found a matching close brace, stop searching
+            if (!foundEnd)
+                break;
+        }
+
+        return null;
+    }
+
     private static bool LooksLikeFeedbackJson(string json)
     {
         // Quick heuristic: check if the JSON contains at least one field name from the schema
@@ -97,7 +169,7 @@ public sealed class FeedbackService
 
     private RunFeedback DeserializeFeedback(string json, FeedbackOutcome outcome, DateTime collectedAtUtc)
     {
-        var dto = JsonSerializer.Deserialize<FeedbackDto>(json, JsonOptions);
+        var dto = JsonSerializer.Deserialize<FeedbackDto>(json, PipelineJsonOptions.Lenient);
 
         if (dto is null)
         {

@@ -3,6 +3,7 @@ using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
