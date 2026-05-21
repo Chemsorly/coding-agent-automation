@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent.Executors;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Moq;
 
@@ -113,6 +114,82 @@ public class ConsolidationExecutorBaseTests
         result.ErrorMessage.Should().Be("Consolidation run was cancelled");
     }
 
+    [Fact]
+    public async Task ExecuteAgentAndCheckAsync_Success_ReturnsResultWithNullFailure()
+    {
+        var executor = CreateExecutor();
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["done"] });
+
+        var (result, failure) = await executor.InvokeExecuteAgentAndCheckAsync(
+            mockAgent.Object, new AgentRequest { Prompt = "test", WorkspacePath = "/tmp" }, "job-1", CancellationToken.None);
+
+        failure.Should().BeNull();
+        result.Success.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAgentAndCheckAsync_Failure_ReturnsFailureResult()
+    {
+        var executor = CreateExecutor();
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [] });
+
+        var (result, failure) = await executor.InvokeExecuteAgentAndCheckAsync(
+            mockAgent.Object, new AgentRequest { Prompt = "test", WorkspacePath = "/tmp" }, "job-1", CancellationToken.None);
+
+        failure.Should().NotBeNull();
+        failure!.Success.Should().BeFalse();
+        failure.JobId.Should().Be("job-1");
+        failure.ErrorMessage.Should().Contain("1");
+    }
+
+    [Fact]
+    public async Task WrapWithCancellationHandlingAsync_Success_ReturnsActionResult()
+    {
+        var executor = CreateExecutor();
+        var expected = new ConsolidationJobResult { JobId = "job-1", Success = true, Summary = "ok" };
+
+        var result = await executor.InvokeWrapWithCancellationHandlingAsync(
+            "job-1", () => Task.FromResult(expected), CancellationToken.None);
+
+        result.Should().BeSameAs(expected);
+    }
+
+    [Fact]
+    public async Task WrapWithCancellationHandlingAsync_Cancelled_ReturnsCancelledResult()
+    {
+        var executor = CreateExecutor();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var result = await executor.InvokeWrapWithCancellationHandlingAsync(
+            "job-1",
+            () => throw new OperationCanceledException(),
+            cts.Token);
+
+        result.Success.Should().BeFalse();
+        result.JobId.Should().Be("job-1");
+        result.ErrorMessage.Should().Contain("cancelled");
+    }
+
+    [Fact]
+    public async Task WrapWithCancellationHandlingAsync_Exception_ReturnsFailureResult()
+    {
+        var executor = CreateExecutor();
+
+        var result = await executor.InvokeWrapWithCancellationHandlingAsync(
+            "job-1",
+            () => throw new InvalidOperationException("boom"),
+            CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.JobId.Should().Be("job-1");
+        result.ErrorMessage.Should().Be("boom");
+    }
+
     /// <summary>
     /// Concrete test subclass to expose protected members for testing.
     /// </summary>
@@ -127,5 +204,13 @@ public class ConsolidationExecutorBaseTests
         public string InvokeResolveWorkspacePath(ConsolidationJobMessage job) => ResolveWorkspacePath(job);
         public static ConsolidationJobResult InvokeCreateFailureResult(string jobId, string msg) => CreateFailureResult(jobId, msg);
         public static ConsolidationJobResult InvokeCreateCancelledResult(string jobId) => CreateCancelledResult(jobId);
+
+        public Task<(AgentResult Result, ConsolidationJobResult? Failure)> InvokeExecuteAgentAndCheckAsync(
+            IAgentProvider agentProvider, AgentRequest request, string jobId, CancellationToken ct)
+            => ExecuteAgentAndCheckAsync(agentProvider, request, jobId, ct);
+
+        public Task<ConsolidationJobResult> InvokeWrapWithCancellationHandlingAsync(
+            string jobId, Func<Task<ConsolidationJobResult>> action, CancellationToken ct)
+            => WrapWithCancellationHandlingAsync(jobId, action, ct);
     }
 }

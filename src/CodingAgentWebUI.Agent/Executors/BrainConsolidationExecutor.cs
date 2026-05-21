@@ -46,7 +46,7 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
 
         var workspacePath = ResolveWorkspacePath(job);
 
-        try
+        return await WrapWithCancellationHandlingAsync(job.JobId, async () =>
         {
             // 1. Clone brain repo
             Directory.CreateDirectory(workspacePath);
@@ -59,21 +59,18 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
 
             // 3. Execute agent
             Logger.Information("Executing brain consolidation agent for run {RunId}", job.JobId);
-            var agentResult = await agentProvider.ExecuteAsync(
+            var (agentResult, failure) = await ExecuteAgentAndCheckAsync(
+                agentProvider,
                 new AgentRequest
                 {
                     Prompt = prompt,
                     WorkspacePath = workspacePath,
                     Timeout = job.PipelineConfiguration.AgentTimeout
                 },
+                job.JobId,
                 ct);
 
-            if (!agentResult.Success)
-            {
-                Logger.Warning("{ExecutorName} agent exited with code {ExitCode} for run {RunId}",
-                    ExecutorName, agentResult.ExitCode, job.JobId);
-                return CreateFailureResult(job.JobId, $"Agent exited with code {agentResult.ExitCode}");
-            }
+            if (failure is not null) return failure;
 
             // 4. Diff summary and adversarial review
             TokenUsage? diffSummaryTokenUsage = null;
@@ -210,21 +207,7 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                 ReviewTokenUsage = reviewTokenUsage,
                 RefinementTokenUsage = refinementTokenUsage
             };
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            return CreateCancelledResult(job.JobId);
-        }
-        catch (Exception ex)
-        {
-            Logger.Error(ex, "{ExecutorName} run {RunId} failed: {Message}", ExecutorName, job.JobId, ex.Message);
-            return CreateFailureResult(job.JobId, ex.Message);
-        }
-        finally
-        {
-            // Workspace cleanup for successful runs is handled by the caller
-            // Failed runs retain workspace for debugging
-        }
+        }, ct);
     }
 
     /// <summary>
