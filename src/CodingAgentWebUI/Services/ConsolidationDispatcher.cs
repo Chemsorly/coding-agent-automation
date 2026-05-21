@@ -12,7 +12,7 @@ namespace CodingAgentWebUI.Services;
 /// <see cref="AgentRegistryService"/>, building a <see cref="ConsolidationJobMessage"/>,
 /// and dispatching it via <see cref="IAgentCommunication"/>.
 /// </summary>
-public sealed class ConsolidationDispatchService : IConsolidationDispatcher
+public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 {
     private readonly AgentRegistryService _registry;
     private readonly JobDispatcherService _jobDispatcher;
@@ -29,7 +29,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatcher
         Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
     };
 
-    public ConsolidationDispatchService(
+    public ConsolidationDispatcher(
         AgentRegistryService registry,
         JobDispatcherService jobDispatcher,
         IAgentCommunication agentComm,
