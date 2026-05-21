@@ -55,7 +55,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 
         var workspacePath = ResolveWorkspacePath(job);
 
-        try
+        return await WrapWithCancellationHandlingAsync(job.JobId, async () =>
         {
             // 1. Clone code repo
             Directory.CreateDirectory(workspacePath);
@@ -83,21 +83,18 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 
             // 4. Execute agent
             Logger.Information("Executing refactoring detection agent for run {RunId}", job.JobId);
-            var agentResult = await agentProvider.ExecuteAsync(
+            var (agentResult, failure) = await ExecuteAgentAndCheckAsync(
+                agentProvider,
                 new AgentRequest
                 {
                     Prompt = prompt,
                     WorkspacePath = workspacePath,
                     Timeout = job.PipelineConfiguration.AgentTimeout
                 },
+                job.JobId,
                 ct);
 
-            if (!agentResult.Success)
-            {
-                Logger.Warning("{ExecutorName} agent exited with code {ExitCode} for run {RunId}",
-                    ExecutorName, agentResult.ExitCode, job.JobId);
-                return CreateFailureResult(job.JobId, $"Agent exited with code {agentResult.ExitCode}");
-            }
+            if (failure is not null) return failure;
 
             // 5. Parse proposals JSON from workspace file
             var proposalsFilePath = Path.Combine(workspacePath, AgentWorkspacePaths.RefactoringProposalsFilePath);
@@ -170,16 +167,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                 ReviewTokenUsage = reviewResult.ReviewTokenUsage,
                 RefinementTokenUsage = reviewResult.RefinementTokenUsage
             };
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            return CreateCancelledResult(job.JobId);
-        }
-        catch (Exception ex)
-        {
-            Logger.Error(ex, "{ExecutorName} run {RunId} failed: {Message}", ExecutorName, job.JobId, ex.Message);
-            return CreateFailureResult(job.JobId, ex.Message);
-        }
+        }, ct);
     }
 
     /// <summary>
