@@ -320,13 +320,14 @@ public sealed class LocalPipelineExecutor
             TransitionTo(PipelineStep.Cancelled);
             EmitOutputLine("🚫 Pipeline cancelled");
 
-            // TODO: Set run.FinalLabel = AgentLabels.Cancelled here for consistency (currently relies on fallback inference)
+            run.FinalLabel = AgentLabels.Cancelled;
             return new JobCompletionPayload
             {
                 FinalStep = PipelineStep.Cancelled,
                 CompletedAt = DateTimeOffset.UtcNow,
                 RetryCount = run.RetryCount,
-                IsRework = run.LinkedPullRequest is not null
+                IsRework = run.LinkedPullRequest is not null,
+                FinalLabel = AgentLabels.Cancelled
             };
         }
         catch (Exception ex)
@@ -459,7 +460,7 @@ public sealed class LocalPipelineExecutor
 
         run.CompletedAt = DateTime.UtcNow;
         run.CurrentStep = finalStep;
-        // TODO: Set run.FinalLabel explicitly for success/draft paths (currently relies on fallback inference in AgentHub)
+        run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
     }
 
     /// <summary>
