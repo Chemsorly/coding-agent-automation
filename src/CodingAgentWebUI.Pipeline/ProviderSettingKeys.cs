@@ -60,13 +60,6 @@ public static class ProviderSettingKeys
     /// <summary>Default base branch name.</summary>
     public const string DefaultBaseBranch = "main";
 
-    // TODO: DefaultKiroCliPath and DefaultOpenCodeBaseUrl duplicate AgentDefaults.KiroCliPath and AgentDefaults.OpenCodeBaseUrl — consider referencing AgentDefaults instead
-    /// <summary>Default filesystem path to the Kiro CLI executable inside agent containers.</summary>
-    public const string DefaultKiroCliPath = "/home/ubuntu/.local/bin/kiro-cli";
-
-    /// <summary>Default base URL for the OpenCode agent HTTP API.</summary>
-    public const string DefaultOpenCodeBaseUrl = "http://127.0.0.1:4096";
-
     // ── Token vending (written by orchestrator) ──────────────────────────
 
     /// <summary>Token expiration timestamp (written to provider settings at runtime).</summary>
