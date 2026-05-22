@@ -1,9 +1,9 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Services.Parsers;
 
 namespace CodingAgentWebUI.Agent.Executors;
 
@@ -289,7 +289,8 @@ public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
     /// </summary>
     internal static HarnessSuggestions? ParseSuggestions(string responseText)
     {
-        var jsonBlock = ExtractJsonBlock(responseText);
+        var jsonBlock = JsonBlockExtractor.Extract(responseText,
+            c => c.Contains("suggestions", StringComparison.OrdinalIgnoreCase));
         if (jsonBlock is null)
             return null;
 
@@ -301,82 +302,5 @@ public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
         {
             return null;
         }
-    }
-
-    /// <summary>
-    /// Extracts a JSON block from the response text.
-    /// Tries fenced JSON blocks first (```json ... ```), then bare JSON objects.
-    /// Handles string literals correctly when counting braces.
-    /// </summary>
-    private static string? ExtractJsonBlock(string responseText)
-    {
-        // Try fenced JSON block first (with timeout to prevent catastrophic backtracking)
-        var fencedMatch = Regex.Match(responseText, @"```(?:json)?\s*\n([\s\S]*?)\n\s*```",
-            RegexOptions.None, TimeSpan.FromSeconds(1));
-        if (fencedMatch.Success)
-        {
-            var candidate = fencedMatch.Groups[1].Value.Trim();
-            if (candidate.StartsWith('{'))
-                return candidate;
-        }
-
-        // Fall back to bare JSON object — search all balanced blocks until one matches
-        var searchStart = 0;
-        while (searchStart < responseText.Length)
-        {
-            var braceStart = responseText.IndexOf('{', searchStart);
-            if (braceStart < 0)
-                break;
-
-            var depth = 0;
-            var inString = false;
-            var escaped = false;
-
-            for (var i = braceStart; i < responseText.Length; i++)
-            {
-                var c = responseText[i];
-
-                if (escaped)
-                {
-                    escaped = false;
-                    continue;
-                }
-
-                if (c == '\\' && inString)
-                {
-                    escaped = true;
-                    continue;
-                }
-
-                if (c == '"')
-                {
-                    inString = !inString;
-                    continue;
-                }
-
-                if (inString)
-                    continue;
-
-                if (c == '{') depth++;
-                else if (c == '}') depth--;
-
-                if (depth == 0)
-                {
-                    var candidate = responseText[braceStart..(i + 1)];
-                    // Validate it looks like a suggestions object
-                    if (candidate.Contains("suggestions", StringComparison.OrdinalIgnoreCase))
-                        return candidate;
-                    // Not a match — continue searching from after this block
-                    searchStart = i + 1;
-                    break;
-                }
-            }
-
-            // If we never found a matching close brace, stop searching
-            if (depth != 0)
-                break;
-        }
-
-        return null;
     }
 }
