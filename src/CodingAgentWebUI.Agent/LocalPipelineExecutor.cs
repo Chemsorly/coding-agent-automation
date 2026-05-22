@@ -205,7 +205,12 @@ public sealed class LocalPipelineExecutor
             PipelineProviderConfigId = job.PipelineProviderConfigId,
             InitiatedBy = job.InitiatedBy,
             LinkedPullRequest = job.LinkedPullRequest,
-            AgentId = Environment.MachineName
+            AgentId = Environment.MachineName,
+            RunType = job.RunType,
+            ReviewPrBranchName = job.LinkedPullRequest?.BranchName,
+            ReviewPrTargetBranch = job.ReviewPrTargetBranch,
+            ReviewPrDescription = job.ReviewPrDescription,
+            LinkedIssueContexts = job.LinkedIssueContexts
         };
 
         run.IssueLabels = job.IssueDetail.Labels;
@@ -269,6 +274,7 @@ public sealed class LocalPipelineExecutor
                 step => TransitionTo(step),
                 EmitOutputLine,
                 issueOps,
+                run,
                 prOrchestrator,
                 repoProvider,
                 report => ReportQualityGateResult(report),
@@ -306,8 +312,10 @@ public sealed class LocalPipelineExecutor
                 IssueComments = job.IssueComments
             };
 
-            // Build step pipeline (agent-specific: includes MCP config, skips FetchIssueStep)
-            var steps = BuildAgentStepPipeline(job, connection);
+            // Build step pipeline based on run type
+            var steps = run.RunType == PipelineRunType.Review
+                ? BuildReviewStepPipeline()
+                : BuildAgentStepPipeline(job, connection);
 
             await PipelineStepRunner.ExecuteAsync(steps, context, linkedCt);
 
@@ -379,6 +387,24 @@ public sealed class LocalPipelineExecutor
             new RunQualityGatesStep()
         };
         return steps;
+    }
+
+    /// <summary>
+    /// Builds the ordered step pipeline for PR review runs.
+    /// Shorter sequence: Clone → CreateBranch → SyncBrain → ExtractLinkedIssues → ReviewCode → PostFindings.
+    /// Skips analysis, code generation, quality gates, and rework detection.
+    /// </summary>
+    internal static IReadOnlyList<IPipelineStep> BuildReviewStepPipeline()
+    {
+        return new IPipelineStep[]
+        {
+            new CloneRepositoryStep(),
+            new CreateBranchStep(),
+            new SyncBrainPreRunStep(),
+            new ExtractLinkedIssuesStep(new IssueDescriptionParser()),
+            new ReviewCodeStep(),
+            new PostReviewFindingsStep()
+        };
     }
 
     private async Task CreatePullRequestAsync(
@@ -578,11 +604,14 @@ public sealed class LocalPipelineExecutor
 
     /// <summary>
     /// Adapts the agent executor's callback methods to <see cref="IPipelineCallbacks"/>.
+    /// Routes label swaps based on <see cref="PipelineRun.RunType"/>:
+    /// Implementation runs swap labels on issues, Review runs swap labels on PRs.
     /// </summary>
     private sealed class AgentCallbacks(
         Action<PipelineStep> transitionTo,
         Action<string> emitOutputLine,
-        IAgentIssueOperations issueOps,
+        OrchestratorProxy orchestratorProxy,
+        PipelineRun run,
         PullRequestOrchestrator prOrchestrator,
         IRepositoryProvider repoProvider,
         Action<QualityGateReport> reportQualityGateResult,
@@ -596,9 +625,19 @@ public sealed class LocalPipelineExecutor
         public Task UpdateFileChangeStats(PipelineRun run)
             => prOrchestrator.UpdateFileChangeStatsAsync(run, repoProvider);
         public Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
-            => issueOps.SwapLabelAsync(issueIdentifier, label, ct);
+        {
+            var targetKind = run.RunType == PipelineRunType.Review
+                ? LabelTargetKind.PullRequest
+                : LabelTargetKind.Issue;
+            return orchestratorProxy.SwapLabelAsync(issueIdentifier, label, targetKind, ct);
+        }
         public Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
-            => issueOps.SwapLabelAsync(issueIdentifier, string.Empty, ct);  // Hub handles empty label as remove-only
+        {
+            var targetKind = run.RunType == PipelineRunType.Review
+                ? LabelTargetKind.PullRequest
+                : LabelTargetKind.Issue;
+            return orchestratorProxy.SwapLabelAsync(issueIdentifier, string.Empty, targetKind, ct);
+        }
         public Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
             reportQualityGateResult(report);

@@ -136,6 +136,24 @@ public sealed class PipelineRun
     /// <summary>How this run was initiated: "manual" or "loop".</summary>
     public string InitiatedBy { get; init; } = "manual";
 
+    /// <summary>Discriminates implementation vs review runs.</summary>
+    public PipelineRunType RunType { get; init; } = PipelineRunType.Implementation;
+
+    /// <summary>PR branch name for review runs.</summary>
+    public string? ReviewPrBranchName { get; init; }
+
+    /// <summary>PR target branch for review runs (e.g., "main", "develop"). Used for diff computation.</summary>
+    public string? ReviewPrTargetBranch { get; init; }
+
+    /// <summary>PR URL for review runs.</summary>
+    public string? ReviewPrUrl { get; init; }
+
+    /// <summary>PR body/description for review runs.</summary>
+    public string? ReviewPrDescription { get; init; }
+
+    /// <summary>Pre-fetched linked issue details for review runs.</summary>
+    public IReadOnlyList<LinkedIssueContext>? LinkedIssueContexts { get; init; }
+
     /// <summary>Which agent is executing this run, or null for legacy/local runs.</summary>
     public string? AgentId { get; init; }
 
@@ -172,6 +190,12 @@ public sealed class PipelineRun
         CompletedAt = CompletedAt,
         RetryCount = RetryCount,
         PullRequestUrl = PullRequestUrl,
+        RunType = RunType,
+        ReviewPrUrl = ReviewPrUrl,
+        CodeReviewAgentsRun = CodeReviewAgentsRun,
+        CodeReviewCriticalCount = CodeReviewCriticalCount,
+        CodeReviewWarningCount = CodeReviewWarningCount,
+        CodeReviewSuggestionCount = CodeReviewSuggestionCount,
         ModelName = ModelName,
         BrainRepoUsed = BrainProviderConfigId != null,
         BrainUpdatesPushed = BrainUpdatesPushed,

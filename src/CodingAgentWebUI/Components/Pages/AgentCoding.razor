@@ -59,6 +59,8 @@
         var agentRuns = RunService.GetActiveRuns();
         var agentCount = Registry.GetAllAgents().Count;
         var queueLength = Dispatcher.QueueLength;
+        var implRunCount = agentRuns.Count(r => r.RunType == PipelineRunType.Implementation);
+        var reviewRunCount = agentRuns.Count(r => r.RunType == PipelineRunType.Review);
     }
     @if (agentRuns.Count > 0 || queueLength > 0)
     {
@@ -66,6 +68,14 @@
             <span>
                 🤖 @agentCount agent(s) registered ·
                 @agentRuns.Count agent run(s) active
+                @if (implRunCount > 0 && reviewRunCount > 0)
+                {
+                    <text> (🔨@implRunCount impl · 🔍@reviewRunCount review)</text>
+                }
+                else if (reviewRunCount > 0)
+                {
+                    <text> (🔍@reviewRunCount review)</text>
+                }
                 @if (queueLength > 0)
                 {
                     <text> · @queueLength job(s) queued</text>

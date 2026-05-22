@@ -3452,7 +3452,7 @@ public class PipelineOrchestrationServiceTests
             historyService: mockHistoryService.Object,
             runService: mockRunService.Object,
             lifecycle: lifecycle,
-            labelSwapper: new Orchestration.IssueProviderLabelSwapper(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object));
+            labelSwapper: new Orchestration.LabelSwapper(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object));
 
         await service.CancelActiveAgentRunsAsync();
 

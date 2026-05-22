@@ -20,6 +20,11 @@ public sealed record PendingJob
     public required DateTimeOffset EnqueuedAt { get; init; }
     public required string InitiatedBy { get; init; }
     public IReadOnlyList<string> RequiredLabels { get; init; } = [];
+    public PipelineRunType RunType { get; init; } = PipelineRunType.Implementation;
+    public string? PrBranchName { get; init; }
+    public string? PrDescription { get; init; }
+    public string? PrUrl { get; init; }
+    public string? PrTargetBranch { get; init; }
 }
 
 /// <summary>

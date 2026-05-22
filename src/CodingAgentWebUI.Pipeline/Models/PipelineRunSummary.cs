@@ -11,6 +11,24 @@ public sealed class PipelineRunSummary
     public int RetryCount { get; init; }
     public string? PullRequestUrl { get; init; }
 
+    /// <summary>Discriminates implementation vs review runs.</summary>
+    public PipelineRunType RunType { get; init; } = PipelineRunType.Implementation;
+
+    /// <summary>PR URL for review runs (the PR being reviewed).</summary>
+    public string? ReviewPrUrl { get; init; }
+
+    /// <summary>Review agents that ran during this review run.</summary>
+    public IReadOnlyList<string> CodeReviewAgentsRun { get; init; } = [];
+
+    /// <summary>Critical finding count from code review.</summary>
+    public int CodeReviewCriticalCount { get; init; }
+
+    /// <summary>Warning finding count from code review.</summary>
+    public int CodeReviewWarningCount { get; init; }
+
+    /// <summary>Suggestion finding count from code review.</summary>
+    public int CodeReviewSuggestionCount { get; init; }
+
     /// <summary>Model configured for the agent provider used in this run.</summary>
     public string? ModelName { get; init; }
 

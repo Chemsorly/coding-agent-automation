@@ -4,7 +4,15 @@
     <div class="sidebar-header">
         <div class="sidebar-elapsed">⏱ Elapsed: @GetElapsedTime()</div>
         <div class="sidebar-issue" title="@Run.WorkspacePath">
-            Issue #@Run.IssueIdentifier · @Truncate(Run.IssueTitle, 30)
+            @if (Run.RunType == PipelineRunType.Review)
+            {
+                <span class="run-type-badge run-type-review" style="font-size: 0.75rem;">🔍 Review</span>
+                <text> PR #@Run.IssueIdentifier · @Truncate(Run.IssueTitle, 30)</text>
+            }
+            else
+            {
+                <text>Issue #@Run.IssueIdentifier · @Truncate(Run.IssueTitle, 30)</text>
+            }
         </div>
         @if (Run.IssueLabels.Count > 0)
         {
@@ -125,6 +133,11 @@
             PipelineStep.ReviewingCode,
             PipelineStep.RunningQualityGates
         }),
+        new("Review", "review", new[] {
+            PipelineStep.ExtractingLinkedIssues,
+            PipelineStep.ReviewingCode,
+            PipelineStep.PostingFindings
+        }),
         new("Finalization", "finalization", new[] {
             PipelineStep.PreparingForPullRequest,
             PipelineStep.CreatingPullRequest,
@@ -166,6 +179,27 @@
             // Hide brain sync steps when brain provider is not configured
             if (step is PipelineStep.SyncingBrainRepoPreRun or PipelineStep.SyncingBrainRepoPostRun
                 && Run.BrainProviderConfigId == null)
+                continue;
+
+            // Hide implementation-only steps for review runs
+            if (Run.RunType == PipelineRunType.Review
+                && step is PipelineStep.VerifyingBaseline or PipelineStep.AnalyzingCode
+                    or PipelineStep.ReviewingAnalysis or PipelineStep.PostingAnalysis
+                    or PipelineStep.GeneratingCode or PipelineStep.RunningQualityGates
+                    or PipelineStep.PreparingForPullRequest or PipelineStep.CreatingPullRequest
+                    or PipelineStep.ReflectingOnRun or PipelineStep.SyncingBrainRepoPostRun)
+                continue;
+
+            // Hide review-only steps for implementation runs
+            if (Run.RunType == PipelineRunType.Implementation
+                && step is PipelineStep.ExtractingLinkedIssues or PipelineStep.PostingFindings)
+                continue;
+
+            // Hide duplicate ReviewingCode in the "Review" phase for implementation runs
+            // (it's already shown in "Code Generation" phase)
+            if (Run.RunType == PipelineRunType.Implementation
+                && step == PipelineStep.ReviewingCode
+                && steps.Contains(PipelineStep.ExtractingLinkedIssues))
                 continue;
 
             visible.Add(step);
@@ -363,6 +397,8 @@
         PipelineStep.GeneratingCode => "Generating Code",
         PipelineStep.ReviewingCode => "Reviewing Code",
         PipelineStep.RunningQualityGates => "Running Quality Gates",
+        PipelineStep.ExtractingLinkedIssues => "Extracting Linked Issues",
+        PipelineStep.PostingFindings => "Posting Review Findings",
         PipelineStep.PreparingForPullRequest => "Preparing for Pull Request",
         PipelineStep.CreatingPullRequest => "Creating Pull Request",
         PipelineStep.ReflectingOnRun => "Reflecting on Run",
@@ -389,6 +425,8 @@
         PipelineStep.GeneratingCode => true,
         PipelineStep.ReviewingCode => true,
         PipelineStep.RunningQualityGates => Run.LatestQualityReport != null,
+        PipelineStep.ExtractingLinkedIssues => true,
+        PipelineStep.PostingFindings => true,
         PipelineStep.PreparingForPullRequest => false,
         PipelineStep.CreatingPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
         PipelineStep.ReflectingOnRun => Run.BrainProviderConfigId != null,
@@ -593,6 +631,51 @@
                     }
                 </div>
             }
+        }
+        else if (step == PipelineStep.ExtractingLinkedIssues)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>Extracting linked issues...</span>
+                }
+                else
+                {
+                    var linkedCount = Run.LinkedIssueContexts?.Count ?? 0;
+                    @if (linkedCount > 0)
+                    {
+                        <span>✅ @linkedCount linked issue(s) found</span>
+                    }
+                    else
+                    {
+                        <span>⚠️ No linked issues (using PR metadata)</span>
+                    }
+                }
+            </div>
+        }
+        else if (step == PipelineStep.PostingFindings)
+        {
+            <div class="step-detail-box">
+                @if (state == StepState.Active)
+                {
+                    <span>Posting review findings...</span>
+                }
+                else
+                {
+                    @if (Run.CodeReviewCriticalCount > 0 || Run.CodeReviewWarningCount > 0 || Run.CodeReviewSuggestionCount > 0)
+                    {
+                        <div>🔴 @Run.CodeReviewCriticalCount critical · 🟡 @Run.CodeReviewWarningCount warning · 🔵 @Run.CodeReviewSuggestionCount suggestion</div>
+                    }
+                    else
+                    {
+                        <div>✅ No issues found</div>
+                    }
+                    @if (!string.IsNullOrEmpty(Run.ReviewPrUrl))
+                    {
+                        <div><a href="@Run.ReviewPrUrl" target="_blank" rel="noopener noreferrer" @onclick:stopPropagation="true">🔗 View PR</a></div>
+                    }
+                }
+            </div>
         }
         else if (step == PipelineStep.CreatingPullRequest && !string.IsNullOrEmpty(Run.PullRequestUrl))
         {

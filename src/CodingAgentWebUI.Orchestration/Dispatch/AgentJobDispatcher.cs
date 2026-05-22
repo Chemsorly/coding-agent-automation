@@ -54,7 +54,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
     private readonly ITokenVendingService _tokenVending;
     private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
-    private readonly IIssueProviderLabelSwapper _labelSwapper;
+    private readonly ILabelSwapper _labelSwapper;
     private readonly ProfileResolver _profileResolver;
     private readonly QualityGateResolver _qualityGateResolver;
     private readonly ReviewerResolver _reviewerResolver;
@@ -69,7 +69,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         ITokenVendingService tokenVending,
         IConfigurationStore configStore,
         IProviderFactory providerFactory,
-        IIssueProviderLabelSwapper labelSwapper,
+        ILabelSwapper labelSwapper,
         ProfileResolver profileResolver,
         QualityGateResolver qualityGateResolver,
         ReviewerResolver reviewerResolver,
@@ -172,6 +172,78 @@ public sealed class AgentJobDispatcher : IJobDispatcher
 
         if (enqueued)
             _logger.Information("Issue {IssueIdentifier} enqueued for dispatch (no idle agents)", issueIdentifier);
+
+        return enqueued;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> TryDispatchReviewAsync(
+        string prIdentifier,
+        string prBranchName,
+        string prTitle,
+        string? prDescription,
+        string prUrl,
+        string prTargetBranch,
+        string issueProviderId,
+        string repoProviderId,
+        string? brainProviderId,
+        string initiatedBy,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(prIdentifier);
+        ArgumentNullException.ThrowIfNull(prBranchName);
+        ArgumentNullException.ThrowIfNull(prTitle);
+        ArgumentNullException.ThrowIfNull(prUrl);
+        ArgumentNullException.ThrowIfNull(prTargetBranch);
+        ArgumentNullException.ThrowIfNull(issueProviderId);
+        ArgumentNullException.ThrowIfNull(repoProviderId);
+        ArgumentNullException.ThrowIfNull(initiatedBy);
+
+        // Check if already being processed
+        if (IsIssueBeingProcessedOrQueued(prIdentifier))
+        {
+            _logger.Information("PR {PrIdentifier} already being processed or queued, skipping review dispatch", prIdentifier);
+            return false;
+        }
+
+        // Resolve required labels for agent matching
+        var config = await _configStore.LoadPipelineConfigAsync(ct);
+        var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == repoProviderId);
+        var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
+
+        // Try to find an idle agent
+        var agent = _dispatcher.SelectAgent(requiredLabels);
+
+        if (agent != null)
+        {
+            // Agent available — dispatch immediately
+            return await DispatchReviewToAgentAsync(
+                agent, prIdentifier, prBranchName, prTitle, prDescription, prUrl, prTargetBranch,
+                issueProviderId, repoProviderId, brainProviderId, initiatedBy, requiredLabels, ct);
+        }
+
+        // No idle agent — enqueue for later dispatch
+        var enqueued = _dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = prIdentifier,
+            IssueTitle = prTitle,
+            IssueProviderId = issueProviderId,
+            RepoProviderId = repoProviderId,
+            BrainProviderId = brainProviderId,
+            PipelineProviderId = null,
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            InitiatedBy = initiatedBy,
+            RequiredLabels = requiredLabels,
+            RunType = PipelineRunType.Review,
+            PrBranchName = prBranchName,
+            PrDescription = prDescription,
+            PrUrl = prUrl,
+            PrTargetBranch = prTargetBranch
+        });
+
+        if (enqueued)
+            _logger.Information("PR review {PrIdentifier} enqueued for dispatch (no idle agents)", prIdentifier);
 
         return enqueued;
     }
@@ -321,6 +393,310 @@ public sealed class AgentJobDispatcher : IJobDispatcher
 
             return false;
         }
+    }
+
+    /// <summary>
+    /// Dispatches a PR review job to a specific agent. Creates the PipelineRun with review metadata,
+    /// pre-fetches linked issues, and sends the <see cref="JobAssignmentMessage"/> via SignalR.
+    /// </summary>
+    internal async Task<bool> DispatchReviewToAgentAsync(
+        AgentEntry agent,
+        string prIdentifier,
+        string prBranchName,
+        string prTitle,
+        string? prDescription,
+        string prUrl,
+        string prTargetBranch,
+        string issueProviderId,
+        string repoProviderId,
+        string? brainProviderId,
+        string initiatedBy,
+        IReadOnlyList<string> requiredLabels,
+        CancellationToken ct)
+    {
+        try
+        {
+            // Resolve profile for this agent
+            var profiles = await _configStore.LoadAgentProfilesAsync(ct);
+            var profile = _profileResolver.Resolve(profiles, agent.Labels);
+            if (profile is null)
+            {
+                var labelsStr = string.Join(", ", agent.Labels);
+                _logger.Warning("No profile matches agent {AgentId} labels [{Labels}] for review dispatch", agent.AgentId, labelsStr);
+                return false;
+            }
+
+            var agentProviderId = profile.AgentProviderConfigId;
+
+            // Resolve reviewer configurations for this job (quality gates not needed for reviews)
+            var allReviewerConfigs = await _configStore.LoadReviewerConfigsAsync(ct);
+            var resolvedReviewerConfigs = _reviewerResolver.Resolve(allReviewerConfigs, requiredLabels);
+
+            // Create the dispatched run via PipelineOrchestrationService
+            var run = await _orchestration.CreateDispatchedRunAsync(
+                issueProviderId, repoProviderId, prIdentifier,
+                agentProviderId, agent.AgentId, ct,
+                brainProviderId, pipelineProviderId: null, initiatedBy);
+
+            if (run == null)
+            {
+                _logger.Warning("Failed to create dispatched run for PR review {PrIdentifier}", prIdentifier);
+                return false;
+            }
+
+            // Populate review-specific metadata on the run
+            // PipelineRun uses init-only properties for review fields, so we need to remove and re-create.
+            // CreateDispatchedRunAsync creates the run without review fields — we replace it with a
+            // fully-populated instance that includes RunType, ReviewPr*, and LinkedPullRequest.
+            //
+            // TODO: This remove-then-add pattern creates a brief window where IsIssueBeingProcessed(prIdentifier)
+            // returns false. If a concurrent poll cycle checks eligibility during this gap, it could attempt
+            // a duplicate dispatch for the same PR. In practice this is unlikely because:
+            //   (a) the gap is sub-millisecond (no awaits between remove and add),
+            //   (b) the label is swapped to agent:in-progress later in this method, which prevents re-polling.
+            // The proper fix is to either make PipelineRun's review properties mutable (breaking the immutability
+            // convention) or add an atomic UpdateRun/ReplaceRun method to OrchestratorRunService.
+            _runService.RemoveRun(run.RunId);
+
+            run = new PipelineRun
+            {
+                RunId = run.RunId,
+                IssueIdentifier = prIdentifier,
+                IssueTitle = prTitle,
+                IssueProviderConfigId = issueProviderId,
+                RepoProviderConfigId = repoProviderId,
+                StartedAt = run.StartedAt,
+                CurrentStep = PipelineStep.Created,
+                RepositoryName = run.RepositoryName,
+                ModelName = run.ModelName,
+                BrainProviderConfigId = brainProviderId,
+                PipelineProviderConfigId = null,
+                InitiatedBy = initiatedBy,
+                AgentId = agent.AgentId,
+                AgentProviderConfigId = agentProviderId,
+                RunType = PipelineRunType.Review,
+                ReviewPrBranchName = prBranchName,
+                ReviewPrTargetBranch = prTargetBranch,
+                ReviewPrUrl = prUrl,
+                ReviewPrDescription = prDescription,
+                LinkedPullRequest = new LinkedPullRequest
+                {
+                    Number = int.TryParse(prIdentifier, out var prNum) ? prNum : 0,
+                    BranchName = prBranchName,
+                    Url = prUrl,
+                    IsDraft = false
+                }
+            };
+
+            // Pre-fetch linked issues (non-fatal on failure)
+            var linkedIssueContexts = await PreFetchLinkedIssuesAsync(
+                prIdentifier, issueProviderId, repoProviderId, ct);
+
+            // Set LinkedIssueContexts on the run — requires re-creating since it's init-only
+            if (linkedIssueContexts.Count > 0)
+            {
+                run = new PipelineRun
+                {
+                    RunId = run.RunId,
+                    IssueIdentifier = prIdentifier,
+                    IssueTitle = prTitle,
+                    IssueProviderConfigId = issueProviderId,
+                    RepoProviderConfigId = repoProviderId,
+                    StartedAt = run.StartedAt,
+                    CurrentStep = PipelineStep.Created,
+                    RepositoryName = run.RepositoryName,
+                    ModelName = run.ModelName,
+                    BrainProviderConfigId = brainProviderId,
+                    PipelineProviderConfigId = null,
+                    InitiatedBy = initiatedBy,
+                    AgentId = agent.AgentId,
+                    AgentProviderConfigId = agentProviderId,
+                    RunType = PipelineRunType.Review,
+                    ReviewPrBranchName = prBranchName,
+                    ReviewPrTargetBranch = prTargetBranch,
+                    ReviewPrUrl = prUrl,
+                    ReviewPrDescription = prDescription,
+                    LinkedPullRequest = run.LinkedPullRequest,
+                    LinkedIssueContexts = linkedIssueContexts
+                };
+            }
+
+            // Re-register the run with review metadata
+            _runService.AddRun(run);
+
+            // Populate resolved profile and reviewer config IDs on the run
+            run.ResolvedProfileId = profile.Id;
+            run.ResolvedReviewerConfigIds = resolvedReviewerConfigs.Select(r => r.Id).ToList().AsReadOnly();
+
+            // Build and prepare provider configs for the agent
+            var providerConfigs = await PrepareProviderConfigsAsync(
+                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, ct);
+
+            var config = await _configStore.LoadPipelineConfigAsync(ct);
+
+            // Override BrainReadOnly from the matching template (per-template setting)
+            var matchingTemplate = config.PipelineJobTemplates.FirstOrDefault(t =>
+                t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
+            if (matchingTemplate is { BrainReadOnly: true })
+                config = config with { BrainReadOnly = true };
+
+            // Override blacklist settings from repo provider config (per-repo takes precedence)
+            config = PipelineConfiguration.ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == repoProviderId));
+
+            // TODO: This label swap is redundant — CloneRepositoryStep also calls SwapAgentLabel(InProgress)
+            // when the agent begins execution, resulting in a duplicate GitHub API call per review run.
+            // We swap here (at dispatch time) so the PR is immediately marked in-progress before the agent
+            // picks up the job, preventing the loop from re-dispatching it on the next cycle. CloneRepositoryStep
+            // then swaps again because it doesn't know whether the orchestrator already did it.
+            // To eliminate the duplication: either skip the swap in CloneRepositoryStep for agent-dispatched runs
+            // (check if run.AgentId is set), or remove this swap and accept a brief window where the PR still
+            // has agent:next (mitigated by IsIssueBeingProcessedOrQueued check in the loop).
+            // Swap label to agent:in-progress before dispatch
+            await _labelSwapper.SwapLabelAsync(
+                repoProviderId, prIdentifier, AgentLabels.InProgress, LabelTargetKind.PullRequest, ct);
+
+            // Build a synthetic IssueDetail and ParsedIssue from PR metadata for the job assignment
+            var syntheticIssueDetail = new IssueDetail
+            {
+                Identifier = prIdentifier,
+                Title = prTitle,
+                Description = prDescription ?? string.Empty,
+                Labels = Array.Empty<string>()
+            };
+            var syntheticParsedIssue = new IssueDescriptionParser().Parse(prDescription ?? string.Empty);
+
+            var message = new JobAssignmentMessage
+            {
+                JobId = run.RunId,
+                IssueIdentifier = prIdentifier,
+                IssueDetail = syntheticIssueDetail,
+                ParsedIssue = syntheticParsedIssue,
+                IssueComments = Array.Empty<IssueComment>(),
+                ExistingAnalysis = null,
+                ForceRefreshAnalysis = false,
+                LinkedPullRequest = run.LinkedPullRequest,
+                RepoProviderConfigId = repoProviderId,
+                AgentProviderConfigId = agentProviderId,
+                BrainProviderConfigId = brainProviderId,
+                PipelineProviderConfigId = null,
+                ProviderConfigs = providerConfigs,
+                PipelineConfiguration = config,
+                InitiatedBy = initiatedBy,
+                ResolvedProfileId = profile.Id,
+                QualityGateConfigs = Array.Empty<QualityGateConfiguration>(),
+                McpServers = profile.McpServers,
+                ReviewerConfigs = resolvedReviewerConfigs,
+                LinkedIssueContexts = linkedIssueContexts.Count > 0 ? linkedIssueContexts : null,
+                RunType = PipelineRunType.Review,
+                ReviewPrTargetBranch = prTargetBranch,
+                ReviewPrDescription = prDescription
+            };
+
+            // Assign the job to the agent in the registry
+            agent.ActiveJobId = run.RunId;
+            _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
+
+            // Send the assignment via IAgentCommunication
+            await _agentComm.AssignJobAsync(agent.ConnectionId, message, ct);
+
+            _logger.Information(
+                "Review job {JobId} dispatched to agent {AgentId} for PR {PrIdentifier} (profile={ProfileId}, reviewerConfigs={ReviewerConfigCount}, linkedIssues={LinkedIssueCount})",
+                run.RunId, agent.AgentId, prIdentifier, profile.Id, resolvedReviewerConfigs.Count, linkedIssueContexts.Count);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to dispatch review job to agent {AgentId} for PR {PrIdentifier}",
+                agent.AgentId, prIdentifier);
+
+            // Reset agent status on failure
+            agent.ActiveJobId = null;
+            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+
+            // Revert label on dispatch failure
+            await _labelSwapper.SwapLabelAsync(
+                repoProviderId, prIdentifier, AgentLabels.Next, LabelTargetKind.PullRequest, CancellationToken.None);
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Pre-fetches linked issue details for a PR review dispatch.
+    /// Calls <see cref="IRepositoryProvider.ExtractLinkedIssuesAsync"/> to get issue IDs,
+    /// then fetches each issue's details via <see cref="IIssueProvider.GetIssueAsync"/>.
+    /// Non-fatal: returns empty list on failure.
+    /// </summary>
+    private async Task<IReadOnlyList<LinkedIssueContext>> PreFetchLinkedIssuesAsync(
+        string prIdentifier,
+        string issueProviderId,
+        string repoProviderId,
+        CancellationToken ct)
+    {
+        var linkedIssueContexts = new List<LinkedIssueContext>();
+
+        try
+        {
+            // Resolve repository provider to extract linked issues
+            var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+            var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == repoProviderId);
+            if (repoConfig == null)
+            {
+                _logger.Warning("Repo provider config '{ConfigId}' not found for linked issue extraction", repoProviderId);
+                return linkedIssueContexts.AsReadOnly();
+            }
+
+            IReadOnlyList<string> linkedIssueIds;
+            await using (var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig))
+            {
+                linkedIssueIds = await repoProvider.ExtractLinkedIssuesAsync(int.Parse(prIdentifier), ct);
+            }
+
+            if (linkedIssueIds.Count == 0)
+            {
+                _logger.Debug("No linked issues found for PR {PrIdentifier}", prIdentifier);
+                return linkedIssueContexts.AsReadOnly();
+            }
+
+            // Resolve issue provider to fetch issue details
+            var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
+            var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == issueProviderId);
+            if (issueConfig == null)
+            {
+                _logger.Warning("Issue provider config '{ConfigId}' not found for linked issue pre-fetch", issueProviderId);
+                return linkedIssueContexts.AsReadOnly();
+            }
+
+            await using (var issueProvider = _providerFactory.CreateIssueProvider(issueConfig))
+            {
+                foreach (var issueId in linkedIssueIds)
+                {
+                    try
+                    {
+                        var issueDetail = await issueProvider.GetIssueAsync(issueId, ct);
+                        linkedIssueContexts.Add(new LinkedIssueContext
+                        {
+                            Identifier = issueId,
+                            Title = issueDetail.Title,
+                            Description = issueDetail.Description
+                        });
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.Warning(ex, "Failed to fetch linked issue {IssueId} for PR {PrIdentifier}", issueId, prIdentifier);
+                    }
+                }
+            }
+
+            _logger.Information("Pre-fetched {Count} linked issue(s) for PR {PrIdentifier}", linkedIssueContexts.Count, prIdentifier);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Failed to pre-fetch linked issues for PR {PrIdentifier}, continuing with empty context", prIdentifier);
+        }
+
+        return linkedIssueContexts.AsReadOnly();
     }
 
     /// <summary>

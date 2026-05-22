@@ -23,7 +23,7 @@ public class AgentJobDispatcherTests
     private readonly OrchestratorRunService _runService;
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
-    private readonly Mock<IIssueProviderLabelSwapper> _mockLabelSwapper;
+    private readonly Mock<ILabelSwapper> _mockLabelSwapper;
     private readonly Mock<IAgentCommunication> _mockAgentComm;
     private readonly TokenVendingService _tokenVending;
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
@@ -35,7 +35,7 @@ public class AgentJobDispatcherTests
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _mockConfigStore = new Mock<IConfigurationStore>();
         _mockProviderFactory = new Mock<IProviderFactory>();
-        _mockLabelSwapper = new Mock<IIssueProviderLabelSwapper>();
+        _mockLabelSwapper = new Mock<ILabelSwapper>();
         _mockAgentComm = new Mock<IAgentCommunication>();
         _tokenVending = new TokenVendingService(_mockLogger.Object, new HttpClient());
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();

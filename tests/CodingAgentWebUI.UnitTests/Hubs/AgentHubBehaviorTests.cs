@@ -18,7 +18,7 @@ public sealed class AgentHubBehaviorTests
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
     private readonly Mock<IConsolidationService> _mockConsolidation = new();
     private readonly ConsolidationBadgeService _badgeService = new();
-    private readonly Mock<IIssueProviderLabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
     private readonly Mock<ILogger> _mockLogger = new();
 
     private AgentHub CreateHub(string connectionId = "conn-1")
@@ -127,7 +127,7 @@ public sealed class AgentHubBehaviorTests
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -143,7 +143,7 @@ public sealed class AgentHubBehaviorTests
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.Done, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -164,7 +164,7 @@ public sealed class AgentHubBehaviorTests
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.NeedsRefinement, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -185,7 +185,7 @@ public sealed class AgentHubBehaviorTests
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.WontDo, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.WontDo, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -258,7 +258,7 @@ public sealed class AgentHubBehaviorTests
         var hub = CreateHub();
         await hub.RequestLabelChange("job-1", "agent:error");
 
-        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", "agent:error", It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", "agent:error", LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

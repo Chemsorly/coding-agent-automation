@@ -36,7 +36,7 @@ public class HubAuthorizationTests
             runService,
             new Mock<IPipelineRunHistoryService>().Object,
             new JobDispatcherService(registry, new Mock<ILogger>().Object),
-            new Mock<IIssueProviderLabelSwapper>().Object,
+            new Mock<ILabelSwapper>().Object,
             mockConfigStore.Object,
             new Mock<ILogger>().Object);
 

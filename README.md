@@ -17,8 +17,41 @@ An automated development pipeline that uses AI coding agents to implement issues
 - **Confidence gate** — After analysis, the pipeline evaluates whether the issue is clear enough to implement. Vague or blocked issues are rejected with specific feedback rather than producing bad code.
 - **Quality gates** — Automated checks that must pass before a PR is created: compilation, tests, code coverage, and optionally external CI pipelines.
 - **Closed-loop mode** — The pipeline polls for labeled issues and processes them autonomously without manual dispatch. Configurable poll interval and backoff.
+- **PR review pipeline** — A parallel workflow that picks up pull requests labeled `agent:next` and runs automated multi-agent code review, posting findings as a PR review comment. Uses the same dispatch mechanism and label lifecycle as the implementation pipeline.
 - **Label routing** — Repository labels determine which agent container handles the job, which quality gates run, and which review agents are used.
 - **Harness suggestions** — Automated improvement recommendations for the pipeline itself, derived from accumulated run feedback patterns.
+
+## PR Review Pipeline
+
+The pipeline can also perform automated code review on pull requests. This uses the same `agent:next` label mechanism as the implementation pipeline but runs a shorter workflow focused on review.
+
+### How to Use
+
+1. Add the `agent:next` label to any open pull request
+2. The pipeline picks up the PR on the next poll cycle
+3. The agent clones the repo, checks out the PR branch, and runs multi-agent code review
+4. Review findings are posted as a PR review comment
+5. The label transitions: `agent:next` → `agent:in-progress` → `agent:done` (or `agent:error`)
+
+### Expected Workflow
+
+```
+Label PR with agent:next → Pipeline picks up PR → Clone → Checkout PR branch
+  → [Brain sync] → Extract linked issues → Code review → Post findings → Done
+```
+
+Draft PRs are skipped. To re-review after changes, remove `agent:done` and re-add `agent:next`.
+
+### Configuration
+
+Each pipeline job template has two independent toggles:
+
+| Property | Default | Effect |
+|----------|---------|--------|
+| `ImplementationEnabled` | `true` | Template processes issues for implementation |
+| `ReviewEnabled` | `true` | Template processes PRs for code review |
+
+Set `ReviewEnabled: false` to disable PR review for a template, or `ImplementationEnabled: false` to create a review-only template. See [Pipeline Orchestration](docs/pipeline-orchestration.md) for details.
 
 ## Documentation
 
@@ -34,10 +67,11 @@ Detailed documentation lives in the [`docs/`](docs/) folder. Suggested reading o
 
 - **Multi-agent architecture** — Multiple agent containers run in parallel, picking jobs from a shared queue
 - **Multi-stack support** — Label-based routing dispatches jobs to the right agent (dotnet, python, java) with stack-specific quality gates and review agents
+- **PR review pipeline** — Automated code review for pull requests using the same multi-agent review infrastructure, triggered by labeling PRs with `agent:next`
 - **Brain repository** — Shared knowledge repo that agents read/write across runs
 - **Multi-agent code review** — Specialized review agents (Correctness, Security, AcceptanceCriteria, etc.) analyze changes sequentially
 - **Confidence gate** — Rejects vague issues with specific feedback before attempting implementation
-- **Closed-loop automation** — Polls for labeled issues and processes them autonomously
+- **Closed-loop automation** — Polls for labeled issues and PRs, processing them autonomously
 - **PR rework** — Re-queue an issue with an open PR to incorporate review feedback
 - **External CI integration** — Optionally waits for CI pipelines to pass before creating the final PR
 - **Agent feedback loops** — Structured feedback collected after every run for continuous improvement

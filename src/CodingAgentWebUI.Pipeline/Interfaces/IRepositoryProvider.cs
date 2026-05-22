@@ -102,4 +102,73 @@ public interface IRepositoryProvider : IAsyncDisposable
     Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool markReady, CancellationToken ct)
         => throw new NotSupportedException(
             $"{GetType().Name} does not support UpdatePullRequestAsync.");
+
+    /// <summary>
+    /// Lists open pull requests with optional label filtering.
+    /// When labels is null or empty, returns all open PRs.
+    /// </summary>
+    Task<PagedResult<PullRequestSummary>> ListOpenPullRequestsAsync(
+        int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support ListOpenPullRequestsAsync.");
+
+    /// <summary>Adds a label to a pull request.</summary>
+    Task AddPrLabelAsync(int prNumber, string label, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support AddPrLabelAsync.");
+
+    /// <summary>Removes a label from a pull request.</summary>
+    Task RemovePrLabelAsync(int prNumber, string label, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support RemovePrLabelAsync.");
+
+    /// <summary>
+    /// Ensures the agent status labels exist for pull requests. Creates any that are missing.
+    /// On GitHub this is a no-op (PRs share labels with issues).
+    /// </summary>
+    Task<bool> EnsureAgentLabelsForPullRequestsAsync(CancellationToken ct)
+        => Task.FromResult(true);
+
+    /// <summary>
+    /// Submits a review on a pull request using the platform's native review API.
+    /// Falls back to a regular comment for providers that lack native review support.
+    /// </summary>
+    // TODO: The default throws NotSupportedException, which PostReviewFindingsStep catches gracefully
+    // (the run completes without posting findings). Per the spec, unsupported providers should fall back
+    // to posting a regular comment on the PR so findings are still visible. The challenge is that this
+    // interface method can't call another interface method in its default implementation (no access to
+    // a comment-posting API here). Options:
+    //   (a) Require all providers to implement this method (remove the default, add to each provider).
+    //   (b) Move the fallback logic into PostReviewFindingsStep: catch NotSupportedException, then call
+    //       a separate PostCommentAsync method on IIssueProvider or IRepositoryProvider.
+    //   (c) Add a SupportsNativeReviews property so PostReviewFindingsStep can choose the right path.
+    // Currently the GitHub provider uses issue comments (not the Reviews API), so this only matters
+    // when adding non-GitHub providers (GitLab, Bitbucket, etc.).
+    Task SubmitPullRequestReviewAsync(
+        int prNumber, string body, PullRequestReviewType type, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support SubmitPullRequestReviewAsync.");
+
+    /// <summary>
+    /// Extracts linked issue references from a pull request.
+    /// Provider-dependent: uses platform API, then falls back to title/body parsing.
+    /// Returns issue identifiers (e.g., "42", "PROJ-123").
+    /// </summary>
+    Task<IReadOnlyList<string>> ExtractLinkedIssuesAsync(
+        int prNumber, CancellationToken ct)
+        => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+
+    /// <summary>
+    /// Searches for an existing review comment containing the specified marker text.
+    /// Returns the comment ID if found, null otherwise.
+    /// </summary>
+    Task<long?> FindExistingReviewCommentAsync(int prNumber, string marker, CancellationToken ct)
+        => Task.FromResult<long?>(null);
+
+    /// <summary>
+    /// Updates an existing review comment body by its ID.
+    /// </summary>
+    Task UpdateReviewCommentAsync(int prNumber, long commentId, string body, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support UpdateReviewCommentAsync.");
 }

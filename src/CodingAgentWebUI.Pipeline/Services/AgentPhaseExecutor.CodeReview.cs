@@ -218,6 +218,7 @@ internal partial class AgentPhaseExecutor
     /// Pre-computes git diff artifacts (stat + full diff) and writes them to the workspace
     /// so review agents can read them selectively instead of running git diff themselves.
     /// This reduces context window usage and eliminates initial tool-call rounds.
+    /// For review runs, diffs against the PR's target branch instead of origin/main.
     /// </summary>
     private static async Task PreComputeDiffArtifactsAsync(PipelineRun run, Serilog.ILogger logger, CancellationToken ct)
     {
@@ -226,21 +227,36 @@ internal partial class AgentPhaseExecutor
         var agentDir = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.MetadataDirectory);
         Directory.CreateDirectory(agentDir);
 
+        // Use the PR's target branch for review runs, otherwise default to origin/main
+        var diffBase = run.RunType == PipelineRunType.Review && !string.IsNullOrEmpty(run.ReviewPrTargetBranch)
+            ? $"origin/{run.ReviewPrTargetBranch}"
+            : "origin/main";
+
+        // Validate branch name to prevent git argument injection
+        if (run.RunType == PipelineRunType.Review && run.ReviewPrTargetBranch != null &&
+            (run.ReviewPrTargetBranch.StartsWith("-") ||
+             !System.Text.RegularExpressions.Regex.IsMatch(run.ReviewPrTargetBranch, @"^[a-zA-Z0-9._/\-]+$")))
+        {
+            logger.Warning("Pipeline {RunId} has unsafe ReviewPrTargetBranch '{Branch}', falling back to origin/main",
+                run.RunId, run.ReviewPrTargetBranch);
+            diffBase = "origin/main";
+        }
+
         try
         {
             // Generate diff stat (compact file list with line counts)
-            var diffStatResult = await RunGitCommandAsync(run.WorkspacePath, "diff --stat origin/main", ct);
+            var diffStatResult = await RunGitCommandAsync(run.WorkspacePath, $"diff --stat {diffBase}", ct);
             var diffStatPath = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.DiffStatFilePath);
             await File.WriteAllTextAsync(diffStatPath, diffStatResult, ct);
-            logger.Debug("Pipeline {RunId} wrote diff stat to {FilePath} ({Length} chars)",
-                run.RunId, AgentWorkspacePaths.DiffStatFilePath, diffStatResult.Length);
+            logger.Debug("Pipeline {RunId} wrote diff stat to {FilePath} ({Length} chars, base: {DiffBase})",
+                run.RunId, AgentWorkspacePaths.DiffStatFilePath, diffStatResult.Length, diffBase);
 
             // Generate full diff
-            var fullDiffResult = await RunGitCommandAsync(run.WorkspacePath, "diff origin/main", ct);
+            var fullDiffResult = await RunGitCommandAsync(run.WorkspacePath, $"diff {diffBase}", ct);
             var fullDiffPath = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.FullDiffFilePath);
             await File.WriteAllTextAsync(fullDiffPath, fullDiffResult, ct);
-            logger.Debug("Pipeline {RunId} wrote full diff to {FilePath} ({Length} chars)",
-                run.RunId, AgentWorkspacePaths.FullDiffFilePath, fullDiffResult.Length);
+            logger.Debug("Pipeline {RunId} wrote full diff to {FilePath} ({Length} chars, base: {DiffBase})",
+                run.RunId, AgentWorkspacePaths.FullDiffFilePath, fullDiffResult.Length, diffBase);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
