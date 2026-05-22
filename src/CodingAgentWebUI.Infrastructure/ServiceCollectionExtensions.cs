@@ -34,7 +34,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IBrainUpdateService>(sp => new BrainUpdateService(logger));
 
-        services.AddSingleton<IAgentPhaseExecutor>(sp => new AgentExecutionOrchestrator(logger));
+        services.AddSingleton<IAgentPhaseExecutor>(sp => new AgentPhaseExecutor(logger));
 
         services.AddSingleton<IQualityGateExecutor>(sp => new QualityGateExecutor(
             sp.GetRequiredService<IQualityGateValidator>(),

@@ -5,7 +5,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
 /// <summary>
 /// Builds the rework prompt (if applicable) and delegates to
-/// <see cref="AgentExecutionOrchestrator.ExecuteCodeGenerationAsync"/>.
+/// <see cref="AgentPhaseExecutor.ExecuteCodeGenerationAsync"/>.
 /// </summary>
 internal sealed class GenerateCodeStep : IPipelineStep
 {

@@ -49,7 +49,7 @@ internal partial class QualityGateExecutor
 
                 try
                 {
-                    var cleanupResult = await AgentExecutionOrchestrator.ExecuteAgentAndRecordAsync(
+                    var cleanupResult = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
                         context.AgentProvider, cleanupPrompt, run, config,
                         "Pre-PR cleanup agent",
                         callbacks, _logger, linkedCt);
@@ -304,7 +304,7 @@ internal partial class QualityGateExecutor
 
             try
             {
-                var agentResult = await AgentExecutionOrchestrator.ExecuteAgentAndRecordAsync(
+                var agentResult = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
                     context.AgentProvider, fixPrompt, run, config,
                     $"{retryAgentDescription} (attempt {run.RetryCount})",
                     callbacks, _logger, ct,

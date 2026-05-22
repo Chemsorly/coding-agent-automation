@@ -39,7 +39,7 @@ public class AgentMonitoringComponentTests : BunitContext
 
         _pipelineService = new PipelineOrchestrationService(
             mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
-            new AgentExecutionOrchestrator(mockLogger.Object),
+            new AgentPhaseExecutor(mockLogger.Object),
             new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
             mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,

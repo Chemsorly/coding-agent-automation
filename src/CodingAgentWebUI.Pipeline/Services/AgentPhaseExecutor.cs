@@ -9,7 +9,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// and code review iterations. Extracted from PipelineOrchestrationService.
 /// Split into partial classes by phase for maintainability.
 /// </summary>
-internal partial class AgentExecutionOrchestrator : IAgentPhaseExecutor
+internal partial class AgentPhaseExecutor : IAgentPhaseExecutor
 {
     /// <summary>Minimum length in bytes for analysis.md to be considered valid.</summary>
     internal const int MinAnalysisLength = PipelineConstants.MinAnalysisLength;
@@ -18,7 +18,7 @@ internal partial class AgentExecutionOrchestrator : IAgentPhaseExecutor
 
     private readonly Serilog.ILogger _logger;
 
-    public AgentExecutionOrchestrator(Serilog.ILogger logger)
+    public AgentPhaseExecutor(Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;
@@ -70,10 +70,10 @@ internal partial class AgentExecutionOrchestrator : IAgentPhaseExecutor
     /// <b>Sites NOT consolidated into this helper:</b>
     /// </para>
     /// <list type="bullet">
-    /// <item><c>AgentExecutionOrchestrator.CodeGeneration</c> — has unique post-execution logic: exit code inspection,
+    /// <item><c>AgentPhaseExecutor.CodeGeneration</c> — has unique post-execution logic: exit code inspection,
     /// timeout detection via plain OperationCanceledException (distinct from orchestrator cancellation), and fail-phase
     /// transitions that cannot be cleanly parameterized without making the helper overly complex.</item>
-    /// <item><c>AgentExecutionOrchestrator.Analysis</c> — has its own retry loop with AnalysisIncompleteException handling
+    /// <item><c>AgentPhaseExecutor.Analysis</c> — has its own retry loop with AnalysisIncompleteException handling
     /// and post-execution file validation that is fundamentally different from the simple execute-and-record pattern.</item>
     /// </list>
     /// </remarks>

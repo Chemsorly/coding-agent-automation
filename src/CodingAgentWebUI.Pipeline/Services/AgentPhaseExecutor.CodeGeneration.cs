@@ -3,7 +3,7 @@ using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
-internal partial class AgentExecutionOrchestrator
+internal partial class AgentPhaseExecutor
 {
     /// <summary>
     /// Executes the code generation phase with stall monitoring.

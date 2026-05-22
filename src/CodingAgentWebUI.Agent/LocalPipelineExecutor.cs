@@ -211,7 +211,7 @@ public sealed class LocalPipelineExecutor
         run.IssueLabels = job.IssueDetail.Labels;
 
         // Orchestrators
-        var agentExecution = new AgentExecutionOrchestrator(_logger);
+        var agentExecution = new AgentPhaseExecutor(_logger);
         var prOrchestrator = new PullRequestOrchestrator(_logger);
         var qualityGates = new QualityGateExecutor(_qualityGateValidator, prOrchestrator, _logger, _historyService);
         BrainSyncService? brainSync = _brainUpdateService is not null

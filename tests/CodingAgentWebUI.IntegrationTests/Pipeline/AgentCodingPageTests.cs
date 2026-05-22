@@ -41,7 +41,7 @@ public class AgentCodingPageTests
             _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
-            new AgentExecutionOrchestrator(_mockLogger.Object),
+            new AgentPhaseExecutor(_mockLogger.Object),
             new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
             _mockLogger.Object,
             brainUpdateService: new BrainUpdateService(_mockLogger.Object),

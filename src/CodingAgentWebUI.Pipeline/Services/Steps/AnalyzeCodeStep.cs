@@ -4,7 +4,7 @@ using CodingAgentWebUI.Pipeline.Telemetry;
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
 /// <summary>
-/// Delegates to <see cref="AgentExecutionOrchestrator.ExecuteAnalysisPhaseAsync"/>.
+/// Delegates to <see cref="AgentPhaseExecutor.ExecuteAnalysisPhaseAsync"/>.
 /// Returns <see cref="StepResult.Stop"/> if the confidence gate rejects the issue.
 /// </summary>
 internal sealed class AnalyzeCodeStep : IPipelineStep

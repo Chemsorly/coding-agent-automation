@@ -3,7 +3,7 @@ using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
-internal partial class AgentExecutionOrchestrator
+internal partial class AgentPhaseExecutor
 {
     /// <summary>
     /// Executes the code review loop with multi-agent support and fix prompts.
@@ -171,7 +171,7 @@ internal partial class AgentExecutionOrchestrator
                     var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt);
                     _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
 
-                    await AgentExecutionOrchestrator.ExecuteAgentAndRecordAsync(
+                    await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
                         context.AgentProvider, fixPrompt, run, config,
                         $"Code review fix agent (iteration {i + 1})",
                         context.Callbacks, _logger, ct,
