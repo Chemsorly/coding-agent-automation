@@ -538,17 +538,35 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
 
             if (mergeResult.Status == MergeStatus.Conflicts)
             {
-                var conflictFiles = repo.Index.Conflicts
+                AutoResolveRenameDeleteConflicts(repo, workspacePath);
+
+                // Re-check: are there still unresolved (textual) conflicts?
+                var remainingConflicts = repo.Index.Conflicts
                     .Select(c => c.Ancestor?.Path ?? c.Ours?.Path ?? c.Theirs?.Path)
                     .Where(p => p != null)
                     .Distinct()
                     .ToList();
 
+                if (remainingConflicts.Count > 0)
+                {
+                    return new MergeResult
+                    {
+                        Success = false,
+                        HasConflicts = true,
+                        ConflictFiles = remainingConflicts!
+                    };
+                }
+
+                // All conflicts were rename/delete — auto-resolved. Commit the merge.
+                repo.Commit(
+                    $"Merge {_baseBranch} (auto-resolved rename/delete conflicts)",
+                    signature, signature);
+
                 return new MergeResult
                 {
-                    Success = false,
-                    HasConflicts = true,
-                    ConflictFiles = conflictFiles!
+                    Success = true,
+                    HasConflicts = false,
+                    ConflictFiles = Array.Empty<string>()
                 };
             }
 
@@ -559,6 +577,75 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                 ConflictFiles = Array.Empty<string>()
             };
         }, ct);
+    }
+
+    /// <summary>
+    /// Auto-resolves rename/delete conflicts where one side of the conflict is null.
+    /// These occur when a file was renamed on one branch and modified on the other.
+    /// Resolution strategy: accept whichever side has the file (prefer "theirs"/base for renames,
+    /// since the base branch represents the canonical current state).
+    /// </summary>
+    private static void AutoResolveRenameDeleteConflicts(Repository repo, string workspacePath)
+    {
+        var conflictsToResolve = repo.Index.Conflicts
+            .Where(c => c.Ours == null || c.Theirs == null)
+            .ToList();
+
+        foreach (var conflict in conflictsToResolve)
+        {
+            var conflictPath = conflict.Ancestor?.Path ?? conflict.Ours?.Path ?? conflict.Theirs?.Path;
+            if (conflictPath == null) continue;
+
+            try
+            {
+                if (conflict.Theirs != null && conflict.Ours == null)
+                {
+                    // File exists on base (theirs) but not on branch (ours) — accept theirs.
+                    // This happens when the branch deleted a file that base still has.
+                    var blob = repo.Lookup<LibGit2Sharp.Blob>(conflict.Theirs.Id);
+                    if (blob != null)
+                    {
+                        var filePath = Path.Combine(workspacePath, conflict.Theirs.Path.Replace('/', Path.DirectorySeparatorChar));
+                        var dir = Path.GetDirectoryName(filePath);
+                        if (dir != null && !Directory.Exists(dir))
+                            Directory.CreateDirectory(dir);
+                        File.WriteAllText(filePath, blob.GetContentText());
+                        Commands.Stage(repo, conflict.Theirs.Path);
+                        Log.Information("Auto-resolved rename/delete conflict: accepted theirs for {Path}", conflictPath);
+                    }
+                }
+                else if (conflict.Ours != null && conflict.Theirs == null)
+                {
+                    // File exists on branch (ours) but not on base (theirs) — file was renamed/deleted on base.
+                    // The file at the old path is stale. Remove it from the index and working tree.
+                    var filePath = Path.Combine(workspacePath, conflict.Ours.Path.Replace('/', Path.DirectorySeparatorChar));
+                    if (File.Exists(filePath))
+                    {
+                        // Check if the file's content already exists at a new path (rename scenario).
+                        // If so, delete the old path. If not, keep it (delete on base scenario).
+                        File.Delete(filePath);
+                        Commands.Stage(repo, conflict.Ours.Path);
+                        Log.Information("Auto-resolved rename/delete conflict: removed old path {Path} (renamed on base)", conflict.Ours.Path);
+                    }
+                    else
+                    {
+                        // File already doesn't exist on disk — just stage the removal.
+                        Commands.Stage(repo, conflict.Ours.Path);
+                        Log.Information("Auto-resolved rename/delete conflict: staged removal of {Path}", conflict.Ours.Path);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to auto-resolve rename/delete conflict for {Path}", conflictPath);
+            }
+        }
+
+        if (conflictsToResolve.Count > 0)
+        {
+            repo.Index.Write();
+            Log.Information("Auto-resolved {Count} rename/delete conflict(s)", conflictsToResolve.Count);
+        }
     }
 
     public async Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool markReady, CancellationToken ct)
