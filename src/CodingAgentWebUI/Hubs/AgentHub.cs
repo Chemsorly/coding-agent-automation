@@ -652,7 +652,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// <remarks>
     /// Currently only invoked via <see cref="RequestPostComment"/> when the agent sends
     /// <see cref="CommentType.GateRejection"/> or <see cref="CommentType.GateWontDo"/>.
-    /// In practice, <see cref="CodingAgentWebUI.Pipeline.Services.AgentExecutionOrchestrator"/>
+    /// In practice, <see cref="CodingAgentWebUI.Pipeline.Services.AgentPhaseExecutor"/>
     /// formats gate comments locally and posts via <see cref="CommentType.Analysis"/>,
     /// so this path is currently unused.
     /// </remarks>
@@ -667,8 +667,8 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
             if (assessment is not null)
             {
                 return isWontDo
-                    ? Pipeline.Services.AgentExecutionOrchestrator.BuildWontDoComment(assessment)
-                    : Pipeline.Services.AgentExecutionOrchestrator.BuildNotReadyComment(assessment);
+                    ? Pipeline.Services.AgentPhaseExecutor.BuildWontDoComment(assessment)
+                    : Pipeline.Services.AgentPhaseExecutor.BuildNotReadyComment(assessment);
             }
         }
         catch (JsonException ex)

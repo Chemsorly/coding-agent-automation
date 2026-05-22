@@ -7,8 +7,8 @@ using CodingAgentWebUI.Pipeline.Services;
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
 /// <summary>
-/// Unit tests for <see cref="AgentExecutionOrchestrator.FailPhaseAsync"/> (private helper).
-/// Tested indirectly via <see cref="AgentExecutionOrchestrator.ExecuteCodeGenerationAsync"/>
+/// Unit tests for <see cref="AgentPhaseExecutor.FailPhaseAsync"/> (private helper).
+/// Tested indirectly via <see cref="AgentPhaseExecutor.ExecuteCodeGenerationAsync"/>
 /// by triggering a timeout exit code from the agent provider.
 /// Validates: Requirements 27.3
 /// </summary>
@@ -20,7 +20,7 @@ public class FailPhaseAsyncTests
     private readonly Mock<Serilog.ILogger> _mockLogger;
     private readonly PipelineRun _run;
     private readonly PipelineConfiguration _config;
-    private readonly AgentExecutionOrchestrator _orchestrator;
+    private readonly AgentPhaseExecutor _orchestrator;
 
     public FailPhaseAsyncTests()
     {
@@ -46,7 +46,7 @@ public class FailPhaseAsyncTests
             StallWarningInterval = TimeSpan.FromHours(1)
         };
 
-        _orchestrator = new AgentExecutionOrchestrator(_mockLogger.Object);
+        _orchestrator = new AgentPhaseExecutor(_mockLogger.Object);
 
         // Default health status so stall monitor doesn't interfere
         _mockAgent.Setup(a => a.GetHealthStatus())

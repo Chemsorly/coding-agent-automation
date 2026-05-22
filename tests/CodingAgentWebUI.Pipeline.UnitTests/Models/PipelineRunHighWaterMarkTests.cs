@@ -36,7 +36,7 @@ public class PipelineRunHighWaterMarkTests
             _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
-            new AgentExecutionOrchestrator(mockLogger.Object),
+            new AgentPhaseExecutor(mockLogger.Object),
             new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
             mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,

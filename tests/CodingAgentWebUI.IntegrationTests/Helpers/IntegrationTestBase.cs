@@ -119,7 +119,7 @@ public class IntegrationTestBase : IDisposable
             ConfigStore,
             MockFactory.Object,
             new IssueDescriptionParser(),
-            new AgentExecutionOrchestrator(MockLogger.Object),
+            new AgentPhaseExecutor(MockLogger.Object),
             new QualityGateExecutor(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), MockLogger.Object),
             MockLogger.Object,
             brainUpdateService: new BrainUpdateService(MockLogger.Object),

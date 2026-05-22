@@ -532,7 +532,7 @@ public class PipelineLoopDispatchPropertyTests
         var mockValidator = new Mock<IQualityGateValidator>();
         var orchestration = new PipelineOrchestrationService(
             mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
-            new AgentExecutionOrchestrator(mockLogger.Object),
+            new AgentPhaseExecutor(mockLogger.Object),
             new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
             mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,

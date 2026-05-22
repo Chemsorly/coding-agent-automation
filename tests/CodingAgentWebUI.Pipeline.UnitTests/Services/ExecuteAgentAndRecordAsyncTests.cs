@@ -7,7 +7,7 @@ using CodingAgentWebUI.Pipeline.Services;
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
 /// <summary>
-/// Unit tests for <see cref="AgentExecutionOrchestrator.ExecuteAgentAndRecordAsync"/>.
+/// Unit tests for <see cref="AgentPhaseExecutor.ExecuteAgentAndRecordAsync"/>.
 /// Validates: Requirements 23.3–23.4
 /// </summary>
 public class ExecuteAgentAndRecordAsyncTests
@@ -69,7 +69,7 @@ public class ExecuteAgentAndRecordAsyncTests
             .ReturnsAsync(agentResult);
 
         // Act
-        var result = await AgentExecutionOrchestrator.ExecuteAgentAndRecordAsync(
+        var result = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
             _mockAgent.Object,
             "test prompt",
             _run,
@@ -107,7 +107,7 @@ public class ExecuteAgentAndRecordAsyncTests
 
         // Act & Assert
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            AgentExecutionOrchestrator.ExecuteAgentAndRecordAsync(
+            AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
                 _mockAgent.Object,
                 "test prompt",
                 _run,
@@ -130,7 +130,7 @@ public class ExecuteAgentAndRecordAsyncTests
             .ThrowsAsync(exception);
 
         // Act
-        var result = await AgentExecutionOrchestrator.ExecuteAgentAndRecordAsync(
+        var result = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
             _mockAgent.Object,
             "test prompt",
             _run,

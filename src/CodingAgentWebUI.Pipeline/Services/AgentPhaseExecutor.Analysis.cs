@@ -4,7 +4,7 @@ using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
-internal partial class AgentExecutionOrchestrator
+internal partial class AgentPhaseExecutor
 {
     /// <summary>
     /// Executes the analysis phase: checks for existing analysis, runs agent analysis if needed,

@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
 /// <summary>
 /// Unit tests for the analysis confidence gate: AnalysisAssessment deserialization,
-/// comment builders, and gate decision logic in AgentExecutionOrchestrator.
+/// comment builders, and gate decision logic in AgentPhaseExecutor.
 /// </summary>
 public class AnalysisConfidenceGateTests
 {
@@ -103,7 +103,7 @@ public class AnalysisConfidenceGateTests
             Concerns = new[] { "Might affect perf" }
         };
 
-        var comment = AgentExecutionOrchestrator.BuildNotReadyComment(assessment);
+        var comment = AgentPhaseExecutor.BuildNotReadyComment(assessment);
 
         comment.Should().Contain("## ⚠️ Analysis Gate: Needs Refinement");
         comment.Should().Contain("Issue needs more detail");
@@ -125,7 +125,7 @@ public class AnalysisConfidenceGateTests
             Reason = "Vague issue"
         };
 
-        var comment = AgentExecutionOrchestrator.BuildNotReadyComment(assessment);
+        var comment = AgentPhaseExecutor.BuildNotReadyComment(assessment);
 
         comment.Should().NotContain("### Blocking Issues");
         comment.Should().Contain("<!-- agent:gate-rejection -->");
@@ -143,7 +143,7 @@ public class AnalysisConfidenceGateTests
             Concerns = new[] { "Related test coverage is thin" }
         };
 
-        var comment = AgentExecutionOrchestrator.BuildWontDoComment(assessment);
+        var comment = AgentPhaseExecutor.BuildWontDoComment(assessment);
 
         comment.Should().Contain("## 🚫 Analysis Gate: Won't Do");
         comment.Should().Contain("Already fixed in PR #134");
@@ -162,7 +162,7 @@ public class AnalysisConfidenceGateTests
             Reason = "Feature already implemented"
         };
 
-        var comment = AgentExecutionOrchestrator.BuildWontDoComment(assessment);
+        var comment = AgentPhaseExecutor.BuildWontDoComment(assessment);
 
         comment.Should().NotContain("### Concerns");
         comment.Should().Contain("<!-- agent:gate-wont-do -->");

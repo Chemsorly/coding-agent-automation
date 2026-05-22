@@ -64,7 +64,7 @@ public class PipelineStepTests
             IssueProvider = _issueProvider.Object,
             Callbacks = callbacks,
             IssueOps = _issueOps.Object,
-            AgentExecution = new AgentExecutionOrchestrator(_logger),
+            AgentExecution = new AgentPhaseExecutor(_logger),
             QualityGates = new QualityGateExecutor(
                 Mock.Of<IQualityGateValidator>(), prOrchestrator, _logger),
             BrainSync = brainSync,

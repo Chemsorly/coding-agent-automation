@@ -4,7 +4,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
 /// Executes agent phases: analysis, code generation, and code review.
-/// Abstraction over <c>AgentExecutionOrchestrator</c> for testability.
+/// Abstraction over <c>AgentPhaseExecutor</c> for testability.
 /// </summary>
 public interface IAgentPhaseExecutor
 {

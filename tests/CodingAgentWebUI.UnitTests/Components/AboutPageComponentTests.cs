@@ -32,7 +32,7 @@ public class AboutPageComponentTests : BunitContext
 
         return new PipelineOrchestrationService(
             store.Object, factory.Object, new IssueDescriptionParser(),
-            new AgentExecutionOrchestrator(Log.Logger),
+            new AgentPhaseExecutor(Log.Logger),
             new QualityGateExecutor(validator.Object, new PullRequestOrchestrator(Log.Logger), Log.Logger),
             Log.Logger,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
