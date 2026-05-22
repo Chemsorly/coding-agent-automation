@@ -123,7 +123,7 @@ builder.Services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommuni
     sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));
 
 // Consolidation services
-builder.Services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationDispatchService(
+builder.Services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationDispatcher(
     sp.GetRequiredService<AgentRegistryService>(),
     sp.GetRequiredService<JobDispatcherService>(),
     sp.GetRequiredService<IAgentCommunication>(),

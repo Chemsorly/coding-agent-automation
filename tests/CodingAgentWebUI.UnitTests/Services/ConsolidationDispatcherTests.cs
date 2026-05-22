@@ -12,8 +12,8 @@ using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.UnitTests.Services;
 
-/// <summary>Unit tests for <see cref="ConsolidationDispatchService"/>.</summary>
-public sealed class ConsolidationDispatchServiceTests : IDisposable
+/// <summary>Unit tests for <see cref="ConsolidationDispatcher"/>.</summary>
+public sealed class ConsolidationDispatcherTests : IDisposable
 {
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly AgentRegistryService _registry;
@@ -29,7 +29,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         Converters = { new JsonStringEnumConverter() }
     };
 
-    public ConsolidationDispatchServiceTests()
+    public ConsolidationDispatcherTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
         _dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
@@ -42,10 +42,10 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
             Directory.Delete(_tempDir, recursive: true);
     }
 
-    private ConsolidationDispatchService CreateService(PipelineConfiguration? config = null, string? runsDir = null)
+    private ConsolidationDispatcher CreateService(PipelineConfiguration? config = null, string? runsDir = null)
     {
         config ??= new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" };
-        return new ConsolidationDispatchService(
+        return new ConsolidationDispatcher(
             _registry,
             _dispatcher,
             _mockAgentComm.Object,
@@ -73,49 +73,49 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     [Fact]
     public void Ctor_NullRegistry_Throws()
     {
-        var act = () => new ConsolidationDispatchService(null!, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(null!, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullDispatcher_Throws()
     {
-        var act = () => new ConsolidationDispatchService(_registry, null!, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, null!, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullAgentComm_Throws()
     {
-        var act = () => new ConsolidationDispatchService(_registry, _dispatcher, null!, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, null!, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullConfigStore_Throws()
     {
-        var act = () => new ConsolidationDispatchService(_registry, _dispatcher, _mockAgentComm.Object, null!, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, null!, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullTokenVending_Throws()
     {
-        var act = () => new ConsolidationDispatchService(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, null!, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, null!, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullConfig_Throws()
     {
-        var act = () => new ConsolidationDispatchService(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, null!, _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, null!, _mockLogger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullLogger_Throws()
     {
-        var act = () => new ConsolidationDispatchService(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, null!);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, null!);
         act.Should().Throw<ArgumentNullException>();
     }
 
