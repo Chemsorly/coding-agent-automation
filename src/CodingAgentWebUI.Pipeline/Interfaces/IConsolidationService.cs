@@ -58,6 +58,12 @@ public interface IConsolidationService
     Task SaveHarnessSuggestionsAsync(HarnessSuggestions suggestions, CancellationToken ct);
 
     /// <summary>
+    /// Scans persisted consolidation runs and marks any with Status == Running as Failed.
+    /// Called at application startup to clean up orphaned runs from previous sessions.
+    /// </summary>
+    Task CleanupOrphanedRunsAsync(CancellationToken ct);
+
+    /// <summary>
     /// Fired when any consolidation run changes state (created, completed, or failed).
     /// </summary>
     event Action? OnChange;

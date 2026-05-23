@@ -262,6 +262,10 @@ app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()
     .DisableAntiforgery();
 
+// Clean up orphaned consolidation runs from previous sessions
+var consolidationService = app.Services.GetRequiredService<IConsolidationService>();
+await consolidationService.CleanupOrphanedRunsAsync(CancellationToken.None);
+
 app.Run();
 
 // Make Program class accessible for WebApplicationFactory in tests

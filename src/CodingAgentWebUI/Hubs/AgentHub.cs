@@ -485,12 +485,9 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
             return;
         }
 
-        var kind = (LabelTargetKind)targetKind;
-        if (!Enum.IsDefined(kind))
-        {
-            _logger.Warning("Agent sent invalid LabelTargetKind {TargetKind} for job {JobId}, defaulting to Issue", targetKind, jobId);
-            kind = LabelTargetKind.Issue;
-        }
+        // Derive targetKind from the run's RunType rather than trusting the caller-supplied value.
+        // This prevents a buggy or compromised agent from routing label operations to the wrong entity.
+        var kind = GetLabelTargetKind(run);
 
         await SwapLabelAsync(run, newLabel, kind);
     }

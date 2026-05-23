@@ -272,11 +272,13 @@ public static class PromptBuilder
         return sb.ToString().TrimEnd();
     }
 
-    private static void AppendIssueContext(StringBuilder sb, IssueDetail issue, ParsedIssue parsed)
+    private static void AppendIssueContext(StringBuilder sb, IssueDetail issue, ParsedIssue parsed,
+        string? issueContextPathOverride = null)
     {
+        var contextPath = issueContextPathOverride ?? IssueContextFilePath;
         sb.AppendLine($"# Issue #{issue.Identifier}: {issue.Title}");
         sb.AppendLine();
-        sb.AppendLine($"The full issue description and discussion thread are at `{IssueContextFilePath}` — read it for context.");
+        sb.AppendLine($"The full issue description and discussion thread are at `{contextPath}` — read it for context.");
         sb.AppendLine();
 
         if (parsed.AcceptanceCriteria.Count > 0)

@@ -35,19 +35,24 @@ internal partial class AgentPhaseExecutor
 
         run.CodeReviewIterationsTotal = config.CodeReview.MaxIterations;
 
+        // For review runs (PR review pipeline), force single iteration and skip fix prompts.
+        // The review pipeline is read-only — it reports findings but never modifies code.
+        var maxIterations = run.RunType == PipelineRunType.Review ? 1 : config.CodeReview.MaxIterations;
+        var skipFixPrompt = run.RunType == PipelineRunType.Review;
+
         // Pre-compute diff artifacts so review agents don't need to run git diff themselves.
         // This saves context window space (agents read selectively) and eliminates the first
         // 2-3 tool-call rounds that every review agent would otherwise spend on git commands.
         await PreComputeDiffArtifactsAsync(run, _logger, ct);
 
-        for (var i = 0; i < config.CodeReview.MaxIterations; i++)
+        for (var i = 0; i < maxIterations; i++)
         {
             run.CodeReviewIterationInProgress = i + 1;
             context.Callbacks.TransitionTo(PipelineStep.ReviewingCode);
             _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
-                run.RunId, i + 1, config.CodeReview.MaxIterations);
+                run.RunId, i + 1, maxIterations);
 
-            context.Callbacks.EmitOutputLine($"🔍 Starting code review iteration {i + 1}/{config.CodeReview.MaxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
+            context.Callbacks.EmitOutputLine($"🔍 Starting code review iteration {i + 1}/{maxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
 
             run.ChatHistory.Enqueue(new ChatEntry
             {
@@ -158,7 +163,7 @@ internal partial class AgentPhaseExecutor
                 // NOTE: [UX-16] CodeReview*Count fields are cumulative across iterations — per-iteration counters deferred to separate issue
                 context.Callbacks.EmitOutputLine($"📝 Code review: {run.CodeReviewCriticalCount} critical, {run.CodeReviewWarningCount} warning, {run.CodeReviewSuggestionCount} suggestion");
 
-                if (!string.IsNullOrEmpty(config.CodeReview.FixPrompt) && iterationCriticalCount > 0)
+                if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt) && iterationCriticalCount > 0)
                 {
                     _logger.Information("Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected across {AgentCount} agent(s), sending fix prompt",
                         run.RunId, i + 1, iterationCriticalCount, agents.Count);
@@ -185,7 +190,7 @@ internal partial class AgentPhaseExecutor
                     });
                     context.Callbacks.NotifyChange();
                 }
-                else if (!string.IsNullOrEmpty(config.CodeReview.FixPrompt))
+                else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt))
                 {
                     _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings, skipping fix prompt",
                         run.RunId, i + 1);

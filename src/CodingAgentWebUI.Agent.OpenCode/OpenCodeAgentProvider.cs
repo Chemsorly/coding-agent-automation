@@ -19,6 +19,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     private readonly ILogger _logger;
     private readonly string? _model;
     private volatile string? _currentSessionId;
+    private volatile string? _currentSessionWorkspacePath;
     private volatile bool _isExecuting;
     private volatile bool _sseEmittedAssistantContent;
     private long _lastOutputTimeTicks; // Interlocked access for DateTime
@@ -63,14 +64,29 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
     public async Task EnsureSessionAsync(string workspacePath, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(workspacePath);
+
         try
         {
+            var absolutePath = Path.GetFullPath(workspacePath);
+
             if (_currentSessionId is not null)
             {
-                // Validate existing session
-                var validated = await ValidateExistingSessionAsync(_currentSessionId, ct);
-                if (validated)
-                    return;
+                // If workspace path changed, we need a new session regardless
+                if (_currentSessionWorkspacePath != null && _currentSessionWorkspacePath != absolutePath)
+                {
+                    _logger.Debug("Workspace path changed from {Old} to {New}, creating new session",
+                        _currentSessionWorkspacePath, absolutePath);
+                    _currentSessionId = null;
+                    _currentSessionWorkspacePath = null;
+                }
+                else
+                {
+                    // Validate existing session
+                    var validated = await ValidateExistingSessionAsync(_currentSessionId, ct);
+                    if (validated)
+                        return;
+                }
 
                 // Session no longer valid — create a new one
             }
@@ -111,13 +127,17 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
     private async Task CreateNewSessionAsync(string workspacePath, CancellationToken ct)
     {
-        using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+        using var client = CreateDirectoryClient();
 
         // OpenCode requires an absolute path for the session directory.
         // Consolidation jobs pass relative paths (e.g., "./workspaces/consolidation/{guid}/refactoring")
         // which would otherwise resolve to the wrong directory on the server.
         var absolutePath = Path.GetFullPath(workspacePath);
         var title = Path.GetFileName(absolutePath) ?? absolutePath;
+
+        // The Path field is kept for backward compatibility, but the x-opencode-directory
+        // header (set by CreateDirectoryClient) is the primary mechanism for scoping the
+        // session to the correct workspace directory.
         var request = new CreateSessionRequest { Title = title, Path = absolutePath };
 
         var response = await client.PostAsJsonAsync("/session", request, OpenCodeJson.JsonOptions, ct);
@@ -127,6 +147,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         if (result is not null)
         {
             _currentSessionId = result.Id;
+            _currentSessionWorkspacePath = absolutePath;
         }
     }
 
@@ -160,7 +181,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             AgentResult result;
             try
             {
-                using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+                using var client = CreateDirectoryClient();
                 var messageRequest = new SendMessageRequest
                 {
                     Parts = [new MessagePart { Type = "text", Text = request.Prompt }],
@@ -306,7 +327,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         try
         {
             _logger.Debug("POST /session/{SessionId}/abort", sessionId);
-            using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+            using var client = CreateDirectoryClient();
             await client.PostAsync($"/session/{sessionId}/abort", null);
         }
         catch (Exception ex)
@@ -377,6 +398,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     public ValueTask DisposeAsync()
     {
         _currentSessionId = null;
+        _currentSessionWorkspacePath = null;
         return ValueTask.CompletedTask;
     }
 
@@ -393,7 +415,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
 
-            using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+            using var client = CreateDirectoryClient();
             var response = await client.GetAsync($"/session/{sessionId}/diff", timeoutCts.Token);
             response.EnsureSuccessStatusCode();
 
@@ -428,6 +450,21 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
     // ── Internal helpers ────────────────────────────────────────────────
 
+    /// <summary>
+    /// Creates an HttpClient with the x-opencode-directory header set to the current workspace path.
+    /// OpenCode uses this header to scope all operations (file reads, shell commands, sessions)
+    /// to the specified directory instead of the server's CWD.
+    /// </summary>
+    private HttpClient CreateDirectoryClient()
+    {
+        var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+        if (_currentSessionWorkspacePath is not null)
+        {
+            client.DefaultRequestHeaders.Add("x-opencode-directory", _currentSessionWorkspacePath);
+        }
+        return client;
+    }
+
     private async Task<string?> ResolveSessionIdAsync(AgentRequest request, CancellationToken ct)
     {
         // ResumeSessionId takes precedence
@@ -454,7 +491,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     {
         try
         {
-            using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+            using var client = CreateDirectoryClient();
             await client.PostAsync($"/session/{sessionId}/abort", null);
         }
         catch (Exception ex)
@@ -472,7 +509,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     {
         try
         {
-            using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+            using var client = CreateDirectoryClient();
             var response = await client.GetAsync($"/session/{sessionId}", CancellationToken.None);
             if (!response.IsSuccessStatusCode) return (null, null);
 
@@ -539,7 +576,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     /// </summary>
     internal async Task ConnectAndProcessSseAsync(string sessionId, Action<string>? onOutputLine, CancellationToken ct)
     {
-        using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+        using var client = CreateDirectoryClient();
 
         try
         {
@@ -651,7 +688,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         try
         {
             _logger.Debug("POST /session/{SessionId}/permissions/{PermissionId} (auto-approve)", sessionId, permissionId);
-            using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+            using var client = CreateDirectoryClient();
             var body = new PermissionResponse { Response = "allow", Remember = true };
             await client.PostAsJsonAsync($"/session/{sessionId}/permissions/{permissionId}", body, OpenCodeJson.JsonOptions, ct);
         }
