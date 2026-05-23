@@ -836,14 +836,16 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     {
         ArgumentNullException.ThrowIfNull(body);
 
-        if (commentId > int.MaxValue)
-        {
-            Log.Warning("Comment ID {CommentId} exceeds int.MaxValue, cannot update via Octokit", commentId);
-            return;
-        }
-
         await ExecuteWithResilienceAsync(
-            client => client.Issue.Comment.Update(Owner, Repo, (int)commentId, body),
+            async client =>
+            {
+                // Use the raw Connection API to avoid Octokit's int limitation on comment IDs.
+                // GitHub comment IDs can exceed int.MaxValue on active repositories.
+                var url = new Uri($"repos/{Owner}/{Repo}/issues/comments/{commentId}", UriKind.Relative);
+                var payload = new { body };
+                await client.Connection.Patch<object>(url, payload);
+                return true;
+            },
             "UpdateReviewComment", ct);
     }
 
