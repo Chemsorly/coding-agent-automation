@@ -444,20 +444,13 @@ public sealed class AgentJobDispatcher : IJobDispatcher
                 return false;
             }
 
-            // Populate review-specific metadata on the run
-            // PipelineRun uses init-only properties for review fields, so we need to remove and re-create.
-            // CreateDispatchedRunAsync creates the run without review fields — we replace it with a
-            // fully-populated instance that includes RunType, ReviewPr*, and LinkedPullRequest.
-            //
-            // TODO: This remove-then-add pattern creates a brief window where IsIssueBeingProcessed(prIdentifier)
-            // returns false. If a concurrent poll cycle checks eligibility during this gap, it could attempt
-            // a duplicate dispatch for the same PR. In practice this is unlikely because:
-            //   (a) the gap is sub-millisecond (no awaits between remove and add),
-            //   (b) the label is swapped to agent:in-progress later in this method, which prevents re-polling.
-            // The proper fix is to either make PipelineRun's review properties mutable (breaking the immutability
-            // convention) or add an atomic UpdateRun/ReplaceRun method to OrchestratorRunService.
-            _runService.RemoveRun(run.RunId);
+            // Pre-fetch linked issues before constructing the final run (non-fatal on failure)
+            var linkedIssueContexts = await PreFetchLinkedIssuesAsync(
+                prIdentifier, issueProviderId, repoProviderId, ct);
 
+            // Replace the initial run with a fully-populated review run atomically.
+            // Using ReplaceRun instead of RemoveRun+AddRun eliminates the race window where
+            // IsIssueBeingProcessed(prIdentifier) would return false during the gap.
             run = new PipelineRun
             {
                 RunId = run.RunId,
@@ -485,44 +478,11 @@ public sealed class AgentJobDispatcher : IJobDispatcher
                     BranchName = prBranchName,
                     Url = prUrl,
                     IsDraft = false
-                }
+                },
+                LinkedIssueContexts = linkedIssueContexts.Count > 0 ? linkedIssueContexts : null
             };
 
-            // Pre-fetch linked issues (non-fatal on failure)
-            var linkedIssueContexts = await PreFetchLinkedIssuesAsync(
-                prIdentifier, issueProviderId, repoProviderId, ct);
-
-            // Set LinkedIssueContexts on the run — requires re-creating since it's init-only
-            if (linkedIssueContexts.Count > 0)
-            {
-                run = new PipelineRun
-                {
-                    RunId = run.RunId,
-                    IssueIdentifier = prIdentifier,
-                    IssueTitle = prTitle,
-                    IssueProviderConfigId = issueProviderId,
-                    RepoProviderConfigId = repoProviderId,
-                    StartedAt = run.StartedAt,
-                    CurrentStep = PipelineStep.Created,
-                    RepositoryName = run.RepositoryName,
-                    ModelName = run.ModelName,
-                    BrainProviderConfigId = brainProviderId,
-                    PipelineProviderConfigId = null,
-                    InitiatedBy = initiatedBy,
-                    AgentId = agent.AgentId,
-                    AgentProviderConfigId = agentProviderId,
-                    RunType = PipelineRunType.Review,
-                    ReviewPrBranchName = prBranchName,
-                    ReviewPrTargetBranch = prTargetBranch,
-                    ReviewPrUrl = prUrl,
-                    ReviewPrDescription = prDescription,
-                    LinkedPullRequest = run.LinkedPullRequest,
-                    LinkedIssueContexts = linkedIssueContexts
-                };
-            }
-
-            // Re-register the run with review metadata
-            _runService.AddRun(run);
+            _runService.ReplaceRun(run);
 
             // Populate resolved profile and reviewer config IDs on the run
             run.ResolvedProfileId = profile.Id;
