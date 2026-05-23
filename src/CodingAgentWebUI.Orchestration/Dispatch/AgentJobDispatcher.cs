@@ -650,7 +650,13 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             IReadOnlyList<string> linkedIssueIds;
             await using (var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig))
             {
-                linkedIssueIds = await repoProvider.ExtractLinkedIssuesAsync(int.Parse(prIdentifier), ct);
+                if (!int.TryParse(prIdentifier, out var prNum))
+                {
+                    _logger.Warning("PR identifier '{PrIdentifier}' is not a valid integer, skipping linked issue extraction", prIdentifier);
+                    return linkedIssueContexts.AsReadOnly();
+                }
+
+                linkedIssueIds = await repoProvider.ExtractLinkedIssuesAsync(prNum, ct);
             }
 
             if (linkedIssueIds.Count == 0)
