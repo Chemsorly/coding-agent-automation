@@ -436,23 +436,30 @@ public sealed class PipelineLoopService : BackgroundService
                     }
 
                     // ── PR polling (only when ReviewEnabled) ──
+                    // Wrapped in its own try-catch so that a PR polling failure does not
+                    // discard the already-fetched issue queue for this template.
+                    prQueues[template.Id] = new List<PullRequestSummary>();
                     if (template.ReviewEnabled)
                     {
-                        if (!_repoProviderCache.TryGetValue(template.RepoProviderId, out var repoProvider))
+                        try
                         {
-                            _logger.Warning("Template '{TemplateName}': repo provider '{RepoProviderId}' not found in cache, skipping PR polling",
-                                template.Name, template.RepoProviderId);
-                            prQueues[template.Id] = new List<PullRequestSummary>();
+                            if (!_repoProviderCache.TryGetValue(template.RepoProviderId, out var repoProvider))
+                            {
+                                _logger.Warning("Template '{TemplateName}': repo provider '{RepoProviderId}' not found in cache, skipping PR polling",
+                                    template.Name, template.RepoProviderId);
+                            }
+                            else
+                            {
+                                var prs = await FetchAgentNextPullRequestsAsync(repoProvider, maxPagesToFetch, ct);
+                                prQueues[template.Id] = prs;
+                            }
                         }
-                        else
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception ex)
                         {
-                            var prs = await FetchAgentNextPullRequestsAsync(repoProvider, maxPagesToFetch, ct);
-                            prQueues[template.Id] = prs;
+                            _logger.Warning(ex, "Template '{TemplateName}' PR polling failed, issue polling unaffected: {Error}",
+                                template.Name, ex.Message);
                         }
-                    }
-                    else
-                    {
-                        prQueues[template.Id] = new List<PullRequestSummary>();
                     }
 
                     // Success — update status
