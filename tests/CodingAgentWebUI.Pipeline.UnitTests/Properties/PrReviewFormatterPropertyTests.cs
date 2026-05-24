@@ -7,6 +7,7 @@ using CodingAgentWebUI.Pipeline.Services.Steps;
 using FsCheck;
 using FsCheck.Xunit;
 using Moq;
+using Serilog.Core;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Properties;
 
@@ -234,6 +235,8 @@ public class PrReviewFormatterPropertyTests
         var tempDir = Path.Combine(Path.GetTempPath(), $"pbt-p11-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
 
+        Serilog.Core.Logger? logger = null;
+        PipelineStepContext? context = null;
         try
         {
             var run = new PipelineRun
@@ -251,10 +254,10 @@ public class PrReviewFormatterPropertyTests
             };
 
             var callbacks = new Mock<IPipelineCallbacks>();
-            var logger = new Serilog.LoggerConfiguration().CreateLogger();
+            logger = new Serilog.LoggerConfiguration().CreateLogger();
             var step = new ExtractLinkedIssuesStep(new IssueDescriptionParser());
 
-            var context = new PipelineStepContext
+            context = new PipelineStepContext
             {
                 Run = run,
                 Config = new PipelineConfiguration { WorkspaceBaseDirectory = tempDir },
@@ -292,6 +295,8 @@ public class PrReviewFormatterPropertyTests
         }
         finally
         {
+            context?.Cts?.Dispose();
+            logger?.Dispose();
             if (Directory.Exists(tempDir))
                 Directory.Delete(tempDir, recursive: true);
         }
@@ -307,6 +312,8 @@ public class PrReviewFormatterPropertyTests
         var tempDir = Path.Combine(Path.GetTempPath(), $"pbt-p11-empty-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
 
+        Serilog.Core.Logger? logger = null;
+        PipelineStepContext? context = null;
         try
         {
             var run = new PipelineRun
@@ -324,10 +331,10 @@ public class PrReviewFormatterPropertyTests
             };
 
             var callbacks = new Mock<IPipelineCallbacks>();
-            var logger = new Serilog.LoggerConfiguration().CreateLogger();
+            logger = new Serilog.LoggerConfiguration().CreateLogger();
             var step = new ExtractLinkedIssuesStep(new IssueDescriptionParser());
 
-            var context = new PipelineStepContext
+            context = new PipelineStepContext
             {
                 Run = run,
                 Config = new PipelineConfiguration { WorkspaceBaseDirectory = tempDir },
@@ -358,6 +365,8 @@ public class PrReviewFormatterPropertyTests
         }
         finally
         {
+            context?.Cts?.Dispose();
+            logger?.Dispose();
             if (Directory.Exists(tempDir))
                 Directory.Delete(tempDir, recursive: true);
         }

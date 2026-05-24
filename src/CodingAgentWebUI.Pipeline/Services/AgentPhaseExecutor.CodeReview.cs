@@ -229,6 +229,13 @@ internal partial class AgentPhaseExecutor
     {
         if (run.WorkspacePath is null) return;
 
+        // Guard: skip if workspace is not a git repository to avoid spawning processes in non-git contexts
+        if (!Directory.Exists(Path.Combine(run.WorkspacePath, ".git")))
+        {
+            logger.Debug("Pipeline {RunId} workspace is not a git repository, skipping diff pre-computation", run.RunId);
+            return;
+        }
+
         var agentDir = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.MetadataDirectory);
         Directory.CreateDirectory(agentDir);
 
@@ -307,6 +314,10 @@ internal partial class AgentPhaseExecutor
             throw new TimeoutException($"git {arguments} timed out after 30 seconds");
         }
 
-        return await outputTask;
+        // Await both streams to prevent fire-and-forget task leaks
+        var output = await outputTask;
+        await errorTask;
+
+        return output;
     }
 }

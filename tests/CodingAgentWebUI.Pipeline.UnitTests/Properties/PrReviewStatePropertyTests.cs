@@ -6,6 +6,7 @@ using CodingAgentWebUI.Pipeline.Services.Steps;
 using FsCheck;
 using FsCheck.Xunit;
 using Moq;
+using Serilog.Core;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Properties;
 
@@ -33,6 +34,8 @@ public class PrReviewStatePropertyTests
         var tempDir = Path.Combine(Path.GetTempPath(), $"pbt-p7a-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
 
+        Serilog.Core.Logger? logger = null;
+        PipelineStepContext? context = null;
         try
         {
             var transitions = new List<PipelineStep>();
@@ -54,8 +57,8 @@ public class PrReviewStatePropertyTests
                 LinkedIssueContexts = Array.Empty<LinkedIssueContext>()
             };
 
-            var logger = new Serilog.LoggerConfiguration().CreateLogger();
-            var context = new PipelineStepContext
+            logger = new Serilog.LoggerConfiguration().CreateLogger();
+            context = new PipelineStepContext
             {
                 Run = run,
                 Config = new PipelineConfiguration { WorkspaceBaseDirectory = tempDir },
@@ -83,6 +86,8 @@ public class PrReviewStatePropertyTests
         }
         finally
         {
+            context?.Cts?.Dispose();
+            logger?.Dispose();
             if (Directory.Exists(tempDir))
                 Directory.Delete(tempDir, recursive: true);
         }
@@ -141,6 +146,9 @@ public class PrReviewStatePropertyTests
 
         transitions.Should().Contain(PipelineStep.PostingFindings,
             "PostReviewFindingsStep must transition to PostingFindings");
+
+        context.Cts.Dispose();
+        logger.Dispose();
     }
 
     /// <summary>
@@ -270,6 +278,9 @@ public class PrReviewStatePropertyTests
 
         // Verify: FinalLabel set to agent:error
         run.FinalLabel.Should().Be(AgentLabels.Error);
+
+        context.Cts.Dispose();
+        logger.Dispose();
     }
 
     /// <summary>
@@ -325,6 +336,9 @@ public class PrReviewStatePropertyTests
         await context.FailRunAsync(reason);
 
         run.CompletedAt.Should().NotBeNull("CompletedAt should be set after failure");
+
+        context.Cts.Dispose();
+        logger.Dispose();
     }
 
     /// <summary>
@@ -374,5 +388,8 @@ public class PrReviewStatePropertyTests
         await context.FailRunAsync("Some failure");
 
         callbacks.Verify(c => c.AddRunToHistory(run), Times.Once);
+
+        context.Cts.Dispose();
+        logger.Dispose();
     }
 }

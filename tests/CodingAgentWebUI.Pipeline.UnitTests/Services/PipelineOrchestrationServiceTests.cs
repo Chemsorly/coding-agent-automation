@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// <summary>
 /// Unit tests for PipelineOrchestrationService.
 /// </summary>
-public class PipelineOrchestrationServiceTests
+public class PipelineOrchestrationServiceTests : IDisposable
 {
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IProviderFactory> _mockFactory;
@@ -3468,5 +3468,10 @@ public class PipelineOrchestrationServiceTests
         _mockIssueProvider.Verify(
             p => p.AddLabelAsync("99", "agent:cancelled", It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    public void Dispose()
+    {
+        _service.Dispose();
     }
 }

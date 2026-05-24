@@ -12,13 +12,16 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Steps;
 /// Tests context population from linked issues and fallback to PR metadata.
 /// Feature: 025-pr-review-pipeline, Requirements: Req 12
 /// </summary>
-public class ExtractLinkedIssuesStepTests
+public class ExtractLinkedIssuesStepTests : IDisposable
 {
     private readonly Mock<IPipelineCallbacks> _callbacks = new();
     private readonly Serilog.ILogger _logger = new Serilog.LoggerConfiguration().CreateLogger();
+    private readonly List<CancellationTokenSource> _tokenSources = new();
 
     private PipelineStepContext BuildContext(PipelineRun run)
     {
+        var cts = new CancellationTokenSource();
+        _tokenSources.Add(cts);
         return new PipelineStepContext
         {
             Run = run,
@@ -27,7 +30,7 @@ public class ExtractLinkedIssuesStepTests
             AgentProvider = Mock.Of<IAgentProvider>(),
             BrainProvider = null,
             PipelineProvider = null,
-            Cts = new CancellationTokenSource(),
+            Cts = cts,
             ConfigStore = Mock.Of<IConfigurationStore>(),
             Callbacks = _callbacks.Object,
             IssueOps = Mock.Of<IAgentIssueOperations>(),
@@ -288,5 +291,12 @@ public class ExtractLinkedIssuesStepTests
             if (Directory.Exists(tempDir))
                 Directory.Delete(tempDir, recursive: true);
         }
+    }
+
+    public void Dispose()
+    {
+        foreach (var cts in _tokenSources)
+            cts.Dispose();
+        (_logger as IDisposable)?.Dispose();
     }
 }

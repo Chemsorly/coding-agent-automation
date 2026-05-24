@@ -12,7 +12,7 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.UnitTests.Hubs;
 
 /// <summary>Unit tests for <see cref="AgentHub"/> behavior (method logic, not models).</summary>
-public sealed class AgentHubBehaviorTests
+public sealed class AgentHubBehaviorTests : IDisposable
 {
     private readonly Mock<IAgentHubFacade> _mockFacade = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
@@ -20,6 +20,7 @@ public sealed class AgentHubBehaviorTests
     private readonly ConsolidationBadgeService _badgeService = new();
     private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
     private readonly Mock<ILogger> _mockLogger = new();
+    private readonly List<PipelineOrchestrationService> _orchestrationInstances = new();
 
     private AgentHub CreateHub(string connectionId = "conn-1")
     {
@@ -435,7 +436,7 @@ public sealed class AgentHubBehaviorTests
 
     private PipelineOrchestrationService CreateMinimalOrchestrationService()
     {
-        return new PipelineOrchestrationService(
+        var service = new PipelineOrchestrationService(
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             new IssueDescriptionParser(),
@@ -445,6 +446,8 @@ public sealed class AgentHubBehaviorTests
             brainUpdateService: Mock.Of<IBrainUpdateService>(),
             historyService: Mock.Of<IPipelineRunHistoryService>(),
             runService: Mock.Of<IOrchestratorRunService>());
+        _orchestrationInstances.Add(service);
+        return service;
     }
 
     #endregion
@@ -651,4 +654,10 @@ public sealed class AgentHubBehaviorTests
     }
 
     #endregion
+
+    public void Dispose()
+    {
+        foreach (var orchestration in _orchestrationInstances)
+            orchestration.Dispose();
+    }
 }

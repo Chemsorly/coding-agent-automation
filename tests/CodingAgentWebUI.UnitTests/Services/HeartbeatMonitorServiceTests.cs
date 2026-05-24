@@ -15,7 +15,7 @@ namespace CodingAgentWebUI.UnitTests.Services;
 /// Unit tests for HeartbeatMonitorService — validates sweep logic for stale heartbeats,
 /// grace period handling, and disconnected agent cleanup.
 /// </summary>
-public class HeartbeatMonitorServiceTests
+public class HeartbeatMonitorServiceTests : IDisposable
 {
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
@@ -223,5 +223,10 @@ public class HeartbeatMonitorServiceTests
             AgentType = "kiro-dotnet",
             Labels = new[] { "dotnet" }
         }, connectionId);
+    }
+
+    public void Dispose()
+    {
+        _monitor.Dispose();
     }
 }

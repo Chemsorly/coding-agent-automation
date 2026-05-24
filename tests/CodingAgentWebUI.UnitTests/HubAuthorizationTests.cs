@@ -138,7 +138,7 @@ public class HubAuthorizationTests
                 AgentDisconnectGracePeriod = TimeSpan.Zero // Immediate expiry for testing
             });
 
-        var monitor = CreateMonitor(registry, runService, mockConfigStore);
+        using var monitor = CreateMonitor(registry, runService, mockConfigStore);
 
         // Register and disconnect an agent (no active job)
         var entry = RegisterAgent(registry, "agent-1", "conn-1");
@@ -167,7 +167,7 @@ public class HubAuthorizationTests
                 AgentDisconnectGracePeriod = TimeSpan.FromMinutes(5)
             });
 
-        var monitor = CreateMonitor(registry, runService, mockConfigStore);
+        using var monitor = CreateMonitor(registry, runService, mockConfigStore);
 
         // Register and disconnect an agent
         RegisterAgent(registry, "agent-1", "conn-1");
@@ -331,7 +331,7 @@ public class HubAuthorizationTests
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
 
-        var monitor = CreateMonitor(registry, runService, mockConfigStore);
+        using var monitor = CreateMonitor(registry, runService, mockConfigStore);
 
         // Register agent with stale heartbeat (>90 seconds ago)
         var entry = RegisterAgent(registry, "agent-1", "conn-1");
@@ -356,7 +356,7 @@ public class HubAuthorizationTests
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
 
-        var monitor = CreateMonitor(registry, runService, mockConfigStore);
+        using var monitor = CreateMonitor(registry, runService, mockConfigStore);
 
         // Register agent with fresh heartbeat
         RegisterAgent(registry, "agent-1", "conn-1");

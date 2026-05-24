@@ -12,14 +12,17 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Steps;
 /// Tests no-reviewer-match, existing review detection/update, and non-fatal API failure.
 /// Feature: 025-pr-review-pipeline, Requirements: Req 5, 7
 /// </summary>
-public class PostReviewFindingsStepTests
+public class PostReviewFindingsStepTests : IDisposable
 {
     private readonly Mock<IPipelineCallbacks> _callbacks = new();
     private readonly Mock<IRepositoryProvider> _repoProvider = new();
     private readonly Serilog.ILogger _logger = new Serilog.LoggerConfiguration().CreateLogger();
+    private readonly List<CancellationTokenSource> _tokenSources = new();
 
     private PipelineStepContext BuildContext(PipelineRun run)
     {
+        var cts = new CancellationTokenSource();
+        _tokenSources.Add(cts);
         return new PipelineStepContext
         {
             Run = run,
@@ -28,7 +31,7 @@ public class PostReviewFindingsStepTests
             AgentProvider = Mock.Of<IAgentProvider>(),
             BrainProvider = null,
             PipelineProvider = null,
-            Cts = new CancellationTokenSource(),
+            Cts = cts,
             ConfigStore = Mock.Of<IConfigurationStore>(),
             Callbacks = _callbacks.Object,
             IssueOps = Mock.Of<IAgentIssueOperations>(),
@@ -88,20 +91,21 @@ public class PostReviewFindingsStepTests
         run.CodeReviewCriticalCount = 1;
         run.CodeReviewAgentFindings["SecurityBot"] = "Found SQL injection";
 
-        // Simulate existing review comment found
+        // Simulate existing review comment found on first call, then null (collapsed)
+        var callCount = 0;
         _repoProvider.Setup(r => r.FindExistingReviewCommentAsync(55, ReviewFindingsFormatter.Marker, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(12345L);
+            .ReturnsAsync(() => Interlocked.Increment(ref callCount) == 1 ? 12345L : null);
 
         var context = BuildContext(run);
         var step = new PostReviewFindingsStep();
 
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Should update existing comment, NOT post new
+        // Should collapse existing comment, then post new
         _repoProvider.Verify(r => r.UpdateReviewCommentAsync(
             55, 12345L, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
         _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
-            It.IsAny<int>(), It.IsAny<string>(), It.IsAny<PullRequestReviewType>(), It.IsAny<CancellationToken>()), Times.Never);
+            55, It.IsAny<string>(), PullRequestReviewType.Comment, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -234,5 +238,12 @@ public class PostReviewFindingsStepTests
         postedBody.Should().Contain(ReviewFindingsFormatter.Marker);
         postedBody.Should().Contain("Automated Code Review");
         postedBody.Should().Contain("[CRITICAL]");
+    }
+
+    public void Dispose()
+    {
+        foreach (var cts in _tokenSources)
+            cts.Dispose();
+        (_logger as IDisposable)?.Dispose();
     }
 }
