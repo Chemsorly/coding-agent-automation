@@ -42,6 +42,47 @@ Label PR with agent:next → Pipeline picks up PR → Clone → Checkout PR bran
 
 Draft PRs are skipped. To re-review after changes, remove `agent:done` and re-add `agent:next`.
 
+### Inline Review Comments
+
+The pipeline can post code review findings as native inline comments on specific file:line positions in the diff, giving PR authors precise feedback at the exact location of each issue — in addition to the summary body comment.
+
+#### How to Enable
+
+Set `InlineComments.Enabled` to `true` in the Code Review configuration (via the web UI under Settings → Quality Gates → Code Review → Inline Review Comments, or directly in the pipeline config JSON):
+
+```json
+{
+  "CodeReview": {
+    "MaxIterations": 2,
+    "ReviewIsolation": "Isolated",
+    "InlineComments": {
+      "Enabled": true,
+      "SeverityThreshold": "Warning",
+      "MaxInlineComments": 15,
+      "OrderBySeverity": true,
+      "MaxRetries": 1
+    }
+  }
+}
+```
+
+#### Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `Enabled` | bool | `false` | Master switch. When false, body-only reviews are posted (existing behavior) |
+| `SeverityThreshold` | enum | `Warning` | Minimum severity for inline posting. Options: `Suggestion`, `Warning`, `Critical` |
+| `MaxInlineComments` | int | `15` | Maximum inline comments per review (range: 1–50). Highest-severity findings are prioritized |
+| `OrderBySeverity` | bool | `true` | Sort findings by severity (Critical first) when selecting which to post inline |
+| `MaxRetries` | int | `1` | Times to re-ask the agent for structured output if it doesn't include file:line references (range: 0–5). Each retry adds one LLM API call per agent |
+
+#### Behavior
+
+- **When enabled**: Review agents are instructed to output findings in `[SEVERITY] path/to/file.ext:LINE — message` format. The pipeline parses these, filters by severity threshold, caps at the configured limit, and posts them as inline comments via the GitHub Pull Request Reviews API.
+- **When disabled**: The pipeline posts a single body-level review comment (existing behavior). No parsing or prompt enhancement occurs.
+- **Graceful degradation**: If structured output parsing fails, the GitHub API rejects inline comments (HTTP 422), or any other error occurs in the inline path, the pipeline falls back to body-only submission. Inline comments never fail the pipeline.
+- **Findings without location**: Findings that don't reference a specific file:line appear only in the body summary, regardless of inline settings.
+
 ### Configuration
 
 Each pipeline job template has two independent toggles:

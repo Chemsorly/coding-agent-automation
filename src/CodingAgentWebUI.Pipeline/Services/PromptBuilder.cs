@@ -206,7 +206,7 @@ public static class PromptBuilder
     /// details (title, description, requirements, acceptance criteria, and comments).
     /// </summary>
     public static string BuildReviewPrompt(string reviewInstructions, IssueDetail issue,
-        ParsedIssue parsed, string findingsFilePath, bool isolated = false)
+        ParsedIssue parsed, string findingsFilePath, bool isolated = false, bool inlineCommentsEnabled = false)
     {
         ArgumentNullException.ThrowIfNull(reviewInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -241,6 +241,12 @@ public static class PromptBuilder
         sb.AppendLine();
 
         AppendIssueContext(sb, issue, parsed);
+
+        if (inlineCommentsEnabled)
+        {
+            sb.AppendLine();
+            AppendStructuredOutputInstructions(sb);
+        }
 
         return sb.ToString().TrimEnd();
     }
@@ -353,6 +359,32 @@ public static class PromptBuilder
             sb.AppendLine(comment.Body);
             sb.AppendLine();
         }
+    }
+
+    /// <summary>
+    /// Appends structured output format instructions to the review prompt.
+    /// These instructions guide the review agent to output findings in a parseable format
+    /// with file:line references for inline comment placement.
+    /// </summary>
+    private static void AppendStructuredOutputInstructions(StringBuilder sb)
+    {
+        sb.AppendLine("## Output Format");
+        sb.AppendLine();
+        sb.AppendLine("Format each finding on its own line using this structure:");
+        sb.AppendLine("[SEVERITY] path/to/file.ext:LINE — description of the issue");
+        sb.AppendLine();
+        sb.AppendLine("Where:");
+        sb.AppendLine("- SEVERITY is one of: CRITICAL, WARNING, SUGGESTION");
+        sb.AppendLine("- path is relative to the repository root using forward slashes");
+        sb.AppendLine("- LINE is the 1-based line number in the file");
+        sb.AppendLine("- description explains the finding");
+        sb.AppendLine();
+        sb.AppendLine("Example:");
+        sb.AppendLine("[CRITICAL] src/Service.cs:42 — Null reference possible when input is not validated");
+        sb.AppendLine("[WARNING] src/Controllers/UserController.cs:15 — Missing input validation on email parameter");
+        sb.AppendLine();
+        sb.AppendLine("For findings without a specific file location:");
+        sb.AppendLine("[WARNING] — General observation about architecture");
     }
 
     /// <summary>

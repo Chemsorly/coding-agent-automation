@@ -423,3 +423,199 @@ Review runs follow the same error handling principles as implementation runs:
 - **Review agent timeout** — fail with the configured `AgentTimeout`
 - **Posting failure** — non-fatal (review ran successfully, posting failed), logged as warning
 - **Cancellation** — label set to `agent:cancelled`
+
+
+---
+
+## Inline Review Comments
+
+The PR review pipeline supports posting code review findings as native inline comments on specific file:line positions in the diff. This is an additive enhancement — the body-level review summary is always posted regardless of inline comment settings.
+
+### GitHub API Migration
+
+The review submission was migrated from the **Issue Comments API** (`POST /repos/{owner}/{repo}/issues/{issue_number}/comments`) to the **Pull Request Reviews API** (`POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews`). This change means:
+
+- Review comments are now **dismissible reviews** rather than plain issue comments
+- Reviews support **inline comments** attached to specific file:line positions in the diff
+- Reviews have a **type** (`COMMENT` or `REQUEST_CHANGES`) that affects PR merge status
+- Previous automated reviews can be **dismissed** via the API before posting new ones
+
+Existing issue-comment-based reviews on open PRs (from before the migration) are not affected — they remain as-is with their `<!-- agent:pr-review-superseded -->` collapse markers.
+
+### Structured Output Format
+
+When inline comments are enabled, the review prompt instructs agents to format findings with file:line references:
+
+```
+[SEVERITY] path/to/file.ext:LINE — description of the issue
+```
+
+Where:
+- `SEVERITY` is one of: `CRITICAL`, `WARNING`, `SUGGESTION`
+- `path` is relative to the repository root using forward slashes
+- `LINE` is a 1-based line number in the file
+- `description` explains the finding
+
+Examples:
+```
+[CRITICAL] src/Service.cs:42 — Null reference possible when input is not validated
+[WARNING] src/Controllers/UserController.cs:15 — Missing input validation on email parameter
+[SUGGESTION] src/Utils/StringHelper.cs:8 — Consider using StringBuilder for repeated concatenation
+```
+
+For findings without a specific file location:
+```
+[WARNING] — General observation about architecture
+```
+
+The `FindingsParser` recognizes four file:line reference formats:
+- `path/to/file.cs:42`
+- `path/to/file.cs#L42`
+- `path/to/file.cs (line 42)`
+- `path/to/file.cs, line 42`
+
+### Inline Comment Flow
+
+The full flow within `PostReviewFindingsStep`:
+
+```
+Parse → Filter → Cap → Consolidate → Submit
+```
+
+Detailed sequence:
+
+```mermaid
+flowchart TD
+    A[PostReviewFindingsStep] --> B{SupportsInlineReviewComments?}
+    B -->|Yes| C[DismissPreviousReviewAsync]
+    B -->|No| D[CollapseExistingReviews<br/>existing behavior]
+    C --> E[Format body via ReviewFindingsFormatter]
+    D --> E
+    E --> F{InlineComments.Enabled?}
+    F -->|No| G[Submit body-only review]
+    F -->|Yes| H[FindingsParser.Parse per agent]
+    H --> I{Agent has markers but<br/>no file:line findings?}
+    I -->|Yes| J[ExecuteFollowUpAsync<br/>retry up to MaxRetries]
+    I -->|No| K[FindingsSelector.Select]
+    J --> K
+    K --> L[Build ReviewSubmission<br/>with CommitId]
+    L --> M[SubmitPullRequestReviewAsync]
+    M -->|Success| N[Track InlineCommentsPosted]
+    M -->|422 or Exception| O[Retry body-only]
+    O -->|Success| P[Track degradation]
+    O -->|Failure| Q[Log warning, return Continue]
+```
+
+1. **Dismiss/Collapse** — If the provider supports inline reviews, dismiss previous bot reviews via the Reviews API. Otherwise, collapse existing review comments (existing behavior).
+2. **Format body** — Generate the summary body via `ReviewFindingsFormatter.Format` (unchanged).
+3. **Check enabled** — If `InlineComments.Enabled` is `false`, submit body-only and return.
+4. **Parse** — Run `FindingsParser.Parse` on each agent's output to extract `StructuredFinding` entries.
+5. **Retry** — For agents that produced severity markers but no file:line references, invoke `ExecuteFollowUpAsync` (a fresh prompt with the original output + reformat instructions) up to `MaxRetries` times.
+6. **Select** — `FindingsSelector` applies the transformation pipeline: filter by `SeverityThreshold` → stable sort by severity (if `OrderBySeverity`) → cap at `MaxInlineComments` → consolidate same file:line into single comments.
+7. **Submit** — Build a `ReviewSubmission` with the body, inline comments, and HEAD commit SHA. Submit via the Reviews API.
+8. **Degrade** — On HTTP 422 or any exception, retry once without inline comments (body-only). If that also fails, log a warning and return `StepResult.Continue`. The pipeline never fails due to inline comment issues.
+
+### Retry and Degradation Behavior
+
+#### Per-Agent Retry
+
+Retries are **per-agent**, not global. If Agent A produces structured findings but Agent B doesn't, only B is retried.
+
+- Each retry invokes `ExecuteFollowUpAsync` — a fresh LLM call with the agent's original output + reformat instructions
+- The retry counter is per-agent, capped at `MaxRetries` (default: 1)
+- Retries are sequential (consistent with existing review execution)
+- If the retry produces structured output, it replaces the original output for that agent
+
+#### Degradation Scenarios
+
+| Scenario | Behavior |
+|----------|----------|
+| Agent doesn't produce structured output after retries | Findings appear in body summary only (no inline comments for that agent) |
+| GitHub returns HTTP 422 (Validation Failed) | Retry once without ALL inline comments (body-only). GitHub's 422 doesn't identify which comment failed |
+| Body-only retry also fails | Exception caught, logged as warning, step returns `Continue` |
+| `SupportsInlineReviewComments` is `false` | Inline comments rendered in body under "📍 Findings by Location" section |
+| `InlineComments.Enabled` is `false` | No parsing, no prompt enhancement, body-only review (pre-feature behavior) |
+
+#### Observability
+
+The `PipelineRun` tracks inline comment outcomes:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `InlineCommentsPosted` | `int` | Number of inline comments successfully submitted |
+| `InlineCommentsDegraded` | `bool` | Whether fallback to body-only occurred |
+| `InlineCommentsDegradedReason` | `string?` | Reason for degradation (null on success) |
+
+### `SupportsInlineReviewComments` Capability Detection
+
+The `IRepositoryProvider` interface exposes a `SupportsInlineReviewComments` property:
+
+```csharp
+bool SupportsInlineReviewComments => false; // default: conservative
+```
+
+- **GitHub provider** returns `true` — supports inline comments and review dismissal
+- **Default** returns `false` — providers that haven't opted in get body-only behavior
+
+When `SupportsInlineReviewComments` is `false` but the `FindingsParser` extracted findings with location metadata, the pipeline appends a **"📍 Findings by Location"** section to the body comment. Findings are grouped by file path (alphabetical), with each finding as a bullet point showing severity emoji, line number, and message:
+
+```markdown
+### 📍 Findings by Location
+
+#### src/Controllers/UserController.cs
+- 🔴 Line 42: Null reference possible when input is not validated
+- 🟡 Line 15: Missing input validation on email parameter
+
+#### src/Utils/StringHelper.cs
+- 💡 Line 8: Consider using StringBuilder for repeated concatenation
+```
+
+### Stale Review Handling
+
+Before posting a new review, the pipeline handles previous automated reviews:
+
+- **GitHub (inline-capable)**: Calls `DismissPreviousReviewAsync` to dismiss all previous bot reviews containing the `<!-- agent:pr-review -->` marker. Uses the authenticated bot identity to filter reviews.
+- **Non-inline providers**: Falls back to the existing collapse behavior (wrapping previous review bodies in `<details>` blocks with the `<!-- agent:pr-review-superseded -->` marker).
+
+The coupling between `SupportsInlineReviewComments` and dismiss support is intentional — if a provider supports inline comments, it also supports review dismissal.
+
+### `InlineCommentSettings` Configuration
+
+The `InlineCommentSettings` record is nested within `CodeReviewConfiguration`:
+
+```json
+{
+  "CodeReview": {
+    "MaxIterations": 2,
+    "FixPrompt": null,
+    "ReviewIsolation": "Isolated",
+    "InlineComments": {
+      "Enabled": false,
+      "SeverityThreshold": "Warning",
+      "MaxInlineComments": 15,
+      "OrderBySeverity": true,
+      "MaxRetries": 1
+    }
+  }
+}
+```
+
+#### Property Reference
+
+| Property | Type | Default | Range | Description |
+|----------|------|---------|-------|-------------|
+| `Enabled` | `bool` | `false` | — | Master switch. Must be explicitly set to `true` to activate inline comments |
+| `SeverityThreshold` | `FindingSeverity` | `Warning` | `Suggestion`, `Warning`, `Critical` | Minimum severity for inline posting. A finding is eligible when its severity value `>=` the threshold value |
+| `MaxInlineComments` | `int` | `15` | 1–50 | Maximum inline comments per review. Highest-severity findings are prioritized when the cap is reached |
+| `OrderBySeverity` | `bool` | `true` | — | Sort eligible findings by severity (Critical first) when selecting which to post inline |
+| `MaxRetries` | `int` | `1` | 0–5 | Retry attempts per agent when structured output is missing. Each retry = 1 additional LLM API call |
+
+#### Backward Compatibility
+
+- Existing configuration files without the `InlineComments` key deserialize to a default `InlineCommentSettings` instance with `Enabled = false`
+- No migration required — existing deployments are unaffected on upgrade
+- Property ranges are validated at usage time via `Math.Clamp` (not at deserialization), consistent with other pipeline configs
+
+#### Cost Awareness
+
+Each retry invokes an additional LLM API call per agent. With `MaxRetries = 1` (default) and 3 review agents, worst case is 3 extra LLM calls per review. Operators should consider this cost tradeoff when increasing `MaxRetries`.

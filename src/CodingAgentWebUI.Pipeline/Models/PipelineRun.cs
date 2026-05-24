@@ -42,6 +42,15 @@ public sealed class PipelineRun
     /// <summary>Number of [SUGGESTION] findings detected across all review iterations. Use Interlocked for thread-safe updates.</summary>
     public int CodeReviewSuggestionCount;
 
+    /// <summary>Number of inline comments successfully submitted in this review.</summary>
+    public int InlineCommentsPosted { get; set; }
+
+    /// <summary>Whether fallback to body-only occurred (retries exhausted, API rejection, etc.).</summary>
+    public bool InlineCommentsDegraded { get; set; }
+
+    /// <summary>Reason for degradation, or null if inline comments posted successfully.</summary>
+    public string? InlineCommentsDegradedReason { get; set; }
+
     /// <summary>Per-agent findings accumulated across all review iterations.</summary>
     public Dictionary<string, string> CodeReviewAgentFindings { get; } = new();
 

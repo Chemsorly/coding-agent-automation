@@ -5,6 +5,73 @@ namespace CodingAgentWebUI.Pipeline.Services;
 
 internal partial class AgentPhaseExecutor
 {
+    /// <inheritdoc />
+    public async Task<string> ExecuteFollowUpAsync(
+        AgentPhaseContext context,
+        ReviewerConfiguration reviewerConfig,
+        string followUpPrompt,
+        CancellationToken ct)
+    {
+        try
+        {
+            ArgumentNullException.ThrowIfNull(context);
+            ArgumentNullException.ThrowIfNull(reviewerConfig);
+
+            if (string.IsNullOrEmpty(followUpPrompt))
+                return string.Empty;
+
+            var run = context.Run;
+            var config = context.Config;
+
+            _logger.Information(
+                "Pipeline {RunId} executing follow-up prompt for reviewer '{ReviewerName}' ({PromptLength} chars)",
+                run.RunId, reviewerConfig.DisplayName, followUpPrompt.Length);
+
+            // Dispatch as a fresh prompt (no resume) to the agent provider
+            var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+                context.AgentProvider,
+                new AgentRequest
+                {
+                    Prompt = followUpPrompt,
+                    WorkspacePath = run.WorkspacePath!,
+                    Timeout = config.AgentTimeout,
+                    UseResume = false
+                },
+                run, config, $"Follow-up for reviewer '{reviewerConfig.DisplayName}'",
+                context.Callbacks.NotifyChange, _logger, ct,
+                line =>
+                {
+                    run.OutputLines.Enqueue(line);
+                    context.Callbacks.EmitOutputLine(line);
+                });
+
+            run.AccumulateTokenUsage(agentResult);
+
+            // Collect the agent's response text from output lines
+            var responseText = agentResult.OutputLines.Count > 0
+                ? string.Join(Environment.NewLine, agentResult.OutputLines)
+                : string.Empty;
+
+            _logger.Information(
+                "Pipeline {RunId} follow-up for reviewer '{ReviewerName}' completed ({ResponseLength} chars response)",
+                run.RunId, reviewerConfig.DisplayName, responseText.Length);
+
+            return responseText;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Propagate cancellation — the caller (PostReviewFindingsStep) handles this
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "Pipeline {RunId} follow-up for reviewer '{ReviewerName}' failed, returning empty string",
+                context?.Run?.RunId, reviewerConfig?.DisplayName);
+            return string.Empty;
+        }
+    }
+
     /// <summary>
     /// Executes the code review loop with multi-agent support and fix prompts.
     /// </summary>
@@ -86,7 +153,7 @@ internal partial class AgentPhaseExecutor
                         File.Delete(findingsFilePath);
 
                     var isolated = config.CodeReview.ReviewIsolation == ReviewIsolation.Isolated;
-                    var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue, agentFindingsRelativePath, isolated: isolated);
+                    var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue, agentFindingsRelativePath, isolated: isolated, inlineCommentsEnabled: config.CodeReview.InlineComments.Enabled);
                     _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, i + 1, agent.Name, reviewPrompt);
 
                     var reviewResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(

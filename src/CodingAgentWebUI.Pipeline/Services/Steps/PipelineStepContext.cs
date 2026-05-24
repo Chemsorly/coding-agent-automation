@@ -57,6 +57,13 @@ internal sealed class PipelineStepContext
     public IReadOnlyList<ReviewerConfiguration>? PreResolvedReviewerConfigs { get; set; }
 
     /// <summary>
+    /// Resolved reviewer configurations from the review phase. Populated by <see cref="ReviewCodeStep"/>
+    /// after resolving configs, so that <c>PostReviewFindingsStep</c> can access them for per-agent retry
+    /// via <see cref="IAgentPhaseExecutor.ExecuteFollowUpAsync"/>. Null when review step hasn't run.
+    /// </summary>
+    public IReadOnlyList<ReviewerConfiguration>? ResolvedReviewerConfigs { get; set; }
+
+    /// <summary>
     /// Pre-resolved quality gate configurations. When non-null, <see cref="RunQualityGatesStep"/>
     /// uses these directly instead of loading from the config store.
     /// </summary>

@@ -3,10 +3,15 @@ using CodingAgentWebUI.Pipeline.Models;
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
 /// <summary>
-/// Formats code review findings and posts them as a new PR comment.
-/// Collapses any previous review comments (identified by marker) into a summary,
-/// then posts the new review. This preserves audit history while keeping the PR clean.
-/// Non-fatal on posting failure.
+/// Formats code review findings and posts them as a PR review.
+/// Enhanced with inline comment orchestration: parses structured findings,
+/// retries agents that don't produce file:line references, selects/caps/consolidates
+/// findings, and submits via the Reviews API with inline comments.
+/// 
+/// Stale handling: dismisses previous reviews (when supported) or collapses them
+/// into a details block (fallback for non-inline providers).
+/// 
+/// Non-fatal on all failures — the step always returns <see cref="StepResult.Continue"/>.
 /// </summary>
 internal sealed class PostReviewFindingsStep : IPipelineStep
 {
@@ -17,6 +22,27 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
         "<details>\n<summary>⏳ Superseded by newer review (click to expand)</summary>\n\n";
 
     private const string SupersededSuffix = "\n</details>";
+
+    private const string ReviewMarker = "<!-- agent:pr-review -->";
+
+    private const string DismissReason = "Superseded by a newer automated review.";
+
+    private const string FollowUpPromptTemplate =
+        """
+        Your previous review output did not include file:line references in the expected structured format.
+        Please reformat your findings using this structure (one finding per line):
+
+        [SEVERITY] path/to/file.ext:LINE — description of the issue
+
+        Where:
+        - SEVERITY is one of: CRITICAL, WARNING, SUGGESTION
+        - path is relative to the repository root using forward slashes
+        - LINE is the 1-based line number in the file
+
+        Here is your original output to reformat:
+
+        {0}
+        """;
 
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
@@ -29,27 +55,253 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
             return StepResult.Continue;
         }
 
-        // Determine the body: if no reviewers matched, post a different message
+        try
+        {
+            await ExecuteInternalAsync(context, prNumber, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Outer non-fatal handler: catches double-failures and any unexpected exceptions.
+            // The step NEVER throws — all failures are non-fatal.
+            context.Logger.Warning(ex, "Failed to post review findings to PR #{PrNumber}", prNumber);
+        }
+
+        return StepResult.Continue;
+    }
+
+    private static async Task ExecuteInternalAsync(PipelineStepContext context, int prNumber, CancellationToken ct)
+    {
+        var supportsInline = context.RepoProvider.SupportsInlineReviewComments;
+        var inlineSettings = context.Config.CodeReview.InlineComments;
+
+        // Step 1: Stale review handling
+        if (supportsInline)
+        {
+            // Dismiss previous reviews via platform-native API
+            await DismissPreviousReviewSafeAsync(context, prNumber, ct);
+        }
+        else
+        {
+            // Collapse existing reviews (existing behavior for non-inline providers)
+            await CollapseExistingReviewsAsync(context, prNumber, ct);
+        }
+
+        // Step 2: Determine the body
         var body = context.Run.CodeReviewAgentsRun.Count == 0
             ? $"{ReviewFindingsFormatter.Marker}\n{NoReviewerMessage}"
             : ReviewFindingsFormatter.Format(context.Run);
 
-        try
+        // Step 3: If inline comments are disabled, submit body-only and return
+        if (!inlineSettings.Enabled)
         {
-            // Collapse any previous review comments so the PR stays clean
-            await CollapseExistingReviewsAsync(context, prNumber, ct);
-
-            // Always post a new comment (preserves audit trail)
             await context.RepoProvider.SubmitPullRequestReviewAsync(
                 prNumber, body, PullRequestReviewType.Comment, ct);
+            return;
+        }
+
+        // Step 4: If provider doesn't support inline comments, submit body-only
+        if (!supportsInline)
+        {
+            await context.RepoProvider.SubmitPullRequestReviewAsync(
+                prNumber, body, PullRequestReviewType.Comment, ct);
+            return;
+        }
+
+        // Step 5: Parse structured findings per agent + retry loop
+        var allFindings = await ParseFindingsWithRetryAsync(context, inlineSettings, ct);
+
+        // Step 6: Select/filter/cap/consolidate via FindingsSelector
+        var findingsWithLocation = allFindings
+            .Where(f => f.FilePath is not null && f.LineNumber > 0)
+            .ToList();
+
+        var (comments, excludedCount) = FindingsSelector.Select(findingsWithLocation, inlineSettings);
+
+        // Step 7: Build ReviewSubmission with CommitId
+        string? commitId = null;
+        try
+        {
+            commitId = await context.RepoProvider.GetHeadCommitShaAsync(context.Run.WorkspacePath!, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            context.Logger.Warning(ex, "Failed to post review findings to PR #{PrNumber}", prNumber);
-            // Non-fatal: review ran successfully, posting failed
+            context.Logger.Warning(ex, "Failed to get HEAD commit SHA, inline comments will not be anchored to a specific commit");
         }
 
-        return StepResult.Continue;
+        var submission = new ReviewSubmission
+        {
+            Body = body,
+            Type = PullRequestReviewType.Comment,
+            Comments = comments,
+            CommitId = commitId
+        };
+
+        // Step 8: Submit via new overload
+        try
+        {
+            await context.RepoProvider.SubmitPullRequestReviewAsync(prNumber, submission, ct);
+            context.Run.InlineCommentsPosted = comments.Count;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Step 9: On exception (including 422), retry body-only
+            context.Logger.Warning(ex, "Failed to submit review with inline comments on PR #{PrNumber}, retrying body-only", prNumber);
+
+            context.Run.InlineCommentsDegraded = true;
+            context.Run.InlineCommentsDegradedReason = $"Inline submission failed: {ex.Message}";
+
+            // Retry body-only (this may also throw — caught by outer handler)
+            await context.RepoProvider.SubmitPullRequestReviewAsync(
+                prNumber, body, PullRequestReviewType.Comment, ct);
+        }
+    }
+
+    /// <summary>
+    /// Parses structured findings from each agent's output, with per-agent retry
+    /// when the agent has severity markers but no file:line findings.
+    /// </summary>
+    private static async Task<List<StructuredFinding>> ParseFindingsWithRetryAsync(
+        PipelineStepContext context, InlineCommentSettings settings, CancellationToken ct)
+    {
+        var allFindings = new List<StructuredFinding>();
+        var maxRetries = Math.Clamp(settings.MaxRetries, 0, 5);
+
+        foreach (var kvp in context.Run.CodeReviewAgentFindings)
+        {
+            var agentName = kvp.Key;
+            var agentOutput = kvp.Value;
+
+            if (string.IsNullOrEmpty(agentOutput))
+                continue;
+
+            // Initial parse
+            var findings = FindingsParser.Parse(agentOutput, agentName);
+            var hasLocationFindings = findings.Any(f => f.FilePath is not null && f.LineNumber > 0);
+
+            // Check if agent has severity markers but no file:line findings → candidate for retry
+            if (!hasLocationFindings && maxRetries > 0)
+            {
+                var severityCounts = SeverityParser.Parse(agentOutput.Split('\n'));
+                var hasMarkers = severityCounts.Critical > 0 || severityCounts.Warning > 0 || severityCounts.Suggestion > 0;
+
+                if (hasMarkers)
+                {
+                    findings = await RetryAgentForStructuredOutputAsync(
+                        context, agentName, agentOutput, maxRetries, ct);
+                }
+            }
+
+            allFindings.AddRange(findings);
+        }
+
+        return allFindings;
+    }
+
+    /// <summary>
+    /// Retries a specific agent to get structured output with file:line references.
+    /// Returns the best findings obtained (from retry or original parse).
+    /// </summary>
+    private static async Task<IReadOnlyList<StructuredFinding>> RetryAgentForStructuredOutputAsync(
+        PipelineStepContext context, string agentName, string originalOutput,
+        int maxRetries, CancellationToken ct)
+    {
+        // Need AgentPhaseContext and ReviewerConfiguration for retry
+        AgentPhaseContext? phaseContext = null;
+        try
+        {
+            phaseContext = context.BuildAgentPhaseContext();
+        }
+        catch (InvalidOperationException)
+        {
+            // Cannot build context (Issue/ParsedIssue is null) — skip retry
+            context.Logger.Warning("Cannot retry agent '{AgentName}' for structured output: AgentPhaseContext unavailable", agentName);
+            context.Run.InlineCommentsDegraded = true;
+            context.Run.InlineCommentsDegradedReason = "Retry skipped: pipeline context unavailable for follow-up prompts.";
+            return FindingsParser.Parse(originalOutput, agentName);
+        }
+
+        // Find the ReviewerConfiguration for this agent
+        var reviewerConfig = FindReviewerConfigForAgent(context, agentName);
+        if (reviewerConfig is null)
+        {
+            context.Logger.Warning("Cannot retry agent '{AgentName}': no matching ReviewerConfiguration found", agentName);
+            return FindingsParser.Parse(originalOutput, agentName);
+        }
+
+        var currentOutput = originalOutput;
+        for (var retry = 0; retry < maxRetries; retry++)
+        {
+            try
+            {
+                const int maxPromptOutputLength = 8000;
+                var promptOutput = currentOutput.Length > maxPromptOutputLength
+                    ? currentOutput[..maxPromptOutputLength] + "\n\n...[output truncated for brevity]..."
+                    : currentOutput;
+                var followUpPrompt = string.Format(FollowUpPromptTemplate, promptOutput);
+                var retryResponse = await context.AgentExecution.ExecuteFollowUpAsync(
+                    phaseContext, reviewerConfig, followUpPrompt, ct);
+
+                if (string.IsNullOrEmpty(retryResponse))
+                {
+                    context.Logger.Debug("Retry {Retry}/{MaxRetries} for agent '{AgentName}' returned empty response",
+                        retry + 1, maxRetries, agentName);
+                    continue;
+                }
+
+                var retryFindings = FindingsParser.Parse(retryResponse, agentName);
+                var hasLocation = retryFindings.Any(f => f.FilePath is not null && f.LineNumber > 0);
+
+                if (hasLocation)
+                {
+                    context.Logger.Debug("Retry {Retry}/{MaxRetries} for agent '{AgentName}' produced {Count} findings with location",
+                        retry + 1, maxRetries, agentName, retryFindings.Count(f => f.FilePath is not null));
+                    return retryFindings;
+                }
+
+                // Update currentOutput for next retry attempt
+                currentOutput = retryResponse;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                context.Logger.Warning(ex, "Retry {Retry}/{MaxRetries} for agent '{AgentName}' failed",
+                    retry + 1, maxRetries, agentName);
+            }
+        }
+
+        // All retries exhausted — return original parse (findings without location)
+        context.Logger.Debug("All {MaxRetries} retries exhausted for agent '{AgentName}', using original findings",
+            maxRetries, agentName);
+        return FindingsParser.Parse(originalOutput, agentName);
+    }
+
+    /// <summary>
+    /// Finds the ReviewerConfiguration that contains an agent with the given name.
+    /// Returns null if not found (graceful degradation).
+    /// </summary>
+    private static ReviewerConfiguration? FindReviewerConfigForAgent(PipelineStepContext context, string agentName)
+    {
+        var resolvedConfigs = context.ResolvedReviewerConfigs;
+        if (resolvedConfigs is null)
+            return null;
+
+        return resolvedConfigs.FirstOrDefault(rc =>
+            rc.Agents.Any(a => a.Name.Equals(agentName, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>
+    /// Safely dismisses previous reviews. Failures are logged but don't block the new review.
+    /// </summary>
+    private static async Task DismissPreviousReviewSafeAsync(PipelineStepContext context, int prNumber, CancellationToken ct)
+    {
+        try
+        {
+            await context.RepoProvider.DismissPreviousReviewAsync(
+                prNumber, ReviewMarker, DismissReason, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            context.Logger.Warning(ex, "Failed to dismiss previous reviews on PR #{PrNumber}, continuing with new post", prNumber);
+        }
     }
 
     /// <summary>
@@ -64,11 +316,11 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
             var existingId = await context.RepoProvider.FindExistingReviewCommentAsync(
                 prNumber, ReviewFindingsFormatter.Marker, ct);
 
-            while (existingId is not null)
+            const int maxCollapseIterations = 20;
+            var iterations = 0;
+            while (existingId is not null && iterations < maxCollapseIterations)
             {
-                // Wrap the existing comment body in a <details> collapse.
-                // Replace the original marker with a different one so this collapsed comment
-                // won't be found again on subsequent runs.
+                iterations++;
                 var collapsedBody = $"<!-- agent:pr-review-superseded -->\n{SupersededPrefix}_This review has been superseded by a newer run below._\n{SupersededSuffix}";
                 await context.RepoProvider.UpdateReviewCommentAsync(
                     prNumber, existingId.Value, collapsedBody, ct);
@@ -76,9 +328,14 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
                 context.Logger.Debug("Collapsed previous review comment {CommentId} on PR #{PrNumber}",
                     existingId.Value, prNumber);
 
-                // Check for more (in case multiple reviews exist from earlier bugs)
                 existingId = await context.RepoProvider.FindExistingReviewCommentAsync(
                     prNumber, ReviewFindingsFormatter.Marker, ct);
+            }
+
+            if (iterations >= maxCollapseIterations)
+            {
+                context.Logger.Warning("Reached max collapse iterations ({Max}) on PR #{PrNumber}, some old reviews may remain uncollapsed",
+                    maxCollapseIterations, prNumber);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
