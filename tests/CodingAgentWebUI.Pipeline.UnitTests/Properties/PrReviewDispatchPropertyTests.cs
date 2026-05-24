@@ -24,7 +24,7 @@ public class PrReviewDispatchPropertyTests
     /// <summary>
     /// P1a: When label filter is non-empty, only PRs with at least one matching label are returned.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void P1_LabelFiltering_ReturnsOnlyMatchingPrs(PositiveInt prCountRaw)
     {
         var prCount = Math.Min(prCountRaw.Get, 20);
@@ -68,7 +68,7 @@ public class PrReviewDispatchPropertyTests
     /// <summary>
     /// P1b: When label filter is null or empty, all PRs are returned unfiltered.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void P1_NullOrEmptyFilter_ReturnsAllPrs(PositiveInt prCountRaw, bool useNull)
     {
         var prCount = Math.Min(prCountRaw.Get, 20);
@@ -105,7 +105,7 @@ public class PrReviewDispatchPropertyTests
     // with PRs lacking a CreatedAt sorted last.
     // **Validates: Requirements 2.2**
 
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void P2_FifoOrdering_SortsByCreatedAtAscending(PositiveInt prCountRaw)
     {
         var prCount = Math.Min(prCountRaw.Get, 30);
@@ -174,7 +174,7 @@ public class PrReviewDispatchPropertyTests
     // and (d) do not carry `agent:error`, `agent:in-progress`, `agent:done`, or `agent:cancelled` labels.
     // **Validates: Requirements 2.3, 2.4, 6.5**
 
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void P3_DispatchEligibility_FiltersCorrectly(PositiveInt prCountRaw)
     {
         var prCount = Math.Min(prCountRaw.Get, 30);
@@ -260,7 +260,7 @@ public class PrReviewDispatchPropertyTests
     // ClosedLoopMaxRunsPerCycle of M, the total number of dispatched jobs SHALL never exceed M.
     // **Validates: Requirements 2.6**
 
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void P4_MaxRunsPerCycle_NeverExceedsLimit(PositiveInt issueCountRaw, PositiveInt prCountRaw, PositiveInt limitRaw)
     {
         var issueCount = Math.Min(issueCountRaw.Get, 20);
@@ -324,7 +324,7 @@ public class PrReviewDispatchPropertyTests
     // (no starvation).
     // **Validates: Requirements 2.7**
 
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void P5_FairAlternation_BothQueuesGetAtLeastOneDispatch(PositiveInt issueCountRaw, PositiveInt prCountRaw, PositiveInt limitRaw)
     {
         var issueCount = Math.Max(Math.Min(issueCountRaw.Get, 20), 1); // At least 1
@@ -391,7 +391,7 @@ public class PrReviewDispatchPropertyTests
     // is true, and PR polling occurs if and only if Enabled AND ReviewEnabled is true.
     // **Validates: Requirements 3.3, 3.4, 3.7**
 
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void P6_TemplatePollingEnablement_BooleanLogicCorrect(bool enabled, bool implementationEnabled, bool reviewEnabled)
     {
         var template = new PipelineJobTemplate

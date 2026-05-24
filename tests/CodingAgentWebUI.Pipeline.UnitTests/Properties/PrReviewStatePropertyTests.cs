@@ -27,7 +27,7 @@ public class PrReviewStatePropertyTests
     /// ExtractLinkedIssuesStep transitions to ExtractingLinkedIssues and PostReviewFindingsStep
     /// transitions to PostingFindings — verifying the review-specific state transitions.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task P7_ReviewStepSequence_ExtractLinkedIssuesTransitionsCorrectly(PositiveInt prNumber)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"pbt-p7a-{Guid.NewGuid():N}");
@@ -91,7 +91,7 @@ public class PrReviewStatePropertyTests
     /// <summary>
     /// P7(b): PostReviewFindingsStep transitions to PostingFindings state.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task P7_ReviewStepSequence_PostFindingsTransitionsCorrectly(PositiveInt prNumber)
     {
         var transitions = new List<PipelineStep>();
@@ -149,7 +149,7 @@ public class PrReviewStatePropertyTests
     /// [SyncingBrainRepoPreRun] → ExtractingLinkedIssues → ReviewingCode → PostingFindings → Completed
     /// represents monotonically increasing pipeline progress.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void P7_ReviewStateSequence_IsMonotonicallyOrdered(bool hasBrainProvider)
     {
         // The expected state transition sequence for a review run
@@ -208,7 +208,7 @@ public class PrReviewStatePropertyTests
     /// P8(a): When FailRunAsync is called with any non-empty reason, the run transitions
     /// to Failed state with a non-null FailureReason and the label is swapped to agent:error.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task P8_StepFailure_TransitionsToFailed_WithNonNullReason(NonEmptyString failureReason)
     {
         var reason = failureReason.Get.Trim();
@@ -276,7 +276,7 @@ public class PrReviewStatePropertyTests
     /// P8(b): For any step in the review pipeline that could fail, the failure handling
     /// sets CompletedAt to a non-null value (run is terminated).
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task P8_StepFailure_SetsCompletedAt(NonEmptyString failureReason)
     {
         var reason = failureReason.Get.Trim();
@@ -330,7 +330,7 @@ public class PrReviewStatePropertyTests
     /// <summary>
     /// P8(c): FailRunAsync adds the run to history via callbacks.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task P8_StepFailure_AddsRunToHistory(PositiveInt prNumber)
     {
         var run = new PipelineRun

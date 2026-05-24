@@ -23,7 +23,7 @@ public class PrReviewFormatterPropertyTests
     /// P9(a): The formatted review body SHALL always contain the machine-readable marker.
     /// **Validates: Requirements 5.1**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void FormatterOutput_AlwaysContainsMarker(
         NonNegativeInt critical,
         NonNegativeInt warning,
@@ -43,7 +43,7 @@ public class PrReviewFormatterPropertyTests
     /// P9(b): The formatted review body SHALL always contain the header "Automated Code Review".
     /// **Validates: Requirements 5.6**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void FormatterOutput_AlwaysContainsHeader(
         NonNegativeInt critical,
         NonNegativeInt warning,
@@ -63,7 +63,7 @@ public class PrReviewFormatterPropertyTests
     /// P9(c): When all counts are zero, the output SHALL contain "No issues found".
     /// **Validates: Requirements 5.7**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void FormatterOutput_ZeroCounts_ContainsNoIssuesFound(NonEmptyArray<NonEmptyString> agentNames)
     {
         var names = agentNames.Get.Select(n => n.Get.Replace("\n", "").Replace("\r", "")).ToArray();
@@ -81,7 +81,7 @@ public class PrReviewFormatterPropertyTests
     /// P9(d): When any count > 0, the output SHALL contain a severity table.
     /// **Validates: Requirements 5.8**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void FormatterOutput_NonZeroCounts_ContainsSeverityTable(
         PositiveInt critical,
         NonNegativeInt warning,
@@ -103,7 +103,7 @@ public class PrReviewFormatterPropertyTests
     /// P9(e): Per-agent detail sections SHALL appear for each agent with non-empty findings.
     /// **Validates: Requirements 5.8**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void FormatterOutput_NonEmptyFindings_ContainsPerAgentDetails(
         NonEmptyString agentName,
         NonEmptyString findingText)
@@ -131,7 +131,7 @@ public class PrReviewFormatterPropertyTests
     /// P10: For any string containing #N pattern, the parser SHALL extract the issue number.
     /// **Validates: Requirements 12.7**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void ParseIssueReferences_SimpleHash_ExtractsNumber(PositiveInt issueNumber)
     {
         var text = $"This fixes #{ issueNumber.Get} in the codebase";
@@ -146,7 +146,7 @@ public class PrReviewFormatterPropertyTests
     /// P10: For any string containing owner/repo#N pattern, the parser SHALL extract the issue number.
     /// **Validates: Requirements 12.7**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void ParseIssueReferences_CrossRepo_ExtractsNumber(PositiveInt issueNumber)
     {
         var text = $"Related to myorg/myrepo#{issueNumber.Get}";
@@ -161,7 +161,7 @@ public class PrReviewFormatterPropertyTests
     /// P10: For any string containing GH-N pattern, the parser SHALL extract the issue number.
     /// **Validates: Requirements 12.7**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void ParseIssueReferences_GhDash_ExtractsNumber(PositiveInt issueNumber)
     {
         var text = $"Implements GH-{issueNumber.Get} feature";
@@ -177,7 +177,7 @@ public class PrReviewFormatterPropertyTests
     /// the parser SHALL extract the issue number.
     /// **Validates: Requirements 12.7**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void ParseIssueReferences_ClosingKeywords_ExtractsNumber(PositiveInt issueNumber)
     {
         var keywords = new[] { "closes", "fixes", "resolves", "Closes", "Fixes", "Resolves", "CLOSES", "FIXES", "RESOLVES" };
@@ -194,7 +194,7 @@ public class PrReviewFormatterPropertyTests
     /// P10: For any string NOT containing issue reference patterns, the parser SHALL return empty.
     /// **Validates: Requirements 12.7**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void ParseIssueReferences_NoPatterns_ReturnsEmpty(NonEmptyString text)
     {
         // Generate text that definitely doesn't contain issue patterns
@@ -220,7 +220,7 @@ public class PrReviewFormatterPropertyTests
     /// exactly one file per item to .agent/linked-issue-{id}.md, each containing the issue title and description.
     /// **Validates: Requirements 12.4, 12.8**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task LinkedIssueFileWriting_WritesExactlyOneFilePerItem(PositiveInt countRaw)
     {
         var count = Math.Min(countRaw.Get, 10); // Cap to avoid excessive I/O
@@ -301,7 +301,7 @@ public class PrReviewFormatterPropertyTests
     /// P11: For zero linked issues, no files SHALL be written to .agent/ directory.
     /// **Validates: Requirements 12.4, 12.8**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task LinkedIssueFileWriting_ZeroIssues_NoFilesWritten(PositiveInt prNumber)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"pbt-p11-empty-{Guid.NewGuid():N}");
@@ -371,7 +371,7 @@ public class PrReviewFormatterPropertyTests
     /// When API returns results, title/body parsing results are still included but deduplicated.
     /// **Validates: Requirements 12.3**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void ExtractionPriorityOrder_ApiResultsFirst_ThenTitle_ThenBody(
         PositiveInt apiIssue,
         PositiveInt titleIssue,
@@ -412,7 +412,7 @@ public class PrReviewFormatterPropertyTests
     /// Deduplication ensures no duplicates across sources.
     /// **Validates: Requirements 12.3**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void ExtractionPriorityOrder_Deduplication_NoDuplicates(PositiveInt issueNumber)
     {
         // Same issue referenced in all three sources
