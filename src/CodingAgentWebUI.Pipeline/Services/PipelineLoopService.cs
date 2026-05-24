@@ -661,8 +661,6 @@ public sealed class PipelineLoopService : BackgroundService
                                 var candidate = queue[0];
                                 queue.RemoveAt(0);
 
-                                // Skip drafts
-                                if (candidate.IsDraft) continue;
                                 // Skip PRs with terminal/in-progress status labels
                                 if (candidate.Labels.Contains(AgentLabels.Error) ||
                                     candidate.Labels.Contains(AgentLabels.InProgress) ||
@@ -840,9 +838,8 @@ public sealed class PipelineLoopService : BackgroundService
             page++;
         }
 
-        // Filter: skip drafts, skip PRs with terminal/in-progress status labels
+        // Filter: skip PRs with terminal/in-progress status labels
         result.RemoveAll(pr =>
-            pr.IsDraft ||
             pr.Labels.Contains(AgentLabels.Error) ||
             pr.Labels.Contains(AgentLabels.InProgress) ||
             pr.Labels.Contains(AgentLabels.Done) ||
