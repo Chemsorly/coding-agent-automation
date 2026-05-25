@@ -6,9 +6,7 @@
 # =============================================================================
 
 # Stage 1: Build (compiles the .NET Agent Worker)
-# --platform=linux/arm64: Forces native ARM execution on ARM CI runners (avoids .NET QEMU crash)
-# Cross-compiles to linux-x64 via RID so the output runs in the amd64 runtime stage.
-FROM --platform=linux/arm64 mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
 WORKDIR /src
 
 # Copy only the project files needed for the Agent and its dependencies (not test projects)
