@@ -139,7 +139,7 @@ public sealed class PipelineRun
     /// <summary>Linked agent PR detected during rework mode, or null for new-issue runs.</summary>
     public LinkedPullRequest? LinkedPullRequest { get; set; }
 
-    /// <summary>Files with merge conflicts from MergeFromBaseAsync, empty if no conflicts.</summary>
+    /// <summary>Files with conflicts from rebase onto base branch, empty if no conflicts.</summary>
     public IReadOnlyList<string> MergeConflictFiles { get; set; } = Array.Empty<string>();
 
     /// <summary>How this run was initiated: "manual" or "loop".</summary>

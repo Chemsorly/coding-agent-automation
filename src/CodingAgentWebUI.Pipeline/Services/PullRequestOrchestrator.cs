@@ -60,9 +60,9 @@ internal class PullRequestOrchestrator
             _logger.Information("Pipeline {RunId} no uncommitted changes, skipping commit", run.RunId);
         }
 
-        // Push
-        await repoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, ct);
-        onOutputLine?.Invoke($"🔀 Pushed to origin/{run.BranchName}");
+        // Push (force-push in rework mode because rebase rewrites commit history)
+        await repoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: isRework, ct);
+        onOutputLine?.Invoke($"🔀 Pushed to origin/{run.BranchName}{(isRework ? " (force)" : "")}");
 
         // Refresh file change stats
         await UpdateFileChangeStatsAsync(run, repoProvider);
