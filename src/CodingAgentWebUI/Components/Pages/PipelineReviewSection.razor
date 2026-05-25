@@ -1,0 +1,93 @@
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+
+<section class="settings-section">
+    <h2>Review</h2>
+    <p class="section-description">Settings for the PR review pipeline — how review findings are posted to pull requests as inline comments.</p>
+    <div class="provider-form">
+        <div class="form-group form-checkbox">
+            <label>
+                <input type="checkbox" @bind="_inlineCommentsEnabled" />
+                Enable Inline Review Comments
+            </label>
+        </div>
+        <div class="config-sub-fields">
+            <div class="form-group">
+                <label>Minimum Severity for Inline Posting</label>
+                <select @bind="_inlineSeverityThreshold" disabled="@(!_inlineCommentsEnabled)">
+                    <option value="@FindingSeverity.Critical">Critical</option>
+                    <option value="@FindingSeverity.Warning">Warning</option>
+                    <option value="@FindingSeverity.Suggestion">Suggestion</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Maximum Inline Comments per Review</label>
+                <input type="number" @bind="_inlineMaxComments" min="1" max="50" disabled="@(!_inlineCommentsEnabled)" />
+            </div>
+            <div class="form-group form-checkbox">
+                <label>
+                    <input type="checkbox" @bind="_inlineOrderBySeverity" disabled="@(!_inlineCommentsEnabled)" />
+                    Prioritize by Severity
+                </label>
+            </div>
+            <div class="form-group">
+                <label>Format Correction Retries</label>
+                <input type="number" @bind="_inlineMaxRetries" min="0" max="5" disabled="@(!_inlineCommentsEnabled)" />
+                <span class="form-hint">Number of times to re-ask the AI agent if it doesn't include file/line references in its output. Each retry adds an additional API call.</span>
+            </div>
+        </div>
+        <div class="pipeline-form-actions">
+            <button class="btn-save" @onclick="SaveAsync">Save Review Settings</button>
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private bool _inlineCommentsEnabled = true;
+    private FindingSeverity _inlineSeverityThreshold = FindingSeverity.Warning;
+    private int _inlineMaxComments = 15;
+    private bool _inlineOrderBySeverity = true;
+    private int _inlineMaxRetries = 1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        var inlineSettings = config.CodeReview.InlineComments;
+        _inlineCommentsEnabled = inlineSettings.Enabled;
+        _inlineSeverityThreshold = inlineSettings.SeverityThreshold;
+        _inlineMaxComments = inlineSettings.MaxInlineComments;
+        _inlineOrderBySeverity = inlineSettings.OrderBySeverity;
+        _inlineMaxRetries = inlineSettings.MaxRetries;
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            await ConfigStore.UpdatePipelineConfigAsync(
+                current => current with
+                {
+                    CodeReview = current.CodeReview with
+                    {
+                        InlineComments = new InlineCommentSettings
+                        {
+                            Enabled = _inlineCommentsEnabled,
+                            SeverityThreshold = _inlineSeverityThreshold,
+                            MaxInlineComments = _inlineMaxComments,
+                            OrderBySeverity = _inlineOrderBySeverity,
+                            MaxRetries = _inlineMaxRetries,
+                        },
+                    }
+                },
+                CancellationToken.None);
+            await OnShowStatus.InvokeAsync(("Review settings saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+}

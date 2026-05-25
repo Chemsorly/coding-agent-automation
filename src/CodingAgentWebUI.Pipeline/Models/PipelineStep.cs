@@ -19,5 +19,7 @@ public enum PipelineStep
     SyncingBrainRepoPostRun,
     Completed,
     Failed,
-    Cancelled
+    Cancelled,
+    ExtractingLinkedIssues,
+    PostingFindings
 }

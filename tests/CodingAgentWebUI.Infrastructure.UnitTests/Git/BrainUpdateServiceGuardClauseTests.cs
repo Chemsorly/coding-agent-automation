@@ -2,7 +2,6 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using LibGit2Sharp;
 using Moq;
 using Serilog;
 
@@ -109,43 +108,29 @@ public class BrainUpdateServiceGuardClauseTests
 
     /// <summary>
     /// Requirement 4.4: EmptyCommitException handled gracefully — returns success with 0 files.
-    /// This is tested via the existing BrainUpdateServicePushRetryTests but we verify the
-    /// specific behavior: when there are no changes to commit, it returns success with 0 files.
+    /// When there are no changes to commit, it returns success with 0 files.
     /// </summary>
     [Fact]
     public async Task CommitAndPushAsync_NoChangesToCommit_ReturnsSuccessWithZeroFiles()
     {
-        // Arrange: Create a real git repo with no uncommitted changes
-        var repoPath = Path.Combine(Path.GetTempPath(), $"brain-guard-test-{Guid.NewGuid():N}");
-        try
-        {
-            Repository.Init(repoPath);
-            using (var repo = new Repository(repoPath))
-            {
-                var filePath = Path.Combine(repoPath, "README.md");
-                File.WriteAllText(filePath, "# Brain\n");
-                Commands.Stage(repo, "README.md");
-                var sig = new Signature("Test", "test@test.com", DateTimeOffset.UtcNow);
-                repo.Commit("initial", sig, sig);
-            }
+        // Arrange: Use a mock IGitOperations that throws EmptyCommitException on StageAllAndCommit
+        var mockGit = new Mock<IGitOperations>();
+        mockGit.Setup(g => g.HasConflicts(It.IsAny<string>())).Returns(false);
+        mockGit.Setup(g => g.StageAllAndCommit(It.IsAny<string>(), It.IsAny<string>()))
+            .Throws(new EmptyCommitException());
 
-            // No changes made after initial commit — EmptyCommitException will be thrown internally
+        var sut = new BrainUpdateService(new LoggerConfiguration().CreateLogger(), mockGit.Object);
 
-            _mockProvider.Setup(p => p.PullAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
+        _mockProvider.Setup(p => p.PullAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-            // Act
-            var result = await _sut.CommitAndPushAsync(
-                repoPath, "run-1", "issue-1", _mockProvider.Object, CancellationToken.None);
+        // Act
+        var result = await sut.CommitAndPushAsync(
+            "/tmp/fake-repo", "run-1", "issue-1", _mockProvider.Object, CancellationToken.None);
 
-            // Assert: EmptyCommitException is handled gracefully — returns success with 0 files
-            result.Success.Should().BeTrue();
-            result.FilesCommitted.Should().Be(0);
-        }
-        finally
-        {
-            DeleteDirectory(repoPath);
-        }
+        // Assert: EmptyCommitException is handled gracefully — returns success with 0 files
+        result.Success.Should().BeTrue();
+        result.FilesCommitted.Should().Be(0);
     }
 
     /// <summary>
@@ -196,13 +181,4 @@ public class BrainUpdateServiceGuardClauseTests
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
 
-    private static void DeleteDirectory(string path)
-    {
-        if (!Directory.Exists(path)) return;
-        foreach (var file in Directory.GetFiles(path, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(path, recursive: true);
-    }
 }

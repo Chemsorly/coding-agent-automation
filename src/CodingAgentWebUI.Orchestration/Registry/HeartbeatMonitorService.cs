@@ -18,7 +18,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
     private readonly OrchestratorRunService _runService;
     private readonly IPipelineRunHistoryService _historyService;
     private readonly JobDispatcherService _dispatcher;
-    private readonly IIssueProviderLabelSwapper _labelSwapper;
+    private readonly ILabelSwapper _labelSwapper;
     private readonly IConfigurationStore _configStore;
     private readonly ILogger _logger;
 
@@ -30,7 +30,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         OrchestratorRunService runService,
         IPipelineRunHistoryService historyService,
         JobDispatcherService dispatcher,
-        IIssueProviderLabelSwapper labelSwapper,
+        ILabelSwapper labelSwapper,
         IConfigurationStore configStore,
         ILogger logger)
     {

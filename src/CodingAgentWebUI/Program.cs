@@ -65,7 +65,7 @@ builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
     sp.GetRequiredService<OrchestratorRunService>(),
     sp.GetRequiredService<PipelineRunLifecycleService>(),
     sp.GetRequiredService<IQualityGateValidator>(),
-    sp.GetRequiredService<IIssueProviderLabelSwapper>()));
+    sp.GetRequiredService<ILabelSwapper>()));
 
 // Pipeline — Loop Service (background service, starts dormant)
 builder.Services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(
@@ -96,12 +96,16 @@ builder.Services.AddSingleton<IIssueProviderLabelSwapper>(sp => new IssueProvide
     sp.GetRequiredService<IConfigurationStore>(),
     sp.GetRequiredService<IProviderFactory>(),
     Serilog.Log.Logger));
+builder.Services.AddSingleton<ILabelSwapper>(sp => new LabelSwapper(
+    sp.GetRequiredService<IConfigurationStore>(),
+    sp.GetRequiredService<IProviderFactory>(),
+    Serilog.Log.Logger));
 builder.Services.AddHostedService(sp => new HeartbeatMonitorService(
     sp.GetRequiredService<AgentRegistryService>(),
     sp.GetRequiredService<OrchestratorRunService>(),
     sp.GetRequiredService<IPipelineRunHistoryService>(),
     sp.GetRequiredService<JobDispatcherService>(),
-    sp.GetRequiredService<IIssueProviderLabelSwapper>(),
+    sp.GetRequiredService<ILabelSwapper>(),
     sp.GetRequiredService<IConfigurationStore>(),
     Serilog.Log.Logger));
 
@@ -150,7 +154,7 @@ builder.Services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
     sp.GetRequiredService<ITokenVendingService>(),
     sp.GetRequiredService<IConfigurationStore>(),
     sp.GetRequiredService<IProviderFactory>(),
-    sp.GetRequiredService<IIssueProviderLabelSwapper>(),
+    sp.GetRequiredService<ILabelSwapper>(),
     sp.GetRequiredService<ProfileResolver>(),
     sp.GetRequiredService<QualityGateResolver>(),
     sp.GetRequiredService<ReviewerResolver>(),
@@ -257,6 +261,10 @@ app.MapHub<AgentHub>(HubRoutes.Agent).RequireAuthorization("AgentApiKey");
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()
     .DisableAntiforgery();
+
+// Clean up orphaned consolidation runs from previous sessions
+var consolidationService = app.Services.GetRequiredService<IConsolidationService>();
+await consolidationService.CleanupOrphanedRunsAsync(CancellationToken.None);
 
 app.Run();
 

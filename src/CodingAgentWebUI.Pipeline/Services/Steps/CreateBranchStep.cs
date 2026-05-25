@@ -36,6 +36,10 @@ internal sealed class CreateBranchStep : IPipelineStep
             return StepResult.Stop;
         }
 
+        // Skip merge for review runs — review the PR branch as-is
+        if (context.Run.RunType == PipelineRunType.Review)
+            return StepResult.Continue;
+
         try
         {
             var mergeResult = await context.RepoProvider.MergeFromBaseAsync(context.Run.WorkspacePath!, ct);

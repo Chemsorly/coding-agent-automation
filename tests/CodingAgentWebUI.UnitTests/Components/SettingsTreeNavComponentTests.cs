@@ -44,8 +44,9 @@ public class SettingsTreeNavComponentTests : BunitContext
 
         Assert.Contains("General", cut.Markup);
         Assert.Contains("Pipeline Loop", cut.Markup);
-        Assert.Contains("Prompts", cut.Markup);
-        Assert.Contains("Quality Gates", cut.Markup);
+        Assert.Contains("Implementation", cut.Markup);
+        Assert.Contains("Review", cut.Markup);
+        Assert.DoesNotContain("Quality Gates", cut.Markup);
         Assert.DoesNotContain("Security", cut.Markup);
     }
 

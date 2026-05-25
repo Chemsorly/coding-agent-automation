@@ -126,7 +126,7 @@ public class AgentMonitoringComponentTests : BunitContext
         var cut = Render<AgentMonitoring>();
 
         var headerCells = cut.FindAll(".monitoring-table thead th");
-        Assert.Equal(7, headerCells.Count);
+        Assert.Equal(8, headerCells.Count);
     }
 
     [Fact]

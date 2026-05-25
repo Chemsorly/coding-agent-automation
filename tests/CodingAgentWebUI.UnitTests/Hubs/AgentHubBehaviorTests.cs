@@ -12,14 +12,15 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.UnitTests.Hubs;
 
 /// <summary>Unit tests for <see cref="AgentHub"/> behavior (method logic, not models).</summary>
-public sealed class AgentHubBehaviorTests
+public sealed class AgentHubBehaviorTests : IDisposable
 {
     private readonly Mock<IAgentHubFacade> _mockFacade = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
     private readonly Mock<IConsolidationService> _mockConsolidation = new();
     private readonly ConsolidationBadgeService _badgeService = new();
-    private readonly Mock<IIssueProviderLabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
     private readonly Mock<ILogger> _mockLogger = new();
+    private readonly List<PipelineOrchestrationService> _orchestrationInstances = new();
 
     private AgentHub CreateHub(string connectionId = "conn-1")
     {
@@ -127,7 +128,7 @@ public sealed class AgentHubBehaviorTests
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -143,7 +144,7 @@ public sealed class AgentHubBehaviorTests
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.Done, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -164,7 +165,7 @@ public sealed class AgentHubBehaviorTests
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.NeedsRefinement, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -185,7 +186,7 @@ public sealed class AgentHubBehaviorTests
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.WontDo, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.WontDo, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -258,7 +259,7 @@ public sealed class AgentHubBehaviorTests
         var hub = CreateHub();
         await hub.RequestLabelChange("job-1", "agent:error");
 
-        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", "agent:error", It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", "agent:error", LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -435,7 +436,7 @@ public sealed class AgentHubBehaviorTests
 
     private PipelineOrchestrationService CreateMinimalOrchestrationService()
     {
-        return new PipelineOrchestrationService(
+        var service = new PipelineOrchestrationService(
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             new IssueDescriptionParser(),
@@ -445,6 +446,8 @@ public sealed class AgentHubBehaviorTests
             brainUpdateService: Mock.Of<IBrainUpdateService>(),
             historyService: Mock.Of<IPipelineRunHistoryService>(),
             runService: Mock.Of<IOrchestratorRunService>());
+        _orchestrationInstances.Add(service);
+        return service;
     }
 
     #endregion
@@ -651,4 +654,10 @@ public sealed class AgentHubBehaviorTests
     }
 
     #endregion
+
+    public void Dispose()
+    {
+        foreach (var orchestration in _orchestrationInstances)
+            orchestration.Dispose();
+    }
 }

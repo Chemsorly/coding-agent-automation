@@ -151,7 +151,7 @@
             : "—";
 
         _lastRun = history.Count > 0
-            ? history[0].StartedAt.ToString("yyyy-MM-dd HH:mm UTC")
+            ? history[0].StartedAt.ToLocalTime().ToString("g")
             : "—";
     }
 }

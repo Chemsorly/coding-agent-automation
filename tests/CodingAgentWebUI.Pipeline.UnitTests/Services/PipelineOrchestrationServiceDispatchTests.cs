@@ -12,7 +12,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// Unit tests for PipelineOrchestrationService.CreateDispatchedRunAsync and RemoveAllAgentLabelsAsync.
 /// </summary>
 // TODO: Implement IAsyncLifetime (or IDisposable) to dispose PipelineOrchestrationService instances — they own a SemaphoreSlim via IDisposable/IAsyncDisposable.
-public class PipelineOrchestrationServiceDispatchTests
+public class PipelineOrchestrationServiceDispatchTests : IDisposable
 {
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IProviderFactory> _mockFactory;
@@ -297,5 +297,10 @@ public class PipelineOrchestrationServiceDispatchTests
         // Act: call RemoveAllAgentLabelsAsync directly — should not throw
         var act = () => service.RemoveAllAgentLabelsAsync("99", CancellationToken.None);
         await act.Should().NotThrowAsync();
+    }
+
+    public void Dispose()
+    {
+        _service.Dispose();
     }
 }

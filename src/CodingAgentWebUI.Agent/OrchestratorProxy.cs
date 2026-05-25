@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Polly;
 using Serilog;
 
+
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
@@ -53,7 +54,19 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(newLabel);
         return _signalRPipeline.ExecuteAsync(async token =>
-            await _connection.InvokeAsync("RequestLabelChange", _jobId, newLabel, token), ct).AsTask();
+            await _connection.InvokeAsync("RequestLabelChange", _jobId, newLabel, (int)LabelTargetKind.Issue, token), ct).AsTask();
+    }
+
+    /// <summary>
+    /// Swaps the agent label via the orchestrator with explicit target kind routing.
+    /// Used by review runs to route label swaps to PRs instead of issues.
+    /// </summary>
+    public Task SwapLabelAsync(string identifier, string newLabel, LabelTargetKind targetKind, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(newLabel);
+        return _signalRPipeline.ExecuteAsync(async token =>
+            await _connection.InvokeAsync("RequestLabelChange", _jobId, newLabel, (int)targetKind, token), ct).AsTask();
     }
 
     /// <summary>

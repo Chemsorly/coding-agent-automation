@@ -27,7 +27,13 @@ internal sealed class IssueProviderIssueOperations : IAgentIssueOperations
         try
         {
             foreach (var label in AgentLabels.All)
+            {
+                // Skip removing the label we're about to add — avoids a redundant remove+add
+                // that shows up as a confusing "added X and removed X" event on GitHub.
+                if (string.Equals(label, newLabel, StringComparison.Ordinal))
+                    continue;
                 await _issueProvider.RemoveLabelAsync(issueIdentifier, label, ct);
+            }
             await _issueProvider.AddLabelAsync(issueIdentifier, newLabel, ct);
         }
         catch (Exception ex)

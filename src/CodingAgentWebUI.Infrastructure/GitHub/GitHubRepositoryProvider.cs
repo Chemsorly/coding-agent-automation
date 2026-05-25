@@ -1,6 +1,7 @@
 using LibGit2Sharp;
 using Octokit;
 using Polly;
+using System.Text.RegularExpressions;
 using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -22,6 +23,23 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     private readonly string _baseBranch;
     private readonly ResiliencePipeline _gitPipeline;
 
+    // Static compiled regex patterns for ParseIssueReferences (avoid per-call allocation)
+    private static readonly Regex ClosingKeywordPattern = new(
+        @"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:#|GH-)(\d+)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex CrossRepoPattern = new(
+        @"[\w\-\.]+/[\w\-\.]+#(\d+)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex GhPattern = new(
+        @"\bGH-(\d+)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex SimpleHashPattern = new(
+        @"(?<![&\w/])#(\d+)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     static GitHubRepositoryProvider()
     {
         // Disable libgit2's directory ownership validation. In Docker containers,
@@ -37,6 +55,9 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
 
     /// <inheritdoc />
     public string RepositoryFullName => $"{Owner}/{Repo}";
+
+    /// <inheritdoc />
+    public bool SupportsInlineReviewComments => true;
 
     /// <summary>
     /// Creates a provider with a static token (backward compatible).
@@ -710,6 +731,387 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         {
             throw new InvalidOperationException(
                 $"Pull request #{pullRequestNumber} not found in {Owner}/{Repo}.", ex);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<PagedResult<PullRequestSummary>> ListOpenPullRequestsAsync(
+        int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, 100);
+
+        // GitHub's PR list API doesn't support label filtering directly.
+        // Use the Issues API (PRs are issues on GitHub) with label filtering,
+        // then fetch full PR details for items that are pull requests.
+        var request = new RepositoryIssueRequest
+        {
+            State = ItemStateFilter.Open
+        };
+
+        if (labels is { Count: > 0 })
+        {
+            foreach (var label in labels)
+                request.Labels.Add(label);
+        }
+
+        var apiOptions = new ApiOptions
+        {
+            PageSize = pageSize + 1, // fetch one extra to detect HasMore
+            StartPage = page,
+            PageCount = 1
+        };
+
+        var issues = await ExecuteWithResilienceAsync(
+            client => client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions),
+            "ListOpenPullRequests", ct);
+
+        // Base HasMore on raw issues count (before PR filtering) to avoid early termination
+        var hasMore = issues.Count > pageSize;
+
+        // Filter to only pull requests (opposite of issue provider which filters them out)
+        var prIssues = issues
+            .Where(i => i.PullRequest != null)
+            .Take(pageSize)
+            .ToList();
+
+        // Fetch full PR details for each matching issue to get Draft, Head, Base info
+        var items = new List<PullRequestSummary>();
+        foreach (var issue in prIssues)
+        {
+            var pr = await ExecuteWithResilienceAsync(
+                client => client.PullRequest.Get(Owner, Repo, issue.Number),
+                "ListOpenPullRequests.GetDetail", ct);
+
+            items.Add(new PullRequestSummary
+            {
+                Number = pr.Number,
+                Identifier = pr.Number.ToString(),
+                Title = pr.Title,
+                Description = pr.Body ?? string.Empty,
+                Labels = pr.Labels.Select(l => l.Name).ToArray(),
+                BranchName = pr.Head.Ref,
+                TargetBranch = pr.Base.Ref,
+                Url = pr.HtmlUrl,
+                IsDraft = pr.Draft,
+                CreatedAt = pr.CreatedAt.UtcDateTime
+            });
+        }
+
+        return new PagedResult<PullRequestSummary>
+        {
+            Items = items.AsReadOnly(),
+            Page = page,
+            PageSize = pageSize,
+            HasMore = hasMore
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task SubmitPullRequestReviewAsync(
+        int prNumber, string body, PullRequestReviewType type, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        // Use the Pull Request Reviews API so that reviews are dismissible
+        // and support inline comments in future overloads.
+        var review = new Octokit.PullRequestReviewCreate
+        {
+            Body = body,
+            Event = MapReviewEvent(type)
+        };
+
+        await ExecuteWithResilienceAsync(
+            client => client.PullRequest.Review.Create(Owner, Repo, prNumber, review),
+            "SubmitPullRequestReview", ct);
+    }
+
+    /// <inheritdoc />
+    public async Task SubmitPullRequestReviewAsync(
+        int prNumber, ReviewSubmission submission, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(submission);
+
+        // When Comments is empty, delegate to the existing body-only overload
+        // to produce the same observable result.
+        if (submission.Comments.Count == 0)
+        {
+            await SubmitPullRequestReviewAsync(prNumber, submission.Body, submission.Type, ct);
+            return;
+        }
+
+        // Build the review payload with inline comments using the raw API,
+        // because Octokit's DraftPullRequestReviewComment doesn't support 'line' and 'side' fields.
+        var comments = submission.Comments.Select(c => new
+        {
+            path = c.Path,
+            line = c.Line,
+            side = c.Side == DiffSide.Left ? "LEFT" : "RIGHT",
+            body = c.Body
+        }).ToArray();
+
+        var payload = new Dictionary<string, object?>
+        {
+            ["body"] = submission.Body,
+            ["event"] = MapReviewEventString(submission.Type),
+            ["comments"] = comments
+        };
+
+        if (submission.CommitId is not null)
+        {
+            payload["commit_id"] = submission.CommitId;
+        }
+
+        try
+        {
+            await ExecuteWithResilienceAsync(
+                async client =>
+                {
+                    var url = new Uri($"repos/{Owner}/{Repo}/pulls/{prNumber}/reviews", UriKind.Relative);
+                    await client.Connection.Post<object>(url, payload, "application/json", null);
+                    return true;
+                },
+                "SubmitPullRequestReviewWithComments", ct);
+        }
+        catch (ApiValidationException)
+        {
+            // On HTTP 422, retry once without any comments (body-only fallback).
+            // GitHub's 422 response doesn't reliably identify which comment failed.
+            Log.Warning(
+                "GitHub returned 422 when submitting review with {CommentCount} inline comments on PR #{PrNumber}. " +
+                "Retrying with body-only fallback.",
+                submission.Comments.Count, prNumber);
+
+            await SubmitPullRequestReviewAsync(prNumber, submission.Body, submission.Type, ct);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task DismissPreviousReviewAsync(int prNumber, string marker, string reason, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(marker);
+        ArgumentNullException.ThrowIfNull(reason);
+
+        // NOTE: This method only finds reviews posted via the Pull Request Reviews API (spec 026+).
+        // Old issue-comment-based reviews (from spec 025, pre-migration) are NOT found here —
+        // they remain as-is with their <!-- agent:pr-review-superseded --> collapse markers.
+        // This is acceptable per the design doc (migration edge case).
+
+        // Get all reviews on the PR. Octokit's GetAll handles pagination automatically.
+        var allReviews = await ExecuteWithResilienceAsync(
+            client => client.PullRequest.Review.GetAll(Owner, Repo, prNumber),
+            "DismissPreviousReview.GetAllReviews", ct);
+
+        // Filter reviews that contain the marker in their body AND are in a dismissible state.
+        // GitHub's dismiss API only works on reviews with state CHANGES_REQUESTED or APPROVED.
+        // Reviews with state COMMENTED return 422 "Can not dismiss a commented pull request review".
+        var matchingReviews = allReviews
+            .Where(r => r.Body?.Contains(marker, StringComparison.Ordinal) == true
+                        && (r.State.Value == Octokit.PullRequestReviewState.ChangesRequested
+                            || r.State.Value == Octokit.PullRequestReviewState.Approved))
+            .ToList();
+
+        if (matchingReviews.Count == 0)
+        {
+            return; // No-op when no matching reviews found.
+        }
+
+        Log.Information(
+            "Found {Count} previous review(s) to dismiss on PR #{PrNumber}",
+            matchingReviews.Count, prNumber);
+
+        // Dismiss each matching review. Log warning and continue on individual failures.
+        foreach (var review in matchingReviews)
+        {
+            try
+            {
+                await ExecuteWithResilienceAsync(
+                    async client =>
+                    {
+                        var url = new Uri(
+                            $"repos/{Owner}/{Repo}/pulls/{prNumber}/reviews/{review.Id}/dismissals",
+                            UriKind.Relative);
+                        var payload = new { message = reason, @event = "DISMISS" };
+                        await client.Connection.Put<object>(url, payload);
+                        return true;
+                    },
+                    $"DismissPreviousReview.Dismiss({review.Id})", ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Log.Warning(
+                    ex,
+                    "Failed to dismiss review {ReviewId} on PR #{PrNumber}. Continuing with remaining reviews.",
+                    review.Id, prNumber);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Maps the pipeline's <see cref="PullRequestReviewType"/> to the GitHub API event string.
+    /// </summary>
+    private static string MapReviewEventString(PullRequestReviewType type) => type switch
+    {
+        PullRequestReviewType.Comment => "COMMENT",
+        PullRequestReviewType.RequestChanges => "REQUEST_CHANGES",
+        PullRequestReviewType.Approve => "APPROVE",
+        _ => "COMMENT"
+    };
+
+    /// <summary>
+    /// Maps the pipeline's <see cref="PullRequestReviewType"/> to Octokit's <see cref="Octokit.PullRequestReviewEvent"/>.
+    /// </summary>
+    private static Octokit.PullRequestReviewEvent MapReviewEvent(PullRequestReviewType type) => type switch
+    {
+        PullRequestReviewType.Comment => Octokit.PullRequestReviewEvent.Comment,
+        PullRequestReviewType.RequestChanges => Octokit.PullRequestReviewEvent.RequestChanges,
+        PullRequestReviewType.Approve => Octokit.PullRequestReviewEvent.Approve,
+        _ => Octokit.PullRequestReviewEvent.Comment
+    };
+
+    /// <inheritdoc />
+    public async Task<long?> FindExistingReviewCommentAsync(int prNumber, string marker, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(marker);
+
+        var comments = await ExecuteWithResilienceAsync(
+            client => client.Issue.Comment.GetAllForIssue(Owner, Repo, prNumber),
+            "FindExistingReviewComment", ct);
+
+        var match = comments.FirstOrDefault(c => c.Body?.Contains(marker, StringComparison.Ordinal) == true);
+        return match?.Id;
+    }
+
+    /// <inheritdoc />
+    public async Task UpdateReviewCommentAsync(int prNumber, long commentId, string body, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        await ExecuteWithResilienceAsync(
+            async client =>
+            {
+                // Use the raw Connection API to avoid Octokit's int limitation on comment IDs.
+                // GitHub comment IDs can exceed int.MaxValue on active repositories.
+                var url = new Uri($"repos/{Owner}/{Repo}/issues/comments/{commentId}", UriKind.Relative);
+                var payload = new { body };
+                await client.Connection.Patch<object>(url, payload);
+                return true;
+            },
+            "UpdateReviewComment", ct);
+    }
+
+    /// <inheritdoc />
+    public async Task AddPrLabelAsync(int prNumber, string label, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(label);
+
+        await ExecuteWithResilienceAsync(
+            client => client.Issue.Labels.AddToIssue(Owner, Repo, prNumber, new[] { label }),
+            "AddPrLabel", ct);
+    }
+
+    /// <inheritdoc />
+    public async Task RemovePrLabelAsync(int prNumber, string label, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(label);
+
+        try
+        {
+            await ExecuteWithResilienceAsync(
+                async client => { await client.Issue.Labels.RemoveFromIssue(Owner, Repo, prNumber, label); return true; },
+                "RemovePrLabel", ct);
+        }
+        catch (Octokit.NotFoundException)
+        {
+            // Label not present on PR — no-op
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<bool> EnsureAgentLabelsForPullRequestsAsync(CancellationToken ct)
+    {
+        // On GitHub, PRs share the issues label namespace — labels created for issues
+        // are already available for PRs. No additional setup needed.
+        return Task.FromResult(true);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> ExtractLinkedIssuesAsync(int prNumber, CancellationToken ct)
+    {
+        var issueNumbers = new HashSet<string>(StringComparer.Ordinal);
+
+        // Priority (a): Try GitHub timeline events API for closing references
+        try
+        {
+            var events = await ExecuteWithResilienceAsync(
+                client => client.Issue.Timeline.GetAllForIssue(Owner, Repo, prNumber),
+                "ExtractLinkedIssues.Timeline", ct);
+
+            foreach (var evt in events)
+            {
+                // Look for cross-referenced events that indicate closing references
+                if (evt.Event == EventInfoState.Crossreferenced && evt.Source?.Issue != null)
+                {
+                    issueNumbers.Add(evt.Source.Issue.Number.ToString());
+                }
+            }
+
+            if (issueNumbers.Count > 0)
+            {
+                // API found results — still parse title/body for additional references
+                // that may not appear in timeline events (e.g., "Related to #42" without closing keyword).
+                // The HashSet deduplicates across all sources.
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warning(ex, "Failed to extract linked issues via timeline API for PR #{PrNumber}, falling back to parsing", prNumber);
+        }
+
+        // Priority (b) and (c): Parse PR title and body for issue references
+        var pr = await ExecuteWithResilienceAsync(
+            client => client.PullRequest.Get(Owner, Repo, prNumber),
+            "ExtractLinkedIssues.GetPr", ct);
+
+        // Parse title first (priority b), then body (priority c)
+        ParseIssueReferences(pr.Title, issueNumbers);
+        ParseIssueReferences(pr.Body, issueNumbers);
+
+        return issueNumbers.ToList().AsReadOnly();
+    }
+
+    /// <summary>
+    /// Parses a text string for GitHub issue reference patterns and adds found issue numbers to the set.
+    /// Recognizes: #N, owner/repo#N, GH-N, closes #N, fixes #N, resolves #N (case-insensitive).
+    /// </summary>
+    internal static void ParseIssueReferences(string? text, HashSet<string> issueNumbers)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return;
+
+        // Extract from closing keywords first
+        foreach (Match match in ClosingKeywordPattern.Matches(text))
+        {
+            issueNumbers.Add(match.Groups[1].Value);
+        }
+
+        // Extract from cross-repo references
+        foreach (Match match in CrossRepoPattern.Matches(text))
+        {
+            issueNumbers.Add(match.Groups[1].Value);
+        }
+
+        // Extract from GH-N references
+        foreach (Match match in GhPattern.Matches(text))
+        {
+            issueNumbers.Add(match.Groups[1].Value);
+        }
+
+        // Extract from simple #N references
+        foreach (Match match in SimpleHashPattern.Matches(text))
+        {
+            issueNumbers.Add(match.Groups[1].Value);
         }
     }
 

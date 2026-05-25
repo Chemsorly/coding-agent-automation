@@ -32,6 +32,9 @@ public sealed class PipelineLoopService : BackgroundService
     /// <summary>Provider cache keyed by IssueProviderId. Reused across cycles.</summary>
     private readonly Dictionary<string, IIssueProvider> _providerCache = new();
 
+    /// <summary>Repository provider cache keyed by RepoProviderId. Reused across cycles.</summary>
+    private readonly Dictionary<string, IRepositoryProvider> _repoProviderCache = new();
+
     /// <summary>Per-template runtime status. Immutable records swapped atomically.</summary>
     private readonly ConcurrentDictionary<string, ConfigStatusSnapshot> _templateStatuses = new();
 
@@ -249,6 +252,52 @@ public sealed class PipelineLoopService : BackgroundService
     }
 
     /// <summary>
+    /// Reconciles the repository provider cache with the needed set of RepoProviderIds.
+    /// Evicts stale entries (disposes before removing), creates missing entries.
+    /// </summary>
+    private async Task ReconcileRepoProviderCacheAsync(
+        HashSet<string> neededRepoProviderIds,
+        IReadOnlyList<ProviderConfig> repoProviderConfigs,
+        CancellationToken ct)
+    {
+        // Evict stale entries
+        var staleKeys = _repoProviderCache.Keys.Where(k => !neededRepoProviderIds.Contains(k)).ToList();
+        foreach (var key in staleKeys)
+        {
+            if (_repoProviderCache.TryGetValue(key, out var provider))
+            {
+                try { await provider.DisposeAsync(); }
+                catch (Exception ex) { _logger.Warning(ex, "Failed to dispose cached repo provider {ProviderId}", key); }
+                _repoProviderCache.Remove(key);
+            }
+        }
+
+        // Create missing entries
+        foreach (var neededId in neededRepoProviderIds)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!_repoProviderCache.ContainsKey(neededId))
+            {
+                var config = repoProviderConfigs.FirstOrDefault(c => c.Id == neededId);
+                if (config is not null)
+                {
+                    try
+                    {
+                        var provider = _providerFactory.CreateRepositoryProvider(config);
+                        if (provider is not null)
+                            _repoProviderCache[neededId] = provider;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex, "Failed to create repo provider for {ProviderId}", neededId);
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Evicts a provider from the cache due to an auth error. Disposes and removes it
     /// so the next cycle recreates a fresh instance.
     /// </summary>
@@ -324,8 +373,28 @@ public sealed class PipelineLoopService : BackgroundService
             var issueProviderConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
             await ReconcileProviderCacheAsync(neededIds, issueProviderConfigs, ct);
 
-            // Step 3: Poll once per pollable template
+            // Reconcile repo provider cache for templates with ReviewEnabled
+            var neededRepoIds = enabledTemplates
+                .Where(t => t.ReviewEnabled)
+                .Select(t => t.RepoProviderId)
+                .ToHashSet();
+            if (neededRepoIds.Count > 0)
+            {
+                try
+                {
+                    var repoProviderConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+                    await ReconcileRepoProviderCacheAsync(neededRepoIds, repoProviderConfigs, ct);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to reconcile repo provider cache, PR polling will be skipped this cycle");
+                }
+            }
+
+            // Step 3: Poll once per pollable template (issues + PRs)
             var issueQueues = new Dictionary<string, List<IssueSummary>>();
+            var prQueues = new Dictionary<string, List<PullRequestSummary>>();
             for (int i = 0; i < pollableTemplates.Count; i++)
             {
                 if (_stopRequested || ct.IsCancellationRequested) break;
@@ -341,27 +410,65 @@ public sealed class PipelineLoopService : BackgroundService
 
                 try
                 {
-                    if (!_providerCache.TryGetValue(template.IssueProviderId, out var provider))
+                    // ── Issue polling (only when ImplementationEnabled) ──
+                    if (template.ImplementationEnabled)
                     {
-                        // Provider not in cache (config issue) — skip
-                        _templateStatuses[template.Id] = new ConfigStatusSnapshot
+                        if (!_providerCache.TryGetValue(template.IssueProviderId, out var provider))
                         {
-                            LastPollTime = DateTimeOffset.UtcNow,
-                            LastError = $"Issue provider '{template.IssueProviderId}' not found in cache.",
-                            IsCurrentlyPolling = false
-                        };
+                            // Provider not in cache (config issue) — skip issues
+                            _templateStatuses[template.Id] = new ConfigStatusSnapshot
+                            {
+                                LastPollTime = DateTimeOffset.UtcNow,
+                                LastError = $"Issue provider '{template.IssueProviderId}' not found in cache.",
+                                IsCurrentlyPolling = false
+                            };
+                            issueQueues[template.Id] = new List<IssueSummary>();
+                        }
+                        else
+                        {
+                            var issues = await FetchAgentNextIssuesForProviderAsync(provider, maxPagesToFetch, ct);
+                            issueQueues[template.Id] = issues;
+                        }
+                    }
+                    else
+                    {
                         issueQueues[template.Id] = new List<IssueSummary>();
-                        continue;
                     }
 
-                    var issues = await FetchAgentNextIssuesForProviderAsync(provider, maxPagesToFetch, ct);
-                    issueQueues[template.Id] = issues;
+                    // ── PR polling (only when ReviewEnabled) ──
+                    // Wrapped in its own try-catch so that a PR polling failure does not
+                    // discard the already-fetched issue queue for this template.
+                    prQueues[template.Id] = new List<PullRequestSummary>();
+                    if (template.ReviewEnabled)
+                    {
+                        try
+                        {
+                            if (!_repoProviderCache.TryGetValue(template.RepoProviderId, out var repoProvider))
+                            {
+                                _logger.Warning("Template '{TemplateName}': repo provider '{RepoProviderId}' not found in cache, skipping PR polling",
+                                    template.Name, template.RepoProviderId);
+                            }
+                            else
+                            {
+                                var prs = await FetchAgentNextPullRequestsAsync(repoProvider, maxPagesToFetch, ct);
+                                prQueues[template.Id] = prs;
+                            }
+                        }
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception ex)
+                        {
+                            _logger.Warning(ex, "Template '{TemplateName}' PR polling failed, issue polling unaffected: {Error}",
+                                template.Name, ex.Message);
+                        }
+                    }
 
                     // Success — update status
+                    var issueCount = issueQueues[template.Id].Count;
+                    var prCount = prQueues[template.Id].Count;
                     _templateStatuses[template.Id] = new ConfigStatusSnapshot
                     {
                         LastPollTime = DateTimeOffset.UtcNow,
-                        LastPollIssueCount = issues.Count,
+                        LastPollIssueCount = issueCount + prCount,
                         LastError = null,
                         ConsecutiveFailures = 0,
                         RateLimitResetAt = null,
@@ -383,6 +490,7 @@ public sealed class PipelineLoopService : BackgroundService
                         IsCurrentlyPolling = false
                     };
                     issueQueues[template.Id] = new List<IssueSummary>();
+                    prQueues[template.Id] = new List<PullRequestSummary>();
                 }
                 catch (Exception ex) when (IsAuthError(ex))
                 {
@@ -397,6 +505,7 @@ public sealed class PipelineLoopService : BackgroundService
                         IsCurrentlyPolling = false
                     };
                     issueQueues[template.Id] = new List<IssueSummary>();
+                    prQueues[template.Id] = new List<PullRequestSummary>();
                 }
                 catch (Exception ex)
                 {
@@ -410,6 +519,7 @@ public sealed class PipelineLoopService : BackgroundService
                         IsCurrentlyPolling = false
                     };
                     issueQueues[template.Id] = new List<IssueSummary>();
+                    prQueues[template.Id] = new List<PullRequestSummary>();
                 }
             }
 
@@ -438,82 +548,186 @@ public sealed class PipelineLoopService : BackgroundService
                 continue;
             }
 
-            // Step 5: Fair dispatch — round-robin across templates
+            // Step 5: Fair dispatch — interleaved round-robin between issues and PRs
+            // Alternates between dispatching one round of issues (one per template) and one round
+            // of PRs (one per template) to ensure both queue types get fair access to the budget.
+            // Within each round, templates are served round-robin (one item per template per pass).
             if (_jobDispatcher != null)
             {
                 int remaining = maxRunsPerCycle > 0 ? maxRunsPerCycle : int.MaxValue;
+
+                // Track which queue type to dispatch next (true = issue turn, false = PR turn)
+                bool issuesTurn = true;
+
                 while (remaining > 0)
                 {
                     if (_stopRequested || ct.IsCancellationRequested) break;
 
-                    int dispatchedThisPass = 0;
-                    foreach (var template in pollableTemplates)
+                    bool issueMadeProgress = false;
+                    bool prMadeProgress = false;
+
+                    bool hasIssues = HasEligibleIssues(pollableTemplates, issueQueues);
+                    bool hasPrs = HasEligiblePrs(pollableTemplates, prQueues);
+
+                    // ── Issue dispatch (one per template per pass) ──
+                    if (hasIssues && (issuesTurn || !hasPrs))
                     {
-                        if (remaining <= 0) break;
-                        if (!issueQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
-                            continue;
-
-                        // Dequeue next valid issue
-                        IssueSummary? issue = null;
-                        while (queue.Count > 0)
+                        foreach (var template in pollableTemplates)
                         {
-                            var candidate = queue[0];
-                            queue.RemoveAt(0);
-
-                            // Skip errored/needs-refinement
-                            if (candidate.Labels.Contains(AgentLabels.Error) || candidate.Labels.Contains(AgentLabels.NeedsRefinement))
-                                continue;
-                            // Skip already processing
-                            if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
-                                continue;
-                            if (_jobDispatcher.IsIssueBeingProcessedOrQueued(candidate.Identifier))
+                            if (remaining <= 0) break;
+                            if (_stopRequested || ct.IsCancellationRequested) break;
+                            if (!template.ImplementationEnabled) continue;
+                            if (!issueQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
                                 continue;
 
-                            issue = candidate;
-                            break;
-                        }
-
-                        if (issue is null) continue;
-
-                        CurrentIssueIdentifier = issue.Identifier;
-                        StatusMessage = $"🔄 Dispatching #{issue.Identifier} from '{template.Name}'";
-                        NotifyChange();
-
-                        try
-                        {
-                            var dispatched = await _jobDispatcher.TryDispatchAsync(
-                                issue.Identifier,
-                                template.IssueProviderId, template.RepoProviderId,
-                                template.BrainProviderId, template.PipelineProviderId,
-                                initiatedBy: "loop",
-                                stoppingToken,
-                                issueTitle: issue.Title);
-
-                            if (dispatched)
+                            // Dequeue next valid issue
+                            IssueSummary? issue = null;
+                            while (queue.Count > 0)
                             {
+                                var candidate = queue[0];
+                                queue.RemoveAt(0);
+
+                                // Skip errored/needs-refinement
+                                if (candidate.Labels.Contains(AgentLabels.Error) || candidate.Labels.Contains(AgentLabels.NeedsRefinement))
+                                    continue;
+                                // Skip already processing
+                                if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
+                                    continue;
+                                if (_jobDispatcher.IsIssueBeingProcessedOrQueued(candidate.Identifier))
+                                    continue;
+
+                                issue = candidate;
+                                break;
+                            }
+
+                            if (issue is null) continue;
+
+                            CurrentIssueIdentifier = issue.Identifier;
+                            StatusMessage = $"🔄 Dispatching #{issue.Identifier} from '{template.Name}'";
+                            NotifyChange();
+
+                            try
+                            {
+                                var dispatched = await _jobDispatcher.TryDispatchAsync(
+                                    issue.Identifier,
+                                    template.IssueProviderId, template.RepoProviderId,
+                                    template.BrainProviderId, template.PipelineProviderId,
+                                    initiatedBy: "loop",
+                                    stoppingToken,
+                                    issueTitle: issue.Title);
+
+                                if (dispatched)
+                                {
+                                    ProcessedCount++;
+                                    remaining--;
+                                    issueMadeProgress = true;
+                                    _logger.Information("Dispatched issue #{Issue} from template '{Template}'",
+                                        issue.Identifier, template.Name);
+                                }
+                            }
+                            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                            {
+                                break;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.Error(ex, "Dispatch failed for issue #{Issue} from template '{Template}'",
+                                    issue.Identifier, template.Name);
+                                FailedCount++;
                                 ProcessedCount++;
                                 remaining--;
-                                dispatchedThisPass++;
-                                _logger.Information("Dispatched issue #{Issue} from template '{Template}'",
-                                    issue.Identifier, template.Name);
+                                issueMadeProgress = true;
                             }
-                        }
-                        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                        {
-                            break;
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.Error(ex, "Dispatch failed for issue #{Issue} from template '{Template}'",
-                                issue.Identifier, template.Name);
-                            FailedCount++;
-                            ProcessedCount++;
-                            remaining--;
-                            dispatchedThisPass++;
                         }
                     }
 
-                    if (dispatchedThisPass == 0) break; // All queues empty
+                    if (_stopRequested || ct.IsCancellationRequested || remaining <= 0) break;
+
+                    // ── PR review dispatch (one per template per pass) ──
+                    if (hasPrs && (!issuesTurn || !hasIssues))
+                    {
+                        foreach (var template in pollableTemplates)
+                        {
+                            if (remaining <= 0) break;
+                            if (_stopRequested || ct.IsCancellationRequested) break;
+                            if (!template.ReviewEnabled) continue;
+                            if (!prQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
+                                continue;
+
+                            // Dequeue next valid PR
+                            PullRequestSummary? pr = null;
+                            while (queue.Count > 0)
+                            {
+                                var candidate = queue[0];
+                                queue.RemoveAt(0);
+
+                                // Skip PRs with terminal/in-progress status labels
+                                if (candidate.Labels.Contains(AgentLabels.Error) ||
+                                    candidate.Labels.Contains(AgentLabels.InProgress) ||
+                                    candidate.Labels.Contains(AgentLabels.Done) ||
+                                    candidate.Labels.Contains(AgentLabels.Cancelled))
+                                    continue;
+                                // Skip already processing
+                                if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
+                                    continue;
+                                if (_jobDispatcher.IsIssueBeingProcessedOrQueued(candidate.Identifier))
+                                    continue;
+
+                                pr = candidate;
+                                break;
+                            }
+
+                            if (pr is null) continue;
+
+                            CurrentIssueIdentifier = pr.Identifier;
+                            StatusMessage = $"🔄 Dispatching PR #{pr.Identifier} review from '{template.Name}'";
+                            NotifyChange();
+
+                            try
+                            {
+                                var dispatched = await _jobDispatcher.TryDispatchReviewAsync(
+                                    pr.Identifier,
+                                    pr.BranchName,
+                                    pr.Title,
+                                    pr.Description,
+                                    pr.Url,
+                                    pr.TargetBranch,
+                                    template.IssueProviderId,
+                                    template.RepoProviderId,
+                                    template.BrainProviderId,
+                                    initiatedBy: "loop",
+                                    stoppingToken);
+
+                                if (dispatched)
+                                {
+                                    ProcessedCount++;
+                                    remaining--;
+                                    prMadeProgress = true;
+                                    _logger.Information("Dispatched PR #{PrIdentifier} review from template '{Template}'",
+                                        pr.Identifier, template.Name);
+                                }
+                            }
+                            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                            {
+                                break;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.Error(ex, "Dispatch failed for PR #{PrIdentifier} review from template '{Template}'",
+                                    pr.Identifier, template.Name);
+                                FailedCount++;
+                                ProcessedCount++;
+                                remaining--;
+                                prMadeProgress = true;
+                            }
+                        }
+                    }
+
+                    // If neither queue made progress, both are exhausted
+                    if (!issueMadeProgress && !prMadeProgress) break;
+
+                    // Alternate turns for next iteration
+                    issuesTurn = !issuesTurn;
                 }
             }
 
@@ -525,6 +739,40 @@ public sealed class PipelineLoopService : BackgroundService
             NotifyChange();
             await DelayOrStop(pollInterval, ct);
         }
+    }
+
+    /// <summary>
+    /// Checks whether any pollable template has eligible issues remaining in its queue.
+    /// Used by the fair alternation logic to allow the other queue to consume remaining budget.
+    /// </summary>
+    private static bool HasEligibleIssues(
+        List<PipelineJobTemplate> pollableTemplates,
+        Dictionary<string, List<IssueSummary>> issueQueues)
+    {
+        foreach (var template in pollableTemplates)
+        {
+            if (!template.ImplementationEnabled) continue;
+            if (issueQueues.TryGetValue(template.Id, out var queue) && queue.Count > 0)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Checks whether any pollable template has eligible PRs remaining in its queue.
+    /// Used by the fair alternation logic to allow the other queue to consume remaining budget.
+    /// </summary>
+    private static bool HasEligiblePrs(
+        List<PipelineJobTemplate> pollableTemplates,
+        Dictionary<string, List<PullRequestSummary>> prQueues)
+    {
+        foreach (var template in pollableTemplates)
+        {
+            if (!template.ReviewEnabled) continue;
+            if (prQueues.TryGetValue(template.Id, out var queue) && queue.Count > 0)
+                return true;
+        }
+        return false;
     }
 
     /// <summary>Determines if an exception is an auth-related error (401/403/credential).</summary>
@@ -559,6 +807,45 @@ public sealed class PipelineLoopService : BackgroundService
         }
 
         // FIFO: oldest first
+        result.Sort((a, b) =>
+        {
+            var aDate = a.CreatedAt ?? DateTime.MaxValue;
+            var bDate = b.CreatedAt ?? DateTime.MaxValue;
+            return aDate.CompareTo(bDate);
+        });
+
+        return result;
+    }
+
+    /// <summary>
+    /// Fetches agent:next pull requests from a repository provider, filters out ineligible PRs,
+    /// and orders by CreatedAt ascending (FIFO). PRs without CreatedAt sort last.
+    /// </summary>
+    private async Task<List<PullRequestSummary>> FetchAgentNextPullRequestsAsync(
+        IRepositoryProvider repoProvider, int maxPages, CancellationToken ct)
+    {
+        var result = new List<PullRequestSummary>();
+        int page = 1;
+        const int pageSize = PipelineConstants.DefaultPageSize;
+
+        while (true)
+        {
+            var pagedResult = await repoProvider.ListOpenPullRequestsAsync(page, pageSize,
+                new[] { AgentLabels.Next }, ct);
+            result.AddRange(pagedResult.Items);
+            if (!pagedResult.HasMore) break;
+            if (page >= maxPages) break;
+            page++;
+        }
+
+        // Filter: skip PRs with terminal/in-progress status labels
+        result.RemoveAll(pr =>
+            pr.Labels.Contains(AgentLabels.Error) ||
+            pr.Labels.Contains(AgentLabels.InProgress) ||
+            pr.Labels.Contains(AgentLabels.Done) ||
+            pr.Labels.Contains(AgentLabels.Cancelled));
+
+        // FIFO: oldest first, PRs without CreatedAt go last
         result.Sort((a, b) =>
         {
             var aDate = a.CreatedAt ?? DateTime.MaxValue;
@@ -605,6 +892,15 @@ public sealed class PipelineLoopService : BackgroundService
             catch (Exception ex) { _logger.Warning(ex, "Failed to dispose cached provider {ProviderId}", kvp.Key); }
         }
         _providerCache.Clear();
+
+        // Dispose all cached repo providers
+        foreach (var kvp in _repoProviderCache)
+        {
+            try { await kvp.Value.DisposeAsync(); }
+            catch (Exception ex) { _logger.Warning(ex, "Failed to dispose cached repo provider {ProviderId}", kvp.Key); }
+        }
+        _repoProviderCache.Clear();
+
         _templateStatuses.Clear();
 
         NotifyChange();

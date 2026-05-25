@@ -49,9 +49,13 @@
                      @onclick="() => SelectNode(SettingsNodes.PipelinePrompts)">
                     Prompts
                 </div>
-                <div class="tree-node @(SelectedNode == SettingsNodes.PipelineQuality ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.PipelineQuality)">
-                    Quality Gates
+                <div class="tree-node @(SelectedNode == SettingsNodes.PipelineImplementation ? "active" : "")"
+                     @onclick="() => SelectNode(SettingsNodes.PipelineImplementation)">
+                    Implementation
+                </div>
+                <div class="tree-node @(SelectedNode == SettingsNodes.PipelineReview ? "active" : "")"
+                     @onclick="() => SelectNode(SettingsNodes.PipelineReview)">
+                    Review
                 </div>
                 <div class="tree-node @(SelectedNode == SettingsNodes.PipelineConsolidation ? "active" : "")"
                      @onclick="() => SelectNode(SettingsNodes.PipelineConsolidation)">

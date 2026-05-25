@@ -104,6 +104,28 @@ public sealed record JobAssignmentMessage
 
     [Key(18)]
     public IReadOnlyList<ReviewerConfiguration> ReviewerConfigs { get; init; } = [];
+
+    /// <summary>
+    /// Pre-fetched linked issue contexts for PR review runs. Populated at dispatch time
+    /// so the agent doesn't need IIssueProvider credentials. Null for implementation runs
+    /// or when no linked issues were found.
+    /// </summary>
+    [Key(19)]
+    public IReadOnlyList<LinkedIssueContext>? LinkedIssueContexts { get; init; }
+
+    /// <summary>
+    /// Discriminates implementation vs review runs. Defaults to Implementation for backward compatibility.
+    /// </summary>
+    [Key(20)]
+    public PipelineRunType RunType { get; init; } = PipelineRunType.Implementation;
+
+    /// <summary>PR target branch for review runs (e.g., "main", "develop"). Used for diff computation.</summary>
+    [Key(21)]
+    public string? ReviewPrTargetBranch { get; init; }
+
+    /// <summary>PR body/description for review runs.</summary>
+    [Key(22)]
+    public string? ReviewPrDescription { get; init; }
 }
 
 /// <summary>

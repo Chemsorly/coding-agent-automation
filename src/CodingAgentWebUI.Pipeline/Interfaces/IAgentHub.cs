@@ -30,7 +30,7 @@ public interface IAgentHub
 
     // Issue operations (proxied through orchestrator)
     Task RequestPostComment(string jobId, CommentType commentType, CommentPayload payload);
-    Task RequestLabelChange(string jobId, string newLabel);
+    Task RequestLabelChange(string jobId, string newLabel, int targetKind = 0);
 
     // Token refresh
     Task<TokenRefreshResponse> RequestTokenRefresh(string jobId, ProviderKind providerKind);

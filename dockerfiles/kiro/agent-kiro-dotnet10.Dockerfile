@@ -7,9 +7,10 @@
 
 # Stage 1: Build
 # Pinned to 10.0.200 feature band to match global.json (rollForward: latestFeature)
-# --platform=linux/arm64: Forces native ARM execution on ARM CI runners (avoids .NET QEMU crash)
-# Cross-compiles to linux-x64 via RID so the output runs in the amd64 runtime stage.
-FROM --platform=linux/arm64 mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
+# --platform=$BUILDPLATFORM: SDK runs natively on the build host (ARM64 in CI, x64 locally).
+# Cross-compiles to the target platform via -a $TARGETARCH.
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
+ARG TARGETARCH
 WORKDIR /src
 
 # Copy solution and project files first for layer caching
@@ -24,15 +25,16 @@ COPY src/CodingAgentWebUI/CodingAgentWebUI.csproj src/CodingAgentWebUI/
 COPY src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj src/CodingAgentWebUI.Agent/
 COPY src/CodingAgentWebUI.Agent.KiroCli/CodingAgentWebUI.Agent.KiroCli.csproj src/CodingAgentWebUI.Agent.KiroCli/
 COPY src/CodingAgentWebUI.Agent.OpenCode/CodingAgentWebUI.Agent.OpenCode.csproj src/CodingAgentWebUI.Agent.OpenCode/
-RUN dotnet restore src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -r linux-x64
+RUN dotnet restore src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -a $TARGETARCH
 
 # Copy everything else and publish the Agent project
 COPY . .
-RUN dotnet publish src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -c Release -r linux-x64 --self-contained false -o /app/publish
+RUN dotnet publish src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -c Release -a $TARGETARCH --self-contained false -o /app/publish
 
 # Stage 2: Runtime (full SDK — agent runs dotnet build/test for quality gates)
 # Pinned to 10.0.200 feature band to match global.json (rollForward: latestFeature)
 FROM mcr.microsoft.com/dotnet/sdk:10.0.300 AS runtime
+ARG TARGETARCH
 
 # Install dependencies for Kiro CLI and pipeline execution
 RUN apt-get update && \
@@ -56,8 +58,9 @@ ENV PATH="/home/ubuntu/.local/bin:${PATH}"
 # (parent agent hangs indefinitely after dispatching parallel subagents, 2/3 runs affected)
 # Tested: 2.1.0 and 2.1.1 both reproduce. Falling back to 2.0.1.
 ARG KIRO_CLI_VERSION=2.0.1
-RUN curl --proto '=https' --tlsv1.2 -sSf \
-        "https://desktop-release.q.us-east-1.amazonaws.com/${KIRO_CLI_VERSION}/kirocli-x86_64-linux.zip" \
+RUN KIRO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") && \
+    curl --proto '=https' --tlsv1.2 -sSf \
+        "https://desktop-release.q.us-east-1.amazonaws.com/${KIRO_CLI_VERSION}/kirocli-${KIRO_ARCH}-linux.zip" \
         -o /tmp/kirocli.zip && \
     unzip /tmp/kirocli.zip -d /tmp/kirocli && \
     /tmp/kirocli/kirocli/install.sh --no-confirm && \

@@ -17,8 +17,82 @@ An automated development pipeline that uses AI coding agents to implement issues
 - **Confidence gate** — After analysis, the pipeline evaluates whether the issue is clear enough to implement. Vague or blocked issues are rejected with specific feedback rather than producing bad code.
 - **Quality gates** — Automated checks that must pass before a PR is created: compilation, tests, code coverage, and optionally external CI pipelines.
 - **Closed-loop mode** — The pipeline polls for labeled issues and processes them autonomously without manual dispatch. Configurable poll interval and backoff.
+- **PR review pipeline** — A parallel workflow that picks up pull requests labeled `agent:next` and runs automated multi-agent code review, posting findings as a PR review comment. Uses the same dispatch mechanism and label lifecycle as the implementation pipeline.
 - **Label routing** — Repository labels determine which agent container handles the job, which quality gates run, and which review agents are used.
 - **Harness suggestions** — Automated improvement recommendations for the pipeline itself, derived from accumulated run feedback patterns.
+
+## PR Review Pipeline
+
+The pipeline can also perform automated code review on pull requests. This uses the same `agent:next` label mechanism as the implementation pipeline but runs a shorter workflow focused on review.
+
+### How to Use
+
+1. Add the `agent:next` label to any open pull request
+2. The pipeline picks up the PR on the next poll cycle
+3. The agent clones the repo, checks out the PR branch, and runs multi-agent code review
+4. Review findings are posted as a PR review comment
+5. The label transitions: `agent:next` → `agent:in-progress` → `agent:done` (or `agent:error`)
+
+### Expected Workflow
+
+```
+Label PR with agent:next → Pipeline picks up PR → Clone → Checkout PR branch
+  → [Brain sync] → Extract linked issues → Code review → Post findings → Done
+```
+
+Draft PRs are included in review dispatch (a warning is shown in the UI). To re-review after changes, remove `agent:done` and re-add `agent:next`.
+
+### Inline Review Comments
+
+The pipeline can post code review findings as native inline comments on specific file:line positions in the diff, giving PR authors precise feedback at the exact location of each issue — in addition to the summary body comment.
+
+#### How to Enable
+
+Inline comments are enabled by default. To disable them, set `InlineComments.Enabled` to `false` in the Code Review configuration (via the web UI under Settings → Quality Gates → Code Review → Inline Review Comments, or directly in the pipeline config JSON):
+
+```json
+{
+  "CodeReview": {
+    "MaxIterations": 2,
+    "ReviewIsolation": "Isolated",
+    "InlineComments": {
+      "Enabled": true,
+      "SeverityThreshold": "Warning",
+      "MaxInlineComments": 15,
+      "OrderBySeverity": true,
+      "MaxRetries": 1
+    }
+  }
+}
+```
+
+#### Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `Enabled` | bool | `true` | Master switch. When false, body-only reviews are posted (existing behavior) |
+| `SeverityThreshold` | enum | `Warning` | Minimum severity for inline posting. Options: `Suggestion`, `Warning`, `Critical` |
+| `MaxInlineComments` | int | `15` | Maximum inline comments per review (range: 1–50). Highest-severity findings are prioritized |
+| `OrderBySeverity` | bool | `true` | Sort findings by severity (Critical first) when selecting which to post inline |
+| `MaxRetries` | int | `1` | Times to re-ask the agent for structured output if it doesn't include file:line references (range: 0–5). Each retry adds one LLM API call per agent |
+
+#### Behavior
+
+- **When enabled**: Review agents are instructed to output findings in `[SEVERITY] path/to/file.ext:LINE — message` format. The pipeline parses these, filters by severity threshold, caps at the configured limit, and posts them as inline comments via the GitHub Pull Request Reviews API.
+- **When disabled**: The pipeline posts a single body-level review comment (existing behavior). No parsing or prompt enhancement occurs.
+- **Graceful degradation**: If structured output parsing fails, the GitHub API rejects inline comments (HTTP 422), or any other error occurs in the inline path, the pipeline falls back to body-only submission. Inline comments never fail the pipeline.
+- **Findings without location**: Findings that don't reference a specific file:line appear only in the body summary, regardless of inline settings.
+
+### Configuration
+
+Each pipeline job template has two independent toggles:
+
+| Property | Default | Effect |
+|----------|---------|--------|
+| `ImplementationEnabled` | `true` | Template processes issues for implementation |
+| `ReviewEnabled` | `true` | Template processes PRs for code review |
+
+Set `ReviewEnabled: false` to disable PR review for a template, or `ImplementationEnabled: false` to create a review-only template. See [Pipeline Orchestration](docs/pipeline-orchestration.md) for details.
 
 ## Documentation
 
@@ -34,10 +108,11 @@ Detailed documentation lives in the [`docs/`](docs/) folder. Suggested reading o
 
 - **Multi-agent architecture** — Multiple agent containers run in parallel, picking jobs from a shared queue
 - **Multi-stack support** — Label-based routing dispatches jobs to the right agent (dotnet, python, java) with stack-specific quality gates and review agents
+- **PR review pipeline** — Automated code review for pull requests using the same multi-agent review infrastructure, triggered by labeling PRs with `agent:next`
 - **Brain repository** — Shared knowledge repo that agents read/write across runs
 - **Multi-agent code review** — Specialized review agents (Correctness, Security, AcceptanceCriteria, etc.) analyze changes sequentially
 - **Confidence gate** — Rejects vague issues with specific feedback before attempting implementation
-- **Closed-loop automation** — Polls for labeled issues and processes them autonomously
+- **Closed-loop automation** — Polls for labeled issues and PRs, processing them autonomously
 - **PR rework** — Re-queue an issue with an open PR to incorporate review feedback
 - **External CI integration** — Optionally waits for CI pipelines to pass before creating the final PR
 - **Agent feedback loops** — Structured feedback collected after every run for continuous improvement

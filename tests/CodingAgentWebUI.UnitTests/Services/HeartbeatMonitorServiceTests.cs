@@ -15,14 +15,14 @@ namespace CodingAgentWebUI.UnitTests.Services;
 /// Unit tests for HeartbeatMonitorService — validates sweep logic for stale heartbeats,
 /// grace period handling, and disconnected agent cleanup.
 /// </summary>
-public class HeartbeatMonitorServiceTests
+public class HeartbeatMonitorServiceTests : IDisposable
 {
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
     private readonly Mock<IConfigurationStore> _mockConfigStore;
-    private readonly Mock<IIssueProviderLabelSwapper> _mockLabelSwapper;
+    private readonly Mock<ILabelSwapper> _mockLabelSwapper;
     private readonly Mock<ILogger> _mockLogger;
     private readonly HeartbeatMonitorService _monitor;
 
@@ -34,7 +34,7 @@ public class HeartbeatMonitorServiceTests
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
         _mockProviderFactory = new Mock<IProviderFactory>();
         _mockConfigStore = new Mock<IConfigurationStore>();
-        _mockLabelSwapper = new Mock<IIssueProviderLabelSwapper>();
+        _mockLabelSwapper = new Mock<ILabelSwapper>();
 
         _mockConfigStore
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -223,5 +223,10 @@ public class HeartbeatMonitorServiceTests
             AgentType = "kiro-dotnet",
             Labels = new[] { "dotnet" }
         }, connectionId);
+    }
+
+    public void Dispose()
+    {
+        _monitor.Dispose();
     }
 }

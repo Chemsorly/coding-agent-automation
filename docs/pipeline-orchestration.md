@@ -1,6 +1,11 @@
 # Pipeline Orchestration
 
-The pipeline is a state machine that progresses through a fixed sequence of steps, with decision points that can branch to terminal states.
+The pipeline is a state machine that progresses through a fixed sequence of steps, with decision points that can branch to terminal states. There are two pipeline workflows:
+
+1. **Implementation pipeline** — Processes issues through analysis, code generation, quality gates, and PR creation
+2. **PR review pipeline** — Processes pull requests through code review and posts findings (see [PR Review Pipeline](#pr-review-pipeline) below)
+
+Both workflows share the same dispatch mechanism (`agent:next` label polling), label lifecycle, and agent infrastructure.
 
 See also: [Configuration](configuration.md) for all pipeline settings, and [Issue Workflows](github-issue-workflows.md) for how users interact with the pipeline via labels.
 
@@ -185,3 +190,432 @@ Any step can transition to `Failed` on error. The pipeline catches exceptions at
 - **Blacklisted files** — fail if `blacklistMode` is `Fail`, warn if `Warn`
 - **External CI timeout** — treated as gate failure, enters retry loop
 - **Cancellation** — `OperationCanceledException` caught at top level, label set to `agent:cancelled`
+
+---
+
+## PR Review Pipeline
+
+The PR review pipeline is a parallel workflow that processes pull requests for automated code review. It reuses the same dispatch mechanism (`agent:next` label polling), the same step execution pattern, and the same agent execution infrastructure — but with a shorter step sequence that skips analysis, code generation, and quality gates.
+
+### Overview
+
+```mermaid
+flowchart TD
+    A[PipelineLoopService] -->|Poll cycle| B{Template ReviewEnabled?}
+    B -->|Yes| C[ListOpenPullRequestsAsync<br/>label: agent:next]
+    B -->|No| D[Skip PR polling]
+    C --> E{PRs found?}
+    E -->|Yes| F[Filter: skip in-progress]
+    F --> G[TryDispatchReviewAsync]
+    G --> H[Agent picks up job]
+    H --> I[PR Review Step Sequence]
+    
+    subgraph "PR Review Step Sequence"
+        I --> S1[1. CloneRepositoryStep]
+        S1 --> S2[2. CreateBranchStep<br/>checkout PR branch, no merge]
+        S2 --> S3[3. SyncBrainPreRunStep<br/>optional]
+        S3 --> S4[4. ExtractLinkedIssuesStep]
+        S4 --> S5[5. ReviewCodeStep]
+        S5 --> S6[6. PostReviewFindingsStep]
+    end
+```
+
+### Review Step Sequence
+
+The PR review pipeline executes 6 steps (compared to 10+ for implementation):
+
+| # | Step | Reuses Existing | Description |
+|---|------|:---:|-------------|
+| 1 | `CloneRepositoryStep` | ✅ | Clone the repository to a fresh workspace |
+| 2 | `CreateBranchStep` | ✅ | Check out the PR branch (rework path, skip merge from base) |
+| 3 | `SyncBrainPreRunStep` | ✅ | Sync brain repository if configured (non-fatal on failure) |
+| 4 | `ExtractLinkedIssuesStep` | ❌ | Extract linked issues, write context files, synthesize issue context |
+| 5 | `ReviewCodeStep` | ✅ | Resolve reviewer configs and execute multi-agent code review |
+| 6 | `PostReviewFindingsStep` | ❌ | Format findings and post as PR review comment |
+
+Key differences from the implementation pipeline:
+- **No analysis step** — the PR already contains the implementation
+- **No code generation** — the review is read-only
+- **No quality gates** — build/test feedback comes from existing CI
+- **No merge from base** — the PR branch is reviewed as-is
+- **No post-run brain sync** — reviews don't produce new knowledge to persist
+
+### Review Run State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created
+    Created --> CloningRepository
+    CloningRepository --> CreatingBranch
+    CreatingBranch --> SyncingBrainRepoPreRun : if brain configured
+    CreatingBranch --> ExtractingLinkedIssues : no brain
+    SyncingBrainRepoPreRun --> ExtractingLinkedIssues
+    ExtractingLinkedIssues --> ReviewingCode
+    ReviewingCode --> PostingFindings
+    PostingFindings --> Completed
+    
+    CloningRepository --> Failed
+    CreatingBranch --> Failed
+    ReviewingCode --> Failed
+    Created --> Cancelled
+```
+
+### PR Label Lifecycle
+
+PR review runs follow the same label lifecycle as implementation runs:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "agent next" as next
+    state "agent in-progress" as ip
+    state "agent done" as done
+    state "agent error" as err
+    state "agent cancelled" as cancel
+
+    next --> ip : review starts
+    ip --> done : review succeeds
+    ip --> err : review fails
+    ip --> cancel : user cancels
+    done --> next : user requests re-review
+    err --> next : user re-queues
+```
+
+- **Dispatch**: `agent:next` → `agent:in-progress`
+- **Success**: `agent:in-progress` → `agent:done`
+- **Failure**: `agent:in-progress` → `agent:error`
+- **Cancellation**: `agent:in-progress` → `agent:cancelled`
+
+Re-review is always explicitly triggered by the user (remove `agent:done`, re-add `agent:next`). New commits alone do NOT trigger re-review.
+
+### Loop Mode Configuration
+
+Each `PipelineJobTemplate` has two independent toggles controlling which work types it processes:
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `ImplementationEnabled` | `bool` | `true` | Template polls for issues and dispatches implementation jobs |
+| `ReviewEnabled` | `bool` | `true` | Template polls for PRs and dispatches review jobs |
+
+The existing `Enabled` property acts as a master switch — when `false`, both implementation and review are disabled regardless of individual flags.
+
+#### Configuration Examples
+
+**Both enabled (default):**
+```json
+{
+  "Name": "Full Pipeline",
+  "Enabled": true,
+  "ImplementationEnabled": true,
+  "ReviewEnabled": true
+}
+```
+
+**Review-only template** (dedicated to PR reviews, no implementation):
+```json
+{
+  "Name": "Review Only",
+  "Enabled": true,
+  "ImplementationEnabled": false,
+  "ReviewEnabled": true
+}
+```
+
+**Implementation-only template** (no PR reviews):
+```json
+{
+  "Name": "Implementation Only",
+  "Enabled": true,
+  "ImplementationEnabled": true,
+  "ReviewEnabled": false
+}
+```
+
+Settings are read at the start of each poll cycle, allowing runtime changes via the configuration UI without restarting the loop.
+
+### Dispatch Budget Sharing
+
+When both implementation and review loops are active, they share the `ClosedLoopMaxRunsPerCycle` budget. The pipeline alternates fairly between issue and PR queues (round-robin) to prevent starvation of either work type.
+
+- Total dispatches per cycle never exceed `ClosedLoopMaxRunsPerCycle`
+- Both queues get at least one dispatch when budget allows
+- PRs are processed in FIFO order (oldest `CreatedAt` first)
+- Draft PRs are included in review dispatch (a warning is shown in the UI)
+- PRs with `agent:error`, `agent:in-progress`, `agent:done`, or `agent:cancelled` labels are skipped
+
+### Linked Issue Extraction
+
+The review pipeline extracts linked issues from the PR to provide requirements context to the review agent. This enables the reviewer to evaluate the PR against the original acceptance criteria.
+
+#### Extraction Priority Order
+
+Each repository provider implements its own extraction logic:
+
+1. **Platform API** — Query the platform's linked/closing references API (e.g., GitHub timeline events)
+2. **PR title parsing** — Scan the PR title for issue references
+3. **PR body parsing** — Scan the PR body/description for issue references
+
+#### Recognized Patterns (GitHub)
+
+- `#N` — issue number reference
+- `owner/repo#N` — cross-repository reference
+- `GH-N` — GitHub shorthand
+- Closing keywords: `closes #N`, `fixes #N`, `resolves #N` (case-insensitive)
+
+#### How Context is Provided
+
+When linked issues are found:
+1. Issue details (title, body) are fetched at dispatch time (orchestrator-side)
+2. Pre-fetched issue context is included in the job assignment message
+3. The agent writes each linked issue as `.agent/linked-issue-{id}.md` in the workspace
+4. The review agent reads these files alongside the PR diff for requirements-aware review
+
+When no linked issue is found, the review proceeds normally using PR metadata (title, description) as context. This is non-blocking — reviews work with or without linked issue context.
+
+#### Multiple Issues
+
+When multiple issue references are found, ALL are retrieved and written as separate files. The review agent infers which issue(s) are most relevant based on the PR title, description, and diff.
+
+### Review Findings Format
+
+Review findings are posted as a PR review comment with the following structure:
+
+```markdown
+<!-- agent:pr-review -->
+## 🤖 Automated Code Review
+
+**Review Agents**: Correctness, Security, AcceptanceCriteria
+
+| Severity | Count |
+|----------|-------|
+| [CRITICAL] | 2 |
+| [WARNING] | 5 |
+| [SUGGESTION] | 3 |
+
+<details>
+<summary>Correctness</summary>
+
+[Agent findings here]
+
+</details>
+
+<details>
+<summary>Security</summary>
+
+[Agent findings here]
+
+</details>
+```
+
+The `<!-- agent:pr-review -->` marker enables the pipeline to detect and update existing reviews on subsequent runs, avoiding duplicate comments.
+
+When no issues are found, the review body states: "✅ No issues found."
+
+When no reviewer configuration matches the repository labels, a comment is posted indicating no applicable reviewers were found, and the run completes with `agent:done`.
+
+### Error Handling (Review Runs)
+
+Review runs follow the same error handling principles as implementation runs:
+
+- **Clone failure** — immediate fail, label set to `agent:error`
+- **Checkout failure** — immediate fail, label set to `agent:error`
+- **Brain sync failure** — non-fatal, review continues without brain context
+- **Review agent timeout** — fail with the configured `AgentTimeout`
+- **Posting failure** — non-fatal (review ran successfully, posting failed), logged as warning
+- **Cancellation** — label set to `agent:cancelled`
+
+
+---
+
+## Inline Review Comments
+
+The PR review pipeline supports posting code review findings as native inline comments on specific file:line positions in the diff. This is an additive enhancement — the body-level review summary is always posted regardless of inline comment settings.
+
+### GitHub API Migration
+
+The review submission was migrated from the **Issue Comments API** (`POST /repos/{owner}/{repo}/issues/{issue_number}/comments`) to the **Pull Request Reviews API** (`POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews`). This change means:
+
+- Review comments are now **dismissible reviews** rather than plain issue comments
+- Reviews support **inline comments** attached to specific file:line positions in the diff
+- Reviews have a **type** (`COMMENT` or `REQUEST_CHANGES`) that affects PR merge status
+- Previous automated reviews can be **dismissed** via the API before posting new ones
+
+Existing issue-comment-based reviews on open PRs (from before the migration) are not affected — they remain as-is with their `<!-- agent:pr-review-superseded -->` collapse markers.
+
+### Structured Output Format
+
+When inline comments are enabled, the review prompt instructs agents to format findings with file:line references:
+
+```
+[SEVERITY] path/to/file.ext:LINE — description of the issue
+```
+
+Where:
+- `SEVERITY` is one of: `CRITICAL`, `WARNING`, `SUGGESTION`
+- `path` is relative to the repository root using forward slashes
+- `LINE` is a 1-based line number in the file
+- `description` explains the finding
+
+Examples:
+```
+[CRITICAL] src/Service.cs:42 — Null reference possible when input is not validated
+[WARNING] src/Controllers/UserController.cs:15 — Missing input validation on email parameter
+[SUGGESTION] src/Utils/StringHelper.cs:8 — Consider using StringBuilder for repeated concatenation
+```
+
+For findings without a specific file location:
+```
+[WARNING] — General observation about architecture
+```
+
+The `FindingsParser` recognizes four file:line reference formats:
+- `path/to/file.cs:42`
+- `path/to/file.cs#L42`
+- `path/to/file.cs (line 42)`
+- `path/to/file.cs, line 42`
+
+### Inline Comment Flow
+
+The full flow within `PostReviewFindingsStep`:
+
+```
+Parse → Filter → Cap → Consolidate → Submit
+```
+
+Detailed sequence:
+
+```mermaid
+flowchart TD
+    A[PostReviewFindingsStep] --> B{SupportsInlineReviewComments?}
+    B -->|Yes| C[DismissPreviousReviewAsync]
+    B -->|No| D[CollapseExistingReviews<br/>existing behavior]
+    C --> E[Format body via ReviewFindingsFormatter]
+    D --> E
+    E --> F{InlineComments.Enabled?}
+    F -->|No| G[Submit body-only review]
+    F -->|Yes| H[FindingsParser.Parse per agent]
+    H --> I{Agent has markers but<br/>no file:line findings?}
+    I -->|Yes| J[ExecuteFollowUpAsync<br/>retry up to MaxRetries]
+    I -->|No| K[FindingsSelector.Select]
+    J --> K
+    K --> L[Build ReviewSubmission<br/>with CommitId]
+    L --> M[SubmitPullRequestReviewAsync]
+    M -->|Success| N[Track InlineCommentsPosted]
+    M -->|422 or Exception| O[Retry body-only]
+    O -->|Success| P[Track degradation]
+    O -->|Failure| Q[Log warning, return Continue]
+```
+
+1. **Dismiss/Collapse** — If the provider supports inline reviews, dismiss previous bot reviews via the Reviews API. Otherwise, collapse existing review comments (existing behavior).
+2. **Format body** — Generate the summary body via `ReviewFindingsFormatter.Format` (unchanged).
+3. **Check enabled** — If `InlineComments.Enabled` is `false`, submit body-only and return.
+4. **Parse** — Run `FindingsParser.Parse` on each agent's output to extract `StructuredFinding` entries.
+5. **Retry** — For agents that produced severity markers but no file:line references, invoke `ExecuteFollowUpAsync` (a fresh prompt with the original output + reformat instructions) up to `MaxRetries` times.
+6. **Select** — `FindingsSelector` applies the transformation pipeline: filter by `SeverityThreshold` → stable sort by severity (if `OrderBySeverity`) → cap at `MaxInlineComments` → consolidate same file:line into single comments.
+7. **Submit** — Build a `ReviewSubmission` with the body, inline comments, and HEAD commit SHA. Submit via the Reviews API.
+8. **Degrade** — On HTTP 422 or any exception, retry once without inline comments (body-only). If that also fails, log a warning and return `StepResult.Continue`. The pipeline never fails due to inline comment issues.
+
+### Retry and Degradation Behavior
+
+#### Per-Agent Retry
+
+Retries are **per-agent**, not global. If Agent A produces structured findings but Agent B doesn't, only B is retried.
+
+- Each retry invokes `ExecuteFollowUpAsync` — a fresh LLM call with the agent's original output + reformat instructions
+- The retry counter is per-agent, capped at `MaxRetries` (default: 1)
+- Retries are sequential (consistent with existing review execution)
+- If the retry produces structured output, it replaces the original output for that agent
+
+#### Degradation Scenarios
+
+| Scenario | Behavior |
+|----------|----------|
+| Agent doesn't produce structured output after retries | Findings appear in body summary only (no inline comments for that agent) |
+| GitHub returns HTTP 422 (Validation Failed) | Retry once without ALL inline comments (body-only). GitHub's 422 doesn't identify which comment failed |
+| Body-only retry also fails | Exception caught, logged as warning, step returns `Continue` |
+| `SupportsInlineReviewComments` is `false` | Inline comments rendered in body under "📍 Findings by Location" section |
+| `InlineComments.Enabled` is `false` | No parsing, no prompt enhancement, body-only review (pre-feature behavior) |
+
+#### Observability
+
+The `PipelineRun` tracks inline comment outcomes:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `InlineCommentsPosted` | `int` | Number of inline comments successfully submitted |
+| `InlineCommentsDegraded` | `bool` | Whether fallback to body-only occurred |
+| `InlineCommentsDegradedReason` | `string?` | Reason for degradation (null on success) |
+
+### `SupportsInlineReviewComments` Capability Detection
+
+The `IRepositoryProvider` interface exposes a `SupportsInlineReviewComments` property:
+
+```csharp
+bool SupportsInlineReviewComments => false; // default: conservative
+```
+
+- **GitHub provider** returns `true` — supports inline comments and review dismissal
+- **Default** returns `false` — providers that haven't opted in get body-only behavior
+
+When `SupportsInlineReviewComments` is `false` but the `FindingsParser` extracted findings with location metadata, the pipeline appends a **"📍 Findings by Location"** section to the body comment. Findings are grouped by file path (alphabetical), with each finding as a bullet point showing severity emoji, line number, and message:
+
+```markdown
+### 📍 Findings by Location
+
+#### src/Controllers/UserController.cs
+- 🔴 Line 42: Null reference possible when input is not validated
+- 🟡 Line 15: Missing input validation on email parameter
+
+#### src/Utils/StringHelper.cs
+- 💡 Line 8: Consider using StringBuilder for repeated concatenation
+```
+
+### Stale Review Handling
+
+Before posting a new review, the pipeline handles previous automated reviews:
+
+- **GitHub (inline-capable)**: Calls `DismissPreviousReviewAsync` to dismiss all previous bot reviews containing the `<!-- agent:pr-review -->` marker. Uses the authenticated bot identity to filter reviews.
+- **Non-inline providers**: Falls back to the existing collapse behavior (wrapping previous review bodies in `<details>` blocks with the `<!-- agent:pr-review-superseded -->` marker).
+
+The coupling between `SupportsInlineReviewComments` and dismiss support is intentional — if a provider supports inline comments, it also supports review dismissal.
+
+### `InlineCommentSettings` Configuration
+
+The `InlineCommentSettings` record is nested within `CodeReviewConfiguration`:
+
+```json
+{
+  "CodeReview": {
+    "MaxIterations": 2,
+    "FixPrompt": null,
+    "ReviewIsolation": "Isolated",
+    "InlineComments": {
+      "Enabled": true,
+      "SeverityThreshold": "Warning",
+      "MaxInlineComments": 15,
+      "OrderBySeverity": true,
+      "MaxRetries": 1
+    }
+  }
+}
+```
+
+#### Property Reference
+
+| Property | Type | Default | Range | Description |
+|----------|------|---------|-------|-------------|
+| `Enabled` | `bool` | `true` | — | Master switch. When false, body-only reviews are posted (existing behavior). Defaults to enabled |
+| `SeverityThreshold` | `FindingSeverity` | `Warning` | `Suggestion`, `Warning`, `Critical` | Minimum severity for inline posting. A finding is eligible when its severity value `>=` the threshold value |
+| `MaxInlineComments` | `int` | `15` | 1–50 | Maximum inline comments per review. Highest-severity findings are prioritized when the cap is reached |
+| `OrderBySeverity` | `bool` | `true` | — | Sort eligible findings by severity (Critical first) when selecting which to post inline |
+| `MaxRetries` | `int` | `1` | 0–5 | Retry attempts per agent when structured output is missing. Each retry = 1 additional LLM API call |
+
+#### Backward Compatibility
+
+- Existing configuration files without the `InlineComments` key deserialize to a default `InlineCommentSettings` instance with `Enabled = true`
+- No migration required — existing deployments are unaffected on upgrade
+- Property ranges are validated at usage time via `Math.Clamp` (not at deserialization), consistent with other pipeline configs
+
+#### Cost Awareness
+
+Each retry invokes an additional LLM API call per agent. With `MaxRetries = 1` (default) and 3 review agents, worst case is 3 extra LLM calls per review. Operators should consider this cost tradeoff when increasing `MaxRetries`.

@@ -3,7 +3,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using LibGit2Sharp;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -17,38 +16,30 @@ namespace CodingAgentWebUI.Infrastructure.Git;
 public partial class BrainUpdateService : IBrainUpdateService
 {
     private readonly ILogger _logger;
+    private readonly IGitOperations _git;
 
     public BrainUpdateService(ILogger logger)
+        : this(logger, new LibGit2SharpGitOperations())
+    {
+    }
+
+    public BrainUpdateService(ILogger logger, IGitOperations gitOperations)
     {
         ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(gitOperations);
         _logger = logger;
+        _git = gitOperations;
     }
 
     /// <summary>
     /// Detects whether the agent made changes to files in the .brain/ directory.
     /// Returns the list of changed file paths (relative to brainPath).
-    /// Uses LibGit2Sharp directly (pragmatic PoC shortcut).
     /// </summary>
     public Task<IReadOnlyList<string>> DetectChangesAsync(string brainPath, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(brainPath);
 
-        return Task.Run(() =>
-        {
-            using var repo = new Repository(brainPath);
-            var status = repo.RetrieveStatus(new StatusOptions());
-            var changedFiles = new List<string>();
-
-            foreach (var entry in status)
-            {
-                if (entry.State != FileStatus.Ignored && entry.State != FileStatus.Unaltered)
-                {
-                    changedFiles.Add(entry.FilePath);
-                }
-            }
-
-            return (IReadOnlyList<string>)changedFiles;
-        }, ct);
+        return Task.Run(() => _git.GetChangedFiles(brainPath), ct);
     }
 
     /// <summary>
@@ -65,7 +56,6 @@ public partial class BrainUpdateService : IBrainUpdateService
         var today = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         // Check for session log file at sessions/{date}_{runId}.md
-        var sessionLogPattern = $"sessions/{today}_{runId}.md";
         var sessionLogCreated = changedFiles.Any(f =>
             f.Replace('\\', '/').Contains($"sessions/", StringComparison.OrdinalIgnoreCase) &&
             f.Contains(runId, StringComparison.OrdinalIgnoreCase));
@@ -234,18 +224,7 @@ public partial class BrainUpdateService : IBrainUpdateService
             await PushWithRetryRebaseAsync(brainPath, brainProvider, commitMessage, maxPushRetries, ct);
 
             // Count committed files
-            var filesCommitted = await Task.Run(() =>
-            {
-                using var repo = new Repository(brainPath);
-                var headCommit = repo.Head.Tip;
-                if (headCommit?.Parents.Any() == true)
-                {
-                    var diff = repo.Diff.Compare<TreeChanges>(
-                        headCommit.Parents.First().Tree, headCommit.Tree);
-                    return diff.Count;
-                }
-                return 0;
-            }, ct);
+            var filesCommitted = await Task.Run(() => _git.GetHeadCommitFileCount(brainPath), ct);
 
             _logger.Information("Brain repo committed and pushed {FileCount} files for run {RunId}",
                 filesCommitted, runId);
@@ -256,7 +235,6 @@ public partial class BrainUpdateService : IBrainUpdateService
                 FilesCommitted = filesCommitted
             };
         }
-        // NOTE: Use `when (ex is not OperationCanceledException)` to propagate cancellation per project convention
         catch (Exception ex)
         {
             _logger.Warning(ex, "Brain repo commit/push failed for run {RunId}", runId);
@@ -275,48 +253,32 @@ public partial class BrainUpdateService : IBrainUpdateService
     {
         await Task.Run(() =>
         {
-            using var repo = new Repository(brainPath);
-
-            if (repo.Index.Conflicts.Any())
+            if (_git.HasConflicts(brainPath))
             {
-                var conflictCount = repo.Index.Conflicts.Count();
-                _logger.Information("Resolving {ConflictCount} brain repo conflicts", conflictCount);
+                var conflicts = _git.GetConflicts(brainPath);
+                _logger.Information("Resolving {ConflictCount} brain repo conflicts", conflicts.Count);
 
-                foreach (var conflict in repo.Index.Conflicts)
+                foreach (var conflict in conflicts)
                 {
                     try
                     {
-                        var oursContent = conflict.Ours != null
-                            ? repo.Lookup<Blob>(conflict.Ours.Id)?.GetContentText() ?? ""
-                            : "";
-                        var theirsContent = conflict.Theirs != null
-                            ? repo.Lookup<Blob>(conflict.Theirs.Id)?.GetContentText() ?? ""
-                            : "";
+                        var resolved = ResolveConflictAcceptBoth(conflict.OursContent, conflict.TheirsContent);
 
-                        var resolved = ResolveConflictAcceptBoth(oursContent, theirsContent);
-                        var filePath = conflict.Ours?.Path ?? conflict.Theirs?.Path ?? conflict.Ancestor?.Path;
-
-                        if (filePath != null)
+                        if (conflict.FilePath != null)
                         {
-                            var fullPath = Path.Combine(brainPath, filePath);
+                            var fullPath = Path.Combine(brainPath, conflict.FilePath);
                             File.WriteAllText(fullPath, resolved);
-                            Commands.Stage(repo, filePath);
+                            _git.StageFile(brainPath, conflict.FilePath);
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.Warning(ex, "Failed to resolve conflict for {Path}",
-                            conflict.Ours?.Path ?? conflict.Theirs?.Path ?? "unknown");
+                        _logger.Warning(ex, "Failed to resolve conflict for {Path}", conflict.FilePath ?? "unknown");
                     }
                 }
             }
 
-            // Stage all changes
-            Commands.Stage(repo, "*");
-
-            // Commit
-            var signature = new Signature(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
-            repo.Commit(commitMessage, signature, signature);
+            _git.StageAllAndCommit(brainPath, commitMessage);
         }, ct);
     }
 
@@ -370,18 +332,9 @@ public partial class BrainUpdateService : IBrainUpdateService
         string brainPath, IRepositoryProvider brainProvider, string commitMessage, CancellationToken ct)
     {
         // Fetch latest via PullAsync (which does fetch internally).
-        // We catch the NonFastForwardException since we'll handle the merge ourselves.
         try
         {
             await brainProvider.PullAsync(brainPath, ct);
-        }
-        catch (NonFastForwardException)
-        {
-            // Expected — we have local commits that diverge from remote
-        }
-        catch (CheckoutConflictException)
-        {
-            // Expected — local uncommitted changes conflict with fetched remote
         }
         catch (Exception ex)
         {
@@ -390,31 +343,31 @@ public partial class BrainUpdateService : IBrainUpdateService
 
         await Task.Run(() =>
         {
-            using var repo = new Repository(brainPath);
+            // Get our changes before reset
+            var ourChanges = _git.GetHeadCommitChanges(brainPath);
 
-            // Save our commit's tree (the changes we want to keep)
-            var ourCommit = repo.Head.Tip;
-            var ourTree = ourCommit.Tree;
-            var parentTree = ourCommit.Parents.FirstOrDefault()?.Tree;
-
-            // Determine which files we changed
-            if (parentTree is null)
+            if (ourChanges.Count == 0)
             {
                 throw new InvalidOperationException(
-                    "Cannot rebase brain changes: parent tree could not be resolved. " +
-                    "This may indicate the repository has no parent commit to diff against.");
+                    "Cannot rebase brain changes: no changes detected in HEAD commit.");
             }
 
-            var ourChanges = repo.Diff.Compare<TreeChanges>(parentTree, ourTree);
+            // Save our file contents before reset
+            var ourFileContents = new Dictionary<string, string?>();
+            var baseFileContents = new Dictionary<string, string?>();
+            foreach (var change in ourChanges)
+            {
+                if (change.Status != FileChangeStatus.Deleted)
+                {
+                    ourFileContents[change.Path] = _git.GetFileContentFromHead(brainPath, change.Path);
+                }
+                baseFileContents[change.Path] = _git.GetFileContentFromHeadParent(brainPath, change.Path);
+            }
 
             // Reset to remote branch tip
-            var remoteBranchRef = repo.Branches[$"origin/{brainProvider.BaseBranch}"];
-            if (remoteBranchRef != null)
-            {
-                repo.Reset(ResetMode.Hard, remoteBranchRef.Tip);
-            }
+            _git.ResetHardToRemote(brainPath, brainProvider.BaseBranch);
 
-            // Re-apply our changes from the saved commit tree
+            // Re-apply our changes
             var conflictCount = 0;
             foreach (var change in ourChanges)
             {
@@ -423,21 +376,16 @@ public partial class BrainUpdateService : IBrainUpdateService
                 var filePath = change.Path;
                 var fullPath = Path.Combine(brainPath, filePath);
 
-                if (change.Status == ChangeKind.Deleted)
+                if (change.Status == FileChangeStatus.Deleted)
                 {
                     if (File.Exists(fullPath))
                         File.Delete(fullPath);
                     continue;
                 }
 
-                // Get our version from the saved tree
-                var ourBlob = ourTree[filePath]?.Target as Blob;
-                var ourContent = ourBlob?.GetContentText() ?? "";
-
-                // Check if remote also modified this file (conflict)
+                var ourContent = ourFileContents.GetValueOrDefault(change.Path) ?? "";
+                var baseContent = baseFileContents.GetValueOrDefault(change.Path) ?? "";
                 var remoteContent = File.Exists(fullPath) ? File.ReadAllText(fullPath) : "";
-                var baseContent = parentTree?[filePath]?.Target is Blob baseBlob
-                    ? baseBlob.GetContentText() : "";
 
                 if (remoteContent != baseContent && ourContent != baseContent)
                 {
@@ -463,11 +411,9 @@ public partial class BrainUpdateService : IBrainUpdateService
             }
 
             // Stage and recommit
-            Commands.Stage(repo, "*");
-            var signature = new Signature(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
             try
             {
-                repo.Commit(commitMessage, signature, signature);
+                _git.StageAllAndCommit(brainPath, commitMessage);
             }
             catch (EmptyCommitException)
             {

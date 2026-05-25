@@ -33,4 +33,10 @@ public sealed record PipelineJobTemplate
 
     /// <summary>Whether this template is active for round-robin polling. Default true.</summary>
     public bool Enabled { get; init; } = true;
+
+    /// <summary>Whether this template dispatches implementation jobs from issues. Default true.</summary>
+    public bool ImplementationEnabled { get; init; } = true;
+
+    /// <summary>Whether this template dispatches PR review jobs. Default true.</summary>
+    public bool ReviewEnabled { get; init; } = true;
 }

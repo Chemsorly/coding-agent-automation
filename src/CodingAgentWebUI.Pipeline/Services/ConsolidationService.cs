@@ -56,6 +56,41 @@ public sealed class ConsolidationService : IConsolidationService
     }
 
     /// <inheritdoc />
+    public async Task CleanupOrphanedRunsAsync(CancellationToken ct)
+    {
+        if (!Directory.Exists(_consolidationRunsDirectory))
+            return;
+
+        foreach (var file in Directory.GetFiles(_consolidationRunsDirectory, "*.json"))
+        {
+            try
+            {
+                var json = await File.ReadAllTextAsync(file, ct);
+                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+                if (run is null) continue;
+
+                if (run.Status == ConsolidationRunStatus.Running)
+                {
+                    run.Status = ConsolidationRunStatus.Failed;
+                    run.Summary = "Orphaned: application restarted before completion";
+                    run.CompletedAtUtc = DateTime.UtcNow;
+
+                    var updatedJson = JsonSerializer.Serialize(run, s_jsonOptions);
+                    await File.WriteAllTextAsync(file, updatedJson, ct);
+
+                    _logger.Information(
+                        "Marked orphaned consolidation run {RunId} ({Type}) as Failed",
+                        run.RunId, run.Type);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to process consolidation run file {File} during orphan cleanup", file);
+            }
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<ConsolidationRun?> TriggerAsync(
         ConsolidationRunType type,
         string? templateId,

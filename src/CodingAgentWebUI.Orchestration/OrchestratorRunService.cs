@@ -137,8 +137,20 @@ public class OrchestratorRunService : IOrchestratorRunService
         {
             _logger.Information("Active run removed: {RunId}", runId);
         }
-
         return removed;
+    }
+
+    /// <summary>
+    /// Atomically replaces an existing run with a new instance (same RunId).
+    /// Used by review dispatch to update a run with review-specific metadata without
+    /// creating a gap where IsIssueBeingProcessed returns false.
+    /// The output buffer is preserved (not recreated).
+    /// </summary>
+    public void ReplaceRun(PipelineRun run)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        _activeRuns[run.RunId] = run;
+        _logger.Debug("Active run replaced: {RunId} for issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
     }
 
     /// <summary>

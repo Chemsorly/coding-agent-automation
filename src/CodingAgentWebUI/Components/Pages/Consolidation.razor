@@ -49,7 +49,7 @@
                                 @if (lastBrain != null)
                                 {
                                     <span class="consolidation-card-value">
-                                        @lastBrain.StartedAtUtc.ToString("yyyy-MM-dd HH:mm") UTC —
+                                        @lastBrain.StartedAtUtc.ToLocalTime().ToString("g") —
                                         <span class="consolidation-status consolidation-status-@lastBrain.Status.ToString().ToLowerInvariant()">@lastBrain.Status</span>
                                     </span>
                                 }
@@ -71,7 +71,7 @@
                                 @if (lastRefactoring != null)
                                 {
                                     <span class="consolidation-card-value">
-                                        @lastRefactoring.StartedAtUtc.ToString("yyyy-MM-dd HH:mm") UTC —
+                                        @lastRefactoring.StartedAtUtc.ToLocalTime().ToString("g") —
                                         <span class="consolidation-status consolidation-status-@lastRefactoring.Status.ToString().ToLowerInvariant()">@lastRefactoring.Status</span>
                                     </span>
                                 }
@@ -118,7 +118,7 @@
         else
         {
             <div class="consolidation-suggestions-meta">
-                Generated: @_harnessSuggestions.GeneratedAtUtc.ToString("yyyy-MM-dd HH:mm") UTC
+                Generated: @_harnessSuggestions.GeneratedAtUtc.ToLocalTime().ToString("g")
                 — Based on @_harnessSuggestions.BasedOnRunCount runs
                 — Success rate: @_harnessSuggestions.SuccessRate.ToString("P1")
             </div>
@@ -174,7 +174,7 @@
                             <tr>
                                 <td>@FormatRunType(run.Type)</td>
                                 <td>@(run.TemplateName ?? "Global")</td>
-                                <td>@run.StartedAtUtc.ToString("yyyy-MM-dd HH:mm") UTC</td>
+                                <td>@run.StartedAtUtc.ToLocalTime().ToString("g")</td>
                                 <td>
                                     <span class="consolidation-status consolidation-status-@run.Status.ToString().ToLowerInvariant()">
                                         @run.Status

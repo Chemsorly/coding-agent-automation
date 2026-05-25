@@ -59,6 +59,8 @@
         var agentRuns = RunService.GetActiveRuns();
         var agentCount = Registry.GetAllAgents().Count;
         var queueLength = Dispatcher.QueueLength;
+        var implRunCount = agentRuns.Count(r => r.RunType == PipelineRunType.Implementation);
+        var reviewRunCount = agentRuns.Count(r => r.RunType == PipelineRunType.Review);
     }
     @if (agentRuns.Count > 0 || queueLength > 0)
     {
@@ -66,6 +68,14 @@
             <span>
                 🤖 @agentCount agent(s) registered ·
                 @agentRuns.Count agent run(s) active
+                @if (implRunCount > 0 && reviewRunCount > 0)
+                {
+                    <text> (🔨@implRunCount impl · 🔍@reviewRunCount review)</text>
+                }
+                else if (reviewRunCount > 0)
+                {
+                    <text> (🔍@reviewRunCount review)</text>
+                }
                 @if (queueLength > 0)
                 {
                     <text> · @queueLength job(s) queued</text>
@@ -116,6 +126,8 @@
                                                 <th>Repo Provider</th>
                                                 <th>Brain</th>
                                                 <th>CI</th>
+                                                <th>Impl</th>
+                                                <th>Review</th>
                                                 <th>Enabled</th>
                                                 <th>Status</th>
                                                 <th>Actions</th>
@@ -148,6 +160,20 @@
                                                     </td>
                                                     <td>@(string.IsNullOrEmpty(template.BrainProviderId) ? "—" : GetProviderDisplayName(template.BrainProviderId, _brainProviders))</td>
                                                     <td>@(string.IsNullOrEmpty(template.PipelineProviderId) ? "—" : GetProviderDisplayName(template.PipelineProviderId, _pipelineProviders))</td>
+                                                    <td>
+                                                        <label class="toggle-switch">
+                                                            <input type="checkbox" checked="@template.ImplementationEnabled"
+                                                                   @onchange="e => ToggleImplementationEnabled(template, (bool)(e.Value ?? false))" />
+                                                            <span class="toggle-slider"></span>
+                                                        </label>
+                                                    </td>
+                                                    <td>
+                                                        <label class="toggle-switch">
+                                                            <input type="checkbox" checked="@template.ReviewEnabled"
+                                                                   @onchange="e => ToggleReviewEnabled(template, (bool)(e.Value ?? false))" />
+                                                            <span class="toggle-slider"></span>
+                                                        </label>
+                                                    </td>
                                                     <td>
                                                         <label class="toggle-switch">
                                                             <input type="checkbox" checked="@template.Enabled"
@@ -194,7 +220,7 @@
                                                 @if (_expandedPreviewTemplateId == template.Id)
                                                 {
                                                     <tr class="label-preview-row">
-                                                        <td colspan="8">
+                                                        <td colspan="10">
                                                             <div class="label-preview-inline">
                                                                 <div class="label-preview-section">
                                                                     <span class="label-preview-heading">Labels:</span>
@@ -396,6 +422,20 @@
                                             }
                                         </select>
                                     </div>
+                                    <div class="form-group form-checkbox">
+                                        <label>
+                                            <input type="checkbox" @bind="_addForm.ImplementationEnabled" />
+                                            Implementation Enabled
+                                            <span class="form-hint-icon" title="When enabled, this template dispatches implementation jobs from issues.">?</span>
+                                        </label>
+                                    </div>
+                                    <div class="form-group form-checkbox">
+                                        <label>
+                                            <input type="checkbox" @bind="_addForm.ReviewEnabled" />
+                                            Review Enabled
+                                            <span class="form-hint-icon" title="When enabled, this template dispatches PR review jobs.">?</span>
+                                        </label>
+                                    </div>
                                     <div class="form-buttons">
                                         <button class="btn-save" @onclick="AddTemplate">Save</button>
                                         <button class="btn-cancel" @onclick="() => { _showAddForm = false; _formError = null; }">Cancel</button>
@@ -470,6 +510,12 @@
                                         disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))"
                                         data-testid="browse-issues-btn">
                                     Browse Issues
+                                </button>
+                                <button class="btn-save" @onclick="OpenPrDrawer"
+                                        disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))"
+                                        data-testid="browse-prs-btn"
+                                        style="background: var(--accent-secondary, #6366f1);">
+                                    Browse Pull Requests
                                 </button>
                             </div>
                         </section>
@@ -602,12 +648,123 @@
                     @if (_selectedDrawerIssue.CreatedAt.HasValue)
                     {
                         <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0 0 8px;">
-                            Created: @_selectedDrawerIssue.CreatedAt.Value.ToString("g")
+                            Created: @_selectedDrawerIssue.CreatedAt.Value.ToLocalTime().ToString("g")
                         </p>
                     }
                     <button class="btn-save" @onclick="DispatchFromDrawer" disabled="@_drawerDispatching"
                             data-testid="dispatch-issue-btn">
                         @(_drawerDispatching ? "Dispatching..." : $"Start Pipeline on #{_selectedDrawerIssue.Identifier}")
+                    </button>
+                </div>
+            }
+        }
+    }
+</aside>
+
+<!-- ═══ Manual PR Review Dispatch Drawer ═══ -->
+<div class="dispatch-drawer-overlay @(_prDrawerOpen ? "open" : "")" @onclick="ClosePrDrawer"></div>
+<aside class="dispatch-drawer @(_prDrawerOpen ? "open" : "")">
+    <div class="agent-detail-header">
+        <h3>Browse Pull Requests</h3>
+        <button class="agent-detail-close" @onclick="ClosePrDrawer" aria-label="Close drawer">✕</button>
+    </div>
+
+    @if (_prDrawerTemplate != null)
+    {
+        <div class="agent-detail-section">
+            <h4>Template: @_prDrawerTemplate.Name</h4>
+        </div>
+
+        @if (_prDrawerLoading)
+        {
+            <div class="loading-text" style="padding: 12px;">Loading pull requests...</div>
+        }
+        else
+        {
+            <!-- Filter -->
+            <div style="padding: 0 0 8px;">
+                <input type="text" @bind="_prDrawerFilter" @bind:event="oninput" @bind:after="FilterDrawerPrs"
+                       placeholder="Filter by number or title..." style="width: 100%; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 0.82rem;" />
+            </div>
+
+            @if (_prDrawerPrs.Count == 0)
+            {
+                <div class="monitoring-empty">No open pull requests found.</div>
+            }
+            else
+            {
+                <div class="agent-history-list" style="max-height: calc(100vh - 320px); overflow-y: auto;">
+                    @foreach (var pr in _filteredDrawerPrs)
+                    {
+                        var isProcessing = JobDispatcher.IsIssueBeingProcessedOrQueued(pr.Identifier);
+                        <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(_selectedDrawerPr?.Identifier == pr.Identifier ? "drawer-issue-selected" : "")"
+                             @onclick="() => SelectDrawerPr(pr)"
+                             data-testid="pr-row-@pr.Identifier"
+                             style="@(isProcessing ? "opacity: 0.6; pointer-events: none;" : "")">
+                            <div class="drawer-issue-header">
+                                <span class="drawer-issue-number">PR #@pr.Identifier</span>
+                                @if (pr.IsDraft)
+                                {
+                                    <span class="badge-default" style="background: var(--text-muted); color: white;">DRAFT</span>
+                                }
+                                @if (isProcessing)
+                                {
+                                    <span class="badge-default" style="background: var(--accent); color: white;">DISPATCHED</span>
+                                }
+                            </div>
+                            <div class="drawer-issue-title">@pr.Title</div>
+                            <div class="drawer-issue-labels">
+                                <span class="sidebar-label" style="background: var(--bg-hover); font-size: 0.7rem;">@pr.BranchName → @pr.TargetBranch</span>
+                                @foreach (var label in pr.Labels.Take(4))
+                                {
+                                    <span class="sidebar-label @GetLabelClass(label)">@label</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <!-- Pagination -->
+                @if (_prDrawerHasMore || _prDrawerPage > 1)
+                {
+                    <div style="display: flex; justify-content: center; gap: 8px; padding: 8px 0;">
+                        <button class="btn-cancel" @onclick="PrDrawerPrevPage" disabled="@(_prDrawerPage <= 1)">← Prev</button>
+                        <span class="monitoring-muted" style="align-self: center; font-size: 0.8rem;">Page @_prDrawerPage</span>
+                        <button class="btn-cancel" @onclick="PrDrawerNextPage" disabled="@(!_prDrawerHasMore)">Next →</button>
+                    </div>
+                }
+            }
+
+            <!-- Selected PR Detail -->
+            @if (_selectedDrawerPr != null)
+            {
+                <div class="agent-detail-section" style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
+                    <h4>PR #@_selectedDrawerPr.Identifier — @_selectedDrawerPr.Title</h4>
+                    <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 4px;">
+                        @_selectedDrawerPr.BranchName → @_selectedDrawerPr.TargetBranch
+                    </div>
+                    <div class="drawer-issue-labels" style="margin-bottom: 8px;">
+                        @foreach (var label in _selectedDrawerPr.Labels)
+                        {
+                            <span class="sidebar-label @GetLabelClass(label)">@label</span>
+                        }
+                    </div>
+                    @if (_selectedDrawerPr.IsDraft)
+                    {
+                        <div class="settings-status status-error" style="margin-bottom: 8px; font-size: 0.78rem;">
+                            ⚠️ This PR is a draft. Review will still be dispatched.
+                        </div>
+                    }
+                    @if (_selectedDrawerPr.CreatedAt.HasValue)
+                    {
+                        <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0 0 8px;">
+                            Created: @_selectedDrawerPr.CreatedAt.Value.ToLocalTime().ToString("g")
+                        </p>
+                    }
+                    <button class="btn-save" @onclick="DispatchPrReviewFromDrawer" disabled="@_prDrawerDispatching"
+                            data-testid="dispatch-pr-btn"
+                            style="background: var(--accent-secondary, #6366f1);">
+                        @(_prDrawerDispatching ? "Dispatching..." : $"Start Review on PR #{_selectedDrawerPr.Identifier}")
                     </button>
                 </div>
             }
@@ -662,6 +819,18 @@
     private bool _drawerHasMore;
     private IssueSummary? _selectedDrawerIssue;
     private bool _drawerDispatching;
+
+    // ── PR Drawer State ──
+    private bool _prDrawerOpen;
+    private PipelineJobTemplate? _prDrawerTemplate;
+    private bool _prDrawerLoading;
+    private List<PullRequestSummary> _prDrawerPrs = new();
+    private List<PullRequestSummary> _filteredDrawerPrs = new();
+    private string _prDrawerFilter = "";
+    private int _prDrawerPage = 1;
+    private bool _prDrawerHasMore;
+    private PullRequestSummary? _selectedDrawerPr;
+    private bool _prDrawerDispatching;
 
     private void OnTemplateChanged(ChangeEventArgs e)
     {
@@ -752,6 +921,8 @@
             BrainProviderId = string.IsNullOrEmpty(_addForm.BrainProviderId) ? null : _addForm.BrainProviderId,
             PipelineProviderId = string.IsNullOrEmpty(_addForm.PipelineProviderId) ? null : _addForm.PipelineProviderId,
             BrainReadOnly = _addForm.BrainReadOnly,
+            ImplementationEnabled = _addForm.ImplementationEnabled,
+            ReviewEnabled = _addForm.ReviewEnabled,
             Enabled = true
         };
 
@@ -792,6 +963,34 @@
             _recentlyToggled.Add(template.Id);
             _ = ClearToggleIndicator(template.Id);
         }
+    }
+
+    private async Task ToggleImplementationEnabled(PipelineJobTemplate template, bool enabled)
+    {
+        var idx = _templates.IndexOf(template);
+        if (idx < 0) return;
+        _templates[idx] = template with { ImplementationEnabled = enabled };
+        await PersistTemplates();
+        _recentlyToggled.Add(template.Id);
+        _ = ClearRecentlyToggledAfterDelay(template.Id);
+    }
+
+    private async Task ToggleReviewEnabled(PipelineJobTemplate template, bool enabled)
+    {
+        var idx = _templates.IndexOf(template);
+        if (idx < 0) return;
+        _templates[idx] = template with { ReviewEnabled = enabled };
+        await PersistTemplates();
+        _recentlyToggled.Add(template.Id);
+        _ = ClearRecentlyToggledAfterDelay(template.Id);
+    }
+
+    private async Task ClearRecentlyToggledAfterDelay(string templateId)
+    {
+        await Task.Delay(3000);
+        _recentlyToggled.Remove(templateId);
+        try { await InvokeAsync(() => { if (!_disposed) StateHasChanged(); }); }
+        catch (ObjectDisposedException) { }
     }
 
     private async Task PersistTemplates()
@@ -1008,6 +1207,136 @@
         }
     }
 
+    // ── PR Drawer Methods ──
+
+    private async Task OpenPrDrawer()
+    {
+        if (string.IsNullOrEmpty(_manualDispatchTemplateId)) return;
+        _prDrawerTemplate = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
+        if (_prDrawerTemplate == null) return;
+
+        _prDrawerOpen = true;
+        _prDrawerPage = 1;
+        _prDrawerFilter = "";
+        _selectedDrawerPr = null;
+        await LoadPrDrawerPage();
+    }
+
+    private void ClosePrDrawer()
+    {
+        _prDrawerOpen = false;
+        _selectedDrawerPr = null;
+    }
+
+    private async Task LoadPrDrawerPage()
+    {
+        if (_prDrawerTemplate == null) return;
+        _prDrawerLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var repoConfig = _repoProviders.FirstOrDefault(p => p.Id == _prDrawerTemplate.RepoProviderId);
+            if (repoConfig == null)
+            {
+                _prDrawerPrs = new();
+                _filteredDrawerPrs = new();
+                _prDrawerLoading = false;
+                return;
+            }
+
+            await using var repoProvider = ProviderFactory.CreateRepositoryProvider(repoConfig);
+            var result = await repoProvider.ListOpenPullRequestsAsync(_prDrawerPage, 30, null, CancellationToken.None);
+            _prDrawerPrs = result.Items.ToList();
+            _prDrawerHasMore = result.HasMore;
+            FilterDrawerPrs();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to load pull requests: {ex.Message}";
+            _prDrawerPrs = new();
+            _filteredDrawerPrs = new();
+        }
+        finally
+        {
+            _prDrawerLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void FilterDrawerPrs()
+    {
+        if (string.IsNullOrWhiteSpace(_prDrawerFilter))
+        {
+            _filteredDrawerPrs = _prDrawerPrs;
+        }
+        else
+        {
+            var filter = _prDrawerFilter.Trim();
+            _filteredDrawerPrs = _prDrawerPrs
+                .Where(pr => pr.Identifier.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                          || pr.Title.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+    }
+
+    private void SelectDrawerPr(PullRequestSummary pr) => _selectedDrawerPr = pr;
+
+    private async Task PrDrawerNextPage()
+    {
+        _prDrawerPage++;
+        await LoadPrDrawerPage();
+    }
+
+    private async Task PrDrawerPrevPage()
+    {
+        if (_prDrawerPage > 1) _prDrawerPage--;
+        await LoadPrDrawerPage();
+    }
+
+    private async Task DispatchPrReviewFromDrawer()
+    {
+        if (_selectedDrawerPr == null || _prDrawerTemplate == null) return;
+        _prDrawerDispatching = true;
+        StateHasChanged();
+
+        try
+        {
+            var dispatched = await JobDispatcher.TryDispatchReviewAsync(
+                _selectedDrawerPr.Identifier,
+                _selectedDrawerPr.BranchName,
+                _selectedDrawerPr.Title,
+                _selectedDrawerPr.Description,
+                _selectedDrawerPr.Url,
+                _selectedDrawerPr.TargetBranch,
+                _prDrawerTemplate.IssueProviderId,
+                _prDrawerTemplate.RepoProviderId,
+                _prDrawerTemplate.BrainProviderId,
+                initiatedBy: "manual",
+                CancellationToken.None);
+
+            if (dispatched)
+            {
+                _successMessage = $"PR #{_selectedDrawerPr.Identifier} dispatched for review.";
+                _ = ClearSuccessAfterDelay();
+                _selectedDrawerPr = null;
+            }
+            else
+            {
+                _errorMessage = $"PR #{_selectedDrawerPr.Identifier} is already being processed or queued.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to dispatch PR review: {ex.Message}";
+        }
+        finally
+        {
+            _prDrawerDispatching = false;
+            StateHasChanged();
+        }
+    }
+
     // ── Helpers ──
 
     private ConfigStatusSnapshot? GetTemplateStatus(string templateId)
@@ -1211,5 +1540,7 @@
         public string BrainProviderId { get; set; } = "";
         public string PipelineProviderId { get; set; } = "";
         public bool BrainReadOnly { get; set; }
+        public bool ImplementationEnabled { get; set; } = true;
+        public bool ReviewEnabled { get; set; } = true;
     }
 }

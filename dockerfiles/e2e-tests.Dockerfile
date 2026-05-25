@@ -8,7 +8,8 @@
 #   docker run --rm --ipc=host e2e-tests
 # =============================================================================
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
+# --platform=$BUILDPLATFORM: SDK runs natively on the build host (ARM64 in CI, x64 locally).
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
 WORKDIR /src
 
 # Copy solution and project files for restore layer caching

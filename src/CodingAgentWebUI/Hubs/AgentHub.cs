@@ -26,7 +26,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly ModelFetchService _modelFetchService;
     private readonly IConsolidationService _consolidationService;
     private readonly ConsolidationBadgeService _badgeService;
-    private readonly IIssueProviderLabelSwapper _labelSwapper;
+    private readonly ILabelSwapper _labelSwapper;
     private readonly ILogger _logger;
 
     public AgentHub(
@@ -36,7 +36,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         ModelFetchService modelFetchService,
         IConsolidationService consolidationService,
         ConsolidationBadgeService badgeService,
-        IIssueProviderLabelSwapper labelSwapper,
+        ILabelSwapper labelSwapper,
         ILogger logger)
     {
         _facade = facade;
@@ -222,7 +222,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
             if (label is not null)
             {
-                await SwapLabelViaIssueProviderAsync(run, label);
+                await SwapLabelAsync(run, label, GetLabelTargetKind(run));
             }
 
             // Post issue feedback comment if present (non-fatal)
@@ -464,10 +464,11 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     }
 
     /// <summary>
-    /// Executes a label swap on the issue via <see cref="IIssueProvider"/>.
+    /// Executes a label swap on the entity (issue or PR) via <see cref="ILabelSwapper"/>.
+    /// Routes to the correct provider based on <paramref name="targetKind"/>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task RequestLabelChange(string jobId, string newLabel)
+    public async Task RequestLabelChange(string jobId, string newLabel, int targetKind = 0)
     {
         ArgumentNullException.ThrowIfNull(newLabel);
 
@@ -478,7 +479,17 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
             return;
         }
 
-        await SwapLabelViaIssueProviderAsync(run, newLabel);
+        if (!string.IsNullOrEmpty(newLabel) && !AgentLabels.All.Contains(newLabel))
+        {
+            _logger.Warning("Agent requested invalid label '{Label}' for job {JobId}, ignoring", newLabel, jobId);
+            return;
+        }
+
+        // Derive targetKind from the run's RunType rather than trusting the caller-supplied value.
+        // This prevents a buggy or compromised agent from routing label operations to the wrong entity.
+        var kind = GetLabelTargetKind(run);
+
+        await SwapLabelAsync(run, newLabel, kind);
     }
 
     // ── Token refresh ───────────────────────────────────────────────────
@@ -730,12 +741,23 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     }
 
     /// <summary>
-    /// Swaps the agent label on the issue using the issue provider from the run's config.
+    /// Swaps the agent label on the entity (issue or PR) using the appropriate provider.
+    /// Routes based on <paramref name="targetKind"/>: Issue → IssueProviderConfigId, PullRequest → RepoProviderConfigId.
     /// </summary>
-    private Task SwapLabelViaIssueProviderAsync(PipelineRun run, string newLabel)
+    private Task SwapLabelAsync(PipelineRun run, string newLabel, LabelTargetKind targetKind)
     {
-        return _labelSwapper.SwapLabelAsync(run.IssueProviderConfigId, run.IssueIdentifier, newLabel, CancellationToken.None);
+        var providerConfigId = targetKind == LabelTargetKind.PullRequest
+            ? run.RepoProviderConfigId
+            : run.IssueProviderConfigId;
+
+        return _labelSwapper.SwapLabelAsync(providerConfigId, run.IssueIdentifier, newLabel, targetKind, CancellationToken.None);
     }
+
+    /// <summary>
+    /// Determines the correct <see cref="LabelTargetKind"/> based on the run's <see cref="PipelineRun.RunType"/>.
+    /// </summary>
+    private static LabelTargetKind GetLabelTargetKind(PipelineRun run)
+        => run.RunType == PipelineRunType.Review ? LabelTargetKind.PullRequest : LabelTargetKind.Issue;
 
     /// <summary>
     /// Sums the TotalTokens (InputTokens + OutputTokens + ReasoningTokens) from the provided

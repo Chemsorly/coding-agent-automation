@@ -6,10 +6,10 @@
 # =============================================================================
 
 # Stage 1: Build
-# Pinned to 10.0.200 feature band to match global.json (rollForward: latestFeature)
-# --platform=linux/arm64: Forces native ARM execution on ARM CI runners (avoids .NET QEMU crash)
-# Cross-compiles to linux-x64 via RID so the output runs in the amd64 runtime stage.
-FROM --platform=linux/arm64 mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
+# --platform=$BUILDPLATFORM: SDK runs natively on the build host (ARM64 in CI, x64 locally).
+# Cross-compiles to the target platform via -a $TARGETARCH.
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
+ARG TARGETARCH
 WORKDIR /src
 
 # Copy solution and project files first for layer caching
@@ -24,11 +24,11 @@ COPY src/CodingAgentWebUI/CodingAgentWebUI.csproj src/CodingAgentWebUI/
 COPY src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj src/CodingAgentWebUI.Agent/
 COPY src/CodingAgentWebUI.Agent.KiroCli/CodingAgentWebUI.Agent.KiroCli.csproj src/CodingAgentWebUI.Agent.KiroCli/
 COPY src/CodingAgentWebUI.Agent.OpenCode/CodingAgentWebUI.Agent.OpenCode.csproj src/CodingAgentWebUI.Agent.OpenCode/
-RUN dotnet restore src/CodingAgentWebUI/CodingAgentWebUI.csproj -r linux-x64
+RUN dotnet restore src/CodingAgentWebUI/CodingAgentWebUI.csproj -a $TARGETARCH
 
 # Copy everything else and publish
 COPY . .
-RUN dotnet publish src/CodingAgentWebUI/CodingAgentWebUI.csproj -c Release -r linux-x64 --self-contained false -o /app/publish
+RUN dotnet publish src/CodingAgentWebUI/CodingAgentWebUI.csproj -c Release -a $TARGETARCH --self-contained false -o /app/publish
 
 # Stage 2: Runtime (ASP.NET only — no SDK, no Kiro CLI, no Node.js)
 # The orchestrator only serves Blazor UI and SignalR hub.

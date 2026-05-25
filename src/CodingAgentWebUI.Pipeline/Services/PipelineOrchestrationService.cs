@@ -24,7 +24,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     private readonly PipelineRunLifecycleService _lifecycle;
     private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
-    private readonly IIssueProviderLabelSwapper _labelSwapper;
+    private readonly ILabelSwapper _labelSwapper;
     private readonly IssueDescriptionParser _issueParser;
     private readonly BrainSyncService _brainSync;
     private readonly PullRequestOrchestrator _prOrchestrator;
@@ -111,7 +111,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         IOrchestratorRunService? runService = null,
         PipelineRunLifecycleService? lifecycle = null,
         Interfaces.IQualityGateValidator? qualityGateValidator = null,
-        IIssueProviderLabelSwapper? labelSwapper = null)
+        ILabelSwapper? labelSwapper = null)
     {
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
@@ -352,7 +352,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             {
                 _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
                 run.CompletedAt = DateTime.UtcNow;
-                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
+                await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
                 _lifecycle.EmitOutputLine("🚫 Pipeline cancelled");
                 _lifecycle.TransitionTo(run, PipelineStep.Cancelled);
                 _lifecycle.AddRunToHistory(run);
@@ -389,8 +389,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
 
         // Label swap requires the active issue provider (orchestration concern)
-        if (_providerManager.ActiveIssueProvider != null)
-            await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
+        if (_providerManager.ActiveIssueProvider != null || run.RunType == PipelineRunType.Review)
+            await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
 
         // Delegate state transitions to lifecycle
         await _lifecycle.CancelPipelineAsync();
@@ -412,8 +412,15 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 
         foreach (var run in allRuns)
         {
+            var targetKind = run.RunType == PipelineRunType.Review
+                ? LabelTargetKind.PullRequest
+                : LabelTargetKind.Issue;
+            var providerConfigId = targetKind == LabelTargetKind.PullRequest
+                ? run.RepoProviderConfigId
+                : run.IssueProviderConfigId;
+
             await _labelSwapper.SwapLabelAsync(
-                run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
+                providerConfigId, run.IssueIdentifier, AgentLabels.Cancelled, targetKind, CancellationToken.None);
         }
 
         // Delegate state changes to lifecycle
@@ -458,10 +465,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             if (isDraft)
             {
                 run.FailureReason = "Quality gates failed after max retries; draft PR created.";
-                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
+                await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Error, ct);
             }
             else
-                await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Done, ct);
+                await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Done, ct);
 
             if (!isDraft && _providerManager.ActiveBrainProvider != null && !_activeConfig!.BrainReadOnly)
             {
@@ -516,16 +523,74 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         catch (Exception ex) when (ex is not OperationCanceledException)
         { _logger.Warning(ex, "Pipeline {RunId} failed to persist last-used provider IDs", ActiveRun?.RunId); }
     }
+    private async Task SwapAgentLabelAsync(PipelineRun run, string issueId, string newLabel, CancellationToken ct)
+    {
+        try
+        {
+            if (run.RunType == PipelineRunType.Review)
+            {
+                // Review runs: route label swap to the PR via ILabelSwapper
+                await _labelSwapper.SwapLabelAsync(
+                    run.RepoProviderConfigId, issueId, newLabel, LabelTargetKind.PullRequest, ct);
+            }
+            else
+            {
+                // Implementation runs: use the active issue provider directly (existing behavior)
+                foreach (var label in AgentLabels.All)
+                {
+                    if (string.Equals(label, newLabel, StringComparison.Ordinal))
+                        continue;
+                    await _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, ct);
+                }
+                if (!string.IsNullOrEmpty(newLabel))
+                    await _providerManager.ActiveIssueProvider!.AddLabelAsync(issueId, newLabel, ct);
+            }
+        }
+        catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on {Identifier}", newLabel, issueId); }
+    }
+
+    /// <summary>
+    /// Backward-compatible overload for callers that don't have a run reference.
+    /// Routes to issue provider (existing behavior for implementation runs).
+    /// </summary>
     private async Task SwapAgentLabelAsync(string issueId, string newLabel, CancellationToken ct)
     {
         try
         {
             foreach (var label in AgentLabels.All)
+            {
+                if (string.Equals(label, newLabel, StringComparison.Ordinal))
+                    continue;
                 await _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, ct);
-            await _providerManager.ActiveIssueProvider!.AddLabelAsync(issueId, newLabel, ct);
+            }
+            if (!string.IsNullOrEmpty(newLabel))
+                await _providerManager.ActiveIssueProvider!.AddLabelAsync(issueId, newLabel, ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on issue {Issue}", newLabel, issueId); }
     }
+    internal async Task RemoveAllAgentLabelsAsync(PipelineRun run, string issueId, CancellationToken ct)
+    {
+        try
+        {
+            if (run.RunType == PipelineRunType.Review)
+            {
+                // Review runs: route to PR via ILabelSwapper (empty label = remove only)
+                await _labelSwapper.SwapLabelAsync(
+                    run.RepoProviderConfigId, issueId, string.Empty, LabelTargetKind.PullRequest, ct);
+            }
+            else
+            {
+                foreach (var label in AgentLabels.All)
+                    await _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, ct);
+            }
+        }
+        catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from {Identifier}", issueId); }
+    }
+
+    /// <summary>
+    /// Backward-compatible overload for tests and callers without a run reference.
+    /// Routes to issue provider (existing behavior for implementation runs).
+    /// </summary>
     internal async Task RemoveAllAgentLabelsAsync(string issueId, CancellationToken ct)
     {
         try
@@ -545,7 +610,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     {
         run.FailureReason = reason;
         run.CompletedAt = DateTime.UtcNow;
-        await SwapAgentLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct);
+        await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Error, ct);
         _lifecycle.EmitOutputLine($"❌ Pipeline failed: {reason}");
         _lifecycle.TransitionTo(run, PipelineStep.Failed);
         _lifecycle.AddRunToHistory(run);
@@ -597,9 +662,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         public void AddRunToHistory(PipelineRun r) => svc._lifecycle.AddRunToHistory(r);
         public Task UpdateFileChangeStats(PipelineRun r) => svc.UpdateFileChangeStatsAsync(r);
         public Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
-            => svc.SwapAgentLabelAsync(issueIdentifier, label, ct);
+            => svc.SwapAgentLabelAsync(run, issueIdentifier, label, ct);
         public Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
-            => svc.RemoveAllAgentLabelsAsync(issueIdentifier, ct);
+            => svc.RemoveAllAgentLabelsAsync(run, issueIdentifier, ct);
         public Task CreatePullRequest(PipelineRun r, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
             var ctx = ctxAccessor();
@@ -637,9 +702,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     /// </summary>
     internal void NotifyChange() => _lifecycle.NotifyChange();
 
-    private sealed class NoOpLabelSwapper : IIssueProviderLabelSwapper
+    private sealed class NoOpLabelSwapper : ILabelSwapper
     {
         internal static readonly NoOpLabelSwapper Instance = new();
-        public Task SwapLabelAsync(string issueProviderConfigId, string issueIdentifier, string newLabel, CancellationToken ct) => Task.CompletedTask;
+        public Task SwapLabelAsync(string providerConfigId, string identifier, string newLabel, LabelTargetKind targetKind, CancellationToken ct) => Task.CompletedTask;
+        public Task<bool> EnsureAgentLabelsAsync(string providerConfigId, LabelTargetKind targetKind, CancellationToken ct) => Task.FromResult(true);
     }
 }

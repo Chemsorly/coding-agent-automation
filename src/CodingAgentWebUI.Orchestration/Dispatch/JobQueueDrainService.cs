@@ -135,15 +135,34 @@ public sealed class JobQueueDrainService : BackgroundService
                 // Clear the dedup entry so TryDispatchAsync doesn't reject it
                 _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier);
 
-                var dispatched = await _jobDispatcher.TryDispatchAsync(
-                    pendingJob.IssueIdentifier,
-                    pendingJob.IssueProviderId,
-                    pendingJob.RepoProviderId,
-                    pendingJob.BrainProviderId,
-                    pendingJob.PipelineProviderId,
-                    pendingJob.InitiatedBy,
-                    ct,
-                    issueTitle: pendingJob.IssueTitle);
+                bool dispatched;
+                if (pendingJob.RunType == Pipeline.Models.PipelineRunType.Review)
+                {
+                    dispatched = await _jobDispatcher.TryDispatchReviewAsync(
+                        pendingJob.IssueIdentifier,
+                        pendingJob.PrBranchName!,
+                        pendingJob.IssueTitle ?? $"PR #{pendingJob.IssueIdentifier}",
+                        pendingJob.PrDescription ?? string.Empty,
+                        pendingJob.PrUrl ?? string.Empty,
+                        pendingJob.PrTargetBranch ?? "main",
+                        pendingJob.IssueProviderId,
+                        pendingJob.RepoProviderId,
+                        pendingJob.BrainProviderId,
+                        pendingJob.InitiatedBy,
+                        ct);
+                }
+                else
+                {
+                    dispatched = await _jobDispatcher.TryDispatchAsync(
+                        pendingJob.IssueIdentifier,
+                        pendingJob.IssueProviderId,
+                        pendingJob.RepoProviderId,
+                        pendingJob.BrainProviderId,
+                        pendingJob.PipelineProviderId,
+                        pendingJob.InitiatedBy,
+                        ct,
+                        issueTitle: pendingJob.IssueTitle);
+                }
 
                 if (!dispatched)
                 {

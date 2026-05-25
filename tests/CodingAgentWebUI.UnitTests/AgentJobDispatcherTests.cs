@@ -15,7 +15,7 @@ namespace CodingAgentWebUI.UnitTests;
 /// <summary>
 /// Unit tests for <see cref="AgentJobDispatcher"/>.
 /// </summary>
-public class AgentJobDispatcherTests
+public class AgentJobDispatcherTests : IDisposable
 {
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly AgentRegistryService _registry;
@@ -23,10 +23,12 @@ public class AgentJobDispatcherTests
     private readonly OrchestratorRunService _runService;
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
-    private readonly Mock<IIssueProviderLabelSwapper> _mockLabelSwapper;
+    private readonly Mock<ILabelSwapper> _mockLabelSwapper;
     private readonly Mock<IAgentCommunication> _mockAgentComm;
+    private readonly HttpClient _httpClient;
     private readonly TokenVendingService _tokenVending;
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
+    private readonly List<PipelineOrchestrationService> _orchestrationInstances = new();
 
     public AgentJobDispatcherTests()
     {
@@ -35,9 +37,10 @@ public class AgentJobDispatcherTests
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _mockConfigStore = new Mock<IConfigurationStore>();
         _mockProviderFactory = new Mock<IProviderFactory>();
-        _mockLabelSwapper = new Mock<IIssueProviderLabelSwapper>();
+        _mockLabelSwapper = new Mock<ILabelSwapper>();
         _mockAgentComm = new Mock<IAgentCommunication>();
-        _tokenVending = new TokenVendingService(_mockLogger.Object, new HttpClient());
+        _httpClient = new HttpClient();
+        _tokenVending = new TokenVendingService(_mockLogger.Object, _httpClient);
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
     }
 
@@ -57,6 +60,7 @@ public class AgentJobDispatcherTests
             mockBrainUpdateService.Object,
             _mockHistoryService.Object,
             _runService);
+        _orchestrationInstances.Add(orchestration);
 
         return new AgentJobDispatcher(
             _dispatcher,
@@ -306,5 +310,12 @@ public class AgentJobDispatcherTests
 
         // After removal, issue should no longer be processed
         _runService.IsIssueBeingProcessed("issue-complete").Should().BeFalse();
+    }
+
+    public void Dispose()
+    {
+        _httpClient.Dispose();
+        foreach (var orchestration in _orchestrationInstances)
+            orchestration.Dispose();
     }
 }

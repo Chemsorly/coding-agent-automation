@@ -8,9 +8,10 @@
 # =============================================================================
 
 # Stage 1: Build (.NET compilation)
-# --platform=linux/arm64: Forces native ARM execution on ARM CI runners (avoids .NET QEMU crash)
-# Cross-compiles to linux-x64 via RID so the output runs in the amd64 runtime stage.
-FROM --platform=linux/arm64 mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
+# --platform=$BUILDPLATFORM: SDK runs natively on the build host (ARM64 in CI, x64 locally).
+# Cross-compiles to the target platform via -a $TARGETARCH.
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
+ARG TARGETARCH
 WORKDIR /src
 
 # Copy solution and project files first for layer caching
@@ -24,14 +25,15 @@ COPY src/CodingAgentWebUI/CodingAgentWebUI.csproj src/CodingAgentWebUI/
 COPY src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj src/CodingAgentWebUI.Agent/
 COPY src/CodingAgentWebUI.Agent.KiroCli/CodingAgentWebUI.Agent.KiroCli.csproj src/CodingAgentWebUI.Agent.KiroCli/
 COPY src/CodingAgentWebUI.Agent.OpenCode/CodingAgentWebUI.Agent.OpenCode.csproj src/CodingAgentWebUI.Agent.OpenCode/
-RUN dotnet restore src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -r linux-x64
+RUN dotnet restore src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -a $TARGETARCH
 
 # Copy everything else and publish the Agent project
 COPY . .
-RUN dotnet publish src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -c Release -r linux-x64 --self-contained false -o /app/publish
+RUN dotnet publish src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -c Release -a $TARGETARCH --self-contained false -o /app/publish
 
 # Stage 2: Runtime (full SDK — quality gates run dotnet build/test + mvn test)
 FROM mcr.microsoft.com/dotnet/sdk:10.0.300 AS runtime
+ARG TARGETARCH
 
 # Pin OpenCode version via build ARG for reproducible builds
 ARG OPENCODE_VERSION=1.14.50
@@ -49,11 +51,16 @@ RUN apt-get update && \
         npm \
     && rm -rf /var/lib/apt/lists/*
 
-ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+# JAVA_HOME varies by architecture — set dynamically via symlink
+# The JDK package installs to java-21-openjdk-amd64 or java-21-openjdk-arm64
+RUN JAVA_ARCH=$(dpkg --print-architecture) && \
+    ln -sf /usr/lib/jvm/java-21-openjdk-${JAVA_ARCH} /usr/lib/jvm/java-21-openjdk
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
 
-# Download and install OpenCode binary (pinned version)
-RUN curl -fsSL \
-        "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-x64.tar.gz" \
+# Download and install OpenCode binary (pinned version, architecture-aware)
+RUN OC_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
+    curl -fsSL \
+        "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${OC_ARCH}.tar.gz" \
         -o /tmp/opencode.tar.gz && \
     tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin && \
     chmod +x /usr/local/bin/opencode && \

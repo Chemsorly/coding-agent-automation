@@ -27,6 +27,16 @@
     <!-- Active Runs -->
     <section class="settings-section" style="margin: 16px 20px;">
         <h2>🔄 Active Runs (@_activeRuns.Count)</h2>
+        @{
+            var implRuns = _activeRuns.Count(r => r.RunType == PipelineRunType.Implementation);
+            var reviewRuns = _activeRuns.Count(r => r.RunType == PipelineRunType.Review);
+        }
+        @if (_activeRuns.Count > 0)
+        {
+            <div class="monitoring-run-counts" style="margin-bottom: 8px; font-size: 0.85rem; color: var(--text-muted);">
+                🔨 @implRuns implementation · 🔍 @reviewRuns review
+            </div>
+        }
         @if (_activeRuns.Count == 0)
         {
             <div class="monitoring-empty">No active pipeline runs.</div>
@@ -38,6 +48,7 @@
                     <thead>
                         <tr>
                             <th>Run ID</th>
+                            <th>Type</th>
                             <th>Issue</th>
                             <th>Agent</th>
                             <th>Step</th>
@@ -53,14 +64,33 @@
                             <tr class="monitoring-row-clickable"
                                 @onclick="() => OpenRunDetail(run.RunId)">
                                 <td class="monitoring-mono" title="@run.RunId">@run.RunId</td>
-                                <td title="#@run.IssueIdentifier @run.IssueTitle">#@run.IssueIdentifier @run.IssueTitle</td>
+                                <td>
+                                    @if (run.RunType == PipelineRunType.Review)
+                                    {
+                                        <span class="run-type-badge run-type-review" title="PR Review">🔍 Review</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="run-type-badge run-type-impl" title="Implementation">🔨 Impl</span>
+                                    }
+                                </td>
+                                <td title="#@run.IssueIdentifier @run.IssueTitle">
+                                    @if (run.RunType == PipelineRunType.Review)
+                                    {
+                                        <text>PR #@run.IssueIdentifier @run.IssueTitle</text>
+                                    }
+                                    else
+                                    {
+                                        <text>#@run.IssueIdentifier @run.IssueTitle</text>
+                                    }
+                                </td>
                                 <td title="@(run.AgentId ?? "local")">@(run.AgentId ?? "local")</td>
                                 <td>
                                     <span class="monitoring-step monitoring-step-@run.CurrentStep.ToString().ToLowerInvariant()">
                                         @FormatStep(run.CurrentStep)
                                     </span>
                                 </td>
-                                <td>@run.StartedAt.ToString("HH:mm:ss")</td>
+                                <td>@run.StartedAt.ToLocalTime().ToString("HH:mm:ss")</td>
                                 <td>@elapsed.ToString(@"hh\:mm\:ss")</td>
                                 <td>
                                     @if (run.AgentId != null)
@@ -305,7 +335,7 @@
                                 </td>
                                 <td class="monitoring-mono" title="@(agent.ActiveJobId ?? "")">@(agent.ActiveJobId ?? "—")</td>
                                 <td>@FormatTimeAgo(agent.LastHeartbeatAt)</td>
-                                <td>@agent.RegisteredAt.ToString("HH:mm:ss")</td>
+                                <td>@agent.RegisteredAt.ToLocalTime().ToString("HH:mm:ss")</td>
                             </tr>
                         }
                     </tbody>
@@ -345,7 +375,7 @@
                                 <td>@position</td>
                                 <td title="#@job.IssueIdentifier @job.IssueTitle">#@job.IssueIdentifier @job.IssueTitle</td>
                                 <td title="@job.InitiatedBy">@job.InitiatedBy</td>
-                                <td>@job.EnqueuedAt.ToString("HH:mm:ss")</td>
+                                <td>@job.EnqueuedAt.ToLocalTime().ToString("HH:mm:ss")</td>
                                 <td>@waitTime.ToString(@"hh\:mm\:ss")</td>
                                 <td>
                                     @if (job.RequiredLabels.Count > 0)
@@ -394,6 +424,7 @@
                         <thead>
                             <tr>
                                 <th>Run ID</th>
+                                <th>Type</th>
                                 <th>Issue</th>
                                 <th>Agent</th>
                                 <th>Final Step</th>
@@ -409,7 +440,26 @@
                                 <tr class="monitoring-row-clickable"
                                     @onclick="() => OpenHistoryRunDetail(run)">
                                     <td class="monitoring-mono" title="@run.RunId">@run.RunId</td>
-                                    <td title="#@run.IssueIdentifier @run.IssueTitle">#@run.IssueIdentifier @run.IssueTitle</td>
+                                    <td>
+                                        @if (run.RunType == PipelineRunType.Review)
+                                        {
+                                            <span class="run-type-badge run-type-review" title="PR Review">🔍</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="run-type-badge run-type-impl" title="Implementation">🔨</span>
+                                        }
+                                    </td>
+                                    <td title="#@run.IssueIdentifier @run.IssueTitle">
+                                        @if (run.RunType == PipelineRunType.Review)
+                                        {
+                                            <text>PR #@run.IssueIdentifier @run.IssueTitle</text>
+                                        }
+                                        else
+                                        {
+                                            <text>#@run.IssueIdentifier @run.IssueTitle</text>
+                                        }
+                                    </td>
                                     <td>@(run.AgentId ?? "local")</td>
                                     <td>
                                         <span class="step-badge step-@run.FinalStep.ToString().ToLowerInvariant()">
@@ -419,7 +469,11 @@
                                     <td>@FormatDuration(run.StartedAt, run.CompletedAt)</td>
                                     <td><span class="token-badge">@CostFormatter.FormatTokens(run.TotalTokens)</span></td>
                                     <td>
-                                        @if (!string.IsNullOrEmpty(run.PullRequestUrl))
+                                        @if (run.RunType == PipelineRunType.Review && !string.IsNullOrEmpty(run.ReviewPrUrl))
+                                        {
+                                            <a href="@run.ReviewPrUrl" target="_blank" rel="noopener">PR</a>
+                                        }
+                                        else if (!string.IsNullOrEmpty(run.PullRequestUrl))
                                         {
                                             <a href="@run.PullRequestUrl" target="_blank" rel="noopener">PR</a>
                                         }
@@ -446,6 +500,10 @@
             <div class="modal-card" @onclick:stopPropagation="true"
                  role="dialog" aria-modal="true" aria-labelledby="history-detail-title">
                 <h3 id="history-detail-title">
+                    @if (_selectedHistoryRun.RunType == PipelineRunType.Review)
+                    {
+                        <span class="run-type-badge run-type-review">🔍 Review</span>
+                    }
                     Run @Truncate(_selectedHistoryRun.RunId, 12) — #@_selectedHistoryRun.IssueIdentifier @Truncate(_selectedHistoryRun.IssueTitle, 40)
                 </h3>
 
@@ -455,6 +513,7 @@
                 }
 
                 <div class="modal-provider-list">
+                    <div><strong>Run Type:</strong> @(_selectedHistoryRun.RunType == PipelineRunType.Review ? "PR Review" : "Implementation")</div>
                     <div><strong>Final Step:</strong>
                         <span class="step-badge step-@_selectedHistoryRun.FinalStep.ToString().ToLowerInvariant()">
                             @FormatStep(_selectedHistoryRun.FinalStep)
@@ -464,6 +523,25 @@
                     @* TODO: [UX-24] Add AgentProviderConfigId to PipelineRunSummary and resolve display name/type here *@
                     <div><strong>Agent:</strong> @(_selectedHistoryRun.AgentId ?? "local")</div>
                     <div><strong>Initiated By:</strong> @_selectedHistoryRun.InitiatedBy</div>
+                    @if (_selectedHistoryRun.RunType == PipelineRunType.Review)
+                    {
+                        @if (!string.IsNullOrEmpty(_selectedHistoryRun.ReviewPrUrl))
+                        {
+                            <div><strong>PR Under Review:</strong> <a href="@_selectedHistoryRun.ReviewPrUrl" target="_blank" rel="noopener">@_selectedHistoryRun.ReviewPrUrl</a></div>
+                        }
+                        @if (_selectedHistoryRun.CodeReviewAgentsRun.Count > 0)
+                        {
+                            <div><strong>Review Agents:</strong> @string.Join(", ", _selectedHistoryRun.CodeReviewAgentsRun)</div>
+                        }
+                        @if (_selectedHistoryRun.CodeReviewCriticalCount > 0 || _selectedHistoryRun.CodeReviewWarningCount > 0 || _selectedHistoryRun.CodeReviewSuggestionCount > 0)
+                        {
+                            <div><strong>Findings:</strong> 🔴 @_selectedHistoryRun.CodeReviewCriticalCount critical · 🟡 @_selectedHistoryRun.CodeReviewWarningCount warning · 🔵 @_selectedHistoryRun.CodeReviewSuggestionCount suggestion</div>
+                        }
+                        else
+                        {
+                            <div><strong>Findings:</strong> ✅ No issues found</div>
+                        }
+                    }
                     @if (_selectedHistoryRun.TotalCost is not null and > 0m)
                     {
                         <div><strong>Cost:</strong> @CostFormatter.FormatCost(_selectedHistoryRun.TotalCost)</div>
@@ -484,7 +562,7 @@
                     {
                         <div><strong>Rework:</strong> Yes</div>
                     }
-                    @if (!string.IsNullOrEmpty(_selectedHistoryRun.PullRequestUrl))
+                    @if (!string.IsNullOrEmpty(_selectedHistoryRun.PullRequestUrl) && _selectedHistoryRun.RunType != PipelineRunType.Review)
                     {
                         <div><strong>PR:</strong> <a href="@_selectedHistoryRun.PullRequestUrl" target="_blank" rel="noopener">@_selectedHistoryRun.PullRequestUrl</a></div>
                     }
@@ -779,6 +857,8 @@
         PipelineStep.ReviewingCode => "Reviewing",
         PipelineStep.RunningQualityGates => "Quality Gates",
         PipelineStep.CreatingPullRequest => "Creating PR",
+        PipelineStep.ExtractingLinkedIssues => "Extracting Issues",
+        PipelineStep.PostingFindings => "Posting Findings",
         PipelineStep.Completed => "Completed",
         PipelineStep.Failed => "Failed",
         PipelineStep.Cancelled => "Cancelled",

@@ -31,6 +31,9 @@ internal sealed class ReviewCodeStep : IPipelineStep
             resolvedReviewers = reviewerResolver.Resolve(allReviewerConfigs, requiredLabelsForReview);
         }
 
+        // Store resolved reviewers so PostReviewFindingsStep can access them for per-agent retry
+        context.ResolvedReviewerConfigs = resolvedReviewers;
+
         var phaseContext = context.BuildAgentPhaseContext();
 
         await context.AgentExecution.ExecuteCodeReviewAsync(
