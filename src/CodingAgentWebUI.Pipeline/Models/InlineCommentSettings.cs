@@ -15,7 +15,7 @@ public sealed record InlineCommentSettings
     /// and skips FindingsParser invocation and prompt enhancement.
     /// Defaults to false so existing deployments are unaffected on upgrade.
     /// </summary>
-    public bool Enabled { get; init; } = false;
+    public bool Enabled { get; init; } = true;
 
     /// <summary>
     /// Minimum severity level for findings to be posted as inline comments.

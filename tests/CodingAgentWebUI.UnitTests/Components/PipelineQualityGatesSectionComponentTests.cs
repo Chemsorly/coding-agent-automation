@@ -28,7 +28,7 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
     {
         var cut = Render<PipelineQualityGatesSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
-        Assert.Contains("Quality Gates", cut.Markup);
+        Assert.Contains("Implementation", cut.Markup);
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
         var cut = Render<PipelineQualityGatesSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
 
-        var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Quality Gate"));
+        var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Implementation"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
         _mockStore.Verify(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -99,7 +99,7 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
             p.Add(s => s.ConfigStore, _mockStore.Object)
              .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => status = v)));
 
-        var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Quality Gate"));
+        var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Implementation"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
         Assert.Contains("saved", status.Message);

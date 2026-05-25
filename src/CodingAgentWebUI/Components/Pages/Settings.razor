@@ -82,10 +82,15 @@
                         ConfigStore="ConfigStore"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
-                case SettingsNodes.PipelineQuality:
+                case SettingsNodes.PipelineImplementation:
                     <PipelineQualityGatesSection
                         ConfigStore="ConfigStore"
                         PipelineProviderCount="_pipelineProviders.Count"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
+                case SettingsNodes.PipelineReview:
+                    <PipelineReviewSection
+                        ConfigStore="ConfigStore"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineConsolidation:
