@@ -268,6 +268,9 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     }
 
     public Task PushBranchAsync(string workspacePath, string branchName, CancellationToken ct)
+        => PushBranchAsync(workspacePath, branchName, forcePush: false, ct);
+
+    public Task PushBranchAsync(string workspacePath, string branchName, bool forcePush, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(workspacePath);
         ArgumentNullException.ThrowIfNull(branchName);
@@ -287,11 +290,19 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                     pushError = $"Push failed for ref '{error.Reference}': {error.Message}"
             };
 
+            // Force-push uses '+' prefix on refspec to allow non-fast-forward updates (required after rebase)
+            var refSpec = forcePush
+                ? $"+refs/heads/{branchName}"
+                : $"refs/heads/{branchName}";
+
+            if (forcePush)
+                Log.Information("Force-pushing branch {BranchName} (post-rebase history rewrite)", branchName);
+
             await _gitPipeline.ExecuteAsync(async _ =>
             {
                 await Task.CompletedTask;
                 pushError = null;
-                repo.Network.Push(remote, $"refs/heads/{branchName}", options);
+                repo.Network.Push(remote, refSpec, options);
 
                 if (pushError != null)
                 {
@@ -588,24 +599,30 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                 };
             }
 
-            var mergeBaseSha = mergeBase?.Sha[..8] ?? "none";
-            var commitsAhead = repo.Commits.QueryBy(new CommitFilter
+            if (mergeBase != null)
             {
-                IncludeReachableFrom = repo.Head.Tip,
-                ExcludeReachableFrom = mergeBase
-            }).Count();
-            var commitsBehind = repo.Commits.QueryBy(new CommitFilter
+                var mergeBaseSha = mergeBase.Sha[..8];
+                var commitsAhead = repo.Commits.QueryBy(new CommitFilter
+                {
+                    IncludeReachableFrom = repo.Head.Tip,
+                    ExcludeReachableFrom = mergeBase
+                }).Take(500).Count();
+                var commitsBehind = repo.Commits.QueryBy(new CommitFilter
+                {
+                    IncludeReachableFrom = baseBranch.Tip,
+                    ExcludeReachableFrom = mergeBase
+                }).Take(500).Count();
+
+                Log.Information(
+                    "Rebase: branch {BranchName} is {CommitsAhead} ahead, {CommitsBehind} behind origin/{BaseBranch} (merge-base={MergeBaseSha})",
+                    headBranchName, commitsAhead, commitsBehind, _baseBranch, mergeBaseSha);
+            }
+            else
             {
-                IncludeReachableFrom = baseBranch.Tip,
-                ExcludeReachableFrom = mergeBase
-            }).Count();
+                Log.Warning("Rebase: no common ancestor between {BranchName} and origin/{BaseBranch}, proceeding with rebase",
+                    headBranchName, _baseBranch);
+            }
 
-            Log.Information(
-                "Rebase: branch {BranchName} is {CommitsAhead} ahead, {CommitsBehind} behind origin/{BaseBranch} (merge-base={MergeBaseSha})",
-                headBranchName, commitsAhead, commitsBehind, _baseBranch, mergeBaseSha);
-
-            var signature = new Signature(
-                GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
             var identity = new Identity(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail);
 
             // Perform interactive-less rebase: replay branch commits on top of origin/main.
@@ -625,10 +642,10 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                 repo.Rebase.Abort();
 
                 Log.Warning(
-                    "Rebase: branch {BranchName} onto origin/{BaseBranch} produced {ConflictCount} conflict(s) at step {CurrentStep}/{TotalSteps}, aborted. Conflicts: {ConflictFiles}",
+                    "Rebase: branch {BranchName} onto origin/{BaseBranch} produced {ConflictCount} conflict(s) at step {CurrentStep}/{TotalSteps}, aborted. Conflicts: {@ConflictFiles}",
                     headBranchName, _baseBranch, conflictFiles.Count,
                     rebaseResult.CompletedStepCount + 1, rebaseResult.TotalStepCount,
-                    string.Join(", ", conflictFiles));
+                    conflictFiles);
 
                 return new MergeResult
                 {

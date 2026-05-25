@@ -36,6 +36,13 @@ public interface IRepositoryProvider : IAsyncDisposable
     Task CommitAllAsync(string workspacePath, string message, CancellationToken ct) =>
         CommitAllAsync(workspacePath, message, null, ct);
     Task PushBranchAsync(string workspacePath, string branchName, CancellationToken ct);
+
+    /// <summary>
+    /// Pushes the branch to origin with optional force-push (required after rebase rewrites history).
+    /// </summary>
+    Task PushBranchAsync(string workspacePath, string branchName, bool forcePush, CancellationToken ct)
+        => PushBranchAsync(workspacePath, branchName, ct);
+
     Task<string> CreatePullRequestAsync(PullRequestInfo prInfo, CancellationToken ct);
 
     /// <summary>
