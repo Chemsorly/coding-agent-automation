@@ -86,7 +86,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             // 4. Build prompt
             var prompt = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(job.PipelineConfiguration.MaxRefactoringProposals);
 
-            // 4. Execute agent
+            // 5. Execute agent
             Logger.Information("Executing refactoring detection agent for run {RunId}", job.JobId);
             var (agentResult, failure) = await ExecuteAgentAndCheckAsync(
                 agentProvider,
