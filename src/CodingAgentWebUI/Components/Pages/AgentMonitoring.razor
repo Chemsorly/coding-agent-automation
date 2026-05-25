@@ -90,7 +90,7 @@
                                         @FormatStep(run.CurrentStep)
                                     </span>
                                 </td>
-                                <td>@run.StartedAt.ToString("HH:mm:ss")</td>
+                                <td>@run.StartedAt.ToLocalTime().ToString("HH:mm:ss")</td>
                                 <td>@elapsed.ToString(@"hh\:mm\:ss")</td>
                                 <td>
                                     @if (run.AgentId != null)
@@ -335,7 +335,7 @@
                                 </td>
                                 <td class="monitoring-mono" title="@(agent.ActiveJobId ?? "")">@(agent.ActiveJobId ?? "—")</td>
                                 <td>@FormatTimeAgo(agent.LastHeartbeatAt)</td>
-                                <td>@agent.RegisteredAt.ToString("HH:mm:ss")</td>
+                                <td>@agent.RegisteredAt.ToLocalTime().ToString("HH:mm:ss")</td>
                             </tr>
                         }
                     </tbody>
@@ -375,7 +375,7 @@
                                 <td>@position</td>
                                 <td title="#@job.IssueIdentifier @job.IssueTitle">#@job.IssueIdentifier @job.IssueTitle</td>
                                 <td title="@job.InitiatedBy">@job.InitiatedBy</td>
-                                <td>@job.EnqueuedAt.ToString("HH:mm:ss")</td>
+                                <td>@job.EnqueuedAt.ToLocalTime().ToString("HH:mm:ss")</td>
                                 <td>@waitTime.ToString(@"hh\:mm\:ss")</td>
                                 <td>
                                     @if (job.RequiredLabels.Count > 0)

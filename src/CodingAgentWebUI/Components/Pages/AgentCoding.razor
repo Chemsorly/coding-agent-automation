@@ -648,7 +648,7 @@
                     @if (_selectedDrawerIssue.CreatedAt.HasValue)
                     {
                         <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0 0 8px;">
-                            Created: @_selectedDrawerIssue.CreatedAt.Value.ToString("g")
+                            Created: @_selectedDrawerIssue.CreatedAt.Value.ToLocalTime().ToString("g")
                         </p>
                     }
                     <button class="btn-save" @onclick="DispatchFromDrawer" disabled="@_drawerDispatching"
@@ -758,7 +758,7 @@
                     @if (_selectedDrawerPr.CreatedAt.HasValue)
                     {
                         <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0 0 8px;">
-                            Created: @_selectedDrawerPr.CreatedAt.Value.ToString("g")
+                            Created: @_selectedDrawerPr.CreatedAt.Value.ToLocalTime().ToString("g")
                         </p>
                     }
                     <button class="btn-save" @onclick="DispatchPrReviewFromDrawer" disabled="@_prDrawerDispatching"

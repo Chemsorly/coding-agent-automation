@@ -339,9 +339,6 @@ public class InlineReviewIntegrationTests : IAsyncDisposable
         const string reason = "Superseded by new review";
         const int prNumber = 30;
 
-        // Stub current user (bot identity)
-        StubGet(ApiPath("/user"), new { login = "pipeline-bot", id = 100 });
-
         // Stub reviews list — two matching bot reviews, one human review
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/{prNumber}/reviews"), new[]
         {
@@ -416,7 +413,6 @@ public class InlineReviewIntegrationTests : IAsyncDisposable
         // Arrange
         const int prNumber = 31;
 
-        StubGet(ApiPath("/user"), new { login = "pipeline-bot", id = 100 });
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/{prNumber}/reviews"), new[]
         {
             BuildReviewJson(501, "human-user", "Human review"),
@@ -441,7 +437,6 @@ public class InlineReviewIntegrationTests : IAsyncDisposable
         const int prNumber = 32;
         const string marker = "<!-- agent:pr-review -->";
 
-        StubGet(ApiPath("/user"), new { login = "pipeline-bot", id = 100 });
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/{prNumber}/reviews"), new[]
         {
             BuildReviewJson(601, "pipeline-bot", $"Review 1 {marker}"),
@@ -587,11 +582,11 @@ public class InlineReviewIntegrationTests : IAsyncDisposable
         submitted_at = "2026-01-15T10:00:00Z"
     };
 
-    private static object BuildReviewJson(long id, string login, string body) => new
+    private static object BuildReviewJson(long id, string login, string body, string state = "CHANGES_REQUESTED") => new
     {
         id,
         body,
-        state = "COMMENTED",
+        state,
         user = new { login, id = login.GetHashCode() },
         html_url = $"https://github.com/{Owner}/{Repo}/pull/1#pullrequestreview-{id}",
         submitted_at = "2026-01-15T10:00:00Z"
