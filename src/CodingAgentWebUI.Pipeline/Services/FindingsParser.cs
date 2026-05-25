@@ -219,9 +219,17 @@ public static partial class FindingsParser
     }
 
     /// <summary>
-    /// Normalizes file paths to forward slashes.
+    /// Normalizes file paths to forward slashes and strips leading ./ or / prefixes.
     /// </summary>
-    private static string NormalizePath(string path) => path.Replace('\\', '/');
+    private static string NormalizePath(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        if (normalized.StartsWith("./"))
+            normalized = normalized[2..];
+        else if (normalized.StartsWith("/"))
+            normalized = normalized[1..];
+        return normalized;
+    }
 
     /// <summary>
     /// Strips leading separator patterns from the message text.

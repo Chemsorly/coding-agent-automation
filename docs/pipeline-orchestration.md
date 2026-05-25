@@ -205,7 +205,7 @@ flowchart TD
     B -->|Yes| C[ListOpenPullRequestsAsync<br/>label: agent:next]
     B -->|No| D[Skip PR polling]
     C --> E{PRs found?}
-    E -->|Yes| F[Filter: skip draft, skip in-progress]
+    E -->|Yes| F[Filter: skip in-progress]
     F --> G[TryDispatchReviewAsync]
     G --> H[Agent picks up job]
     H --> I[PR Review Step Sequence]
@@ -340,7 +340,7 @@ When both implementation and review loops are active, they share the `ClosedLoop
 - Total dispatches per cycle never exceed `ClosedLoopMaxRunsPerCycle`
 - Both queues get at least one dispatch when budget allows
 - PRs are processed in FIFO order (oldest `CreatedAt` first)
-- Draft PRs are always skipped
+- Draft PRs are included in review dispatch (a warning is shown in the UI)
 - PRs with `agent:error`, `agent:in-progress`, `agent:done`, or `agent:cancelled` labels are skipped
 
 ### Linked Issue Extraction
@@ -590,7 +590,7 @@ The `InlineCommentSettings` record is nested within `CodeReviewConfiguration`:
     "FixPrompt": null,
     "ReviewIsolation": "Isolated",
     "InlineComments": {
-      "Enabled": false,
+      "Enabled": true,
       "SeverityThreshold": "Warning",
       "MaxInlineComments": 15,
       "OrderBySeverity": true,
@@ -604,7 +604,7 @@ The `InlineCommentSettings` record is nested within `CodeReviewConfiguration`:
 
 | Property | Type | Default | Range | Description |
 |----------|------|---------|-------|-------------|
-| `Enabled` | `bool` | `false` | — | Master switch. Must be explicitly set to `true` to activate inline comments |
+| `Enabled` | `bool` | `true` | — | Master switch. When false, body-only reviews are posted (existing behavior). Defaults to enabled |
 | `SeverityThreshold` | `FindingSeverity` | `Warning` | `Suggestion`, `Warning`, `Critical` | Minimum severity for inline posting. A finding is eligible when its severity value `>=` the threshold value |
 | `MaxInlineComments` | `int` | `15` | 1–50 | Maximum inline comments per review. Highest-severity findings are prioritized when the cap is reached |
 | `OrderBySeverity` | `bool` | `true` | — | Sort eligible findings by severity (Critical first) when selecting which to post inline |
@@ -612,7 +612,7 @@ The `InlineCommentSettings` record is nested within `CodeReviewConfiguration`:
 
 #### Backward Compatibility
 
-- Existing configuration files without the `InlineComments` key deserialize to a default `InlineCommentSettings` instance with `Enabled = false`
+- Existing configuration files without the `InlineComments` key deserialize to a default `InlineCommentSettings` instance with `Enabled = true`
 - No migration required — existing deployments are unaffected on upgrade
 - Property ranges are validated at usage time via `Math.Clamp` (not at deserialization), consistent with other pipeline configs
 

@@ -6,7 +6,10 @@
 # =============================================================================
 
 # Stage 1: Build (compiles the .NET Agent Worker)
-FROM mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
+# --platform=$BUILDPLATFORM: SDK runs natively on the build host (ARM64 in CI, x64 locally).
+# Cross-compiles to the target platform via -a $TARGETARCH.
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.300 AS build
+ARG TARGETARCH
 WORKDIR /src
 
 # Copy only the project files needed for the Agent and its dependencies (not test projects)
@@ -20,13 +23,14 @@ COPY src/CodingAgentWebUI/CodingAgentWebUI.csproj src/CodingAgentWebUI/
 COPY src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj src/CodingAgentWebUI.Agent/
 COPY src/CodingAgentWebUI.Agent.KiroCli/CodingAgentWebUI.Agent.KiroCli.csproj src/CodingAgentWebUI.Agent.KiroCli/
 COPY src/CodingAgentWebUI.Agent.OpenCode/CodingAgentWebUI.Agent.OpenCode.csproj src/CodingAgentWebUI.Agent.OpenCode/
-RUN dotnet restore src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -r linux-x64
+RUN dotnet restore src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -a $TARGETARCH
 
 COPY . .
-RUN dotnet publish src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -c Release -r linux-x64 --self-contained false -o /app/publish
+RUN dotnet publish src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -c Release -a $TARGETARCH --self-contained false -o /app/publish
 
 # Stage 2: Runtime (JDK 21 + Maven for Java quality gates)
 FROM mcr.microsoft.com/dotnet/sdk:10.0.300 AS runtime
+ARG TARGETARCH
 
 # Only install what this agent type needs: JDK 21, Maven, git, and curl/unzip for Kiro CLI
 RUN apt-get update && \
@@ -41,7 +45,11 @@ RUN apt-get update && \
         npm \
     && rm -rf /var/lib/apt/lists/*
 
-ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+# JAVA_HOME varies by architecture — set dynamically via symlink
+# The JDK package installs to java-21-openjdk-amd64 or java-21-openjdk-arm64
+RUN JAVA_ARCH=$(dpkg --print-architecture) && \
+    ln -sf /usr/lib/jvm/java-21-openjdk-${JAVA_ARCH} /usr/lib/jvm/java-21-openjdk
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
 
 RUN mkdir -p /home/ubuntu/.local/bin /home/ubuntu/.kiro && \
     chown -R ubuntu:ubuntu /home/ubuntu
@@ -50,8 +58,9 @@ USER ubuntu
 ENV PATH="/home/ubuntu/.local/bin:${PATH}"
 
 ARG KIRO_CLI_VERSION=2.0.1
-RUN curl --proto '=https' --tlsv1.2 -sSf \
-        "https://desktop-release.q.us-east-1.amazonaws.com/${KIRO_CLI_VERSION}/kirocli-x86_64-linux.zip" \
+RUN KIRO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") && \
+    curl --proto '=https' --tlsv1.2 -sSf \
+        "https://desktop-release.q.us-east-1.amazonaws.com/${KIRO_CLI_VERSION}/kirocli-${KIRO_ARCH}-linux.zip" \
         -o /tmp/kirocli.zip && \
     unzip /tmp/kirocli.zip -d /tmp/kirocli && \
     /tmp/kirocli/kirocli/install.sh --no-confirm && \

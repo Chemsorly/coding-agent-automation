@@ -42,10 +42,13 @@ public class LabelSwapperTests
 
         await swapper.SwapLabelAsync("ip-1", "42", AgentLabels.InProgress, LabelTargetKind.Issue, CancellationToken.None);
 
-        // Should have removed all agent labels from the issue
+        // Should have removed all agent labels EXCEPT the target (avoids redundant remove+add)
         foreach (var label in AgentLabels.All)
         {
-            issueProvider.Verify(p => p.RemoveLabelAsync("42", label, It.IsAny<CancellationToken>()), Times.Once);
+            if (label == AgentLabels.InProgress)
+                issueProvider.Verify(p => p.RemoveLabelAsync("42", label, It.IsAny<CancellationToken>()), Times.Never);
+            else
+                issueProvider.Verify(p => p.RemoveLabelAsync("42", label, It.IsAny<CancellationToken>()), Times.Once);
         }
 
         // Should have added the new label
@@ -75,10 +78,13 @@ public class LabelSwapperTests
 
         await swapper.SwapLabelAsync("rp-1", "55", AgentLabels.Done, LabelTargetKind.PullRequest, CancellationToken.None);
 
-        // Should have removed all agent labels from the PR
+        // Should have removed all agent labels EXCEPT the target (avoids redundant remove+add)
         foreach (var label in AgentLabels.All)
         {
-            repoProvider.Verify(p => p.RemovePrLabelAsync(55, label, It.IsAny<CancellationToken>()), Times.Once);
+            if (label == AgentLabels.Done)
+                repoProvider.Verify(p => p.RemovePrLabelAsync(55, label, It.IsAny<CancellationToken>()), Times.Never);
+            else
+                repoProvider.Verify(p => p.RemovePrLabelAsync(55, label, It.IsAny<CancellationToken>()), Times.Once);
         }
 
         // Should have added the new label

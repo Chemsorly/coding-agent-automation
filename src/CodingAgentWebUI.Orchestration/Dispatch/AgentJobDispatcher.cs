@@ -503,15 +503,9 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             // Override blacklist settings from repo provider config (per-repo takes precedence)
             config = PipelineConfiguration.ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == repoProviderId));
 
-            // TODO: This label swap is redundant — CloneRepositoryStep also calls SwapAgentLabel(InProgress)
-            // when the agent begins execution, resulting in a duplicate GitHub API call per review run.
-            // We swap here (at dispatch time) so the PR is immediately marked in-progress before the agent
-            // picks up the job, preventing the loop from re-dispatching it on the next cycle. CloneRepositoryStep
-            // then swaps again because it doesn't know whether the orchestrator already did it.
-            // To eliminate the duplication: either skip the swap in CloneRepositoryStep for agent-dispatched runs
-            // (check if run.AgentId is set), or remove this swap and accept a brief window where the PR still
-            // has agent:next (mitigated by IsIssueBeingProcessedOrQueued check in the loop).
-            // Swap label to agent:in-progress before dispatch
+            // Swap label to agent:in-progress before dispatch so the PR is immediately marked
+            // in-progress, preventing the loop from re-dispatching it on the next cycle.
+            // CloneRepositoryStep skips the swap for agent-dispatched runs (AgentId is set).
             await _labelSwapper.SwapLabelAsync(
                 repoProviderId, prIdentifier, AgentLabels.InProgress, LabelTargetKind.PullRequest, ct);
 

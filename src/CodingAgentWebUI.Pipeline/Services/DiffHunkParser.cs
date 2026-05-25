@@ -19,7 +19,7 @@ internal static partial class DiffHunkParser
         if (string.IsNullOrEmpty(diffText))
             return new Dictionary<string, HashSet<int>>();
 
-        var result = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+        var result = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
         var lines = diffText.Split('\n');
 
         string? currentFile = null;

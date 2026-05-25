@@ -47,8 +47,8 @@ public sealed record CodeReviewConfiguration
     /// <summary>
     /// Settings controlling inline review comment behavior: severity threshold,
     /// maximum comments, verbosity ordering, retry count, and enablement.
-    /// Defaults to a new instance with Enabled=false, ensuring backward-compatible
-    /// deserialization when the key is absent from existing configuration files.
+    /// Defaults to a new instance with Enabled=true, ensuring inline comments
+    /// are active by default when the key is absent from configuration files.
     /// </summary>
     public InlineCommentSettings InlineComments { get; init; } = new();
 }

@@ -1323,10 +1323,11 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        // Should remove all agent labels then add agent:in-progress
-        foreach (var label in AgentLabels.All)
-            _mockIssueProvider.Verify(p => p.RemoveLabelAsync("42", label, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        // Should add agent:in-progress during the clone step
         _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:in-progress", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        // Other labels should be removed (at least once across all swaps)
+        _mockIssueProvider.Verify(p => p.RemoveLabelAsync("42", AgentLabels.Next, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        _mockIssueProvider.Verify(p => p.RemoveLabelAsync("42", AgentLabels.Error, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
     [Fact]

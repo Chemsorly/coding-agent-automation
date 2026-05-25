@@ -95,20 +95,23 @@ jobs:
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_IMAGE_TAG=chemsorly/dev:${{ matrix.tag }}"
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}"
 
-          # Build the image (cross-compile: ARM build stage runs natively, amd64 runtime via QEMU)
+          # Build multi-arch image (SDK runs natively on ARM via $BUILDPLATFORM, cross-compiles via $TARGETARCH)
+          # Builds for both amd64 and arm64, producing a manifest list
           buildah build \
             --isolation chroot \
             --storage-driver vfs \
-            --platform linux/amd64 \
+            --platform linux/amd64,linux/arm64 \
             -f ${{ matrix.dockerfile }} \
-            -t docker.io/chemsorly/dev:${{ matrix.tag }} \
+            --manifest docker.io/chemsorly/dev:${{ matrix.tag }} \
             ${BUILD_ARGS} \
             .
 
-          # Push only on main
+          # Push manifest (multi-arch) only on main
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            buildah push \
+            buildah manifest push \
               --storage-driver vfs \
               --authfile /run/containers/0/auth.json \
-              docker.io/chemsorly/dev:${{ matrix.tag }}
+              --all \
+              docker.io/chemsorly/dev:${{ matrix.tag }} \
+              docker://docker.io/chemsorly/dev:${{ matrix.tag }}
           fi

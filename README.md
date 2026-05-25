@@ -40,7 +40,7 @@ Label PR with agent:next → Pipeline picks up PR → Clone → Checkout PR bran
   → [Brain sync] → Extract linked issues → Code review → Post findings → Done
 ```
 
-Draft PRs are skipped. To re-review after changes, remove `agent:done` and re-add `agent:next`.
+Draft PRs are included in review dispatch (a warning is shown in the UI). To re-review after changes, remove `agent:done` and re-add `agent:next`.
 
 ### Inline Review Comments
 
@@ -48,7 +48,7 @@ The pipeline can post code review findings as native inline comments on specific
 
 #### How to Enable
 
-Set `InlineComments.Enabled` to `true` in the Code Review configuration (via the web UI under Settings → Quality Gates → Code Review → Inline Review Comments, or directly in the pipeline config JSON):
+Inline comments are enabled by default. To disable them, set `InlineComments.Enabled` to `false` in the Code Review configuration (via the web UI under Settings → Quality Gates → Code Review → Inline Review Comments, or directly in the pipeline config JSON):
 
 ```json
 {
@@ -70,7 +70,7 @@ Set `InlineComments.Enabled` to `true` in the Code Review configuration (via the
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `Enabled` | bool | `false` | Master switch. When false, body-only reviews are posted (existing behavior) |
+| `Enabled` | bool | `true` | Master switch. When false, body-only reviews are posted (existing behavior) |
 | `SeverityThreshold` | enum | `Warning` | Minimum severity for inline posting. Options: `Suggestion`, `Warning`, `Critical` |
 | `MaxInlineComments` | int | `15` | Maximum inline comments per review (range: 1–50). Highest-severity findings are prioritized |
 | `OrderBySeverity` | bool | `true` | Sort findings by severity (Critical first) when selecting which to post inline |

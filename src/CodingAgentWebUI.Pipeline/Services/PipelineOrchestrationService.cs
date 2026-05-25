@@ -537,7 +537,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             {
                 // Implementation runs: use the active issue provider directly (existing behavior)
                 foreach (var label in AgentLabels.All)
+                {
+                    if (string.Equals(label, newLabel, StringComparison.Ordinal))
+                        continue;
                     await _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, ct);
+                }
                 if (!string.IsNullOrEmpty(newLabel))
                     await _providerManager.ActiveIssueProvider!.AddLabelAsync(issueId, newLabel, ct);
             }
@@ -554,7 +558,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         try
         {
             foreach (var label in AgentLabels.All)
+            {
+                if (string.Equals(label, newLabel, StringComparison.Ordinal))
+                    continue;
                 await _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, ct);
+            }
             if (!string.IsNullOrEmpty(newLabel))
                 await _providerManager.ActiveIssueProvider!.AddLabelAsync(issueId, newLabel, ct);
         }

@@ -221,17 +221,18 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
     /// <summary>
     /// Determines the review type based on the severity of findings in the run.
     /// Critical/Warning → RequestChanges (blocks merge, dismissible).
-    /// Suggestion only → Approve (doesn't block, dismissible).
-    /// No findings → Comment (not dismissible, but nothing to dismiss next time).
+    /// Suggestion-only or no findings → Comment (doesn't block, doesn't auto-approve).
+    /// Using Approve could inadvertently satisfy branch protection rules,
+    /// allowing PRs to merge without human review.
     /// </summary>
     private static PullRequestReviewType DetermineReviewType(PipelineRun run)
     {
         if (run.CodeReviewCriticalCount > 0 || run.CodeReviewWarningCount > 0)
             return PullRequestReviewType.RequestChanges;
 
-        if (run.CodeReviewSuggestionCount > 0)
-            return PullRequestReviewType.Approve;
-
+        // Suggestion-only and no-findings both use Comment (not Approve).
+        // Using Approve could inadvertently satisfy branch protection rules,
+        // allowing PRs to merge without human review.
         return PullRequestReviewType.Comment;
     }
 

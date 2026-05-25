@@ -15,7 +15,12 @@ internal sealed class CloneRepositoryStep : IPipelineStep
 
         context.Callbacks.TransitionTo(PipelineStep.CloningRepository);
         context.Callbacks.EmitOutputLine($"📋 Cloning repository {context.Run.RepositoryName}...");
-        await context.Callbacks.SwapAgentLabel(context.Run.IssueIdentifier, AgentLabels.InProgress, ct);
+
+        // Skip label swap for agent-dispatched runs — the dispatcher already set agent:in-progress
+        // before sending the job assignment. Swapping again would produce a redundant GitHub API call
+        // that shows up as a confusing "added agent:in-progress and removed agent:in-progress" event.
+        if (string.IsNullOrEmpty(context.Run.AgentId))
+            await context.Callbacks.SwapAgentLabel(context.Run.IssueIdentifier, AgentLabels.InProgress, ct);
 
         try { await context.RepoProvider.CloneAsync(workspacePath, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException)

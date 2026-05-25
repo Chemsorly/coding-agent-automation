@@ -32,10 +32,19 @@ public class IssueProviderLabelSwapperTests
         var swapper = CreateSwapper();
         await swapper.SwapLabelAsync("cfg-1", "org/repo#42", AgentLabels.Done, CancellationToken.None);
 
+        // Should remove all labels EXCEPT the target label (avoids redundant remove+add of same label)
         foreach (var label in AgentLabels.All)
         {
-            _mockIssueProvider.Verify(
-                p => p.RemoveLabelAsync("org/repo#42", label, CancellationToken.None), Times.Once);
+            if (label == AgentLabels.Done)
+            {
+                _mockIssueProvider.Verify(
+                    p => p.RemoveLabelAsync("org/repo#42", label, CancellationToken.None), Times.Never);
+            }
+            else
+            {
+                _mockIssueProvider.Verify(
+                    p => p.RemoveLabelAsync("org/repo#42", label, CancellationToken.None), Times.Once);
+            }
         }
         _mockIssueProvider.Verify(
             p => p.AddLabelAsync("org/repo#42", AgentLabels.Done, CancellationToken.None), Times.Once);

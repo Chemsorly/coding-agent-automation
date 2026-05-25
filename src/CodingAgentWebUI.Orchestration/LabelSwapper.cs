@@ -147,7 +147,13 @@ public sealed class LabelSwapper : ILabelSwapper
         await using var issueProvider = _providerFactory.CreateIssueProvider(issueConfig);
 
         foreach (var label in AgentLabels.All)
+        {
+            // Skip removing the label we're about to add — avoids a redundant remove+add
+            // that shows up as a confusing "added X and removed X" event on GitHub.
+            if (string.Equals(label, newLabel, StringComparison.Ordinal))
+                continue;
             await issueProvider.RemoveLabelAsync(issueIdentifier, label, ct);
+        }
 
         if (!string.IsNullOrEmpty(newLabel))
             await issueProvider.AddLabelAsync(issueIdentifier, newLabel, ct);
@@ -183,7 +189,13 @@ public sealed class LabelSwapper : ILabelSwapper
         await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
 
         foreach (var label in AgentLabels.All)
+        {
+            // Skip removing the label we're about to add — avoids a redundant remove+add
+            // that shows up as a confusing "added X and removed X" event on GitHub.
+            if (string.Equals(label, newLabel, StringComparison.Ordinal))
+                continue;
             await repoProvider.RemovePrLabelAsync(prNumber, label, ct);
+        }
 
         if (!string.IsNullOrEmpty(newLabel))
             await repoProvider.AddPrLabelAsync(prNumber, newLabel, ct);
