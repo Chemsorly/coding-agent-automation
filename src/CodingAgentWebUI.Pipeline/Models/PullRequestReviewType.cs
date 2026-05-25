@@ -5,9 +5,12 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// </summary>
 public enum PullRequestReviewType
 {
-    /// <summary>Neutral, informational review (does not block merge).</summary>
+    /// <summary>Neutral, informational review (does not block merge, not dismissible).</summary>
     Comment,
 
-    /// <summary>Requests changes (blocks merge on GitHub).</summary>
-    RequestChanges
+    /// <summary>Requests changes (blocks merge on GitHub, dismissible).</summary>
+    RequestChanges,
+
+    /// <summary>Approves the PR (does not block merge, dismissible).</summary>
+    Approve
 }

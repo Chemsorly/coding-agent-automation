@@ -903,11 +903,13 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
             client => client.PullRequest.Review.GetAll(Owner, Repo, prNumber),
             "DismissPreviousReview.GetAllReviews", ct);
 
-        // Filter reviews that contain the marker in their body.
-        // The marker (e.g., <!-- agent:pr-review -->) is unique to our automated reviews —
-        // no need to filter by author since the marker is the definitive identifier.
+        // Filter reviews that contain the marker in their body AND are in a dismissible state.
+        // GitHub's dismiss API only works on reviews with state CHANGES_REQUESTED or APPROVED.
+        // Reviews with state COMMENTED return 422 "Can not dismiss a commented pull request review".
         var matchingReviews = allReviews
-            .Where(r => r.Body?.Contains(marker, StringComparison.Ordinal) == true)
+            .Where(r => r.Body?.Contains(marker, StringComparison.Ordinal) == true
+                        && (r.State.Value == Octokit.PullRequestReviewState.ChangesRequested
+                            || r.State.Value == Octokit.PullRequestReviewState.Approved))
             .ToList();
 
         if (matchingReviews.Count == 0)
@@ -953,6 +955,7 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     {
         PullRequestReviewType.Comment => "COMMENT",
         PullRequestReviewType.RequestChanges => "REQUEST_CHANGES",
+        PullRequestReviewType.Approve => "APPROVE",
         _ => "COMMENT"
     };
 
@@ -963,6 +966,7 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     {
         PullRequestReviewType.Comment => Octokit.PullRequestReviewEvent.Comment,
         PullRequestReviewType.RequestChanges => Octokit.PullRequestReviewEvent.RequestChanges,
+        PullRequestReviewType.Approve => Octokit.PullRequestReviewEvent.Approve,
         _ => Octokit.PullRequestReviewEvent.Comment
     };
 

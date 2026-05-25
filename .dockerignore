@@ -7,6 +7,8 @@
 **/.toolstarget
 **/.vs
 **/.vscode
+**/.kiro
+**/.brain
 **/*.*proj.user
 **/*.dbmdl
 **/*.jfm
@@ -23,3 +25,20 @@
 **/TestResults
 LICENSE
 README.md
+
+# Test projects — not needed for any production Docker build
+tests/
+
+# Kiro CLI auth data — mounted as volumes at runtime, not baked into images
+config/kiro-cli-data/
+config/kiro-cli-data-1/
+config/kiro-cli-data-2/
+config/kiro-cli-data-3/
+config/kiro-cli-data-4/
+
+# Other non-build directories
+config/pipeline/runs/
+config/pipeline/consolidation-runs/
+config/opencode/
+config/kiro-settings/
+docs/

@@ -319,6 +319,17 @@ public sealed class LocalPipelineExecutor
 
             await PipelineStepRunner.ExecuteAsync(steps, context, linkedCt);
 
+            // For review runs, the step pipeline ends at PostingFindings.
+            // Transition to Completed here (implementation runs do this in CreatePullRequestAsync).
+            if (run.RunType == PipelineRunType.Review
+                && run.CurrentStep != PipelineStep.Failed
+                && run.CurrentStep != PipelineStep.Cancelled)
+            {
+                run.CompletedAt = DateTime.UtcNow;
+                run.CurrentStep = PipelineStep.Completed;
+                run.FinalLabel ??= AgentLabels.Done;
+            }
+
             return BuildCompletionPayload(run);
         }
         catch (OperationCanceledException)

@@ -101,11 +101,11 @@ public class PostReviewFindingsStepTests : IDisposable
 
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Should collapse existing comment, then post new
+        // Should collapse existing comment, then post new with RequestChanges (criticals present)
         _repoProvider.Verify(r => r.UpdateReviewCommentAsync(
             55, 12345L, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
         _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
-            55, It.IsAny<string>(), PullRequestReviewType.Comment, It.IsAny<CancellationToken>()), Times.Once);
+            55, It.IsAny<string>(), PullRequestReviewType.RequestChanges, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -134,9 +134,9 @@ public class PostReviewFindingsStepTests : IDisposable
 
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Should post new review
+        // Should post new review with RequestChanges (warnings present)
         _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
-            60, It.IsAny<string>(), PullRequestReviewType.Comment, It.IsAny<CancellationToken>()), Times.Once);
+            60, It.IsAny<string>(), PullRequestReviewType.RequestChanges, It.IsAny<CancellationToken>()), Times.Once);
         _repoProvider.Verify(r => r.UpdateReviewCommentAsync(
             It.IsAny<int>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -225,7 +225,7 @@ public class PostReviewFindingsStepTests : IDisposable
 
         string? postedBody = null;
         _repoProvider.Setup(r => r.SubmitPullRequestReviewAsync(
-            90, It.IsAny<string>(), PullRequestReviewType.Comment, It.IsAny<CancellationToken>()))
+            90, It.IsAny<string>(), PullRequestReviewType.RequestChanges, It.IsAny<CancellationToken>()))
             .Callback<int, string, PullRequestReviewType, CancellationToken>((_, body, _, _) => postedBody = body)
             .Returns(Task.CompletedTask);
 

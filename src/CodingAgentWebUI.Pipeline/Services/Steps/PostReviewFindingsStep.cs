@@ -86,16 +86,18 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
             await CollapseExistingReviewsAsync(context, prNumber, ct);
         }
 
-        // Step 2: Determine the body
+        // Step 2: Determine the body and review type
         var body = context.Run.CodeReviewAgentsRun.Count == 0
             ? $"{ReviewFindingsFormatter.Marker}\n{NoReviewerMessage}"
             : ReviewFindingsFormatter.Format(context.Run);
+
+        var reviewType = DetermineReviewType(context.Run);
 
         // Step 3: If inline comments are disabled, submit body-only and return
         if (!inlineSettings.Enabled)
         {
             await context.RepoProvider.SubmitPullRequestReviewAsync(
-                prNumber, body, PullRequestReviewType.Comment, ct);
+                prNumber, body, reviewType, ct);
             return;
         }
 
@@ -121,7 +123,7 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
             }
 
             await context.RepoProvider.SubmitPullRequestReviewAsync(
-                prNumber, body, PullRequestReviewType.Comment, ct);
+                prNumber, body, reviewType, ct);
             return;
         }
 
@@ -149,7 +151,7 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
         var submission = new ReviewSubmission
         {
             Body = body,
-            Type = PullRequestReviewType.Comment,
+            Type = reviewType,
             Comments = comments,
             CommitId = commitId
         };
@@ -170,8 +172,25 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
 
             // Retry body-only (this may also throw — caught by outer handler)
             await context.RepoProvider.SubmitPullRequestReviewAsync(
-                prNumber, body, PullRequestReviewType.Comment, ct);
+                prNumber, body, reviewType, ct);
         }
+    }
+
+    /// <summary>
+    /// Determines the review type based on the severity of findings in the run.
+    /// Critical/Warning → RequestChanges (blocks merge, dismissible).
+    /// Suggestion only → Approve (doesn't block, dismissible).
+    /// No findings → Comment (not dismissible, but nothing to dismiss next time).
+    /// </summary>
+    private static PullRequestReviewType DetermineReviewType(PipelineRun run)
+    {
+        if (run.CodeReviewCriticalCount > 0 || run.CodeReviewWarningCount > 0)
+            return PullRequestReviewType.RequestChanges;
+
+        if (run.CodeReviewSuggestionCount > 0)
+            return PullRequestReviewType.Approve;
+
+        return PullRequestReviewType.Comment;
     }
 
     /// <summary>

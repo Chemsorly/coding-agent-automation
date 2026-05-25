@@ -100,6 +100,21 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
         body!.Should().Contain("REQUEST_CHANGES");
     }
 
+    [Fact]
+    public async Task SubmitPullRequestReviewAsync_Approve_MapsEventCorrectly()
+    {
+        var reviewPath = ApiPath($"/repos/{Owner}/{Repo}/pulls/10/reviews");
+        StubPost(reviewPath, BuildReviewResponseJson(2003));
+
+        await using var provider = CreateProvider();
+        await provider.SubmitPullRequestReviewAsync(
+            10, "Looks good", PullRequestReviewType.Approve, CancellationToken.None);
+
+        var body = GetRequestBody(reviewPath);
+        body.Should().NotBeNull();
+        body!.ToUpperInvariant().Should().Contain("APPROVE");
+    }
+
     #endregion
 
     #region SubmitPullRequestReviewAsync — Inline comments overload
@@ -495,6 +510,42 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
         dismissEntries.Should().HaveCount(1);
     }
 
+    [Fact]
+    public async Task DismissPreviousReviewAsync_SkipsCommentedReviews_OnlyDismissesDismissibleStates()
+    {
+        const string marker = "<!-- agent:pr-review -->";
+
+        // Three reviews with marker: one COMMENTED (not dismissible), one CHANGES_REQUESTED, one APPROVED
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/26/reviews"), new[]
+        {
+            BuildReviewJson(1101, "bot-user", $"Commented review {marker}", "COMMENTED"),
+            BuildReviewJson(1102, "bot-user", $"Changes requested review {marker}", "CHANGES_REQUESTED"),
+            BuildReviewJson(1103, "bot-user", $"Approved review {marker}", "APPROVED")
+        });
+
+        // Stub dismiss endpoints for the dismissible reviews only
+        Server.Given(Request.Create()
+                .WithPath(ApiPath($"/repos/{Owner}/{Repo}/pulls/26/reviews/1102/dismissals"))
+                .UsingPut())
+            .RespondWith(Response.Create().WithStatusCode(200).WithBody("{}"));
+        Server.Given(Request.Create()
+                .WithPath(ApiPath($"/repos/{Owner}/{Repo}/pulls/26/reviews/1103/dismissals"))
+                .UsingPut())
+            .RespondWith(Response.Create().WithStatusCode(200).WithBody("{}"));
+
+        await using var provider = CreateProvider();
+        await provider.DismissPreviousReviewAsync(26, marker, "Superseded", CancellationToken.None);
+
+        // Only CHANGES_REQUESTED and APPROVED reviews should be dismissed (not COMMENTED)
+        var dismissEntries = Server.LogEntries
+            .Where(e => e.RequestMessage.Path?.Contains("/dismissals") == true)
+            .ToList();
+        dismissEntries.Should().HaveCount(2);
+        dismissEntries.Should().Contain(e => e.RequestMessage.Path!.Contains("/1102/"));
+        dismissEntries.Should().Contain(e => e.RequestMessage.Path!.Contains("/1103/"));
+        dismissEntries.Should().NotContain(e => e.RequestMessage.Path!.Contains("/1101/"));
+    }
+
     #endregion
 
     #region Helpers
@@ -513,7 +564,17 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
     {
         id,
         body,
-        state = "COMMENTED",
+        state = "CHANGES_REQUESTED",
+        user = new { login, id = login.GetHashCode() },
+        html_url = $"https://github.com/{Owner}/{Repo}/pull/1#pullrequestreview-{id}",
+        submitted_at = "2026-01-15T10:00:00Z"
+    };
+
+    private static object BuildReviewJson(long id, string login, string body, string state) => new
+    {
+        id,
+        body,
+        state,
         user = new { login, id = login.GetHashCode() },
         html_url = $"https://github.com/{Owner}/{Repo}/pull/1#pullrequestreview-{id}",
         submitted_at = "2026-01-15T10:00:00Z"

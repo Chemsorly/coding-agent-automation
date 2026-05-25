@@ -136,9 +136,9 @@ public class PostReviewFindingsStepInlineTests : IDisposable
 
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Verify body-only overload was called (not the ReviewSubmission overload)
+        // Verify body-only overload was called with RequestChanges (criticals present)
         _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
-            42, It.IsAny<string>(), PullRequestReviewType.Comment, It.IsAny<CancellationToken>()), Times.Once);
+            42, It.IsAny<string>(), PullRequestReviewType.RequestChanges, It.IsAny<CancellationToken>()), Times.Once);
         _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
             42, It.IsAny<ReviewSubmission>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -161,9 +161,9 @@ public class PostReviewFindingsStepInlineTests : IDisposable
 
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Verify body-only overload was called (provider doesn't support inline)
+        // Verify body-only overload was called with RequestChanges (criticals present)
         _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
-            42, It.IsAny<string>(), PullRequestReviewType.Comment, It.IsAny<CancellationToken>()), Times.Once);
+            42, It.IsAny<string>(), PullRequestReviewType.RequestChanges, It.IsAny<CancellationToken>()), Times.Once);
         _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
             42, It.IsAny<ReviewSubmission>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -245,7 +245,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
             42, It.IsAny<ReviewSubmission>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("422 Validation Failed"));
         _repoProvider.Setup(r => r.SubmitPullRequestReviewAsync(
-            42, It.IsAny<string>(), PullRequestReviewType.Comment, It.IsAny<CancellationToken>()))
+            42, It.IsAny<string>(), PullRequestReviewType.RequestChanges, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var context = BuildContext(run, supportsInline: true, inlineEnabled: true);
@@ -254,9 +254,9 @@ public class PostReviewFindingsStepInlineTests : IDisposable
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         result.Should().Be(StepResult.Continue);
-        // Verify body-only fallback was called after the ReviewSubmission failure
+        // Verify body-only fallback was called with RequestChanges after the ReviewSubmission failure
         _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
-            42, It.IsAny<string>(), PullRequestReviewType.Comment, It.IsAny<CancellationToken>()), Times.Once);
+            42, It.IsAny<string>(), PullRequestReviewType.RequestChanges, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ─── (f) Degradation tracked on PipelineRun ───────────────────────────────
@@ -279,7 +279,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
             42, It.IsAny<ReviewSubmission>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("422 Validation Failed"));
         _repoProvider.Setup(r => r.SubmitPullRequestReviewAsync(
-            42, It.IsAny<string>(), PullRequestReviewType.Comment, It.IsAny<CancellationToken>()))
+            42, It.IsAny<string>(), PullRequestReviewType.RequestChanges, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var context = BuildContext(run, supportsInline: true, inlineEnabled: true);
@@ -378,7 +378,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
             42, It.IsAny<ReviewSubmission>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("422 Validation Failed"));
         _repoProvider.Setup(r => r.SubmitPullRequestReviewAsync(
-            42, It.IsAny<string>(), PullRequestReviewType.Comment, It.IsAny<CancellationToken>()))
+            42, It.IsAny<string>(), PullRequestReviewType.RequestChanges, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("500 Internal Server Error"));
 
         var context = BuildContext(run, supportsInline: true, inlineEnabled: true);
@@ -408,7 +408,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
 
         string? postedBody = null;
         _repoProvider.Setup(r => r.SubmitPullRequestReviewAsync(
-            42, It.IsAny<string>(), PullRequestReviewType.Comment, It.IsAny<CancellationToken>()))
+            42, It.IsAny<string>(), PullRequestReviewType.RequestChanges, It.IsAny<CancellationToken>()))
             .Callback<int, string, PullRequestReviewType, CancellationToken>((_, body, _, _) => postedBody = body)
             .Returns(Task.CompletedTask);
 
@@ -418,13 +418,10 @@ public class PostReviewFindingsStepInlineTests : IDisposable
 
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        // The body should be posted (body-only since provider doesn't support inline)
+        // The body should be posted with RequestChanges (criticals/warnings present)
         _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
-            42, It.IsAny<string>(), PullRequestReviewType.Comment, It.IsAny<CancellationToken>()), Times.Once);
+            42, It.IsAny<string>(), PullRequestReviewType.RequestChanges, It.IsAny<CancellationToken>()), Times.Once);
 
-        // Note: The "Findings by Location" section is appended by the step when
-        // provider doesn't support inline but findings have location metadata.
-        // The step parses findings and appends FormatFindingsByLocation to the body.
         // Verify body-only was called (not ReviewSubmission overload)
         _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
             42, It.IsAny<ReviewSubmission>(), It.IsAny<CancellationToken>()), Times.Never);
