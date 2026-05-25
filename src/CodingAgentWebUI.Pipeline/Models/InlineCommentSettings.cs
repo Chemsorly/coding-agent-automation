@@ -13,7 +13,8 @@ public sealed record InlineCommentSettings
     /// Master switch to enable or disable inline comment posting.
     /// When false, the pipeline posts body-only reviews (existing behavior)
     /// and skips FindingsParser invocation and prompt enhancement.
-    /// Defaults to false so existing deployments are unaffected on upgrade.
+    /// Defaults to true — inline comments are enabled by default.
+    /// Operators can disable via configuration if needed.
     /// </summary>
     public bool Enabled { get; init; } = true;
 
