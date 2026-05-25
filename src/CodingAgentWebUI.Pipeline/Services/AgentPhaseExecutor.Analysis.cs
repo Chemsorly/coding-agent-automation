@@ -47,8 +47,8 @@ internal partial class AgentPhaseExecutor
             Directory.CreateDirectory(agentDir);
 
             var issueContextContent = PromptBuilder.BuildIssueContextFileContent(context.Issue, context.ParsedIssue, issueComments);
-            await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.IssueContextFilePath), issueContextContent, ct);
-            _logger.Debug("Pipeline {RunId} wrote issue context to {FilePath}", run.RunId, AgentWorkspacePaths.IssueContextFilePath);
+            await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, PromptBuilder.IssueContextFilePath), issueContextContent, ct);
+            _logger.Debug("Pipeline {RunId} wrote issue context to {FilePath}", run.RunId, PromptBuilder.IssueContextFilePath);
         }
         catch (IOException ex)
         {
@@ -69,8 +69,8 @@ internal partial class AgentPhaseExecutor
         {
             context.Callbacks.TransitionTo(PipelineStep.AnalyzingCode);
 
-            var analysisFilePath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.AnalysisFilePath);
-            var assessmentFilePath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.AnalysisAssessmentFilePath);
+            var analysisFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisFilePath);
+            var assessmentFilePath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisAssessmentFilePath);
             AnalysisAssessment? assessment = null;
             var maxRetries = Math.Max(0, config.MaxAnalysisRetries);
 
@@ -306,14 +306,15 @@ internal partial class AgentPhaseExecutor
 
     private async Task<AnalysisAssessment> ReadAssessmentAsync(PipelineRun run, CancellationToken ct)
     {
-        var assessmentPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.AnalysisAssessmentFilePath);
+        var assessmentPath = Path.Combine(run.WorkspacePath!, PromptBuilder.AnalysisAssessmentFilePath);
         if (!File.Exists(assessmentPath))
             throw new AnalysisIncompleteException("analysis-assessment.json not found after agent execution");
 
         try
         {
             var json = await File.ReadAllTextAsync(assessmentPath, ct);
-            var result = JsonSerializer.Deserialize<AnalysisAssessment>(json, s_camelCaseOptions);
+            // TODO: PipelineJsonOptions.Lenient is more permissive than the original camelCase-only policy and adds JsonStringEnumConverter not previously present
+            var result = JsonSerializer.Deserialize<AnalysisAssessment>(json, PipelineJsonOptions.Lenient);
             return result ?? throw new AnalysisIncompleteException("analysis-assessment.json deserialized to null");
         }
         catch (JsonException ex)

@@ -58,7 +58,7 @@ public sealed class ConsolidationService : IConsolidationService
             try
             {
                 var json = await File.ReadAllTextAsync(file, ct);
-                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
                 if (run is null) continue;
 
                 if (run.Status == ConsolidationRunStatus.Running)
@@ -67,7 +67,7 @@ public sealed class ConsolidationService : IConsolidationService
                     run.Summary = "Orphaned: application restarted before completion";
                     run.CompletedAtUtc = DateTime.UtcNow;
 
-                    var updatedJson = JsonSerializer.Serialize(run, s_jsonOptions);
+                    var updatedJson = JsonSerializer.Serialize(run, PipelineJsonOptions.Default);
                     await File.WriteAllTextAsync(file, updatedJson, ct);
 
                     _logger.Information(
