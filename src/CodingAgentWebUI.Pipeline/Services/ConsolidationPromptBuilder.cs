@@ -180,10 +180,23 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("    \"title\": \"Short descriptive title of the refactoring opportunity\",");
         sb.AppendLine("    \"affectedFiles\": [\"src/path/to/File1.cs\", \"src/path/to/File2.cs\"],");
         sb.AppendLine("    \"description\": \"Detailed description of what should be changed and how\",");
-        sb.AppendLine("    \"rationale\": \"Why this refactoring would improve the codebase (maintainability, readability, performance, etc.)\"");
+        sb.AppendLine("    \"rationale\": \"Why this refactoring would improve the codebase (maintainability, readability, performance, etc.)\",");
+        sb.AppendLine("    \"prerequisites\": [\"Add characterization tests for X before refactoring\"],");
+        sb.AppendLine("    \"estimatedEffort\": \"small\",");
+        sb.AppendLine("    \"riskLevel\": \"low\",");
+        sb.AppendLine("    \"technique\": \"Extract Method\"");
         sb.AppendLine("  }");
         sb.AppendLine("]");
         sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine("### Optional Field Definitions");
+        sb.AppendLine();
+        sb.AppendLine("The following fields are optional. Include them when you can assess them confidently:");
+        sb.AppendLine();
+        sb.AppendLine("- **prerequisites** — List of prep work needed before the refactoring can be safely applied (e.g., \"Add characterization tests for X\"). If affected files have no test coverage, include a prerequisite like \"Add characterization tests for X before refactoring\".");
+        sb.AppendLine("- **estimatedEffort** — `small` (<5 files, mechanical changes), `medium` (5-15 files with logic changes), or `large` (15-30 files or architectural changes).");
+        sb.AppendLine("- **riskLevel** — `low` (rename/move), `medium` (extract/restructure), or `high` (interface changes affecting consumers).");
+        sb.AppendLine("- **technique** — Named refactoring pattern if applicable (e.g., Extract Method, Strangler Fig, Branch by Abstraction, Inline Class, Move Method).");
         sb.AppendLine();
 
         // Constraints

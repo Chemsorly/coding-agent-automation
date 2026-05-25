@@ -140,4 +140,15 @@ public class ConsolidationPromptBuilderTests
         result.Should().Contain("Contradictions resolved");
         result.Should().Contain("Entries pruned");
     }
+
+    [Fact]
+    public void BuildRefactoringDetectionPrompt_ContainsNewSchemaFields()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
+
+        result.Should().Contain("prerequisites");
+        result.Should().Contain("estimatedEffort");
+        result.Should().Contain("riskLevel");
+        result.Should().Contain("technique");
+    }
 }

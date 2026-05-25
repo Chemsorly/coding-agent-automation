@@ -146,4 +146,20 @@ public sealed class LibGit2SharpGitOperations : IGitOperations
         using var repo = new Repository(repoPath);
         return repo.Branches[$"origin/{remoteBranch}"] != null;
     }
+
+    public bool FileExists(string fullPath) => File.Exists(fullPath);
+
+    public string ReadAllText(string fullPath) => File.ReadAllText(fullPath);
+
+    public void WriteAllText(string fullPath, string content)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.WriteAllText(fullPath, content);
+    }
+
+    public void DeleteFile(string fullPath)
+    {
+        if (File.Exists(fullPath))
+            File.Delete(fullPath);
+    }
 }
