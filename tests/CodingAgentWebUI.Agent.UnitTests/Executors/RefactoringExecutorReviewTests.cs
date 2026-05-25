@@ -24,6 +24,12 @@ public class RefactoringExecutorReviewTests : IDisposable
     {
         _tempDir = Path.Combine(Path.GetTempPath(), $"refactoring-review-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
+
+        // Default: return empty issue lists so the new issue-context query path succeeds
+        var emptyResult = new PagedResult<IssueSummary> { Items = [], Page = 1, PageSize = 50, HasMore = false };
+        _mockIssueProvider
+            .Setup(x => x.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(emptyResult);
     }
 
     public void Dispose()
