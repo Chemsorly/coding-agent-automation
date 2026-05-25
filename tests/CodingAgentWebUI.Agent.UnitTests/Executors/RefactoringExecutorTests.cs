@@ -22,12 +22,6 @@ public class RefactoringExecutorTests : IDisposable
     {
         _tempDir = Path.Combine(Path.GetTempPath(), $"refactoring-test-{Guid.NewGuid()}");
         Directory.CreateDirectory(_tempDir);
-
-        // Default: return empty issue lists so the new issue-context query path succeeds
-        var emptyResult = new PagedResult<IssueSummary> { Items = [], Page = 1, PageSize = 50, HasMore = false };
-        _mockIssueProvider
-            .Setup(x => x.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(emptyResult);
     }
 
     public void Dispose()
@@ -217,115 +211,6 @@ public class RefactoringExecutorTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_IssueQuerySucceeds_PromptContainsIssueContext()
-    {
-        // Arrange
-        var executor = CreateExecutor();
-        var job = CreateJob();
-
-        var refactoringIssues = new PagedResult<IssueSummary>
-        {
-            Items = [new IssueSummary { Identifier = "100", Title = "Extract retry logic", Labels = ["refactoring", "agent-generated"], CreatedAt = DateTime.UtcNow.AddDays(-5) }],
-            Page = 1, PageSize = 30, HasMore = false
-        };
-        var allIssues = new PagedResult<IssueSummary>
-        {
-            Items = [new IssueSummary { Identifier = "200", Title = "Add caching layer", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-2) }],
-            Page = 1, PageSize = 50, HasMore = false
-        };
-
-        _mockIssueProvider
-            .Setup(x => x.ListOpenIssuesAsync(1, 30, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(refactoringIssues);
-        _mockIssueProvider
-            .Setup(x => x.ListOpenIssuesAsync(1, 50, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(allIssues);
-
-        _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        string? capturedPrompt = null;
-        _mockAgentProvider
-            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
-            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedPrompt = req.Prompt)
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
-
-        // Act
-        await executor.ExecuteAsync(job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
-
-        // Assert
-        capturedPrompt.Should().Contain("Do Not Duplicate");
-        capturedPrompt.Should().Contain("Extract retry logic");
-        capturedPrompt.Should().Contain("Add caching layer");
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_IssueQueryThrows_ContinuesWithoutContext()
-    {
-        // Arrange
-        var executor = CreateExecutor();
-        var job = CreateJob();
-
-        _mockIssueProvider
-            .Setup(x => x.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("Provider unavailable"));
-
-        _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        _mockAgentProvider
-            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
-
-        // Act
-        var result = await executor.ExecuteAsync(job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
-
-        // Assert — run should succeed (graceful degradation), not fail due to issue query
-        result.Success.Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_IssueQueryReturnsOldIssues_FilteredOut()
-    {
-        // Arrange
-        var executor = CreateExecutor();
-        var job = CreateJob();
-
-        var emptyRefactoring = new PagedResult<IssueSummary> { Items = [], Page = 1, PageSize = 30, HasMore = false };
-        var oldIssues = new PagedResult<IssueSummary>
-        {
-            Items = [new IssueSummary { Identifier = "50", Title = "Old issue", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-60) }],
-            Page = 1, PageSize = 50, HasMore = false
-        };
-
-        _mockIssueProvider
-            .Setup(x => x.ListOpenIssuesAsync(1, 30, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(emptyRefactoring);
-        _mockIssueProvider
-            .Setup(x => x.ListOpenIssuesAsync(1, 50, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(oldIssues);
-
-        _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        string? capturedPrompt = null;
-        _mockAgentProvider
-            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
-            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedPrompt = req.Prompt)
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
-
-        // Act
-        await executor.ExecuteAsync(job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
-
-        // Assert — old issue should be filtered out, no issue context in prompt
-        capturedPrompt.Should().NotContain("Old issue");
-        capturedPrompt.Should().NotContain("Do Not Duplicate");
-    }
-
-    [Fact]
     public void FormatIssueBody_WithNewFields_RendersMetadata()
     {
         var proposal = new RefactoringProposal
@@ -371,73 +256,62 @@ public class RefactoringExecutorTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_ClosedIssueQueryFails_ContinuesWithoutContext()
+    public void ParseHotspotOutput_WithValidOutput_ReturnsFormattedSummary()
     {
-        var executor = CreateExecutor();
-        var job = CreateJob();
+        var gitOutput = "src/File1.cs\nsrc/File2.cs\nsrc/File1.cs\nsrc/File1.cs\nsrc/File2.cs\n";
 
-        _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90));
 
-        _mockIssueProvider
-            .Setup(x => x.ListClosedIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("API failure"));
-
-        _mockAgentProvider
-            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
-
-        var result = await executor.ExecuteAsync(
-            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
-
-        // Should succeed (graceful degradation) — no proposals file means "no proposals"
-        result.Success.Should().BeTrue();
-        result.Summary.Should().Contain("No refactoring opportunities identified");
+        result.Should().NotBeNull();
+        result.Should().Contain("3 changes — src/File1.cs");
+        result.Should().Contain("2 changes — src/File2.cs");
+        result.Should().Contain("last 90 days");
     }
 
     [Fact]
-    public async Task ExecuteAsync_ClosedIssuesFound_InjectsOutcomeContextIntoPrompt()
+    public void ParseHotspotOutput_WithEmptyOutput_ReturnsNull()
     {
-        var executor = CreateExecutor();
-        var job = CreateJob();
+        var result = RefactoringExecutor.ParseHotspotOutput("", TimeSpan.FromDays(90));
 
-        _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+        result.Should().BeNull();
+    }
 
-        var closedIssues = new PagedResult<IssueSummary>
-        {
-            Items = new[]
-            {
-                new IssueSummary { Identifier = "100", Title = "Implemented refactoring", Labels = new[] { "refactoring", "agent-generated", "agent:done" } },
-                new IssueSummary { Identifier = "101", Title = "Rejected refactoring", Labels = new[] { "refactoring", "agent-generated", "agent:wont-do" } }
-            },
-            Page = 1,
-            PageSize = 20,
-            HasMore = false
-        };
+    [Fact]
+    public void ParseHotspotOutput_WithOnlyWhitespace_ReturnsNull()
+    {
+        var result = RefactoringExecutor.ParseHotspotOutput("\n\n  \n", TimeSpan.FromDays(90));
 
-        _mockIssueProvider
-            .Setup(x => x.ListClosedIssuesAsync(1, 20,
-                It.Is<IReadOnlyList<string>>(l => l.Contains("refactoring") && l.Contains("agent-generated")),
-                It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(closedIssues);
+        result.Should().BeNull();
+    }
 
-        AgentRequest? capturedRequest = null;
-        _mockAgentProvider
-            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
-            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedRequest = req)
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+    [Fact]
+    public void ParseHotspotOutput_CapsAtThirtyFiles()
+    {
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < 50; i++)
+            sb.AppendLine($"src/File{i:D2}.cs");
 
-        await executor.ExecuteAsync(
-            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+        var result = RefactoringExecutor.ParseHotspotOutput(sb.ToString(), TimeSpan.FromDays(90));
 
-        capturedRequest.Should().NotBeNull();
-        capturedRequest!.Prompt.Should().Contain("Past Proposal Outcomes");
-        capturedRequest.Prompt.Should().Contain("#100 \"Implemented refactoring\"");
-        capturedRequest.Prompt.Should().Contain("#101 \"Rejected refactoring\"");
-        capturedRequest.Prompt.Should().Contain("Do NOT propose refactorings similar to rejected items above.");
+        result.Should().NotBeNull();
+        // Each file appears once, so 30 lines of "1 changes — ..."
+        var lines = result!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Where(l => l.Contains("changes —")).ToList();
+        lines.Should().HaveCount(30);
+    }
+
+    [Fact]
+    public void ParseHotspotOutput_SortsDescendingByCount()
+    {
+        var gitOutput = "src/Rare.cs\nsrc/Common.cs\nsrc/Common.cs\nsrc/Common.cs\nsrc/Medium.cs\nsrc/Medium.cs\n";
+
+        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90));
+
+        result.Should().NotBeNull();
+        var lines = result!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Where(l => l.Contains("changes —")).ToList();
+        lines[0].Should().Contain("src/Common.cs");
+        lines[1].Should().Contain("src/Medium.cs");
+        lines[2].Should().Contain("src/Rare.cs");
     }
 }
