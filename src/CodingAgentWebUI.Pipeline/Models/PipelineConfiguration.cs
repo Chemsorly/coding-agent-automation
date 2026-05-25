@@ -335,4 +335,11 @@ public sealed record PipelineConfiguration
     /// Default: 3.
     /// </summary>
     public int MaxRefactoringProposals { get; init; } = 3;
+
+    /// <summary>
+    /// Time window for querying past refactoring proposal outcomes.
+    /// Only closed issues within this window are included in the feedback context.
+    /// Default: 90 days.
+    /// </summary>
+    public TimeSpan RefactoringOutcomeLookback { get; init; } = TimeSpan.FromDays(90);
 }

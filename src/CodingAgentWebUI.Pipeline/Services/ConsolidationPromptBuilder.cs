@@ -1,4 +1,5 @@
 using System.Text;
+using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -562,6 +563,55 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("This summary will be reviewed by an independent agent — be thorough and specific.");
         sb.AppendLine();
         sb.AppendLine("Do NOT make additional modifications to `.brain/` files in this step.");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds a prompt section summarizing past refactoring proposal outcomes.
+    /// Categorizes closed issues as implemented (agent:done) or rejected (agent:wont-do/agent:cancelled).
+    /// Issues without agent labels are excluded. Returns empty string if no categorizable issues.
+    /// </summary>
+    public static string BuildProposalOutcomeContext(IReadOnlyList<IssueSummary> closedIssues)
+    {
+        var implemented = new List<IssueSummary>();
+        var rejected = new List<IssueSummary>();
+
+        foreach (var issue in closedIssues)
+        {
+            if (issue.Labels.Contains(AgentLabels.Done))
+                implemented.Add(issue);
+            else if (issue.Labels.Contains(AgentLabels.WontDo) || issue.Labels.Contains(AgentLabels.Cancelled))
+                rejected.Add(issue);
+            // Ambiguous closures (no agent label) are excluded
+        }
+
+        if (implemented.Count == 0 && rejected.Count == 0)
+            return string.Empty;
+
+        var sb = new StringBuilder();
+        sb.AppendLine();
+        sb.AppendLine("## Past Proposal Outcomes — Learn From History");
+        sb.AppendLine();
+
+        if (implemented.Count > 0)
+        {
+            sb.AppendLine("### Implemented (team valued these)");
+            foreach (var issue in implemented)
+                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
+            sb.AppendLine();
+        }
+
+        if (rejected.Count > 0)
+        {
+            sb.AppendLine("### Rejected (avoid similar proposals)");
+            foreach (var issue in rejected)
+                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("Do NOT propose refactorings similar to rejected items above.");
+        sb.AppendLine("Proposals similar to implemented items are encouraged — the team values this type of improvement.");
 
         return sb.ToString();
     }

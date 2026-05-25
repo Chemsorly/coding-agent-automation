@@ -82,6 +82,26 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             // 3. Build prompt
             var prompt = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(job.PipelineConfiguration.MaxRefactoringProposals);
 
+            // 3b. Query past proposal outcomes for feedback context
+            IReadOnlyList<IssueSummary> closedRefactoringIssues = Array.Empty<IssueSummary>();
+            try
+            {
+                var since = DateTime.UtcNow - job.PipelineConfiguration.RefactoringOutcomeLookback;
+                var closedResult = await issueProvider.ListClosedIssuesAsync(
+                    page: 1, pageSize: 20,
+                    labels: new[] { AgentLabels.Refactoring, AgentLabels.AgentGenerated },
+                    since: since, ct);
+                closedRefactoringIssues = closedResult.Items;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Logger.Warning(ex, "Failed to query closed issues for feedback context in run {RunId}", job.JobId);
+            }
+
+            var outcomeContext = ConsolidationPromptBuilder.BuildProposalOutcomeContext(closedRefactoringIssues);
+            if (outcomeContext.Length > 0)
+                prompt += outcomeContext;
+
             // 4. Execute agent
             Logger.Information("Executing refactoring detection agent for run {RunId}", job.JobId);
             var (agentResult, failure) = await ExecuteAgentAndCheckAsync(

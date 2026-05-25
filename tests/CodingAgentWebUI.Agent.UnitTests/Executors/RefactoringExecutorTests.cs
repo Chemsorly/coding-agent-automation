@@ -254,4 +254,75 @@ public class RefactoringExecutorTests : IDisposable
         body.Should().Contain("## Summary");
         body.Should().Contain("## Affected Components");
     }
+
+    [Fact]
+    public async Task ExecuteAsync_ClosedIssueQueryFails_ContinuesWithoutContext()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockIssueProvider
+            .Setup(x => x.ListClosedIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("API failure"));
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Should succeed (graceful degradation) — no proposals file means "no proposals"
+        result.Success.Should().BeTrue();
+        result.Summary.Should().Contain("No refactoring opportunities identified");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ClosedIssuesFound_InjectsOutcomeContextIntoPrompt()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var closedIssues = new PagedResult<IssueSummary>
+        {
+            Items = new[]
+            {
+                new IssueSummary { Identifier = "100", Title = "Implemented refactoring", Labels = new[] { "refactoring", "agent-generated", "agent:done" } },
+                new IssueSummary { Identifier = "101", Title = "Rejected refactoring", Labels = new[] { "refactoring", "agent-generated", "agent:wont-do" } }
+            },
+            Page = 1,
+            PageSize = 20,
+            HasMore = false
+        };
+
+        _mockIssueProvider
+            .Setup(x => x.ListClosedIssuesAsync(1, 20,
+                It.Is<IReadOnlyList<string>>(l => l.Contains("refactoring") && l.Contains("agent-generated")),
+                It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(closedIssues);
+
+        AgentRequest? capturedRequest = null;
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedRequest = req)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.Prompt.Should().Contain("Past Proposal Outcomes");
+        capturedRequest.Prompt.Should().Contain("#100 \"Implemented refactoring\"");
+        capturedRequest.Prompt.Should().Contain("#101 \"Rejected refactoring\"");
+        capturedRequest.Prompt.Should().Contain("Do NOT propose refactorings similar to rejected items above.");
+    }
 }
