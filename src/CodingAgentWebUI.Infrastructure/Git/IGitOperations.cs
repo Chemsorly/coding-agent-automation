@@ -67,6 +67,26 @@ public interface IGitOperations
     /// Returns true if the specified remote tracking branch exists.
     /// </summary>
     bool RemoteBranchExists(string repoPath, string remoteBranch);
+
+    /// <summary>
+    /// Returns true if the file exists at the given absolute path.
+    /// </summary>
+    bool FileExists(string fullPath);
+
+    /// <summary>
+    /// Reads all text from the file at the given absolute path.
+    /// </summary>
+    string ReadAllText(string fullPath);
+
+    /// <summary>
+    /// Writes text to the file at the given absolute path, creating directories as needed.
+    /// </summary>
+    void WriteAllText(string fullPath, string content);
+
+    /// <summary>
+    /// Deletes the file at the given absolute path if it exists.
+    /// </summary>
+    void DeleteFile(string fullPath);
 }
 
 /// <summary>

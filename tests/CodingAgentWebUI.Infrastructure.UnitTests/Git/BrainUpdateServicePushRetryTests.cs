@@ -117,6 +117,9 @@ public class BrainUpdateServicePushRetryTests : IDisposable
             .Returns("local content\n");
         _mockGit.Setup(g => g.GetFileContentFromHeadParent(_repoPath, "sessions/test.md"))
             .Returns("base content\n");
+        _mockGit.Setup(g => g.FileExists(It.IsAny<string>())).Returns(true);
+        _mockGit.Setup(g => g.ReadAllText(It.IsAny<string>())).Returns("remote content\n");
+        _mockGit.Setup(g => g.WriteAllText(It.IsAny<string>(), It.IsAny<string>()));
 
         var result = await _sut.CommitAndPushAsync(
             _repoPath, "run-1", "issue-1", _mockProvider.Object, CancellationToken.None);
@@ -225,5 +228,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
             .Returns("new entry\n");
         _mockGit.Setup(g => g.GetFileContentFromHeadParent(_repoPath, "log.md"))
             .Returns("base content\n");
+        _mockGit.Setup(g => g.FileExists(It.IsAny<string>())).Returns(false);
+        _mockGit.Setup(g => g.WriteAllText(It.IsAny<string>(), It.IsAny<string>()));
     }
 }

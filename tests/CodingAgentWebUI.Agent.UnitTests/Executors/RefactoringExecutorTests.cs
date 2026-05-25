@@ -323,5 +323,47 @@ public class RefactoringExecutorTests : IDisposable
         // Assert — old issue should be filtered out, no issue context in prompt
         capturedPrompt.Should().NotContain("Old issue");
         capturedPrompt.Should().NotContain("Do Not Duplicate");
+    public void FormatIssueBody_WithNewFields_RendersMetadata()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Extract validation",
+            AffectedFiles = ["src/A.cs"],
+            Description = "Extract shared logic",
+            Rationale = "DRY violation",
+            Prerequisites = ["Add tests for A.cs"],
+            EstimatedEffort = "medium",
+            RiskLevel = "low",
+            Technique = "Extract Method"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("**Effort:** medium");
+        body.Should().Contain("**Risk:** low");
+        body.Should().Contain("**Technique:** Extract Method");
+        body.Should().Contain("## Prerequisites");
+        body.Should().Contain("- Add tests for A.cs");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithNullFields_OmitsOptionalSections()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Rename methods",
+            AffectedFiles = ["src/X.cs"],
+            Description = "Inconsistent naming",
+            Rationale = "Convention violation"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().NotContain("**Effort:**");
+        body.Should().NotContain("**Risk:**");
+        body.Should().NotContain("**Technique:**");
+        body.Should().NotContain("## Prerequisites");
+        body.Should().Contain("## Summary");
+        body.Should().Contain("## Affected Components");
     }
 }

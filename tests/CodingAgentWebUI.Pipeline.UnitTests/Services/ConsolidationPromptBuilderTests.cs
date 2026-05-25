@@ -220,5 +220,13 @@ public class ConsolidationPromptBuilderTests
         var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(3, null);
 
         result.Should().NotContain("Do Not Duplicate");
+    public void BuildRefactoringDetectionPrompt_ContainsNewSchemaFields()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
+
+        result.Should().Contain("prerequisites");
+        result.Should().Contain("estimatedEffort");
+        result.Should().Contain("riskLevel");
+        result.Should().Contain("technique");
     }
 }

@@ -10,4 +10,8 @@ public sealed class RefactoringProposal
     public required IReadOnlyList<string> AffectedFiles { get; init; }
     public required string Description { get; init; }
     public required string Rationale { get; init; }
+    public IReadOnlyList<string>? Prerequisites { get; init; }
+    public string? EstimatedEffort { get; init; }
+    public string? RiskLevel { get; init; }
+    public string? Technique { get; init; }
 }
