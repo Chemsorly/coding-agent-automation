@@ -267,7 +267,7 @@ public partial class BrainUpdateService : IBrainUpdateService
                         if (conflict.FilePath != null)
                         {
                             var fullPath = Path.Combine(brainPath, conflict.FilePath);
-                            File.WriteAllText(fullPath, resolved);
+                            _git.WriteAllText(fullPath, resolved);
                             _git.StageFile(brainPath, conflict.FilePath);
                         }
                     }
@@ -378,28 +378,25 @@ public partial class BrainUpdateService : IBrainUpdateService
 
                 if (change.Status == FileChangeStatus.Deleted)
                 {
-                    if (File.Exists(fullPath))
-                        File.Delete(fullPath);
+                    _git.DeleteFile(fullPath);
                     continue;
                 }
 
                 var ourContent = ourFileContents.GetValueOrDefault(change.Path) ?? "";
                 var baseContent = baseFileContents.GetValueOrDefault(change.Path) ?? "";
-                var remoteContent = File.Exists(fullPath) ? File.ReadAllText(fullPath) : "";
+                var remoteContent = _git.FileExists(fullPath) ? _git.ReadAllText(fullPath) : "";
 
                 if (remoteContent != baseContent && ourContent != baseContent)
                 {
                     // Both sides modified — resolve with accept-both
                     conflictCount++;
                     var resolved = ResolveConflictAcceptBoth(remoteContent, ourContent);
-                    Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-                    File.WriteAllText(fullPath, resolved);
+                    _git.WriteAllText(fullPath, resolved);
                 }
                 else
                 {
                     // Only we modified — apply our version
-                    Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-                    File.WriteAllText(fullPath, ourContent);
+                    _git.WriteAllText(fullPath, ourContent);
                 }
             }
 
