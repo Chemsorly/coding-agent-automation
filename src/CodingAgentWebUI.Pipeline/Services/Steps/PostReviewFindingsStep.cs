@@ -137,6 +137,35 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
 
         var (comments, excludedCount) = FindingsSelector.Select(findingsWithLocation, inlineSettings);
 
+        // Step 6.5: Filter comments to only those targeting lines within diff hunks.
+        // GitHub's API returns 422 if a comment targets a line outside the diff.
+        var diffPath = Path.Combine(context.Run.WorkspacePath!, AgentWorkspacePaths.FullDiffFilePath);
+        IReadOnlyList<ReviewComment> validComments = comments;
+        if (File.Exists(diffPath))
+        {
+            try
+            {
+                var diffText = await File.ReadAllTextAsync(diffPath, ct);
+                var validLines = DiffHunkParser.ParseValidLines(diffText);
+                validComments = comments
+                    .Where(c => validLines.TryGetValue(c.Path, out var lines) && lines.Contains(c.Line))
+                    .ToList();
+
+                var filteredCount = comments.Count - validComments.Count;
+                if (filteredCount > 0)
+                {
+                    context.Logger.Information(
+                        "Filtered {FilteredCount}/{TotalCount} inline comments targeting lines outside diff hunks",
+                        filteredCount, comments.Count);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                context.Logger.Warning(ex, "Failed to parse diff for hunk validation, submitting all comments (may 422)");
+                // Fall through with unfiltered comments — the 422 fallback will handle it
+            }
+        }
+
         // Step 7: Build ReviewSubmission with CommitId
         string? commitId = null;
         try
@@ -152,7 +181,7 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
         {
             Body = body,
             Type = reviewType,
-            Comments = comments,
+            Comments = validComments,
             CommitId = commitId
         };
 
@@ -160,7 +189,7 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
         try
         {
             await context.RepoProvider.SubmitPullRequestReviewAsync(prNumber, submission, ct);
-            context.Run.InlineCommentsPosted = comments.Count;
+            context.Run.InlineCommentsPosted = validComments.Count;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

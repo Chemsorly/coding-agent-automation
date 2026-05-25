@@ -16,7 +16,7 @@ public class InlineCommentSettingsTests
         var settings = JsonSerializer.Deserialize<InlineCommentSettings>("{}");
 
         settings.Should().NotBeNull();
-        settings!.Enabled.Should().BeFalse();
+        settings!.Enabled.Should().BeTrue();
         settings.SeverityThreshold.Should().Be(FindingSeverity.Warning);
         settings.MaxInlineComments.Should().Be(15);
         settings.OrderBySeverity.Should().BeTrue();
@@ -93,7 +93,7 @@ public class InlineCommentSettingsTests
         config!.MaxIterations.Should().Be(5);
         config.ReviewIsolation.Should().Be(ReviewIsolation.Shared);
         config.InlineComments.Should().NotBeNull();
-        config.InlineComments.Enabled.Should().BeFalse();
+        config.InlineComments.Enabled.Should().BeTrue();
         config.InlineComments.SeverityThreshold.Should().Be(FindingSeverity.Warning);
         config.InlineComments.MaxInlineComments.Should().Be(15);
         config.InlineComments.OrderBySeverity.Should().BeTrue();
@@ -132,7 +132,7 @@ public class InlineCommentSettingsTests
     {
         var settings = new InlineCommentSettings();
 
-        settings.Enabled.Should().BeFalse();
+        settings.Enabled.Should().BeTrue();
         settings.SeverityThreshold.Should().Be(FindingSeverity.Warning);
         settings.MaxInlineComments.Should().Be(15);
         settings.OrderBySeverity.Should().BeTrue();

@@ -222,8 +222,8 @@ public class InlineReviewFormatterPropertyTests
                 "InlineComments should be initialized to default instance when key is absent");
 
             // Verify all default values
-            config.InlineComments.Enabled.Should().BeFalse(
-                "Enabled should default to false");
+            config.InlineComments.Enabled.Should().BeTrue(
+                "Enabled should default to true");
             config.InlineComments.SeverityThreshold.Should().Be(FindingSeverity.Warning,
                 "SeverityThreshold should default to Warning");
             config.InlineComments.MaxInlineComments.Should().Be(15,
