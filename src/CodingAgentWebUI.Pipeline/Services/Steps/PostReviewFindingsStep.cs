@@ -99,9 +99,27 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
             return;
         }
 
-        // Step 4: If provider doesn't support inline comments, submit body-only
+        // Step 4: If provider doesn't support inline comments but inline is enabled,
+        // parse findings and append "Findings by Location" section to body
         if (!supportsInline)
         {
+            if (inlineSettings.Enabled)
+            {
+                // Parse findings to get location metadata for the body section
+                var findings = new List<StructuredFinding>();
+                foreach (var kvp in context.Run.CodeReviewAgentFindings)
+                {
+                    if (!string.IsNullOrEmpty(kvp.Value))
+                        findings.AddRange(FindingsParser.Parse(kvp.Value, kvp.Key));
+                }
+
+                var locationSection = ReviewFindingsFormatter.FormatFindingsByLocation(findings);
+                if (!string.IsNullOrEmpty(locationSection))
+                {
+                    body += "\n" + locationSection;
+                }
+            }
+
             await context.RepoProvider.SubmitPullRequestReviewAsync(
                 prNumber, body, PullRequestReviewType.Comment, ct);
             return;

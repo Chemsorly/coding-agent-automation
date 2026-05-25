@@ -22,7 +22,6 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
 {
     private readonly string _baseBranch;
     private readonly ResiliencePipeline _gitPipeline;
-    private string? _cachedBotLogin;
 
     // Static compiled regex patterns for ParseIssueReferences (avoid per-call allocation)
     private static readonly Regex ClosingKeywordPattern = new(
@@ -899,25 +898,16 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
         // they remain as-is with their <!-- agent:pr-review-superseded --> collapse markers.
         // This is acceptable per the design doc (migration edge case).
 
-        // Get the authenticated bot login to identify our own reviews (cached).
-        if (_cachedBotLogin is null)
-        {
-            var currentUser = await ExecuteWithResilienceAsync(
-                client => client.User.Current(),
-                "DismissPreviousReview.GetCurrentUser", ct);
-            _cachedBotLogin = currentUser.Login;
-        }
-        var botLogin = _cachedBotLogin;
-
         // Get all reviews on the PR. Octokit's GetAll handles pagination automatically.
         var allReviews = await ExecuteWithResilienceAsync(
             client => client.PullRequest.Review.GetAll(Owner, Repo, prNumber),
             "DismissPreviousReview.GetAllReviews", ct);
 
-        // Filter reviews authored by the bot that contain the marker in their body.
+        // Filter reviews that contain the marker in their body.
+        // The marker (e.g., <!-- agent:pr-review -->) is unique to our automated reviews —
+        // no need to filter by author since the marker is the definitive identifier.
         var matchingReviews = allReviews
-            .Where(r => string.Equals(r.User.Login, botLogin, StringComparison.OrdinalIgnoreCase)
-                        && r.Body?.Contains(marker, StringComparison.Ordinal) == true)
+            .Where(r => r.Body?.Contains(marker, StringComparison.Ordinal) == true)
             .ToList();
 
         if (matchingReviews.Count == 0)

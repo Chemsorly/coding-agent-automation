@@ -112,6 +112,24 @@ internal partial class AgentPhaseExecutor
         // 2-3 tool-call rounds that every review agent would otherwise spend on git commands.
         await PreComputeDiffArtifactsAsync(run, _logger, ct);
 
+        // Write issue context file for review agents (may not exist if analysis phase was skipped)
+        try
+        {
+            var issueContextPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.IssueContextFilePath);
+            if (!File.Exists(issueContextPath))
+            {
+                var issueContextContent = PromptBuilder.BuildIssueContextFileContent(
+                    context.Issue, context.ParsedIssue, Array.Empty<IssueComment>());
+                await File.WriteAllTextAsync(issueContextPath, issueContextContent, ct);
+                _logger.Debug("Pipeline {RunId} wrote issue context to {FilePath} for review agents",
+                    run.RunId, AgentWorkspacePaths.IssueContextFilePath);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} failed to write issue context file, review agents may lack issue context", run.RunId);
+        }
+
         for (var i = 0; i < maxIterations; i++)
         {
             run.CodeReviewIterationInProgress = i + 1;

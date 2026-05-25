@@ -311,9 +311,6 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
         const string marker = "<!-- agent:pr-review -->";
         const string reason = "Superseded by new review";
 
-        // Stub current user
-        StubGet(ApiPath("/user"), new { login = "bot-user", id = 100 });
-
         // Stub reviews list — one matching, one not
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/20/reviews"), new[]
         {
@@ -333,7 +330,7 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
         await using var provider = CreateProvider();
         await provider.DismissPreviousReviewAsync(20, marker, reason, CancellationToken.None);
 
-        // Verify dismiss was called for review 501 only
+        // Verify dismiss was called for review 501 only (only one with the marker)
         var dismissEntries = Server.LogEntries
             .Where(e => e.RequestMessage.Path?.Contains("/dismissals") == true)
             .ToList();
@@ -346,10 +343,7 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
     {
         const string marker = "<!-- agent:pr-review -->";
 
-        // Stub current user
-        StubGet(ApiPath("/user"), new { login = "bot-user", id = 100 });
-
-        // Stub reviews list — two matching reviews from bot
+        // Stub reviews list — three reviews with marker (all should be dismissed regardless of author)
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/21/reviews"), new[]
         {
             BuildReviewJson(601, "bot-user", $"First review {marker}"),
@@ -357,7 +351,7 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
             BuildReviewJson(603, "other-bot", $"Other bot {marker}")
         });
 
-        // Stub dismiss endpoints
+        // Stub dismiss endpoints for all matching reviews
         Server.Given(Request.Create()
                 .WithPath(ApiPath($"/repos/{Owner}/{Repo}/pulls/21/reviews/601/dismissals"))
                 .UsingPut())
@@ -366,15 +360,19 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
                 .WithPath(ApiPath($"/repos/{Owner}/{Repo}/pulls/21/reviews/602/dismissals"))
                 .UsingPut())
             .RespondWith(Response.Create().WithStatusCode(200).WithBody("{}"));
+        Server.Given(Request.Create()
+                .WithPath(ApiPath($"/repos/{Owner}/{Repo}/pulls/21/reviews/603/dismissals"))
+                .UsingPut())
+            .RespondWith(Response.Create().WithStatusCode(200).WithBody("{}"));
 
         await using var provider = CreateProvider();
         await provider.DismissPreviousReviewAsync(21, marker, "Superseded", CancellationToken.None);
 
-        // Both matching reviews should be dismissed
+        // All reviews with the marker should be dismissed (marker is the definitive identifier)
         var dismissEntries = Server.LogEntries
             .Where(e => e.RequestMessage.Path?.Contains("/dismissals") == true)
             .ToList();
-        dismissEntries.Should().HaveCount(2);
+        dismissEntries.Should().HaveCount(3);
     }
 
     [Fact]
@@ -382,10 +380,7 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
     {
         const string marker = "<!-- agent:pr-review -->";
 
-        // Stub current user
-        StubGet(ApiPath("/user"), new { login = "bot-user", id = 100 });
-
-        // Stub reviews list — no matching reviews
+        // Stub reviews list — no matching reviews (none contain the marker)
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/22/reviews"), new[]
         {
             BuildReviewJson(701, "human-user", "Human review"),
@@ -406,9 +401,6 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
     public async Task DismissPreviousReviewAsync_PaginationHandlesMoreThan30Reviews()
     {
         const string marker = "<!-- agent:pr-review -->";
-
-        // Stub current user
-        StubGet(ApiPath("/user"), new { login = "bot-user", id = 100 });
 
         // Build 35 reviews — the last one matches the marker.
         // Octokit's GetAll handles pagination internally, so we just return all 35 in one response
@@ -441,9 +433,6 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
     public async Task DismissPreviousReviewAsync_IndividualDismissFailure_LogsButDoesNotBlock()
     {
         const string marker = "<!-- agent:pr-review -->";
-
-        // Stub current user
-        StubGet(ApiPath("/user"), new { login = "bot-user", id = 100 });
 
         // Two matching reviews
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/24/reviews"), new[]
@@ -480,17 +469,14 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
     }
 
     [Fact]
-    public async Task DismissPreviousReviewAsync_CaseInsensitiveBotLoginMatch()
+    public async Task DismissPreviousReviewAsync_MatchesByMarkerRegardlessOfAuthor()
     {
         const string marker = "<!-- agent:pr-review -->";
 
-        // Stub current user with mixed case
-        StubGet(ApiPath("/user"), new { login = "Bot-User", id = 100 });
-
-        // Review authored by lowercase version of the same user
+        // Review authored by a different user but containing the marker — should still be dismissed
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/25/reviews"), new[]
         {
-            BuildReviewJson(1001, "bot-user", $"Review {marker}")
+            BuildReviewJson(1001, "some-other-user", $"Review {marker}")
         });
 
         // Stub dismiss
@@ -502,7 +488,7 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
         await using var provider = CreateProvider();
         await provider.DismissPreviousReviewAsync(25, marker, "Superseded", CancellationToken.None);
 
-        // Should match despite case difference
+        // Should match by marker regardless of author
         var dismissEntries = Server.LogEntries
             .Where(e => e.RequestMessage.Path?.Contains("/dismissals") == true)
             .ToList();

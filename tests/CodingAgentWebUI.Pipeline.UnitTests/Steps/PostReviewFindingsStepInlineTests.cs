@@ -424,8 +424,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
 
         // Note: The "Findings by Location" section is appended by the step when
         // provider doesn't support inline but findings have location metadata.
-        // The current implementation submits body-only without the section appended
-        // (it's handled by ReviewFindingsFormatter.FormatFindingsByLocation separately).
+        // The step parses findings and appends FormatFindingsByLocation to the body.
         // Verify body-only was called (not ReviewSubmission overload)
         _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
             42, It.IsAny<ReviewSubmission>(), It.IsAny<CancellationToken>()), Times.Never);
