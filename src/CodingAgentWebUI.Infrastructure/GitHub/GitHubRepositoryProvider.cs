@@ -539,50 +539,47 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     {
         ArgumentNullException.ThrowIfNull(workspacePath);
 
-        return Task.Run(() =>
+        return Task.Run(async () =>
         {
+            var token = await GetTokenAsync(ct);
+
             using var repo = new Repository(workspacePath);
 
-            var baseBranch = repo.Branches[$"origin/{_baseBranch}"]
-                ?? repo.Branches[_baseBranch];
+            var headBranchName = repo.Head.FriendlyName;
+            var headSha = repo.Head.Tip.Sha[..8];
+
+            Log.Information(
+                "Rebase: starting for branch {BranchName} (HEAD={HeadSha}) onto origin/{BaseBranch}",
+                headBranchName, headSha, _baseBranch);
+
+            // Fetch latest origin/main to ensure we rebase onto the absolute latest base branch.
+            // Without this, the clone's origin/main may be stale if main advanced after clone.
+            var remote = repo.Network.Remotes["origin"];
+            var fetchOptions = new FetchOptions
+            {
+                CredentialsProvider = (_, _, _) =>
+                    new UsernamePasswordCredentials { Username = GitConstants.TokenUsername, Password = token }
+            };
+            var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
+            Commands.Fetch(repo, remote.Name, refSpecs, fetchOptions, null);
+
+            var baseBranch = repo.Branches[$"origin/{_baseBranch}"];
             if (baseBranch == null)
                 throw new InvalidOperationException(
-                    $"Base branch '{_baseBranch}' not found.");
+                    $"Base branch 'origin/{_baseBranch}' not found after fetch.");
 
-            var signature = new Signature(
-                GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
+            var baseSha = baseBranch.Tip.Sha[..8];
+            Log.Debug(
+                "Rebase: fetched origin/{BaseBranch} at {BaseSha}, branch HEAD at {HeadSha}",
+                _baseBranch, baseSha, headSha);
 
-            var mergeResult = repo.Merge(baseBranch, signature, new MergeOptions
+            // If the base branch tip is already an ancestor of HEAD, no rebase needed.
+            var mergeBase = repo.ObjectDatabase.FindMergeBase(repo.Head.Tip, baseBranch.Tip);
+            if (mergeBase?.Sha == baseBranch.Tip.Sha)
             {
-                FileConflictStrategy = CheckoutFileConflictStrategy.Merge
-            });
-
-            if (mergeResult.Status == MergeStatus.Conflicts)
-            {
-                AutoResolveRenameDeleteConflicts(repo, workspacePath);
-
-                // Re-check: are there still unresolved (textual) conflicts?
-                var remainingConflicts = repo.Index.Conflicts
-                    .Select(c => c.Ancestor?.Path ?? c.Ours?.Path ?? c.Theirs?.Path)
-                    .Where(p => p != null)
-                    .Distinct()
-                    .ToList();
-
-                if (remainingConflicts.Count > 0)
-                {
-                    return new MergeResult
-                    {
-                        Success = false,
-                        HasConflicts = true,
-                        ConflictFiles = remainingConflicts!
-                    };
-                }
-
-                // All conflicts were rename/delete — auto-resolved. Commit the merge.
-                repo.Commit(
-                    $"Merge {_baseBranch} (auto-resolved rename/delete conflicts)",
-                    signature, signature);
-
+                Log.Information(
+                    "Rebase: branch {BranchName} is already up-to-date with origin/{BaseBranch} (base={BaseSha}), no rebase needed",
+                    headBranchName, _baseBranch, baseSha);
                 return new MergeResult
                 {
                     Success = true,
@@ -590,6 +587,60 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
                     ConflictFiles = Array.Empty<string>()
                 };
             }
+
+            var mergeBaseSha = mergeBase?.Sha[..8] ?? "none";
+            var commitsAhead = repo.Commits.QueryBy(new CommitFilter
+            {
+                IncludeReachableFrom = repo.Head.Tip,
+                ExcludeReachableFrom = mergeBase
+            }).Count();
+            var commitsBehind = repo.Commits.QueryBy(new CommitFilter
+            {
+                IncludeReachableFrom = baseBranch.Tip,
+                ExcludeReachableFrom = mergeBase
+            }).Count();
+
+            Log.Information(
+                "Rebase: branch {BranchName} is {CommitsAhead} ahead, {CommitsBehind} behind origin/{BaseBranch} (merge-base={MergeBaseSha})",
+                headBranchName, commitsAhead, commitsBehind, _baseBranch, mergeBaseSha);
+
+            var signature = new Signature(
+                GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
+            var identity = new Identity(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail);
+
+            // Perform interactive-less rebase: replay branch commits on top of origin/main.
+            var rebaseOptions = new RebaseOptions();
+            var rebaseResult = repo.Rebase.Start(repo.Head, baseBranch, baseBranch, identity, rebaseOptions);
+
+            if (rebaseResult.Status == RebaseStatus.Conflicts)
+            {
+                // Collect conflicting files before aborting
+                var conflictFiles = repo.Index.Conflicts
+                    .Select(c => c.Ancestor?.Path ?? c.Ours?.Path ?? c.Theirs?.Path)
+                    .Where(p => p != null)
+                    .Distinct()
+                    .ToList();
+
+                // Abort the rebase to leave the workspace in a clean state
+                repo.Rebase.Abort();
+
+                Log.Warning(
+                    "Rebase: branch {BranchName} onto origin/{BaseBranch} produced {ConflictCount} conflict(s) at step {CurrentStep}/{TotalSteps}, aborted. Conflicts: {ConflictFiles}",
+                    headBranchName, _baseBranch, conflictFiles.Count,
+                    rebaseResult.CompletedStepCount + 1, rebaseResult.TotalStepCount,
+                    string.Join(", ", conflictFiles));
+
+                return new MergeResult
+                {
+                    Success = false,
+                    HasConflicts = true,
+                    ConflictFiles = conflictFiles!
+                };
+            }
+
+            Log.Information(
+                "Rebase: successfully rebased {BranchName} onto origin/{BaseBranch} ({TotalSteps} commits replayed, new HEAD={NewHeadSha})",
+                headBranchName, _baseBranch, rebaseResult.TotalStepCount, repo.Head.Tip.Sha[..8]);
 
             return new MergeResult
             {

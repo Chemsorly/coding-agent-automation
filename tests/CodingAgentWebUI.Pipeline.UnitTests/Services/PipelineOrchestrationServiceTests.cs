@@ -3269,7 +3269,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
-        run.FailureReason.Should().Contain("merge");
+        run.FailureReason.Should().Contain("rebase");
         _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 

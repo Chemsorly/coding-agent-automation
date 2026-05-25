@@ -89,8 +89,8 @@ public interface IRepositoryProvider : IAsyncDisposable
             $"{GetType().Name} does not support CheckoutRemoteBranchAsync.");
 
     /// <summary>
-    /// Merges the base branch into the current branch. If conflicts occur, leaves conflict
-    /// markers in the working tree and returns the list of conflicting files.
+    /// Rebases the current branch onto the latest base branch (fetches first to ensure freshness).
+    /// If conflicts occur, aborts the rebase and returns the list of conflicting files.
     /// </summary>
     Task<MergeResult> MergeFromBaseAsync(string workspacePath, CancellationToken ct)
         => throw new NotSupportedException(

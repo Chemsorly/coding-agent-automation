@@ -46,20 +46,20 @@ internal sealed class CreateBranchStep : IPipelineStep
             context.Run.MergeConflictFiles = mergeResult.ConflictFiles;
             if (mergeResult.HasConflicts)
             {
-                context.Callbacks.EmitOutputLine($"⚠️ Merged from {context.RepoProvider.BaseBranch} with {mergeResult.ConflictFiles.Count} conflict(s)");
-                context.Logger.Information("Pipeline {RunId} merged from base with {ConflictCount} conflict(s)",
+                context.Callbacks.EmitOutputLine($"⚠️ Rebase onto {context.RepoProvider.BaseBranch} failed with {mergeResult.ConflictFiles.Count} conflict(s)");
+                context.Logger.Information("Pipeline {RunId} rebase onto base had {ConflictCount} conflict(s)",
                     context.Run.RunId, mergeResult.ConflictFiles.Count);
             }
             else
             {
-                context.Callbacks.EmitOutputLine($"🔀 Merged from {context.RepoProvider.BaseBranch} (no conflicts)");
-                context.Logger.Information("Pipeline {RunId} merged from base (no conflicts)", context.Run.RunId);
+                context.Callbacks.EmitOutputLine($"🔀 Rebased onto {context.RepoProvider.BaseBranch} (no conflicts)");
+                context.Logger.Information("Pipeline {RunId} rebased onto base (no conflicts)", context.Run.RunId);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            context.Logger.Error(ex, "Pipeline {RunId} failed to merge from base branch", context.Run.RunId);
-            await context.FailRunAsync($"Base branch merge failed: {ex.Message}");
+            context.Logger.Error(ex, "Pipeline {RunId} failed to rebase onto base branch", context.Run.RunId);
+            await context.FailRunAsync($"Base branch rebase failed: {ex.Message}");
             return StepResult.Stop;
         }
 
