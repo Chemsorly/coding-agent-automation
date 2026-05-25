@@ -164,22 +164,32 @@ public class DiffHunkParserPropertyTests
 
     private static Gen<GeneratedHunk[]> GenNonOverlappingHunks(int count)
     {
-        return Gen.Choose(1, 50).Select(startOffset =>
+        // Use FsCheck generators for all random values to maintain determinism
+        // (enables shrinking and reproducible counterexamples).
+        return
+            from startOffset in Gen.Choose(1, 50)
+            from sizes in Gen.ArrayOf(Gen.Choose(1, 14), count)
+            from oldOffsets in Gen.ArrayOf(Gen.Choose(0, 2), count)
+            from oldSizes in Gen.ArrayOf(Gen.Choose(1, 9), count)
+            from gaps in Gen.ArrayOf(Gen.Choose(5, 29), count)
+            select BuildHunks(startOffset, sizes, oldOffsets, oldSizes, gaps, count);
+    }
+
+    private static GeneratedHunk[] BuildHunks(int startOffset, int[] sizes, int[] oldOffsets, int[] oldSizes, int[] gaps, int count)
+    {
+        var hunks = new GeneratedHunk[count];
+        var currentStart = startOffset;
+
+        for (var i = 0; i < count; i++)
         {
-            var hunks = new GeneratedHunk[count];
-            var currentStart = startOffset;
+            var size = sizes[i] + 1; // 1-15
+            var oldStart = Math.Max(1, currentStart - oldOffsets[i]);
+            var oldSize = oldSizes[i] + 1; // 1-10
+            hunks[i] = new GeneratedHunk(oldStart, oldSize, currentStart, size);
+            currentStart += size + gaps[i] + 5; // Gap between hunks (5-34)
+        }
 
-            for (var i = 0; i < count; i++)
-            {
-                var size = Random.Shared.Next(1, 15);
-                var oldStart = Math.Max(1, currentStart - Random.Shared.Next(0, 3));
-                var oldSize = Random.Shared.Next(1, 10);
-                hunks[i] = new GeneratedHunk(oldStart, oldSize, currentStart, size);
-                currentStart += size + Random.Shared.Next(5, 30); // Gap between hunks
-            }
-
-            return hunks;
-        });
+        return hunks;
     }
 
     // ─── Diff Builder ───────────────────────────────────────────────────────────

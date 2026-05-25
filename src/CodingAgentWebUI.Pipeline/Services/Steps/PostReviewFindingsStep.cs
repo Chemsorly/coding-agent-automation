@@ -157,6 +157,19 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
                     context.Logger.Information(
                         "Filtered {FilteredCount}/{TotalCount} inline comments targeting lines outside diff hunks",
                         filteredCount, comments.Count);
+
+                    // Log per-comment diagnostics at Debug level for troubleshooting
+                    foreach (var c in comments)
+                    {
+                        if (!validLines.ContainsKey(c.Path))
+                        {
+                            context.Logger.Debug("Comment on {Path}:{Line} filtered — file not in diff", c.Path, c.Line);
+                        }
+                        else if (!validLines[c.Path].Contains(c.Line))
+                        {
+                            context.Logger.Debug("Comment on {Path}:{Line} filtered — line not in any diff hunk", c.Path, c.Line);
+                        }
+                    }
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
