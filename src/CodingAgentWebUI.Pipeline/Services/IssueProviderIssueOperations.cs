@@ -6,7 +6,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// <summary>
 /// Adapts <see cref="IIssueProvider"/> to <see cref="IAgentIssueOperations"/> for use
 /// by <see cref="AgentPhaseExecutor"/> and <see cref="QualityGateExecutor"/>.
-/// Implements the label swap logic (remove all agent labels, add new label) inline.
+/// Delegates label swap logic to <see cref="AgentLabelOperations"/>.
 /// </summary>
 internal sealed class IssueProviderIssueOperations : IAgentIssueOperations
 {
@@ -26,15 +26,11 @@ internal sealed class IssueProviderIssueOperations : IAgentIssueOperations
     {
         try
         {
-            foreach (var label in AgentLabels.All)
-            {
-                // Skip removing the label we're about to add — avoids a redundant remove+add
-                // that shows up as a confusing "added X and removed X" event on GitHub.
-                if (string.Equals(label, newLabel, StringComparison.Ordinal))
-                    continue;
-                await _issueProvider.RemoveLabelAsync(issueIdentifier, label, ct);
-            }
-            await _issueProvider.AddLabelAsync(issueIdentifier, newLabel, ct);
+            await AgentLabelOperations.SwapAsync(
+                (label, c) => _issueProvider.RemoveLabelAsync(issueIdentifier, label, c),
+                (label, c) => _issueProvider.AddLabelAsync(issueIdentifier, label, c),
+                newLabel,
+                ct);
         }
         catch (Exception ex)
         {

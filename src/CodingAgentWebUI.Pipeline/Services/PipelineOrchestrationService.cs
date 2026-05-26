@@ -536,14 +536,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             else
             {
                 // Implementation runs: use the active issue provider directly (existing behavior)
-                foreach (var label in AgentLabels.All)
-                {
-                    if (string.Equals(label, newLabel, StringComparison.Ordinal))
-                        continue;
-                    await _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, ct);
-                }
-                if (!string.IsNullOrEmpty(newLabel))
-                    await _providerManager.ActiveIssueProvider!.AddLabelAsync(issueId, newLabel, ct);
+                await AgentLabelOperations.SwapAsync(
+                    (label, c) => _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, c),
+                    (label, c) => _providerManager.ActiveIssueProvider!.AddLabelAsync(issueId, label, c),
+                    newLabel,
+                    ct);
             }
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on {Identifier}", newLabel, issueId); }
@@ -557,14 +554,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     {
         try
         {
-            foreach (var label in AgentLabels.All)
-            {
-                if (string.Equals(label, newLabel, StringComparison.Ordinal))
-                    continue;
-                await _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, ct);
-            }
-            if (!string.IsNullOrEmpty(newLabel))
-                await _providerManager.ActiveIssueProvider!.AddLabelAsync(issueId, newLabel, ct);
+            await AgentLabelOperations.SwapAsync(
+                (label, c) => _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, c),
+                (label, c) => _providerManager.ActiveIssueProvider!.AddLabelAsync(issueId, label, c),
+                newLabel,
+                ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on issue {Issue}", newLabel, issueId); }
     }
@@ -580,8 +574,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             }
             else
             {
-                foreach (var label in AgentLabels.All)
-                    await _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, ct);
+                await AgentLabelOperations.RemoveAllAsync(
+                    (label, c) => _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, c),
+                    ct);
             }
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from {Identifier}", issueId); }
@@ -595,8 +590,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     {
         try
         {
-            foreach (var label in AgentLabels.All)
-                await _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, ct);
+            await AgentLabelOperations.RemoveAllAsync(
+                (label, c) => _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, c),
+                ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from issue {Issue}", issueId); }
     }
