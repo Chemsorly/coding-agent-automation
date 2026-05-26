@@ -141,8 +141,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
 
         // Resolve required labels for agent matching
         var config = await _configStore.LoadPipelineConfigAsync(ct);
-        var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == repoProviderId);
+        var repoConfig = await _configStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
         var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
 
         // Try to find an idle agent
@@ -208,8 +207,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
 
         // Resolve required labels for agent matching
         var config = await _configStore.LoadPipelineConfigAsync(ct);
-        var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == repoProviderId);
+        var repoConfig = await _configStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
         var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
 
         // Try to find an idle agent
@@ -593,8 +591,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         try
         {
             // Resolve repository provider to extract linked issues
-            var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-            var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == repoProviderId);
+            var repoConfig = await _configStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
             if (repoConfig == null)
             {
                 _logger.Warning("Repo provider config '{ConfigId}' not found for linked issue extraction", repoProviderId);
@@ -620,8 +617,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             }
 
             // Resolve issue provider to fetch issue details
-            var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
-            var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == issueProviderId);
+            var issueConfig = await _configStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
             if (issueConfig == null)
             {
                 _logger.Warning("Issue provider config '{ConfigId}' not found for linked issue pre-fetch", issueProviderId);
@@ -668,8 +664,7 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         string issueProviderId,
         CancellationToken ct)
     {
-        var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
-        var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == issueProviderId);
+        var issueConfig = await _configStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
         if (issueConfig == null)
             return null;
 

@@ -49,6 +49,12 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
             {
                 new() { Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test Issue" }
             });
+        _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .Returns((string id, ProviderKind kind, CancellationToken ct) =>
+            {
+                var configs = _mockConfigStore.Object.LoadProviderConfigsAsync(kind, ct).GetAwaiter().GetResult();
+                return Task.FromResult(configs.FirstOrDefault(c => c.Id == id));
+            });
 
         _mockRepoProvider.Setup(p => p.RepositoryFullName).Returns("owner/repo");
         _mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>())).Returns(_mockRepoProvider.Object);

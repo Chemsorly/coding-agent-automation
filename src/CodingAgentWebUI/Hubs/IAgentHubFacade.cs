@@ -102,6 +102,11 @@ public interface IAgentHubFacade
     Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct);
 
     /// <summary>
+    /// Gets a single provider configuration by ID and kind.
+    /// </summary>
+    Task<ProviderConfig?> GetProviderConfigByIdAsync(string id, ProviderKind kind, CancellationToken ct);
+
+    /// <summary>
     /// Creates an issue provider from the given configuration.
     /// </summary>
     IIssueProvider CreateIssueProvider(ProviderConfig config);

@@ -60,6 +60,12 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             .ReturnsAsync(new[] { issueConfig });
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(It.IsNotIn(ProviderKind.Issue), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ProviderConfig>());
+        _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .Returns((string id, ProviderKind kind, CancellationToken ct) =>
+            {
+                var configs = _mockConfigStore.Object.LoadProviderConfigsAsync(kind, ct).GetAwaiter().GetResult();
+                return Task.FromResult(configs.FirstOrDefault(c => c.Id == id));
+            });
 
         _mockProviderFactory.Setup(f => f.CreateIssueProvider(issueConfig))
             .Returns(_mockIssueProvider.Object);
@@ -152,6 +158,12 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             .ReturnsAsync(new[] { issueConfig });
         configStore.Setup(s => s.LoadProviderConfigsAsync(It.IsNotIn(ProviderKind.Issue), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ProviderConfig>());
+        configStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .Returns((string id, ProviderKind kind, CancellationToken ct) =>
+            {
+                var configs = configStore.Object.LoadProviderConfigsAsync(kind, ct).GetAwaiter().GetResult();
+                return Task.FromResult(configs.FirstOrDefault(c => c.Id == id));
+            });
 
         var providerFactory = new Mock<IProviderFactory>();
         providerFactory.Setup(f => f.CreateIssueProvider(issueConfig))

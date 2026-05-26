@@ -42,6 +42,13 @@ public class AgentJobDispatcherTests : IDisposable
         _httpClient = new HttpClient();
         _tokenVending = new TokenVendingService(_mockLogger.Object, _httpClient);
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
+
+        _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .Returns((string id, ProviderKind kind, CancellationToken ct) =>
+            {
+                var configs = _mockConfigStore.Object.LoadProviderConfigsAsync(kind, ct).GetAwaiter().GetResult();
+                return Task.FromResult(configs.FirstOrDefault(c => c.Id == id));
+            });
     }
 
     private AgentJobDispatcher CreateDispatcher()

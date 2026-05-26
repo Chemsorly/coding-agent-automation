@@ -72,6 +72,13 @@ public class JsonConfigurationStore : IConfigurationStore
         return await LoadAllFromDirectoryAsync<ProviderConfig>(directory, ct);
     }
 
+    public async Task<ProviderConfig?> GetProviderConfigByIdAsync(string id, ProviderKind kind, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        var path = Path.Combine(GetProviderDirectory(kind), $"{id}.json");
+        return await LoadJsonAsync<ProviderConfig>(path, ct);
+    }
+
     public async Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(config);

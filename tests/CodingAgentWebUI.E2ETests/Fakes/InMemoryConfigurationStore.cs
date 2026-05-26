@@ -96,6 +96,9 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     public Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<ProviderConfig>>(_providerConfigs.Where(c => c.Kind == kind).ToList());
 
+    public Task<ProviderConfig?> GetProviderConfigByIdAsync(string id, ProviderKind kind, CancellationToken ct) =>
+        Task.FromResult(_providerConfigs.FirstOrDefault(c => c.Id == id && c.Kind == kind));
+
     public Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct)
     {
         _providerConfigs.RemoveAll(c => c.Id == config.Id);
