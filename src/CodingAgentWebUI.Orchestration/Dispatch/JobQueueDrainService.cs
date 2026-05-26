@@ -20,12 +20,19 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 ///         idle or a new job is enqueued, providing near-instant dispatch.</item>
 /// </list>
 /// </para>
+///
+/// <para>
+/// <b>Priority:</b> Pipeline jobs are drained before consolidation jobs (intentional).
+/// </para>
 /// </summary>
 public sealed class JobQueueDrainService : BackgroundService
 {
     private readonly JobDispatcherService _dispatcher;
     private readonly AgentRegistryService _registry;
     private readonly IJobDispatcher _jobDispatcher;
+    private readonly ConsolidationQueueService _consolidationQueue;
+    private readonly IConsolidationService _consolidationService;
+    private readonly IConsolidationDispatcher _consolidationDispatcher;
     private readonly ILogger _logger;
 
     private readonly SemaphoreSlim _wakeSignal = new(0, int.MaxValue);
@@ -39,16 +46,25 @@ public sealed class JobQueueDrainService : BackgroundService
         JobDispatcherService dispatcher,
         AgentRegistryService registry,
         IJobDispatcher jobDispatcher,
+        ConsolidationQueueService consolidationQueue,
+        IConsolidationService consolidationService,
+        IConsolidationDispatcher consolidationDispatcher,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(jobDispatcher);
+        ArgumentNullException.ThrowIfNull(consolidationQueue);
+        ArgumentNullException.ThrowIfNull(consolidationService);
+        ArgumentNullException.ThrowIfNull(consolidationDispatcher);
         ArgumentNullException.ThrowIfNull(logger);
 
         _dispatcher = dispatcher;
         _registry = registry;
         _jobDispatcher = jobDispatcher;
+        _consolidationQueue = consolidationQueue;
+        _consolidationService = consolidationService;
+        _consolidationDispatcher = consolidationDispatcher;
         _logger = logger;
     }
 
@@ -101,9 +117,20 @@ public sealed class JobQueueDrainService : BackgroundService
 
     /// <summary>
     /// Performs a single drain cycle: for each idle agent, attempts to dequeue
-    /// a compatible job and dispatch it. Exposed as internal for testing.
+    /// a compatible job and dispatch it. Pipeline jobs are prioritized over
+    /// consolidation jobs (intentional design decision).
+    /// Exposed as internal for testing.
     /// </summary>
     internal async Task DrainAsync(CancellationToken ct)
+    {
+        // Phase 1: Drain pipeline jobs (higher priority)
+        await DrainPipelineJobsAsync(ct);
+
+        // Phase 2: Drain consolidation jobs (lower priority — only if idle agents remain)
+        await DrainConsolidationJobsAsync(ct);
+    }
+
+    private async Task DrainPipelineJobsAsync(CancellationToken ct)
     {
         var queueLength = _dispatcher.QueueLength;
         if (queueLength == 0)
@@ -114,7 +141,7 @@ public sealed class JobQueueDrainService : BackgroundService
             return;
 
         _logger.Debug(
-            "Drain cycle: {QueueLength} queued job(s), {IdleAgents} idle agent(s)",
+            "Drain cycle: {QueueLength} queued pipeline job(s), {IdleAgents} idle agent(s)",
             queueLength, idleAgents.Count);
 
         foreach (var agent in idleAgents)
@@ -178,6 +205,98 @@ public sealed class JobQueueDrainService : BackgroundService
                     "Drain: exception dispatching job for issue {IssueIdentifier} to agent {AgentId}, re-enqueuing",
                     pendingJob.IssueIdentifier, agent.AgentId);
                 _dispatcher.EnqueueJob(pendingJob);
+            }
+        }
+    }
+
+    private async Task DrainConsolidationJobsAsync(CancellationToken ct)
+    {
+        var queueLength = _consolidationQueue.QueueLength;
+        if (queueLength == 0)
+            return;
+
+        var idleAgents = _registry.GetIdleAgents();
+        if (idleAgents.Count == 0)
+            return;
+
+        _logger.Debug(
+            "Drain cycle: {QueueLength} queued consolidation job(s), {IdleAgents} idle agent(s)",
+            queueLength, idleAgents.Count);
+
+        foreach (var agent in idleAgents)
+        {
+            if (ct.IsCancellationRequested)
+                break;
+
+            var job = _consolidationQueue.DequeueForAgent(agent);
+            if (job is null)
+                continue;
+
+            // Cancel-during-dispatch race check
+            if (_consolidationQueue.IsRunCancelled(job.RunId))
+            {
+                _logger.Information(
+                    "Drain: consolidation job {RunId} was cancelled, skipping", job.RunId);
+                continue;
+            }
+
+            _logger.Information(
+                "Drain: dequeued consolidation job {RunId} → agent {AgentId}",
+                job.RunId, agent.AgentId);
+
+            try
+            {
+                var dispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
+                    job.RunId, job.Type, job.TemplateId, job.WorkspacePath, agent.AgentId, ct);
+
+                if (dispatched)
+                {
+                    // Transition run from Queued to Running
+                    await _consolidationService.TransitionToRunningAsync(job.RunId, ct);
+                }
+                else
+                {
+                    job.RetryCount++;
+                    if (job.RetryCount >= ConsolidationQueueService.MaxRetryCount)
+                    {
+                        _logger.Warning(
+                            "Drain: consolidation job {RunId} exceeded max retries ({MaxRetries}), marking as Failed",
+                            job.RunId, ConsolidationQueueService.MaxRetryCount);
+
+                        await _consolidationService.UpdateRunAsync(
+                            job.RunId,
+                            Pipeline.Models.ConsolidationRunStatus.Failed,
+                            $"Dispatch failed after {ConsolidationQueueService.MaxRetryCount} attempts",
+                            ct);
+                    }
+                    else
+                    {
+                        _logger.Warning(
+                            "Drain: failed to dispatch consolidation job {RunId} (attempt {Attempt}/{Max}), re-enqueuing",
+                            job.RunId, job.RetryCount, ConsolidationQueueService.MaxRetryCount);
+                        _consolidationQueue.ReEnqueue(job);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex,
+                    "Drain: exception dispatching consolidation job {RunId} to agent {AgentId}",
+                    job.RunId, agent.AgentId);
+
+                job.RetryCount++;
+                if (job.RetryCount >= ConsolidationQueueService.MaxRetryCount)
+                {
+                    await _consolidationService.UpdateRunAsync(
+                        job.RunId,
+                        Pipeline.Models.ConsolidationRunStatus.Failed,
+                        $"Dispatch failed after {ConsolidationQueueService.MaxRetryCount} attempts",
+                        ct);
+                }
+                else
+                {
+                    _consolidationQueue.ReEnqueue(job);
+                }
             }
         }
     }

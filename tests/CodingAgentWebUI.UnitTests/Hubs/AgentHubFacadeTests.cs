@@ -29,7 +29,8 @@ public sealed class AgentHubFacadeTests
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
-        _drainService = new JobQueueDrainService(_dispatcher, _registry, Mock.Of<IJobDispatcher>(), _mockLogger.Object);
+        _drainService = new JobQueueDrainService(_dispatcher, _registry, Mock.Of<IJobDispatcher>(),
+            new ConsolidationQueueService(_mockLogger.Object), Mock.Of<IConsolidationService>(), Mock.Of<IConsolidationDispatcher>(), _mockLogger.Object);
 
         _facade = new AgentHubFacade(
             _registry,

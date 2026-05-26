@@ -985,11 +985,15 @@ select option { background: var(--surface); color: var(--text); }
 .btn-trigger { padding: 6px 14px; border-radius: var(--radius); border: 1px solid var(--accent); background: transparent; color: var(--accent-light); font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: background 0.15s, color 0.15s; }
 .btn-trigger:hover:not(:disabled) { background: var(--accent); color: white; }
 .btn-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-cancel { padding: 4px 10px; border-radius: var(--radius); border: 1px solid var(--error, #dc3545); background: transparent; color: var(--error, #dc3545); font-size: 0.75rem; cursor: pointer; transition: background 0.15s, color 0.15s; }
+.btn-cancel:hover { background: var(--error, #dc3545); color: white; }
 
 .consolidation-status { font-size: 0.78rem; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
 .consolidation-status-running { background: var(--bg-info); color: var(--accent-light); }
 .consolidation-status-succeeded { background: var(--bg-success); color: var(--success); }
 .consolidation-status-failed { background: var(--bg-error); color: var(--error); }
+.consolidation-status-queued { background: var(--bg-warning, #3d3520); color: var(--warning, #f0ad4e); }
+.consolidation-status-cancelled { background: var(--bg-error); color: var(--text-muted); }
 
 .consolidation-suggestions-meta { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 12px; }
 .consolidation-suggestions-list { display: flex; flex-direction: column; gap: 10px; }
