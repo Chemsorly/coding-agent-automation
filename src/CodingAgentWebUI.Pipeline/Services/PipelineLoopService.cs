@@ -18,6 +18,7 @@ public sealed class PipelineLoopService : BackgroundService
     private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly IProviderConfigStore _providerConfigStore;
     private readonly IJobDispatcher? _jobDispatcher;
+    private readonly IDependencyChecker? _dependencyChecker;
     private readonly Serilog.ILogger _logger;
 
     private TaskCompletionSource _activationSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -92,7 +93,8 @@ public sealed class PipelineLoopService : BackgroundService
         IPipelineConfigStore pipelineConfigStore,
         IProviderConfigStore providerConfigStore,
         Serilog.ILogger logger,
-        IJobDispatcher? jobDispatcher = null)
+        IJobDispatcher? jobDispatcher = null,
+        IDependencyChecker? dependencyChecker = null)
     {
         ArgumentNullException.ThrowIfNull(orchestration);
         ArgumentNullException.ThrowIfNull(providerFactory);
@@ -106,6 +108,7 @@ public sealed class PipelineLoopService : BackgroundService
         _providerConfigStore = providerConfigStore;
         _logger = logger;
         _jobDispatcher = jobDispatcher;
+        _dependencyChecker = dependencyChecker;
     }
 
     /// <summary>
@@ -556,6 +559,9 @@ public sealed class PipelineLoopService : BackgroundService
             {
                 int remaining = maxRunsPerCycle > 0 ? maxRunsPerCycle : int.MaxValue;
 
+                // Per-cycle dependency state cache shared across all issue evaluations
+                var cycleStateCache = new Dictionary<int, bool>();
+
                 // Track which queue type to dispatch next (true = issue turn, false = PR turn)
                 bool issuesTurn = true;
 
@@ -595,6 +601,26 @@ public sealed class PipelineLoopService : BackgroundService
                                     continue;
                                 if (_jobDispatcher.IsIssueBeingProcessedOrQueued(candidate.Identifier))
                                     continue;
+
+                                // Dependency check — skip blocked issues, try next candidate
+                                if (_dependencyChecker != null)
+                                {
+                                    if (!_providerCache.TryGetValue(template.IssueProviderId, out var provider))
+                                    {
+                                        _logger.Warning("Provider '{ProviderId}' not in cache during dependency check for #{Identifier}, skipping dispatch",
+                                            template.IssueProviderId, candidate.Identifier);
+                                        continue;
+                                    }
+
+                                    var depResult = await _dependencyChecker.CheckAsync(
+                                        candidate.Identifier, candidate.Description, provider, cycleStateCache, ct);
+                                    if (!depResult.IsReady)
+                                    {
+                                        _logger.Information("Issue #{Identifier} blocked by open issues: {BlockedBy}. Skipping dispatch.",
+                                            candidate.Identifier, depResult.BlockedBy);
+                                        continue;
+                                    }
+                                }
 
                                 issue = candidate;
                                 break;

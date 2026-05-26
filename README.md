@@ -112,6 +112,7 @@ Detailed documentation lives in the [`docs/`](docs/) folder. Suggested reading o
 - **Brain repository** — Shared knowledge repo that agents read/write across runs
 - **Multi-agent code review** — Specialized review agents (Correctness, Security, AcceptanceCriteria, etc.) analyze changes sequentially
 - **Confidence gate** — Rejects vague issues with specific feedback before attempting implementation
+- **Issue dependency tracking** — Issues referencing `Blocked by #N`, `Depends on #N`, `Requires #N`, or `After #N` in their body are automatically held until all referenced issues are closed
 - **Closed-loop automation** — Polls for labeled issues and PRs, processing them autonomously
 - **PR rework** — Re-queue an issue with an open PR to incorporate review feedback
 - **External CI integration** — Optionally waits for CI pipelines to pass before creating the final PR

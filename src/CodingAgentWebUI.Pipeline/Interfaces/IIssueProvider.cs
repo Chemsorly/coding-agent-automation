@@ -91,6 +91,13 @@ public interface IIssueProvider : IAsyncDisposable
     }
 
     /// <summary>
+    /// Checks whether the specified issue is closed.
+    /// Returns true if closed, false if open or not found.
+    /// </summary>
+    Task<bool> IsIssueClosedAsync(string identifier, CancellationToken ct)
+        => Task.FromResult(false);
+
+    /// <summary>
     /// Lists closed issues with optional label filtering and date cutoff.
     /// The <paramref name="since"/> parameter filters by last-updated date (Octokit semantics),
     /// not close date. Returns empty results by default so existing implementations don't break.

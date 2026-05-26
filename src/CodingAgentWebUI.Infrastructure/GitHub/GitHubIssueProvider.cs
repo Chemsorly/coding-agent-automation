@@ -1,4 +1,5 @@
 using Octokit;
+using Serilog;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using PipelineIssueComment = CodingAgentWebUI.Pipeline.Models.IssueComment;
@@ -293,6 +294,26 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     }
 
     /// <inheritdoc />
+    public async Task<bool> IsIssueClosedAsync(string identifier, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(identifier);
+        var issueNumber = ParseIssueIdentifier(identifier);
+
+        try
+        {
+            var issue = await ExecuteWithResilienceAsync(
+                client => client.Issue.Get(Owner, Repo, issueNumber),
+                "IsIssueClosed", ct);
+            return issue.State.Value == ItemState.Closed;
+        }
+        catch (NotFoundException)
+        {
+            Log.Warning("Issue #{IssueNumber} not found when checking dependency state", issueNumber);
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task CloseIssueAsync(string identifier, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(identifier);
@@ -335,6 +356,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         {
             Identifier = issue.Number.ToString(),
             Title = issue.Title ?? string.Empty,
+            Description = issue.Body,
             Labels = issue.Labels?.Select(l => l.Name).ToList().AsReadOnly()
                 ?? (IReadOnlyList<string>)Array.Empty<string>(),
             CreatedAt = issue.CreatedAt.UtcDateTime

@@ -343,6 +343,61 @@ When both implementation and review loops are active, they share the `ClosedLoop
 - Draft PRs are included in review dispatch (a warning is shown in the UI)
 - PRs with `agent:error`, `agent:in-progress`, `agent:done`, or `agent:cancelled` labels are skipped
 
+### Issue Dependency Tracking
+
+The dispatch loop supports dependency tracking for issues. When an issue body contains dependency references, the dispatcher checks whether those referenced issues are closed before dispatching. This prevents issues from being worked on before their prerequisites are complete.
+
+#### Supported Dependency Patterns
+
+The following patterns are recognized in the issue body (case-insensitive, word-boundary matched):
+
+| Pattern | Example |
+|---------|---------|
+| `Blocked by #N` | `Blocked by #123` |
+| `Depends on #N` | `Depends on #45` |
+| `Requires #N` | `Requires #78` |
+| `After #N` | `After #90` |
+
+Multiple dependencies can appear in a single issue body — ALL must be satisfied (closed) before the issue is dispatched. Patterns are matched with a `\b` word boundary before the keyword, so "hereafter #123" does NOT match but "After #123" does.
+
+#### How It Works
+
+The dependency check is **stateless** and **body-parsed** on each poll cycle:
+
+1. When a candidate issue is dequeued for dispatch, the `DependencyParser` extracts issue numbers from the body text
+2. For each referenced issue number, the `DependencyChecker` calls `IsIssueClosedAsync` on the issue provider
+3. Results are **cached per-cycle** in a shared `Dictionary<int, bool>` — if multiple candidates reference the same dependency, only one API call is made
+4. If ALL dependencies are closed → issue is eligible for dispatch
+5. If ANY dependency is still open → issue is skipped, next candidate in the queue is tried
+
+No internal state is persisted between cycles. No new labels are introduced. The check runs fresh on every poll cycle (~30s default interval).
+
+#### Behavior When Dependencies Are Unresolved
+
+- The issue stays labeled `agent:next` (no label change)
+- It is skipped silently from dispatch this cycle
+- On the next poll cycle (~30s), the check runs again
+- Once all dependencies are closed, the issue becomes eligible for dispatch
+- A blocked issue at the front of the queue does NOT prevent unblocked issues behind it from being dispatched
+
+#### Graceful Degradation
+
+- **API failures** (network errors, rate limits, 5xx after retry exhaustion) → the dependency is treated as unresolved → the issue is skipped for this cycle, a warning is logged
+- **Issue not found** (404) → treated as unresolved (conservative: don't dispatch if we can't verify)
+- **Null body** → treated as no dependencies (issue dispatches normally)
+- Failures for one issue do NOT affect other issues in the same cycle
+- Failures do NOT cause the poll cycle to abort, the circuit breaker to trip, or the template status to record a failure
+
+#### Known Limitations
+
+| Limitation | Description |
+|------------|-------------|
+| "After" false positives | The word "after" is common in English. Sentences like "I fixed this after #456 was reported" will incorrectly match as a dependency. Prefer `Blocked by` or `Depends on` for human-written issues. |
+| Code block matching | Patterns inside markdown code blocks (`` `Blocked by #123` `` or fenced blocks) will still match. Avoid putting dependency patterns in code examples within issue bodies. |
+| Strikethrough matching | `~~Blocked by #123~~` will still match. Delete dependency text rather than striking through. |
+| No circular dependency detection | If issue A depends on B and B depends on A, both are skipped indefinitely. Humans must notice and fix. |
+| Same-repository only | Only `#N` references are supported. Cross-repository references (`owner/repo#N`) are not recognized. |
+
 ### Linked Issue Extraction
 
 The review pipeline extracts linked issues from the PR to provide requirements context to the review agent. This enables the reviewer to evaluate the PR against the original acceptance criteria.

@@ -12,6 +12,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
     public List<(string Identifier, string Body)> PostedComments { get; } = new();
     public List<(string Identifier, string Label, bool Added)> LabelChanges { get; } = new();
     public bool ShouldFail { get; set; }
+    public HashSet<string> ClosedIssueIdentifiers { get; } = new();
 
     public IssueProviderType ProviderType => IssueProviderType.GitHub;
 
@@ -21,6 +22,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         PostedComments.Clear();
         LabelChanges.Clear();
         ShouldFail = false;
+        ClosedIssueIdentifiers.Clear();
     }
 
     public Task<IssueDetail> GetIssueAsync(string identifier, CancellationToken ct)
@@ -42,7 +44,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         var paged = filtered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
         return Task.FromResult(new PagedResult<IssueSummary>
         {
-            Items = paged.Select(i => new IssueSummary { Identifier = i.Identifier, Title = i.Title, Labels = i.Labels }).ToList(),
+            Items = paged.Select(i => new IssueSummary { Identifier = i.Identifier, Title = i.Title, Labels = i.Labels, Description = i.Description }).ToList(),
             Page = page,
             PageSize = pageSize,
             HasMore = filtered.Count > page * pageSize
@@ -89,6 +91,8 @@ public sealed class InMemoryIssueProvider : IIssueProvider
     }
 
     public Task CloseIssueAsync(string identifier, CancellationToken ct) => Task.CompletedTask;
+    public Task<bool> IsIssueClosedAsync(string identifier, CancellationToken ct)
+        => Task.FromResult(ClosedIssueIdentifiers.Contains(identifier));
     public Task<bool> HasAgentLabelsAsync(CancellationToken ct) => Task.FromResult(true);
     public Task<bool> EnsureAgentLabelsAsync(CancellationToken ct) => Task.FromResult(true);
     public Task ValidateAsync(CancellationToken ct) => Task.CompletedTask;
