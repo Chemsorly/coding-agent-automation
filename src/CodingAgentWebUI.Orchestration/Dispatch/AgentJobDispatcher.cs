@@ -248,6 +248,72 @@ public sealed class AgentJobDispatcher : IJobDispatcher
         return enqueued;
     }
 
+    /// <inheritdoc />
+    public async Task<bool> TryDispatchDecompositionAsync(
+        string epicIdentifier,
+        string epicTitle,
+        PipelineRunType phaseType,
+        string issueProviderId,
+        string repoProviderId,
+        string? brainProviderId,
+        string initiatedBy,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(epicIdentifier);
+        ArgumentNullException.ThrowIfNull(epicTitle);
+        ArgumentNullException.ThrowIfNull(issueProviderId);
+        ArgumentNullException.ThrowIfNull(repoProviderId);
+        ArgumentNullException.ThrowIfNull(initiatedBy);
+
+        if (phaseType is not (PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition))
+            throw new ArgumentOutOfRangeException(nameof(phaseType), phaseType, "Must be DecompositionAnalysis or Decomposition");
+
+        // Check if already being processed
+        if (_orchestration.IsIssueBeingProcessed(epicIdentifier) || _dispatcher.IsIssueQueued(epicIdentifier))
+        {
+            _logger.Information("Epic {EpicIdentifier} already being processed or queued, skipping decomposition dispatch", epicIdentifier);
+            return false;
+        }
+
+        // Resolve required labels for agent matching
+        var config = await _configStore.LoadPipelineConfigAsync(ct);
+        var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == repoProviderId);
+        var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
+
+        // Try to find an idle agent
+        var agent = _dispatcher.SelectAgent(requiredLabels);
+
+        if (agent != null)
+        {
+            // Agent available — dispatch immediately
+            return await DispatchDecompositionToAgentAsync(
+                agent, epicIdentifier, epicTitle, phaseType,
+                issueProviderId, repoProviderId, brainProviderId,
+                initiatedBy, requiredLabels, ct);
+        }
+
+        // No idle agent — enqueue for later dispatch
+        var enqueued = _dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = epicIdentifier,
+            IssueTitle = epicTitle,
+            IssueProviderId = issueProviderId,
+            RepoProviderId = repoProviderId,
+            BrainProviderId = brainProviderId,
+            PipelineProviderId = null,
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            InitiatedBy = initiatedBy,
+            RequiredLabels = requiredLabels,
+            RunType = phaseType
+        });
+
+        if (enqueued)
+            _logger.Information("Decomposition {Phase} for epic {EpicIdentifier} enqueued for dispatch (no idle agents)", phaseType, epicIdentifier);
+
+        return enqueued;
+    }
+
     /// <summary>
     /// Dispatches a job to a specific agent. Resolves the agent profile and quality gate
     /// configurations, creates the PipelineRun, prepares configs, and sends the
@@ -571,6 +637,161 @@ public sealed class AgentJobDispatcher : IJobDispatcher
             // Revert label on dispatch failure
             await _labelSwapper.SwapLabelAsync(
                 repoProviderId, prIdentifier, AgentLabels.Next, LabelTargetKind.PullRequest, CancellationToken.None);
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Dispatches a decomposition job to a specific agent. Creates the PipelineRun with the
+    /// correct RunType (DecompositionAnalysis or Decomposition), sets workspace path to
+    /// <c>{base}/decomposition/{runId}/</c>, and sends the <see cref="JobAssignmentMessage"/> via SignalR.
+    /// </summary>
+    internal async Task<bool> DispatchDecompositionToAgentAsync(
+        AgentEntry agent,
+        string epicIdentifier,
+        string epicTitle,
+        PipelineRunType phaseType,
+        string issueProviderId,
+        string repoProviderId,
+        string? brainProviderId,
+        string initiatedBy,
+        IReadOnlyList<string> requiredLabels,
+        CancellationToken ct)
+    {
+        try
+        {
+            // Resolve profile for this agent
+            var profiles = await _configStore.LoadAgentProfilesAsync(ct);
+            var profile = _profileResolver.Resolve(profiles, agent.Labels);
+            if (profile is null)
+            {
+                var labelsStr = string.Join(", ", agent.Labels);
+                _logger.Warning("No profile matches agent {AgentId} labels [{Labels}] for decomposition dispatch", agent.AgentId, labelsStr);
+                return false;
+            }
+
+            var agentProviderId = profile.AgentProviderConfigId;
+
+            // Create the dispatched run via PipelineOrchestrationService
+            var run = await _orchestration.CreateDispatchedRunAsync(
+                issueProviderId, repoProviderId, epicIdentifier,
+                agentProviderId, agent.AgentId, ct,
+                brainProviderId, pipelineProviderId: null, initiatedBy);
+
+            if (run == null)
+            {
+                _logger.Warning("Failed to create dispatched run for decomposition of epic {EpicIdentifier}", epicIdentifier);
+                return false;
+            }
+
+            // Replace the initial run with a fully-populated decomposition run atomically.
+            var config = await _configStore.LoadPipelineConfigAsync(ct);
+            var runId = run.RunId;
+            var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, "decomposition", runId);
+
+            run = new PipelineRun
+            {
+                RunId = runId,
+                IssueIdentifier = epicIdentifier,
+                IssueTitle = epicTitle,
+                IssueProviderConfigId = issueProviderId,
+                RepoProviderConfigId = repoProviderId,
+                StartedAt = run.StartedAt,
+                CurrentStep = PipelineStep.Created,
+                RepositoryName = run.RepositoryName,
+                ModelName = run.ModelName,
+                BrainProviderConfigId = brainProviderId,
+                PipelineProviderConfigId = null,
+                InitiatedBy = initiatedBy,
+                AgentId = agent.AgentId,
+                AgentProviderConfigId = agentProviderId,
+                RunType = phaseType,
+                WorkspacePath = workspacePath
+            };
+
+            _runService.ReplaceRun(run);
+
+            // Populate resolved profile ID on the run
+            run.ResolvedProfileId = profile.Id;
+
+            // Build and prepare provider configs for the agent
+            var providerConfigs = await PrepareProviderConfigsAsync(
+                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, ct);
+
+            // Override BrainReadOnly from the matching template (per-template setting)
+            var matchingTemplate = config.PipelineJobTemplates.FirstOrDefault(t =>
+                t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
+            if (matchingTemplate is { BrainReadOnly: true })
+                config = config with { BrainReadOnly = true };
+
+            // Override blacklist settings from repo provider config (per-repo takes precedence)
+            config = PipelineConfiguration.ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == repoProviderId));
+
+            // Build a synthetic IssueDetail from epic metadata for the job assignment
+            var syntheticIssueDetail = new IssueDetail
+            {
+                Identifier = epicIdentifier,
+                Title = epicTitle,
+                Description = string.Empty,
+                Labels = Array.Empty<string>()
+            };
+            var syntheticParsedIssue = new IssueDescriptionParser().Parse(string.Empty);
+
+            var message = new JobAssignmentMessage
+            {
+                JobId = run.RunId,
+                IssueIdentifier = epicIdentifier,
+                IssueDetail = syntheticIssueDetail,
+                ParsedIssue = syntheticParsedIssue,
+                IssueComments = Array.Empty<IssueComment>(),
+                ExistingAnalysis = null,
+                ForceRefreshAnalysis = false,
+                RepoProviderConfigId = repoProviderId,
+                AgentProviderConfigId = agentProviderId,
+                BrainProviderConfigId = brainProviderId,
+                PipelineProviderConfigId = null,
+                ProviderConfigs = providerConfigs,
+                PipelineConfiguration = config,
+                InitiatedBy = initiatedBy,
+                ResolvedProfileId = profile.Id,
+                QualityGateConfigs = Array.Empty<QualityGateConfiguration>(),
+                McpServers = profile.McpServers,
+                ReviewerConfigs = Array.Empty<ReviewerConfiguration>(),
+                RunType = phaseType
+            };
+
+            // Swap label to agent:in-progress before dispatch so the epic is immediately marked
+            // in-progress, preventing the loop from re-dispatching it on the next cycle.
+            await _labelSwapper.SwapLabelAsync(issueProviderId, epicIdentifier, AgentLabels.InProgress, ct);
+
+            // Assign the job to the agent in the registry
+            agent.ActiveJobId = run.RunId;
+            _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
+
+            // Send the assignment via IAgentCommunication
+            await _agentComm.AssignJobAsync(agent.ConnectionId, message, ct);
+
+            _logger.Information(
+                "Decomposition {Phase} job {JobId} dispatched to agent {AgentId} for epic {EpicIdentifier} (profile={ProfileId})",
+                phaseType, run.RunId, agent.AgentId, epicIdentifier, profile.Id);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to dispatch decomposition job to agent {AgentId} for epic {EpicIdentifier}",
+                agent.AgentId, epicIdentifier);
+
+            // Reset agent status on failure
+            agent.ActiveJobId = null;
+            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+
+            // Revert label on dispatch failure — Phase 1 reverts to agent:epic, Phase 2 reverts to agent:epic-approved
+            var revertLabel = phaseType == PipelineRunType.DecompositionAnalysis
+                ? AgentLabels.Epic
+                : AgentLabels.EpicApproved;
+            await _labelSwapper.SwapLabelAsync(issueProviderId, epicIdentifier, revertLabel, CancellationToken.None);
 
             return false;
         }

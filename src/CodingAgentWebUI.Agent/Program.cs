@@ -5,6 +5,7 @@ using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Configuration;
 using KiroCliLib.Core;
@@ -136,13 +137,15 @@ try
         new HubConnectionManager(orchestratorUrl, agentId, agentApiKey, Log.Logger));
 
     // ── Pipeline executor ──
+    builder.Services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
     builder.Services.AddSingleton(sp => new LocalPipelineExecutor(
         sp.GetRequiredService<IKiroCliOrchestrator>(),
         sp.GetRequiredService<IHttpClientFactory>(),
         sp.GetRequiredService<PipelineConfiguration>(),
         sp.GetRequiredService<IQualityGateValidator>(),
         Log.Logger,
-        sp.GetRequiredService<IBrainUpdateService>()));
+        sp.GetRequiredService<IBrainUpdateService>(),
+        openIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>()));
 
     // ── Consolidation executor ──
     builder.Services.AddSingleton(sp => new LocalConsolidationExecutor(

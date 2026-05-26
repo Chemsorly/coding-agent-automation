@@ -187,6 +187,15 @@ public sealed class PipelineRun
     /// <summary>Accumulated total cost (USD, decimal) across all agent invocations, or null if no cost data available.</summary>
     public decimal? TotalCost { get; set; }
 
+    /// <summary>Number of sub-issues successfully created during the Decomposition phase.</summary>
+    public int DecompositionSubIssuesCreated { get; set; }
+
+    /// <summary>Total number of sub-issues attempted during the Decomposition phase.</summary>
+    public int DecompositionSubIssuesAttempted { get; set; }
+
+    /// <summary>Results of individual sub-issue creation attempts during the Decomposition phase.</summary>
+    public IReadOnlyList<SubIssueCreationResult> SubIssueResults { get; set; } = [];
+
     /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
     // NOTE: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
     public PipelineRunSummary ToSummary() => new()

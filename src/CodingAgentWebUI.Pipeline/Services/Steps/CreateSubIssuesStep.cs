@@ -1,0 +1,234 @@
+using CodingAgentWebUI.Pipeline.Models;
+
+namespace CodingAgentWebUI.Pipeline.Services.Steps;
+
+/// <summary>
+/// Phase 2, Step 4: Parses sub-issue JSON files from the workspace, resolves dependencies,
+/// sanitizes content, and creates GitHub issues sequentially via the orchestrator proxy.
+/// Enforces the configured sub-issue cap, retries transient errors, and tracks results
+/// for the summary step.
+/// </summary>
+internal sealed class CreateSubIssuesStep : IPipelineStep
+{
+    /// <summary>Maximum retry attempts for transient errors.</summary>
+    private const int MaxRetryAttempts = 3;
+
+    /// <summary>Timeout for the entire issue creation phase.</summary>
+    private static readonly TimeSpan CreationTimeout = TimeSpan.FromMinutes(5);
+
+    /// <summary>Exponential backoff delays: 0s, 1s, 3s.</summary>
+    private static readonly TimeSpan[] RetryDelays =
+    [
+        TimeSpan.Zero,
+        TimeSpan.FromSeconds(1),
+        TimeSpan.FromSeconds(3)
+    ];
+
+    public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
+    {
+        // 1. Transition to CreatingIssues
+        context.Callbacks.TransitionTo(PipelineStep.CreatingIssues);
+
+        // 2. Parse sub-issue files from workspace
+        var workspacePath = context.Run.WorkspacePath!;
+        var proposals = await SubIssueFileParser.ParseSubIssueFilesAsync(workspacePath, context.Logger, ct);
+
+        if (proposals.Count == 0)
+        {
+            context.Logger.Warning("No valid sub-issue proposals found in workspace");
+            context.Run.SubIssueResults = [];
+            return StepResult.Continue;
+        }
+
+        // 3. Enforce MaxDecompositionSubIssues cap (take first N alphabetically — already sorted by parser)
+        var cap = context.Config.MaxDecompositionSubIssues;
+        var cappedProposals = proposals.Count > cap
+            ? proposals.Take(cap).ToList()
+            : proposals;
+
+        if (proposals.Count > cap)
+        {
+            context.Logger.Information(
+                "Sub-issue cap enforced: {Total} proposals found, processing first {Cap} alphabetically",
+                proposals.Count, cap);
+        }
+
+        // 4. Create linked CancellationTokenSource with 5-minute timeout
+        using var timeoutCts = new CancellationTokenSource(CreationTimeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        var creationCt = linkedCts.Token;
+
+        // 5-10. Create issues sequentially with dependency resolution
+        var resolver = new DependencyResolver();
+        var results = new List<SubIssueCreationResult>();
+
+        foreach (var proposal in cappedProposals)
+        {
+            // 11. On timeout: mark remaining as failed
+            if (timeoutCts.IsCancellationRequested)
+            {
+                context.Logger.Warning(
+                    "Creation timeout exceeded; marking remaining sub-issues as failed. Title: {Title}",
+                    proposal.Title);
+
+                results.Add(new SubIssueCreationResult
+                {
+                    Title = proposal.Title,
+                    Success = false,
+                    FailureReason = "creation timeout exceeded"
+                });
+                continue;
+            }
+
+            var result = await CreateSingleIssueAsync(proposal, resolver, context, creationCt);
+            results.Add(result);
+
+            // Register successful creations for dependency resolution
+            if (result.Success && result.Identifier is not null)
+            {
+                resolver.Register(proposal.Title, result.Identifier);
+            }
+        }
+
+        // 12. Store results on context for summary step
+        context.Run.SubIssueResults = results;
+        context.Run.DecompositionSubIssuesAttempted = results.Count;
+        context.Run.DecompositionSubIssuesCreated = results.Count(r => r.Success);
+
+        context.Logger.Information(
+            "Sub-issue creation complete: {Created}/{Attempted} succeeded",
+            context.Run.DecompositionSubIssuesCreated,
+            context.Run.DecompositionSubIssuesAttempted);
+
+        return StepResult.Continue;
+    }
+
+    private static async Task<SubIssueCreationResult> CreateSingleIssueAsync(
+        SubIssueProposal proposal,
+        DependencyResolver resolver,
+        PipelineStepContext context,
+        CancellationToken ct)
+    {
+        // 6. Sanitize title and body
+        var sanitizedTitle = TextSanitizer.SanitizeTitle(proposal.Title);
+        var sanitizedBody = TextSanitizer.SanitizeMarkdown(proposal.Body);
+
+        // 7. Resolve dependencies and prepend to body
+        var dependencyLines = resolver.Resolve(proposal.Dependencies, context.Logger);
+        if (dependencyLines.Count > 0)
+        {
+            var depSection = string.Join("\n", dependencyLines);
+            sanitizedBody = $"{depSection}\n\n{sanitizedBody}";
+        }
+
+        // 8. Apply labels: agent:next + agent-generated + custom labels from proposal
+        var labels = new List<string> { AgentLabels.Next, AgentLabels.AgentGenerated };
+        foreach (var label in proposal.Labels)
+        {
+            if (!string.IsNullOrWhiteSpace(label) &&
+                !labels.Contains(label, StringComparer.OrdinalIgnoreCase))
+            {
+                labels.Add(label);
+            }
+        }
+
+        // 9. Retry transient errors (3 attempts, exponential backoff: 0s, 1s, 3s)
+        for (var attempt = 0; attempt < MaxRetryAttempts; attempt++)
+        {
+            try
+            {
+                if (attempt > 0)
+                {
+                    var delay = RetryDelays[attempt];
+                    if (delay > TimeSpan.Zero)
+                    {
+                        await Task.Delay(delay, ct);
+                    }
+                }
+
+                var created = await context.IssueOps.CreateIssueAsync(
+                    sanitizedTitle, sanitizedBody, labels, ct);
+
+                context.Logger.Information(
+                    "Created sub-issue {Identifier}: {Title}",
+                    created.Identifier, sanitizedTitle);
+
+                return new SubIssueCreationResult
+                {
+                    Title = proposal.Title,
+                    Success = true,
+                    Identifier = created.Identifier,
+                    Url = created.Url
+                };
+            }
+            catch (OperationCanceledException)
+            {
+                // Timeout or external cancellation — don't retry
+                return new SubIssueCreationResult
+                {
+                    Title = proposal.Title,
+                    Success = false,
+                    FailureReason = "creation timeout exceeded"
+                };
+            }
+            catch (Exception ex) when (IsTransient(ex))
+            {
+                context.Logger.Warning(
+                    ex,
+                    "Transient error creating sub-issue '{Title}' (attempt {Attempt}/{MaxAttempts})",
+                    proposal.Title, attempt + 1, MaxRetryAttempts);
+
+                // If this was the last attempt, fall through to failure
+                if (attempt == MaxRetryAttempts - 1)
+                {
+                    context.Logger.Warning(
+                        "Exhausted retries for sub-issue '{Title}': {Error}",
+                        proposal.Title, ex.Message);
+
+                    return new SubIssueCreationResult
+                    {
+                        Title = proposal.Title,
+                        Success = false,
+                        FailureReason = $"Transient error after {MaxRetryAttempts} attempts: {ex.Message}"
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                // Non-transient error — skip immediately without retry
+                context.Logger.Warning(
+                    ex,
+                    "Non-transient error creating sub-issue '{Title}': {Error}",
+                    proposal.Title, ex.Message);
+
+                return new SubIssueCreationResult
+                {
+                    Title = proposal.Title,
+                    Success = false,
+                    FailureReason = $"Non-transient error: {ex.Message}"
+                };
+            }
+        }
+
+        // Should not reach here, but safety net
+        return new SubIssueCreationResult
+        {
+            Title = proposal.Title,
+            Success = false,
+            FailureReason = "Unexpected: exhausted retry loop without result"
+        };
+    }
+
+    /// <summary>
+    /// Determines whether an exception represents a transient error that should be retried.
+    /// Transient errors include network failures, rate limits, and server errors.
+    /// </summary>
+    private static bool IsTransient(Exception ex)
+    {
+        return ex is HttpRequestException httpEx &&
+               (httpEx.StatusCode is null || // Network-level failure (no response)
+                (int)httpEx.StatusCode.Value >= 500 || // Server errors
+                httpEx.StatusCode == System.Net.HttpStatusCode.TooManyRequests || // Rate limit
+                httpEx.StatusCode == System.Net.HttpStatusCode.RequestTimeout);
+    }
+}

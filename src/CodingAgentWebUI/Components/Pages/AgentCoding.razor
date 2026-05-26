@@ -128,6 +128,7 @@
                                                 <th>CI</th>
                                                 <th>Impl</th>
                                                 <th>Review</th>
+                                                <th>Decomp</th>
                                                 <th>Enabled</th>
                                                 <th>Status</th>
                                                 <th>Actions</th>
@@ -171,6 +172,13 @@
                                                         <label class="toggle-switch">
                                                             <input type="checkbox" checked="@template.ReviewEnabled"
                                                                    @onchange="e => ToggleReviewEnabled(template, (bool)(e.Value ?? false))" />
+                                                            <span class="toggle-slider"></span>
+                                                        </label>
+                                                    </td>
+                                                    <td>
+                                                        <label class="toggle-switch">
+                                                            <input type="checkbox" checked="@template.DecompositionEnabled"
+                                                                   @onchange="e => ToggleDecompositionEnabled(template, (bool)(e.Value ?? false))" />
                                                             <span class="toggle-slider"></span>
                                                         </label>
                                                     </td>
@@ -434,6 +442,13 @@
                                             <input type="checkbox" @bind="_addForm.ReviewEnabled" />
                                             Review Enabled
                                             <span class="form-hint-icon" title="When enabled, this template dispatches PR review jobs.">?</span>
+                                        </label>
+                                    </div>
+                                    <div class="form-group form-checkbox">
+                                        <label>
+                                            <input type="checkbox" @bind="_addForm.DecompositionEnabled" />
+                                            Decomposition Enabled
+                                            <span class="form-hint-icon" title="When enabled, this template dispatches epic decomposition jobs from agent:epic labeled issues.">?</span>
                                         </label>
                                     </div>
                                     <div class="form-buttons">
@@ -923,6 +938,7 @@
             BrainReadOnly = _addForm.BrainReadOnly,
             ImplementationEnabled = _addForm.ImplementationEnabled,
             ReviewEnabled = _addForm.ReviewEnabled,
+            DecompositionEnabled = _addForm.DecompositionEnabled,
             Enabled = true
         };
 
@@ -980,6 +996,16 @@
         var idx = _templates.IndexOf(template);
         if (idx < 0) return;
         _templates[idx] = template with { ReviewEnabled = enabled };
+        await PersistTemplates();
+        _recentlyToggled.Add(template.Id);
+        _ = ClearRecentlyToggledAfterDelay(template.Id);
+    }
+
+    private async Task ToggleDecompositionEnabled(PipelineJobTemplate template, bool enabled)
+    {
+        var idx = _templates.IndexOf(template);
+        if (idx < 0) return;
+        _templates[idx] = template with { DecompositionEnabled = enabled };
         await PersistTemplates();
         _recentlyToggled.Add(template.Id);
         _ = ClearRecentlyToggledAfterDelay(template.Id);
@@ -1542,5 +1568,6 @@
         public bool BrainReadOnly { get; set; }
         public bool ImplementationEnabled { get; set; } = true;
         public bool ReviewEnabled { get; set; } = true;
+        public bool DecompositionEnabled { get; set; }
     }
 }

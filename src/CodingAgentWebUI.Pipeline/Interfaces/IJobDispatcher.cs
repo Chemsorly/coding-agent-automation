@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.Models;
+
 namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
@@ -38,6 +40,28 @@ public interface IJobDispatcher
         string? prDescription,
         string prUrl,
         string prTargetBranch,
+        string issueProviderId,
+        string repoProviderId,
+        string? brainProviderId,
+        string initiatedBy,
+        CancellationToken ct);
+
+    /// <summary>
+    /// Attempts to dispatch a decomposition job to an available agent.
+    /// </summary>
+    /// <param name="epicIdentifier">The epic issue identifier.</param>
+    /// <param name="epicTitle">The epic issue title.</param>
+    /// <param name="phaseType">DecompositionAnalysis or Decomposition.</param>
+    /// <param name="issueProviderId">Issue provider config ID for the template.</param>
+    /// <param name="repoProviderId">Repository provider config ID for the template.</param>
+    /// <param name="brainProviderId">Optional brain provider config ID.</param>
+    /// <param name="initiatedBy">Who initiated the dispatch (e.g., "loop").</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>true if dispatched or enqueued; false if already processing.</returns>
+    Task<bool> TryDispatchDecompositionAsync(
+        string epicIdentifier,
+        string epicTitle,
+        PipelineRunType phaseType,
         string issueProviderId,
         string repoProviderId,
         string? brainProviderId,

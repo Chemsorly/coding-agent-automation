@@ -21,5 +21,13 @@ public enum PipelineStep
     Failed,
     Cancelled,
     ExtractingLinkedIssues,
-    PostingFindings
+    PostingFindings,
+    DownloadingOpenIssues,
+    ExploringCodebase,
+    GeneratingPlan,
+    ReviewingPlan,
+    PostingPlan,
+    GeneratingSubIssues,
+    CreatingIssues,
+    PostingSummary
 }

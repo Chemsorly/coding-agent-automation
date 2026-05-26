@@ -151,6 +151,19 @@ public sealed class JobQueueDrainService : BackgroundService
                         pendingJob.InitiatedBy,
                         ct);
                 }
+                else if (pendingJob.RunType is Pipeline.Models.PipelineRunType.DecompositionAnalysis
+                         or Pipeline.Models.PipelineRunType.Decomposition)
+                {
+                    dispatched = await _jobDispatcher.TryDispatchDecompositionAsync(
+                        pendingJob.IssueIdentifier,
+                        pendingJob.IssueTitle ?? $"Epic #{pendingJob.IssueIdentifier}",
+                        pendingJob.RunType,
+                        pendingJob.IssueProviderId,
+                        pendingJob.RepoProviderId,
+                        pendingJob.BrainProviderId,
+                        pendingJob.InitiatedBy,
+                        ct);
+                }
                 else
                 {
                     dispatched = await _jobDispatcher.TryDispatchAsync(
