@@ -68,13 +68,15 @@ builder.Services.AddSingleton(sp => new PipelineOrchestrationService(
     sp.GetRequiredService<ILabelSwapper>()));
 
 // Pipeline — Loop Service (background service, starts dormant)
+builder.Services.AddSingleton<IDependencyChecker>(sp => new DependencyChecker(Serilog.Log.Logger));
 builder.Services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(
     sp.GetRequiredService<PipelineOrchestrationService>(),
     sp.GetRequiredService<IProviderFactory>(),
     sp.GetRequiredService<IPipelineConfigStore>(),
     sp.GetRequiredService<IProviderConfigStore>(),
     Serilog.Log.Logger,
-    sp.GetRequiredService<IJobDispatcher>()));
+    sp.GetRequiredService<IJobDispatcher>(),
+    sp.GetRequiredService<IDependencyChecker>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
 
 builder.Services.AddTransient<IssueDescriptionParser>();

@@ -8,4 +8,7 @@ public sealed class IssueSummary
 
     /// <summary>Issue creation date, used for FIFO ordering in the pipeline loop.</summary>
     public DateTime? CreatedAt { get; init; }
+
+    /// <summary>Issue body text, used for dependency reference parsing. Null when not populated.</summary>
+    public string? Description { get; init; }
 }
