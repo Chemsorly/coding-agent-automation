@@ -41,6 +41,7 @@ public static class TestPipelineConfig
         ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15),
         ClosedLoopMaxPagesToFetch = 10,
         MaxRefactoringProposals = 3,
+        RefactoringOutcomeLookback = TimeSpan.FromDays(90),
     };
 
     /// <summary>
@@ -76,5 +77,6 @@ public static class TestPipelineConfig
         ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15),
         ClosedLoopMaxPagesToFetch = 10,
         MaxRefactoringProposals = 3,
+        RefactoringOutcomeLookback = TimeSpan.FromDays(90),
     };
 }
