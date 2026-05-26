@@ -39,4 +39,7 @@ public sealed record PipelineJobTemplate
 
     /// <summary>Whether this template dispatches PR review jobs. Default true.</summary>
     public bool ReviewEnabled { get; init; } = true;
+
+    /// <summary>Whether this template dispatches decomposition jobs from epics. Default false.</summary>
+    public bool DecompositionEnabled { get; init; } = false;
 }

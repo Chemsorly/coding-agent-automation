@@ -32,6 +32,13 @@ public interface IAgentHub
     Task RequestPostComment(string jobId, CommentType commentType, CommentPayload payload);
     Task RequestLabelChange(string jobId, string newLabel, int targetKind = 0);
 
+    // Decomposition issue operations (proxied through orchestrator)
+    Task<CreatedIssueResult> RequestCreateIssue(string jobId, string title, string body, IReadOnlyList<string> labels);
+    Task<PagedResult<IssueSummary>> RequestListOpenIssues(string jobId, int page, int pageSize, IReadOnlyList<string>? labels);
+    Task<IssueDetail> RequestGetIssue(string jobId, string identifier);
+    Task<IReadOnlyList<IssueComment>> RequestListComments(string jobId, string identifier);
+    Task RequestUpdateComment(string jobId, string issueId, string commentId, string body);
+
     // Token refresh
     Task<TokenRefreshResponse> RequestTokenRefresh(string jobId, ProviderKind providerKind);
 

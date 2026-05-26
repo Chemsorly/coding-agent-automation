@@ -46,6 +46,7 @@ builder.Services.AddSingleton<IProviderFactory>(sp =>
 
 // Pipeline — Services (shared registrations: IQualityGateValidator, IBrainUpdateService, IAgentPhaseExecutor, IQualityGateExecutor)
 builder.Services.AddPipelineServices(Serilog.Log.Logger);
+builder.Services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Serilog.Log.Logger));
 builder.Services.AddSingleton<IPipelineRunHistoryService>(sp => new PipelineRunHistoryService(Serilog.Log.Logger));
 // Pipeline — Lifecycle Service (owns run state, events, transitions, cancellation)
 builder.Services.AddSingleton(sp => new PipelineRunLifecycleService(

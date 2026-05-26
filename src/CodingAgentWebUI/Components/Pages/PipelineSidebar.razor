@@ -138,6 +138,18 @@
             PipelineStep.ReviewingCode,
             PipelineStep.PostingFindings
         }),
+        new("Decomposition Analysis", "decomposition-analysis", new[] {
+            PipelineStep.DownloadingOpenIssues,
+            PipelineStep.ExploringCodebase,
+            PipelineStep.GeneratingPlan,
+            PipelineStep.ReviewingPlan,
+            PipelineStep.PostingPlan
+        }),
+        new("Decomposition", "decomposition", new[] {
+            PipelineStep.GeneratingSubIssues,
+            PipelineStep.CreatingIssues,
+            PipelineStep.PostingSummary
+        }),
         new("Finalization", "finalization", new[] {
             PipelineStep.PreparingForPullRequest,
             PipelineStep.CreatingPullRequest,
@@ -200,6 +212,26 @@
             if (Run.RunType == PipelineRunType.Implementation
                 && step == PipelineStep.ReviewingCode
                 && steps.Contains(PipelineStep.ExtractingLinkedIssues))
+                continue;
+
+            // Hide decomposition-only phases for non-decomposition runs
+            if (Run.RunType is not PipelineRunType.DecompositionAnalysis
+                && step is PipelineStep.DownloadingOpenIssues or PipelineStep.ExploringCodebase
+                    or PipelineStep.GeneratingPlan or PipelineStep.ReviewingPlan or PipelineStep.PostingPlan)
+                continue;
+
+            if (Run.RunType is not PipelineRunType.Decomposition
+                && step is PipelineStep.GeneratingSubIssues or PipelineStep.CreatingIssues or PipelineStep.PostingSummary)
+                continue;
+
+            // Hide non-decomposition phases for decomposition runs
+            if (Run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition
+                && step is PipelineStep.CreatingBranch or PipelineStep.VerifyingBaseline
+                    or PipelineStep.AnalyzingCode or PipelineStep.ReviewingAnalysis or PipelineStep.PostingAnalysis
+                    or PipelineStep.GeneratingCode or PipelineStep.ReviewingCode or PipelineStep.RunningQualityGates
+                    or PipelineStep.ExtractingLinkedIssues or PipelineStep.PostingFindings
+                    or PipelineStep.PreparingForPullRequest or PipelineStep.CreatingPullRequest
+                    or PipelineStep.ReflectingOnRun or PipelineStep.SyncingBrainRepoPostRun)
                 continue;
 
             visible.Add(step);
@@ -403,6 +435,14 @@
         PipelineStep.CreatingPullRequest => "Creating Pull Request",
         PipelineStep.ReflectingOnRun => "Reflecting on Run",
         PipelineStep.SyncingBrainRepoPostRun => "Saving Brain Knowledge",
+        PipelineStep.DownloadingOpenIssues => "Downloading Issues",
+        PipelineStep.ExploringCodebase => "Exploring Codebase",
+        PipelineStep.GeneratingPlan => "Generating Plan",
+        PipelineStep.ReviewingPlan => "Reviewing Plan",
+        PipelineStep.PostingPlan => "Posting Plan",
+        PipelineStep.GeneratingSubIssues => "Generating Sub-Issues",
+        PipelineStep.CreatingIssues => "Creating Issues",
+        PipelineStep.PostingSummary => "Posting Summary",
         _ => step.ToString()
     };
 
@@ -719,6 +759,118 @@
                 else
                 {
                     <span>⚠️ Brain updates not persisted</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.DownloadingOpenIssues)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>Downloading open issues...</span>
+                }
+                else if (Run.OpenIssuesDownloaded > 0)
+                {
+                    <span>✅ @Run.OpenIssuesDownloaded issues downloaded</span>
+                }
+                else
+                {
+                    <span>No open issues found</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.ExploringCodebase)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>🔍 Agent exploring codebase...</span>
+                }
+                else
+                {
+                    <span>Codebase explored</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.GeneratingPlan)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>📝 Generating decomposition plan...</span>
+                }
+                else
+                {
+                    <span>✅ Plan generated</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.ReviewingPlan)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>🔍 Adversarial review in progress...</span>
+                }
+                else
+                {
+                    <span>✅ Plan validated</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.PostingPlan)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>Posting plan comment...</span>
+                }
+                else
+                {
+                    <span>✅ Plan posted for review</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.GeneratingSubIssues)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>🤖 Agent generating sub-issues...</span>
+                }
+                else
+                {
+                    <span>Sub-issue files generated</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.CreatingIssues)
+        {
+            <div class="step-detail-box">
+                @if (state == StepState.Active)
+                {
+                    <span>Creating GitHub issues...</span>
+                }
+                @if (Run.DecompositionSubIssuesAttempted > 0)
+                {
+                    <div>✅ @Run.DecompositionSubIssuesCreated/@Run.DecompositionSubIssuesAttempted created</div>
+                    @if (Run.DecompositionSubIssuesCreated < Run.DecompositionSubIssuesAttempted)
+                    {
+                        <div class="step-detail-warning">⚠️ @(Run.DecompositionSubIssuesAttempted - Run.DecompositionSubIssuesCreated) failed</div>
+                    }
+                }
+            </div>
+        }
+        else if (step == PipelineStep.PostingSummary)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>Posting summary comment...</span>
+                }
+                else
+                {
+                    <span>✅ Summary posted</span>
                 }
             </div>
         }

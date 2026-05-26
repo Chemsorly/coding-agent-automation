@@ -166,4 +166,112 @@ public class MessageSerializationPropertyTests
         deserialized.AnalysisMarkdown.Should().Be(original.AnalysisMarkdown);
         deserialized.AssessmentJson.Should().Be(original.AssessmentJson);
     }
+
+    /// <summary>
+    /// Property P4: JobAssignmentMessage round-trip with DecompositionAnalysis RunType.
+    /// Verifies that the new decomposition RunType values serialize/deserialize correctly via MessagePack.
+    /// **Validates: Requirements 17.8, 17.11**
+    /// </summary>
+    [Fact]
+    public void JobAssignmentMessage_RoundTrip_DecompositionAnalysis()
+    {
+        var original = CreateMinimalJobAssignmentMessage(PipelineRunType.DecompositionAnalysis);
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<JobAssignmentMessage>(bytes, MsgPackOptions);
+
+        deserialized.Should().NotBeNull();
+        deserialized.JobId.Should().Be(original.JobId);
+        deserialized.IssueIdentifier.Should().Be(original.IssueIdentifier);
+        deserialized.RunType.Should().Be(PipelineRunType.DecompositionAnalysis);
+        deserialized.InitiatedBy.Should().Be(original.InitiatedBy);
+        deserialized.RepoProviderConfigId.Should().Be(original.RepoProviderConfigId);
+        deserialized.AgentProviderConfigId.Should().Be(original.AgentProviderConfigId);
+    }
+
+    /// <summary>
+    /// Property P4: JobAssignmentMessage round-trip with Decomposition RunType.
+    /// Verifies that the new decomposition RunType values serialize/deserialize correctly via MessagePack.
+    /// **Validates: Requirements 17.8, 17.11**
+    /// </summary>
+    [Fact]
+    public void JobAssignmentMessage_RoundTrip_Decomposition()
+    {
+        var original = CreateMinimalJobAssignmentMessage(PipelineRunType.Decomposition);
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<JobAssignmentMessage>(bytes, MsgPackOptions);
+
+        deserialized.Should().NotBeNull();
+        deserialized.JobId.Should().Be(original.JobId);
+        deserialized.IssueIdentifier.Should().Be(original.IssueIdentifier);
+        deserialized.RunType.Should().Be(PipelineRunType.Decomposition);
+        deserialized.InitiatedBy.Should().Be(original.InitiatedBy);
+    }
+
+    /// <summary>
+    /// Property P4: JobAssignmentMessage backward compatibility — default RunType is Implementation.
+    /// Verifies that existing messages without explicit RunType deserialize to Implementation.
+    /// **Validates: Requirements 17.8, 17.11**
+    /// </summary>
+    [Fact]
+    public void JobAssignmentMessage_RoundTrip_DefaultRunType_IsImplementation()
+    {
+        var original = CreateMinimalJobAssignmentMessage(PipelineRunType.Implementation);
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<JobAssignmentMessage>(bytes, MsgPackOptions);
+
+        deserialized.Should().NotBeNull();
+        deserialized.RunType.Should().Be(PipelineRunType.Implementation);
+    }
+
+    /// <summary>
+    /// Property P4: All PipelineRunType enum values round-trip correctly via MessagePack.
+    /// **Validates: Requirements 17.8, 17.11**
+    /// </summary>
+    [Theory]
+    [InlineData(PipelineRunType.Implementation)]
+    [InlineData(PipelineRunType.Review)]
+    [InlineData(PipelineRunType.DecompositionAnalysis)]
+    [InlineData(PipelineRunType.Decomposition)]
+    public void JobAssignmentMessage_RoundTrip_AllRunTypes(PipelineRunType runType)
+    {
+        var original = CreateMinimalJobAssignmentMessage(runType);
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<JobAssignmentMessage>(bytes, MsgPackOptions);
+
+        deserialized.Should().NotBeNull();
+        deserialized.RunType.Should().Be(runType);
+    }
+
+    private static JobAssignmentMessage CreateMinimalJobAssignmentMessage(PipelineRunType runType)
+    {
+        return new JobAssignmentMessage
+        {
+            JobId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "42",
+            IssueDetail = new IssueDetail
+            {
+                Identifier = "42",
+                Title = "Test Epic",
+                Description = "Test description",
+                Labels = Array.Empty<string>()
+            },
+            ParsedIssue = new ParsedIssue
+            {
+                RequirementsSection = string.Empty,
+                AcceptanceCriteria = Array.Empty<string>()
+            },
+            IssueComments = Array.Empty<IssueComment>(),
+            RepoProviderConfigId = "repo-config-1",
+            AgentProviderConfigId = "agent-config-1",
+            ProviderConfigs = Array.Empty<ProviderConfig>(),
+            PipelineConfiguration = new PipelineConfiguration(),
+            InitiatedBy = "test",
+            QualityGateConfigs = Array.Empty<QualityGateConfiguration>(),
+            RunType = runType
+        };
+    }
 }

@@ -330,6 +330,15 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
                 case "CodeReviewIterationInProgress":
                     if (int.TryParse(value, out var crip)) run.CodeReviewIterationInProgress = crip;
                     break;
+                case "OpenIssuesDownloaded":
+                    if (int.TryParse(value, out var oid)) run.OpenIssuesDownloaded = oid;
+                    break;
+                case "DecompositionSubIssuesCreated":
+                    if (int.TryParse(value, out var dsic)) run.DecompositionSubIssuesCreated = dsic;
+                    break;
+                case "DecompositionSubIssuesAttempted":
+                    if (int.TryParse(value, out var dsia)) run.DecompositionSubIssuesAttempted = dsia;
+                    break;
             }
         }
     }
@@ -654,7 +663,152 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         _orchestration.NotifyChange();
     }
 
+    // ── Decomposition issue operations (proxied through orchestrator) ──
+
+    /// <summary>
+    /// Creates a new issue via the run's configured <see cref="IIssueProvider"/>.
+    /// Called by the agent's <c>OrchestratorProxy.CreateIssueAsync</c>.
+    /// </summary>
+    [RequiresActiveJob]
+    public async Task<CreatedIssueResult> RequestCreateIssue(string jobId, string title, string body, IReadOnlyList<string> labels)
+    {
+        ArgumentNullException.ThrowIfNull(title);
+        ArgumentNullException.ThrowIfNull(body);
+        ArgumentNullException.ThrowIfNull(labels);
+
+        var (run, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
+        await using (issueProvider)
+        {
+            try
+            {
+                return await issueProvider.CreateIssueAsync(title, body, labels, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "RequestCreateIssue failed for job {JobId}", jobId);
+                throw new HubException($"Failed to create issue for job {jobId}: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Lists open issues with optional label filtering via the run's configured <see cref="IIssueProvider"/>.
+    /// Called by the agent's <c>OrchestratorProxy.ListOpenIssuesAsync</c>.
+    /// </summary>
+    [RequiresActiveJob]
+    public async Task<PagedResult<IssueSummary>> RequestListOpenIssues(string jobId, int page, int pageSize, IReadOnlyList<string>? labels)
+    {
+        var (run, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
+        await using (issueProvider)
+        {
+            try
+            {
+                return await issueProvider.ListOpenIssuesAsync(page, pageSize, labels, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "RequestListOpenIssues failed for job {JobId}", jobId);
+                throw new HubException($"Failed to list open issues for job {jobId}: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets full issue details by identifier via the run's configured <see cref="IIssueProvider"/>.
+    /// Called by the agent's <c>OrchestratorProxy.GetIssueAsync</c>.
+    /// </summary>
+    [RequiresActiveJob]
+    public async Task<IssueDetail> RequestGetIssue(string jobId, string identifier)
+    {
+        ArgumentNullException.ThrowIfNull(identifier);
+
+        var (run, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
+        await using (issueProvider)
+        {
+            try
+            {
+                return await issueProvider.GetIssueAsync(identifier, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "RequestGetIssue failed for job {JobId}, identifier {Identifier}", jobId, identifier);
+                throw new HubException($"Failed to get issue '{identifier}' for job {jobId}: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Lists all comments on an issue via the run's configured <see cref="IIssueProvider"/>.
+    /// Called by the agent's <c>OrchestratorProxy.ListCommentsAsync</c>.
+    /// </summary>
+    [RequiresActiveJob]
+    public async Task<IReadOnlyList<IssueComment>> RequestListComments(string jobId, string identifier)
+    {
+        ArgumentNullException.ThrowIfNull(identifier);
+
+        var (run, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
+        await using (issueProvider)
+        {
+            try
+            {
+                return await issueProvider.ListCommentsAsync(identifier, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "RequestListComments failed for job {JobId}, identifier {Identifier}", jobId, identifier);
+                throw new HubException($"Failed to list comments for issue '{identifier}' on job {jobId}: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Updates an existing comment by ID via the run's configured <see cref="IIssueProvider"/>.
+    /// Called by the agent's <c>OrchestratorProxy.UpdateCommentAsync</c>.
+    /// </summary>
+    [RequiresActiveJob]
+    public async Task RequestUpdateComment(string jobId, string issueId, string commentId, string body)
+    {
+        ArgumentNullException.ThrowIfNull(issueId);
+        ArgumentNullException.ThrowIfNull(commentId);
+        ArgumentNullException.ThrowIfNull(body);
+
+        var (run, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
+        await using (issueProvider)
+        {
+            try
+            {
+                await issueProvider.UpdateCommentAsync(issueId, commentId, body, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "RequestUpdateComment failed for job {JobId}, issue {IssueId}, comment {CommentId}", jobId, issueId, commentId);
+                throw new HubException($"Failed to update comment '{commentId}' on issue '{issueId}' for job {jobId}: {ex.Message}");
+            }
+        }
+    }
+
     // ── Private helpers ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Resolves the <see cref="IIssueProvider"/> for the given job's run configuration.
+    /// Validates the job ID, finds the run, loads the issue provider config, and creates the provider.
+    /// </summary>
+    /// <exception cref="HubException">Thrown when the job ID is invalid or the provider config is not found.</exception>
+    private async Task<(PipelineRun Run, IIssueProvider Provider)> ResolveIssueProviderForRunAsync(string jobId)
+    {
+        ArgumentNullException.ThrowIfNull(jobId);
+
+        var run = _facade.GetRun(jobId);
+        if (run is null)
+            throw new HubException($"No active run found for job {jobId}");
+
+        var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+        var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
+        if (issueConfig is null)
+            throw new HubException($"Issue provider config '{run.IssueProviderConfigId}' not found for job {jobId}");
+
+        return (run, _facade.CreateIssueProvider(issueConfig));
+    }
 
     /// <summary>
     /// Builds a gate comment (not-ready or wont-do) from the assessment JSON.

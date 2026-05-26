@@ -109,4 +109,68 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
                 "RequestTokenRefresh", _jobId, kind, token), ct);
         return response.Token;
     }
+
+    // --- Decomposition-specific operations (proxied to orchestrator via SignalR) ---
+
+    /// <summary>
+    /// Creates a new issue via the orchestrator. Returns the created issue's identifier and URL.
+    /// </summary>
+    public async Task<CreatedIssueResult> CreateIssueAsync(string title, string body, IReadOnlyList<string> labels, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(title);
+        ArgumentNullException.ThrowIfNull(body);
+        ArgumentNullException.ThrowIfNull(labels);
+
+        return await _signalRPipeline.ExecuteAsync(async token =>
+            await _connection.InvokeAsync<CreatedIssueResult>(
+                "RequestCreateIssue", _jobId, title, body, labels, token), ct);
+    }
+
+    /// <summary>
+    /// Lists open issues with optional label filtering via the orchestrator.
+    /// </summary>
+    public async Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)
+    {
+        return await _signalRPipeline.ExecuteAsync(async token =>
+            await _connection.InvokeAsync<PagedResult<IssueSummary>>(
+                "RequestListOpenIssues", _jobId, page, pageSize, labels, token), ct);
+    }
+
+    /// <summary>
+    /// Gets full issue details by identifier via the orchestrator.
+    /// </summary>
+    public async Task<IssueDetail> GetIssueAsync(string identifier, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(identifier);
+
+        return await _signalRPipeline.ExecuteAsync(async token =>
+            await _connection.InvokeAsync<IssueDetail>(
+                "RequestGetIssue", _jobId, identifier, token), ct);
+    }
+
+    /// <summary>
+    /// Lists all comments on an issue via the orchestrator.
+    /// </summary>
+    public async Task<IReadOnlyList<IssueComment>> ListCommentsAsync(string identifier, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(identifier);
+
+        return await _signalRPipeline.ExecuteAsync(async token =>
+            await _connection.InvokeAsync<IReadOnlyList<IssueComment>>(
+                "RequestListComments", _jobId, identifier, token), ct);
+    }
+
+    /// <summary>
+    /// Updates an existing comment by ID via the orchestrator.
+    /// </summary>
+    public Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(commentId);
+        ArgumentNullException.ThrowIfNull(body);
+
+        return _signalRPipeline.ExecuteAsync(async token =>
+            await _connection.InvokeAsync(
+                "RequestUpdateComment", _jobId, issueIdentifier, commentId, body, token), ct).AsTask();
+    }
 }

@@ -683,6 +683,9 @@ select option { background: var(--surface); color: var(--text); }
 .label-agent-progress { background: rgba(124, 58, 237, 0.15); color: var(--accent-light); border-color: var(--accent-light); }
 .label-agent-error { background: var(--error-bg); color: var(--error); border-color: var(--error); }
 .label-agent-refinement { background: var(--warning-bg); color: var(--warning); border-color: var(--warning); }
+.label-agent-epic { background: rgba(112, 87, 255, 0.15); color: #7057ff; border-color: #7057ff; }
+.label-agent-epic-approved { background: rgba(14, 138, 22, 0.15); color: #0e8a16; border-color: #0e8a16; }
+.label-agent-epic-review { background: rgba(251, 202, 4, 0.15); color: #b08800; border-color: #fbca04; }
 
 /* ===== Agent Chat Page ===== */
 .chat-setup { max-width: 600px; }

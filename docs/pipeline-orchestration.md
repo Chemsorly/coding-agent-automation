@@ -1,11 +1,12 @@
 # Pipeline Orchestration
 
-The pipeline is a state machine that progresses through a fixed sequence of steps, with decision points that can branch to terminal states. There are two pipeline workflows:
+The pipeline is a state machine that progresses through a fixed sequence of steps, with decision points that can branch to terminal states. There are three pipeline workflows:
 
 1. **Implementation pipeline** — Processes issues through analysis, code generation, quality gates, and PR creation
 2. **PR review pipeline** — Processes pull requests through code review and posts findings (see [PR Review Pipeline](#pr-review-pipeline) below)
+3. **Epic decomposition pipeline** — Processes epics through a two-phase workflow producing implementation-ready sub-issues (see [Epic Decomposition Pipeline](#epic-decomposition-pipeline) below)
 
-Both workflows share the same dispatch mechanism (`agent:next` label polling), label lifecycle, and agent infrastructure.
+All three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure.
 
 See also: [Configuration](configuration.md) for all pipeline settings, and [Issue Workflows](github-issue-workflows.md) for how users interact with the pipeline via labels.
 
@@ -290,14 +291,15 @@ Re-review is always explicitly triggered by the user (remove `agent:done`, re-ad
 
 ### Loop Mode Configuration
 
-Each `PipelineJobTemplate` has two independent toggles controlling which work types it processes:
+Each `PipelineJobTemplate` has three independent toggles controlling which work types it processes:
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `ImplementationEnabled` | `bool` | `true` | Template polls for issues and dispatches implementation jobs |
 | `ReviewEnabled` | `bool` | `true` | Template polls for PRs and dispatches review jobs |
+| `DecompositionEnabled` | `bool` | `false` | Template polls for epics and dispatches decomposition jobs |
 
-The existing `Enabled` property acts as a master switch — when `false`, both implementation and review are disabled regardless of individual flags.
+The existing `Enabled` property acts as a master switch — when `false`, all work types (implementation, review, and decomposition) are disabled regardless of individual flags.
 
 #### Configuration Examples
 
@@ -335,13 +337,14 @@ Settings are read at the start of each poll cycle, allowing runtime changes via 
 
 ### Dispatch Budget Sharing
 
-When both implementation and review loops are active, they share the `ClosedLoopMaxRunsPerCycle` budget. The pipeline alternates fairly between issue and PR queues (round-robin) to prevent starvation of either work type.
+When multiple work type loops are active, they share the `ClosedLoopMaxRunsPerCycle` budget. The pipeline alternates fairly between issue, PR, and decomposition queues (round-robin) to prevent starvation of any work type.
 
 - Total dispatches per cycle never exceed `ClosedLoopMaxRunsPerCycle`
-- Both queues get at least one dispatch when budget allows
+- All active queues get at least one dispatch when budget allows
 - PRs are processed in FIFO order (oldest `CreatedAt` first)
 - Draft PRs are included in review dispatch (a warning is shown in the UI)
 - PRs with `agent:error`, `agent:in-progress`, `agent:done`, or `agent:cancelled` labels are skipped
+- Decomposition dispatch is additionally gated by `MaxConcurrentDecompositions`
 
 ### Issue Dependency Tracking
 
@@ -674,3 +677,371 @@ The `InlineCommentSettings` record is nested within `CodeReviewConfiguration`:
 #### Cost Awareness
 
 Each retry invokes an additional LLM API call per agent. With `MaxRetries = 1` (default) and 3 review agents, worst case is 3 extra LLM calls per review. Operators should consider this cost tradeoff when increasing `MaxRetries`.
+
+
+---
+
+## Epic Decomposition Pipeline
+
+The epic decomposition pipeline is a two-phase workflow that transforms high-level epics (GitHub issues labeled `agent:epic`) into implementation-ready sub-issues. It reuses the same dispatch mechanism as implementation and PR review pipelines — `PipelineLoopService` → `IJobDispatcher` → `JobAssignmentMessage` → `LocalPipelineExecutor` — adding two `PipelineRunType` values (`DecompositionAnalysis` and `Decomposition`) that route to dedicated step pipelines.
+
+### Overview
+
+```mermaid
+flowchart TD
+    A[PipelineLoopService] -->|Poll cycle| B{Template DecompositionEnabled?}
+    B -->|Yes| C[ListOpenIssuesAsync<br/>labels: agent:epic, agent:epic-approved]
+    B -->|No| D[Skip decomposition polling]
+    C --> E{Epics found?}
+    E -->|Yes| F[Filter: skip in-progress, error, done]
+    F --> G{Label type?}
+    G -->|agent:epic| H[TryDispatchDecompositionAsync<br/>Phase: DecompositionAnalysis]
+    G -->|agent:epic-approved| I[TryDispatchDecompositionAsync<br/>Phase: Decomposition]
+    H --> J[Agent picks up job]
+    I --> J
+    J --> K{RunType routing}
+    K -->|DecompositionAnalysis| L[Phase 1 Step Pipeline]
+    K -->|Decomposition| M[Phase 2 Step Pipeline]
+
+    subgraph "Phase 1: DecompositionAnalysis"
+        L --> P1S1[1. CloneRepositoryStep]
+        P1S1 --> P1S2[2. SyncBrainPreRunStep]
+        P1S2 --> P1S3[3. WriteOpenIssueContextStep]
+        P1S3 --> P1S4[4. DecompositionAnalysisStep]
+        P1S4 --> P1S5[5. PostDecompositionPlanStep]
+    end
+
+    subgraph "Phase 2: Decomposition"
+        M --> P2S1[1. CloneRepositoryStep]
+        P2S1 --> P2S2[2. SyncBrainPreRunStep]
+        P2S2 --> P2S3[3. DecompositionStep]
+        P2S3 --> P2S4[4. CreateSubIssuesStep]
+        P2S4 --> P2S5[5. PostDecompositionSummaryStep]
+    end
+```
+
+### Label State Machine
+
+The epic decomposition pipeline uses a dedicated label lifecycle separate from the implementation pipeline:
+
+```mermaid
+stateDiagram-v2
+    [*] --> AgentEpic : User labels issue
+    AgentEpic --> AgentInProgress : Phase 1 dispatched
+    AgentInProgress --> AgentEpicReview : Phase 1 success
+    AgentInProgress --> AgentError : Phase 1 failure
+    AgentEpicReview --> AgentEpic : User requests re-analysis
+    AgentEpicReview --> AgentEpicApproved : User approves plan
+    AgentEpicApproved --> AgentInProgress : Phase 2 dispatched
+    AgentInProgress --> AgentDone : Phase 2 success
+    AgentError --> AgentEpic : User retries Phase 1
+    AgentError --> AgentEpicApproved : User retries Phase 2
+```
+
+#### Label Definitions
+
+| Label | Hex Color | Purpose |
+|-------|-----------|---------|
+| `agent:epic` | `#7057ff` (purple) | Triggers Phase 1 (DecompositionAnalysis) |
+| `agent:epic-review` | `#fbca04` (yellow) | Plan posted, awaiting human approval |
+| `agent:epic-approved` | `#0e8a16` (green) | Triggers Phase 2 (Decomposition) |
+
+These labels are auto-created by `EnsureAgentLabelsAsync` alongside existing pipeline labels.
+
+#### Eligibility Filters
+
+When polling for decomposition candidates:
+
+- **Phase 1 (`agent:epic`)**: Skip issues that also carry `agent:epic-review`, `agent:in-progress`, `agent:error`, or `agent:done`
+- **Phase 2 (`agent:epic-approved`)**: Skip issues that also carry `agent:in-progress`, `agent:error`, or `agent:done`
+- Issues already being processed or queued are skipped (same `IsIssueBeingProcessedOrQueued` check as implementation dispatch)
+
+### Decomposition Loop Integration
+
+The decomposition loop is integrated into `PipelineLoopService` as a third queue alongside implementation and PR review:
+
+#### Three-Way Fair Alternation
+
+When all three work types are active, the pipeline alternates fairly between them (round-robin) to prevent starvation:
+
+```
+Issue queue → PR queue → Decomposition queue → Issue queue → ...
+```
+
+- Total dispatches per cycle never exceed `ClosedLoopMaxRunsPerCycle`
+- All three queues get at least one dispatch when budget allows (budget ≥ 3)
+- Decomposition jobs share the same budget as implementation and review
+
+#### Concurrency Limit
+
+`MaxConcurrentDecompositions` is enforced by querying active `PipelineRun` instances filtered by `RunType == DecompositionAnalysis || Decomposition`. When the active count reaches the limit, decomposition dispatch is skipped for that cycle.
+
+### Phase 1: DecompositionAnalysis Step Sequence
+
+| # | Step | PipelineStep Enum | Description |
+|---|------|-------------------|-------------|
+| 1 | `CloneRepositoryStep` | `CloningRepository` | Clone the repository to a fresh workspace |
+| 2 | `SyncBrainPreRunStep` | `SyncingBrainRepoPreRun` | Sync brain repository if configured (non-fatal on failure) |
+| 3 | `WriteOpenIssueContextStep` | `DownloadingOpenIssues` | Download open issues for deduplication context |
+| 4 | `DecompositionAnalysisStep` | `ExploringCodebase` → `GeneratingPlan` → `ReviewingPlan` | Agent explores codebase, generates plan, adversarial review validates |
+| 5 | `PostDecompositionPlanStep` | `PostingPlan` | Post/update plan comment on epic, swap label to `agent:epic-review` |
+
+#### WriteOpenIssueContextStep
+
+Downloads open issues via `IAgentIssueOperations` (proxied through SignalR to the orchestrator) and writes them as markdown files to `.agent/open-issues/{identifier}.md`. Each file contains YAML front-matter (identifier, title, labels) followed by the issue body. The agent reads these to avoid proposing sub-issues that duplicate existing work.
+
+Cap: controlled by `MaxOpenIssuesForContext` (default 50). Individual fetch failures are logged and skipped (graceful degradation).
+
+#### DecompositionAnalysisStep
+
+1. Writes epic issue body + all comments to `.agent/issue-context.md`
+2. Builds analysis prompt with `MaxDecompositionSubIssues` cap
+3. Executes agent — expects `.agent/decomposition-plan.md` output
+4. Validates plan file exists and has ≥20 characters
+5. Executes adversarial review via `AdversarialReviewHelper.ExecuteReviewAsync`
+6. On success → `StepResult.Continue`; on failure → `StepResult.Stop`
+
+The adversarial review validates: no overlap with open issues, each sub-issue is right-sized (≤5 files, one verification criterion, one agent run), dependencies are acyclic, all epic acceptance criteria are covered, and no duplicate titles.
+
+#### PostDecompositionPlanStep
+
+1. Reads `.agent/decomposition-plan.md` from workspace
+2. Formats comment with `<!-- agent:decomposition-plan -->` marker + approval instructions
+3. Checks for existing plan comment via `ListCommentsAsync` + marker search (most recent match)
+4. If existing: updates via `UpdateCommentAsync`; if not: posts new via `PostCommentAsync`
+5. Swaps label to `agent:epic-review`
+
+On re-run, the existing plan comment is updated (not duplicated), identified by the marker.
+
+### Phase 2: Decomposition Step Sequence
+
+| # | Step | PipelineStep Enum | Description |
+|---|------|-------------------|-------------|
+| 1 | `CloneRepositoryStep` | `CloningRepository` | Clone the repository to a fresh workspace |
+| 2 | `SyncBrainPreRunStep` | `SyncingBrainRepoPreRun` | Sync brain repository if configured (non-fatal on failure) |
+| 3 | `DecompositionStep` | `GeneratingSubIssues` | Agent produces sub-issue JSON files |
+| 4 | `CreateSubIssuesStep` | `CreatingIssues` | Parse JSON, resolve dependencies, create issues sequentially |
+| 5 | `PostDecompositionSummaryStep` | `PostingSummary` | Post summary comment, swap label to `agent:done` |
+
+#### DecompositionStep
+
+1. Writes epic body + all comments (including plan comment) to `.agent/issue-context.md`
+2. Queries existing agent-generated sub-issues for deduplication context
+3. Builds decomposition prompt with `MaxDecompositionSubIssues` cap
+4. Executes agent — expects `.agent/sub-issues/*.json` output
+5. Validates plan comment exists (marker detection)
+
+#### CreateSubIssuesStep
+
+1. Parses sub-issue files via `SubIssueFileParser` (alphabetical order)
+2. Enforces `MaxDecompositionSubIssues` cap (takes first N alphabetically)
+3. Creates issues sequentially via `IAgentIssueOperations.CreateIssueAsync`
+4. For each issue: sanitizes title (`TextSanitizer.SanitizeTitle`), sanitizes body (`TextSanitizer.SanitizeMarkdown`), resolves dependencies via `DependencyResolver`
+5. Applies labels: `agent:next` + `agent-generated` + custom labels from JSON
+6. Retries transient errors (3 attempts, exponential backoff: 0s, 1s, 3s)
+7. 5-minute creation phase timeout — remaining issues marked as failed on timeout
+8. Tracks results in `List<SubIssueCreationResult>` for the summary step
+
+#### PostDecompositionSummaryStep
+
+1. Reads `SubIssueResults` from the pipeline run
+2. Formats summary comment with `<!-- agent:decomposition-summary -->` marker + table of created/failed issues
+3. Posts via `PostCommentAsync`
+4. All succeeded → swap to `agent:done`; all failed → swap to `agent:error`; partial success → swap to `agent:done`
+5. Summary post failure → log error, proceed with label swap
+
+### Template Configuration
+
+The `DecompositionEnabled` property on `PipelineJobTemplate` controls whether a template participates in decomposition polling. It operates independently of `ImplementationEnabled` and `ReviewEnabled`.
+
+#### Configuration Examples
+
+**All pipelines enabled:**
+```json
+{
+  "Name": "Full Pipeline",
+  "Enabled": true,
+  "ImplementationEnabled": true,
+  "ReviewEnabled": true,
+  "DecompositionEnabled": true
+}
+```
+
+**Decomposition-only template** (dedicated to epic breakdown):
+```json
+{
+  "Name": "Decomposition Only",
+  "Enabled": true,
+  "ImplementationEnabled": false,
+  "ReviewEnabled": false,
+  "DecompositionEnabled": true
+}
+```
+
+**Implementation + decomposition** (no PR reviews):
+```json
+{
+  "Name": "Implement and Decompose",
+  "Enabled": true,
+  "ImplementationEnabled": true,
+  "ReviewEnabled": false,
+  "DecompositionEnabled": true
+}
+```
+
+The `Enabled` property acts as a master switch — when `false`, all polling (implementation, review, and decomposition) is disabled regardless of individual flags.
+
+Settings are read at the start of each poll cycle, allowing runtime changes via the configuration UI without restarting the loop.
+
+#### Pipeline Configuration Properties
+
+| Property | Type | Default | Range | Description |
+|----------|------|---------|-------|-------------|
+| `MaxDecompositionSubIssues` | `int` | `5` | 1–20 | Maximum sub-issues the agent may propose per epic. Controls both the prompt instruction and the executor's creation cap |
+| `MaxConcurrentDecompositions` | `int` | `2` | — | Maximum decomposition runs (across both phases) executing simultaneously. Dispatch skipped when limit reached |
+| `DecompositionTimeout` | `TimeSpan` | `15 min` | — | Timeout for decomposition phases (separate from `AgentTimeout`). Accounts for codebase exploration time |
+| `MaxOpenIssuesForContext` | `int` | `50` | 1+ | Maximum open issues downloaded for deduplication context |
+
+### Sub-Issue JSON Schema
+
+The agent writes sub-issue files to `.agent/sub-issues/` as JSON, one file per sub-issue.
+
+#### File Naming Convention
+
+```
+{NN}-{title-slug}.json
+```
+
+- `{NN}` — Zero-padded two-digit sequence number starting at `01`
+- `{title-slug}` — Lowercase, hyphen-separated slug derived from the title (max 60 characters, truncated without breaking words)
+
+Examples: `01-add-user-authentication.json`, `02-create-database-schema.json`
+
+#### Schema
+
+```json
+{
+  "title": "Add user authentication endpoint",
+  "body": "## Summary\n\nImplement the /auth/login endpoint...\n\n## Affected Components\n\n- `src/Controllers/AuthController.cs`\n\n## Requirements\n\n- Must validate JWT tokens\n\n## Acceptance Criteria\n\n- [ ] POST /auth/login returns 200 with valid credentials",
+  "dependencies": ["Create database schema"],
+  "labels": ["enhancement"]
+}
+```
+
+#### Field Reference
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `title` | `string` | Yes | Non-empty, max 256 characters |
+| `body` | `string` | Yes | Non-empty, markdown-formatted. Must contain at minimum: Summary, Affected Components, Requirements, Acceptance Criteria sections |
+| `dependencies` | `string[]` | Yes | Zero or more title strings referencing other sub-issues in this decomposition (resolved to `#N` format during creation) |
+| `labels` | `string[]` | Yes | Zero or more additional labels beyond the auto-applied `agent:next` and `agent-generated` |
+
+#### Validation Rules
+
+- Files must be valid UTF-8 JSON without byte-order mark
+- All four fields are required and must have correct types
+- `title` and `body` must be non-empty strings
+- `dependencies` and `labels` must be arrays (may be empty)
+- Invalid files are logged and skipped without failing the phase
+
+#### Dependency Resolution
+
+Dependencies are expressed as title-based references (not issue numbers, since numbers aren't known until creation time). During sequential creation, the executor:
+
+1. Creates issues in alphabetical file-name order
+2. Maintains a title→issue-number mapping as each issue is created
+3. Resolves dependency titles to `#N` format using case-insensitive, whitespace-trimmed matching
+4. Inserts "Depends on #N" lines at the top of the sub-issue body before creation
+5. Unresolved titles (including forward references) are logged as warnings and omitted
+
+### Workspace Conventions
+
+Decomposition workspaces follow the same conventions as implementation and review workspaces:
+
+#### Workspace Path
+
+```
+{WorkspaceBaseDirectory}/decomposition/{runId}/
+```
+
+Where `runId` is a GUID identifying the decomposition run.
+
+#### Agent Workspace Paths
+
+| Path | Purpose |
+|------|---------|
+| `.agent/open-issues/` | Open issue context files for deduplication |
+| `.agent/sub-issues/` | Sub-issue JSON output files |
+| `.agent/decomposition-plan.md` | Decomposition plan output (Phase 1) |
+| `.agent/decomposition-review.md` | Adversarial review findings (Phase 1) |
+| `.agent/issue-context.md` | Epic body + comments context |
+
+All paths are defined as constants in `AgentWorkspacePaths`.
+
+#### Workspace Cleanup
+
+- **Success**: Workspace deleted recursively after run completes
+- **Failure**: Workspace retained for `FailedWorkspaceRetentionDays` (configurable)
+- **Deletion failure**: Logged as warning, execution continues
+
+### Comment Markers
+
+| Marker | Purpose |
+|--------|---------|
+| `<!-- agent:decomposition-plan -->` | Identifies the decomposition plan comment (first line of comment body) |
+| `<!-- agent:decomposition-summary -->` | Identifies the decomposition summary comment |
+
+Markers enable idempotent updates on re-run (update existing comment rather than posting duplicates). Plan comments are identified as the most recent comment containing the marker (marker-only detection, consistent with existing analysis comment identification).
+
+### Partial Failure Handling
+
+The decomposition pipeline handles failures gracefully:
+
+| Scenario | Behavior |
+|----------|----------|
+| Phase 1 agent error/timeout | Label → `agent:error`, failure logged |
+| Phase 1 adversarial review failure | Label → `agent:error`, failure logged |
+| Phase 1 plan comment post failure | Label → `agent:error` |
+| Phase 2 individual sub-issue creation failure (transient) | Retry 3× with exponential backoff (0s, 1s, 3s) |
+| Phase 2 individual sub-issue creation failure (non-transient) | Skip, continue creating remaining issues |
+| Phase 2 creation timeout (5 min) | Mark remaining as failed, proceed to summary |
+| Phase 2 all creations failed | Label → `agent:error`, summary lists failures |
+| Phase 2 partial success | Label → `agent:done`, summary lists successes and failures |
+| Summary comment post failure | Log error, proceed with label swap |
+
+Already-created sub-issues are never rolled back — they remain with their `agent:next` labels even if the overall phase fails.
+
+### Re-run Support
+
+To re-run Phase 1 after providing feedback:
+
+1. Post a comment on the epic with your feedback (rejection reasons, requested changes)
+2. Remove `agent:epic-review` and add `agent:epic`
+3. The pipeline picks up the epic on the next poll cycle
+4. The agent receives the full comment thread (including previous plan + your feedback) as context
+5. The existing plan comment is updated (not duplicated) with the revised plan
+
+The decomposition prompt instructs the agent to look for comments posted after the previous plan comment as rejection feedback and address them in the revised plan.
+
+### Error Recovery
+
+| Error State | Recovery Action |
+|-------------|----------------|
+| Phase 1 failed (`agent:error`) | Remove `agent:error`, add `agent:epic` → re-runs Phase 1 |
+| Phase 2 failed (`agent:error`) | Remove `agent:error`, add `agent:epic-approved` → re-runs Phase 2 (skips re-analysis) |
+| Phase 2 failed (`agent:error`) | Remove `agent:error`, add `agent:epic` → re-runs from Phase 1 |
+
+### Issue Operations Proxy
+
+Consistent with the implementation and review pipelines, the decomposition agent does NOT receive `IIssueProvider` credentials directly. All issue operations are proxied through SignalR to the orchestrator:
+
+| Operation | Agent Method | Hub Method |
+|-----------|-------------|------------|
+| Create issue | `CreateIssueAsync` | `RequestCreateIssue` |
+| List open issues | `ListOpenIssuesAsync` | `RequestListOpenIssues` |
+| Get issue details | `GetIssueAsync` | `RequestGetIssue` |
+| List comments | `ListCommentsAsync` | `RequestListComments` |
+| Update comment | `UpdateCommentAsync` | `RequestUpdateComment` |
+
+The orchestrator resolves the `IIssueProvider` from the run's `IssueProviderConfigId` and executes the operation. This keeps the agent's credential surface minimal.

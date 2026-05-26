@@ -23,4 +23,10 @@ public static class CommentMarkers
 
     /// <summary>HTML comment prefix used to tag agent-generated comments for detection.</summary>
     public const string AgentCommentPrefix = "<!-- agent:";
+
+    /// <summary>HTML marker for the decomposition plan comment.</summary>
+    public const string DecompositionPlan = "<!-- agent:decomposition-plan -->";
+
+    /// <summary>HTML marker for the decomposition summary comment.</summary>
+    public const string DecompositionSummary = "<!-- agent:decomposition-summary -->";
 }

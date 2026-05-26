@@ -126,6 +126,7 @@
                                                 <th>Repo Provider</th>
                                                 <th>Brain</th>
                                                 <th>CI</th>
+                                                <th>Decomp</th>
                                                 <th>Impl</th>
                                                 <th>Review</th>
                                                 <th>Enabled</th>
@@ -160,6 +161,13 @@
                                                     </td>
                                                     <td>@(string.IsNullOrEmpty(template.BrainProviderId) ? "—" : GetProviderDisplayName(template.BrainProviderId, _brainProviders))</td>
                                                     <td>@(string.IsNullOrEmpty(template.PipelineProviderId) ? "—" : GetProviderDisplayName(template.PipelineProviderId, _pipelineProviders))</td>
+                                                    <td>
+                                                        <label class="toggle-switch">
+                                                            <input type="checkbox" checked="@template.DecompositionEnabled"
+                                                                   @onchange="e => ToggleDecompositionEnabled(template, (bool)(e.Value ?? false))" />
+                                                            <span class="toggle-slider"></span>
+                                                        </label>
+                                                    </td>
                                                     <td>
                                                         <label class="toggle-switch">
                                                             <input type="checkbox" checked="@template.ImplementationEnabled"
@@ -436,6 +444,13 @@
                                             <span class="form-hint-icon" title="When enabled, this template dispatches PR review jobs.">?</span>
                                         </label>
                                     </div>
+                                    <div class="form-group form-checkbox">
+                                        <label>
+                                            <input type="checkbox" @bind="_addForm.DecompositionEnabled" />
+                                            Decomposition Enabled
+                                            <span class="form-hint-icon" title="When enabled, this template dispatches epic decomposition jobs from agent:epic labeled issues.">?</span>
+                                        </label>
+                                    </div>
                                     <div class="form-buttons">
                                         <button class="btn-save" @onclick="AddTemplate">Save</button>
                                         <button class="btn-cancel" @onclick="() => { _showAddForm = false; _formError = null; }">Cancel</button>
@@ -506,6 +521,12 @@
                                         <option value="@t.Id">@t.Name</option>
                                     }
                                 </select>
+                                <button class="btn-save" @onclick="OpenEpicDrawer"
+                                        disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))"
+                                        data-testid="browse-epics-btn"
+                                        style="background: #7057ff;">
+                                    Browse Epics
+                                </button>
                                 <button class="btn-save" @onclick="OpenDrawer"
                                         disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))"
                                         data-testid="browse-issues-btn">
@@ -772,6 +793,113 @@
     }
 </aside>
 
+<!-- ═══ Manual Epic Decomposition Dispatch Drawer ═══ -->
+<div class="dispatch-drawer-overlay @(_epicDrawerOpen ? "open" : "")" @onclick="CloseEpicDrawer"></div>
+<aside class="dispatch-drawer @(_epicDrawerOpen ? "open" : "")">
+    <div class="agent-detail-header">
+        <h3>Select Epic for Decomposition</h3>
+        <button class="agent-detail-close" @onclick="CloseEpicDrawer" aria-label="Close drawer">✕</button>
+    </div>
+
+    @if (_epicDrawerTemplate != null)
+    {
+        <div class="agent-detail-section">
+            <h4>Template: @_epicDrawerTemplate.Name</h4>
+        </div>
+
+        @if (_epicDrawerLoading)
+        {
+            <div class="loading-text" style="padding: 12px;">Loading epics...</div>
+        }
+        else
+        {
+            <!-- Filter -->
+            <div style="padding: 0 0 8px;">
+                <input type="text" @bind="_epicDrawerFilter" @bind:event="oninput" @bind:after="FilterDrawerEpics"
+                       placeholder="Filter by number or title..." style="width: 100%; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 0.82rem;" />
+            </div>
+
+            @if (_epicDrawerIssues.Count == 0)
+            {
+                <div class="monitoring-empty">No epics found.</div>
+            }
+            else
+            {
+                <div class="agent-history-list" style="max-height: calc(100vh - 320px); overflow-y: auto;">
+                    @foreach (var issue in _filteredEpicDrawerIssues)
+                    {
+                        var isProcessing = JobDispatcher.IsIssueBeingProcessedOrQueued(issue.Identifier);
+                        var isApproved = issue.Labels.Contains("agent:epic-approved", StringComparer.OrdinalIgnoreCase);
+                        <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(_selectedEpicDrawerIssue?.Identifier == issue.Identifier ? "drawer-issue-selected" : "")"
+                             @onclick="() => SelectEpicDrawerIssue(issue)"
+                             data-testid="epic-row-@issue.Identifier"
+                             style="@(isProcessing ? "opacity: 0.6; pointer-events: none;" : "")">
+                            <div class="drawer-issue-header">
+                                <span class="drawer-issue-number">#@issue.Identifier</span>
+                                @if (isApproved)
+                                {
+                                    <span class="badge-default" style="background: #0e8a16; color: white; font-size: 0.7rem;">🧩 Create Sub-Issues</span>
+                                }
+                                else
+                                {
+                                    <span class="badge-default" style="background: #7057ff; color: white; font-size: 0.7rem;">🔍 Analysis</span>
+                                }
+                                @if (isProcessing)
+                                {
+                                    <span class="badge-default" style="background: var(--accent); color: white;">DISPATCHED</span>
+                                }
+                            </div>
+                            <div class="drawer-issue-title">@issue.Title</div>
+                            <div class="drawer-issue-labels">
+                                @foreach (var label in issue.Labels.Take(5))
+                                {
+                                    <span class="sidebar-label @GetLabelClass(label)">@label</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            <!-- Selected Epic Detail -->
+            @if (_selectedEpicDrawerIssue != null)
+            {
+                var selectedIsApproved = _selectedEpicDrawerIssue.Labels.Contains("agent:epic-approved", StringComparer.OrdinalIgnoreCase);
+                <div class="agent-detail-section" style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
+                    <h4>#@_selectedEpicDrawerIssue.Identifier — @_selectedEpicDrawerIssue.Title</h4>
+                    <div class="drawer-issue-labels" style="margin-bottom: 8px;">
+                        @foreach (var label in _selectedEpicDrawerIssue.Labels)
+                        {
+                            <span class="sidebar-label @GetLabelClass(label)">@label</span>
+                        }
+                    </div>
+                    <div style="margin-bottom: 8px; font-size: 0.8rem; font-weight: 500;">
+                        @if (selectedIsApproved)
+                        {
+                            <span style="color: #0e8a16;">🧩 Phase 2: Create Sub-Issues (Decomposition)</span>
+                        }
+                        else
+                        {
+                            <span style="color: #7057ff;">🔍 Phase 1: Analysis (DecompositionAnalysis)</span>
+                        }
+                    </div>
+                    @if (_selectedEpicDrawerIssue.CreatedAt.HasValue)
+                    {
+                        <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0 0 8px;">
+                            Created: @_selectedEpicDrawerIssue.CreatedAt.Value.ToLocalTime().ToString("g")
+                        </p>
+                    }
+                    <button class="btn-save" @onclick="DispatchDecompositionFromDrawer" disabled="@_epicDrawerDispatching"
+                            data-testid="dispatch-epic-btn"
+                            style="background: #7057ff;">
+                        @(_epicDrawerDispatching ? "Dispatching..." : $"Start Decomposition on #{_selectedEpicDrawerIssue.Identifier}")
+                    </button>
+                </div>
+            }
+        }
+    }
+</aside>
+
 @code {
     private const string JsScrollToBottom = "scrollToBottom";
     private const string JsScrollActiveStep = "scrollActiveStepIntoView";
@@ -831,6 +959,16 @@
     private bool _prDrawerHasMore;
     private PullRequestSummary? _selectedDrawerPr;
     private bool _prDrawerDispatching;
+
+    // ── Epic Drawer State ──
+    private bool _epicDrawerOpen;
+    private PipelineJobTemplate? _epicDrawerTemplate;
+    private bool _epicDrawerLoading;
+    private List<IssueSummary> _epicDrawerIssues = new();
+    private List<IssueSummary> _filteredEpicDrawerIssues = new();
+    private string _epicDrawerFilter = "";
+    private IssueSummary? _selectedEpicDrawerIssue;
+    private bool _epicDrawerDispatching;
 
     private void OnTemplateChanged(ChangeEventArgs e)
     {
@@ -923,6 +1061,7 @@
             BrainReadOnly = _addForm.BrainReadOnly,
             ImplementationEnabled = _addForm.ImplementationEnabled,
             ReviewEnabled = _addForm.ReviewEnabled,
+            DecompositionEnabled = _addForm.DecompositionEnabled,
             Enabled = true
         };
 
@@ -980,6 +1119,16 @@
         var idx = _templates.IndexOf(template);
         if (idx < 0) return;
         _templates[idx] = template with { ReviewEnabled = enabled };
+        await PersistTemplates();
+        _recentlyToggled.Add(template.Id);
+        _ = ClearRecentlyToggledAfterDelay(template.Id);
+    }
+
+    private async Task ToggleDecompositionEnabled(PipelineJobTemplate template, bool enabled)
+    {
+        var idx = _templates.IndexOf(template);
+        if (idx < 0) return;
+        _templates[idx] = template with { DecompositionEnabled = enabled };
         await PersistTemplates();
         _recentlyToggled.Add(template.Id);
         _ = ClearRecentlyToggledAfterDelay(template.Id);
@@ -1337,6 +1486,150 @@
         }
     }
 
+    // ── Epic Drawer Methods ──
+
+    private async Task OpenEpicDrawer()
+    {
+        if (string.IsNullOrEmpty(_manualDispatchTemplateId)) return;
+        _epicDrawerTemplate = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
+        if (_epicDrawerTemplate == null) return;
+
+        _epicDrawerOpen = true;
+        _epicDrawerFilter = "";
+        _selectedEpicDrawerIssue = null;
+        await LoadEpicDrawerIssues();
+    }
+
+    private void CloseEpicDrawer()
+    {
+        _epicDrawerOpen = false;
+        _epicDrawerTemplate = null;
+        _epicDrawerIssues.Clear();
+        _filteredEpicDrawerIssues.Clear();
+        _selectedEpicDrawerIssue = null;
+    }
+
+    private async Task LoadEpicDrawerIssues()
+    {
+        if (_epicDrawerTemplate == null) return;
+        _epicDrawerLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var providerConfig = _issueProviders.FirstOrDefault(p => p.Id == _epicDrawerTemplate.IssueProviderId);
+            if (providerConfig == null)
+            {
+                _errorMessage = "Issue provider not found for this template.";
+                _epicDrawerLoading = false;
+                return;
+            }
+
+            await using var provider = ProviderFactory.CreateIssueProvider(providerConfig);
+
+            // Fetch agent:epic issues (Phase 1 candidates)
+            var epicResult = await provider.ListOpenIssuesAsync(1, 50, new[] { "agent:epic" }, CancellationToken.None);
+
+            // Fetch agent:epic-approved issues (Phase 2 candidates)
+            var approvedResult = await provider.ListOpenIssuesAsync(1, 50, new[] { "agent:epic-approved" }, CancellationToken.None);
+
+            // Combine both lists
+            _epicDrawerIssues = epicResult.Items.Concat(approvedResult.Items).ToList();
+            FilterDrawerEpics();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to load epics: {ex.Message}";
+            _epicDrawerIssues.Clear();
+            _filteredEpicDrawerIssues.Clear();
+        }
+        finally
+        {
+            _epicDrawerLoading = false;
+        }
+    }
+
+    private void FilterDrawerEpics()
+    {
+        if (string.IsNullOrWhiteSpace(_epicDrawerFilter))
+        {
+            _filteredEpicDrawerIssues = _epicDrawerIssues;
+        }
+        else
+        {
+            var filter = _epicDrawerFilter.Trim().ToLowerInvariant();
+            _filteredEpicDrawerIssues = _epicDrawerIssues
+                .Where(i => i.Identifier.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                         || i.Title.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+    }
+
+    private void SelectEpicDrawerIssue(IssueSummary issue)
+    {
+        _selectedEpicDrawerIssue = _selectedEpicDrawerIssue?.Identifier == issue.Identifier ? null : issue;
+    }
+
+    private async Task DispatchDecompositionFromDrawer()
+    {
+        if (_selectedEpicDrawerIssue == null || _epicDrawerTemplate == null) return;
+
+        // Validate provider IDs still exist
+        if (!_issueProviders.Any(p => p.Id == _epicDrawerTemplate.IssueProviderId) ||
+            !_repoProviders.Any(p => p.Id == _epicDrawerTemplate.RepoProviderId))
+        {
+            _errorMessage = "Template references providers that no longer exist.";
+            return;
+        }
+
+        // Check if any agents are connected before attempting dispatch
+        if (!JobDispatcher.HasRegisteredAgents)
+        {
+            _errorMessage = "Could not dispatch — no agents are currently connected.";
+            return;
+        }
+
+        _epicDrawerDispatching = true;
+        StateHasChanged();
+
+        try
+        {
+            // Determine phase type from labels
+            var phaseType = _selectedEpicDrawerIssue.Labels.Contains("agent:epic-approved", StringComparer.OrdinalIgnoreCase)
+                ? PipelineRunType.Decomposition
+                : PipelineRunType.DecompositionAnalysis;
+
+            var dispatched = await JobDispatcher.TryDispatchDecompositionAsync(
+                _selectedEpicDrawerIssue.Identifier,
+                _selectedEpicDrawerIssue.Title,
+                phaseType,
+                _epicDrawerTemplate.IssueProviderId,
+                _epicDrawerTemplate.RepoProviderId,
+                _epicDrawerTemplate.BrainProviderId,
+                initiatedBy: "manual",
+                CancellationToken.None);
+
+            if (dispatched)
+            {
+                _successMessage = $"✅ Dispatched epic #{_selectedEpicDrawerIssue.Identifier} for {(phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition")}";
+                CloseEpicDrawer();
+                _ = ClearSuccessAfterDelay();
+            }
+            else
+            {
+                _errorMessage = "Could not dispatch — epic is already being processed or queued, or no agents are available.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Dispatch failed: {ex.Message}";
+        }
+        finally
+        {
+            _epicDrawerDispatching = false;
+        }
+    }
+
     // ── Helpers ──
 
     private ConfigStatusSnapshot? GetTemplateStatus(string templateId)
@@ -1363,6 +1656,9 @@
         "agent:in-progress" => "label-agent-progress",
         "agent:error" => "label-agent-error",
         "agent:needs-refinement" => "label-agent-refinement",
+        "agent:epic" => "label-agent-epic",
+        "agent:epic-approved" => "label-agent-epic-approved",
+        "agent:epic-review" => "label-agent-epic-review",
         _ => ""
     };
 
@@ -1542,5 +1838,6 @@
         public bool BrainReadOnly { get; set; }
         public bool ImplementationEnabled { get; set; } = true;
         public bool ReviewEnabled { get; set; } = true;
+        public bool DecompositionEnabled { get; set; }
     }
 }

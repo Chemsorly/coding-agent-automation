@@ -344,8 +344,8 @@ public class GitHubIssueProviderTests
         var result = await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
 
         result.Should().BeTrue();
-        // All nine should be attempted (7 agent labels + 2 consolidation labels)
-        mockLabels.Verify(l => l.Create("owner", "repo", It.IsAny<NewLabel>()), Times.Exactly(9));
+        // All twelve should be attempted (7 agent labels + 2 consolidation labels + 3 epic decomposition labels)
+        mockLabels.Verify(l => l.Create("owner", "repo", It.IsAny<NewLabel>()), Times.Exactly(12));
     }
 
     [Fact]

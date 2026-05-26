@@ -14,6 +14,11 @@ public static class AgentLabels
     public const string Cancelled = "agent:cancelled";
     public const string Done = "agent:done";
 
+    // Epic decomposition labels
+    public const string Epic = "agent:epic";
+    public const string EpicReview = "agent:epic-review";
+    public const string EpicApproved = "agent:epic-approved";
+
     // Consolidation labels (applied to auto-generated refactoring issues)
     public const string Refactoring = "refactoring";
     public const string AgentGenerated = "agent-generated";
@@ -29,7 +34,10 @@ public static class AgentLabels
         (Cancelled, "c5def5"),
         (Done, "0075ca"),
         (Refactoring, "5319e7"),
-        (AgentGenerated, "bfd4f2")
+        (AgentGenerated, "bfd4f2"),
+        (Epic, "7057ff"),
+        (EpicReview, "fbca04"),
+        (EpicApproved, "0e8a16")
     };
 
     /// <summary>All agent label names.</summary>

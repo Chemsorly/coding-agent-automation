@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.Models;
+
 namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
@@ -19,4 +21,39 @@ public interface IAgentIssueOperations
     /// Removes all existing agent labels before adding the new one.
     /// </summary>
     Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct);
+
+    // --- Decomposition-specific operations ---
+    // All calls are proxied through SignalR to the orchestrator, which resolves
+    // the IIssueProvider from the template config.
+
+    /// <summary>
+    /// Creates a new issue with the given title, body, and labels.
+    /// Returns the created issue's identifier and URL.
+    /// </summary>
+    Task<CreatedIssueResult> CreateIssueAsync(string title, string body, IReadOnlyList<string> labels, CancellationToken ct)
+        => throw new NotSupportedException("CreateIssueAsync is not implemented by this provider.");
+
+    /// <summary>
+    /// Lists open issues with optional label filtering. Returns paginated results.
+    /// </summary>
+    Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)
+        => throw new NotSupportedException("ListOpenIssuesAsync is not implemented by this provider.");
+
+    /// <summary>
+    /// Gets full issue details by identifier.
+    /// </summary>
+    Task<IssueDetail> GetIssueAsync(string identifier, CancellationToken ct)
+        => throw new NotSupportedException("GetIssueAsync is not implemented by this provider.");
+
+    /// <summary>
+    /// Lists all comments on an issue.
+    /// </summary>
+    Task<IReadOnlyList<IssueComment>> ListCommentsAsync(string identifier, CancellationToken ct)
+        => throw new NotSupportedException("ListCommentsAsync is not implemented by this provider.");
+
+    /// <summary>
+    /// Updates an existing comment by ID.
+    /// </summary>
+    Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct)
+        => throw new NotSupportedException("UpdateCommentAsync is not implemented by this provider.");
 }

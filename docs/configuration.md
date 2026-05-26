@@ -25,6 +25,15 @@ See also: [Pipeline Orchestration](pipeline-orchestration.md) for how these sett
 | `outputBufferCapacity` | 10000 | Max lines of agent output kept in memory for the UI |
 | `agentDisconnectGracePeriod` | 00:05:00 | How long to wait for a disconnected agent to reconnect before failing the run |
 
+### Decomposition
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `maxDecompositionSubIssues` | 5 | Maximum sub-issues the decomposition agent may propose per epic (range: 1–20) |
+| `maxConcurrentDecompositions` | 2 | Maximum decomposition runs (across both phases) executing simultaneously |
+| `decompositionTimeout` | 00:15:00 | Timeout for decomposition phases (separate from `agentTimeout`) |
+| `maxOpenIssuesForContext` | 50 | Maximum open issues downloaded for deduplication context |
+
 ## Quality Gate Settings
 
 Quality gates are configured per-stack via Quality Gate Configurations (see [Label Routing](label-routing.md#quality-gate-configurations)). Each QGC has these fields:
@@ -64,6 +73,9 @@ Templates are managed in the **Agent Coding** page. When creating or viewing a t
 | Repository Provider | Yes | Which repository to clone and push changes to |
 | Brain Provider | No | Brain repository for knowledge persistence |
 | Pipeline/CI Provider | No | External CI provider for pipeline status checks |
+| ImplementationEnabled | No | Whether this template processes issues for implementation (default: true) |
+| ReviewEnabled | No | Whether this template processes PRs for code review (default: true) |
+| DecompositionEnabled | No | Whether this template processes epics for decomposition (default: false) |
 
 ## Environment Variables
 

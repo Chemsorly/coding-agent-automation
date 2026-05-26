@@ -104,6 +104,26 @@ public static class AgentWorkspacePaths
     public const string HarnessSuggestionsOutputFilePath = ".agent/harness-suggestions-output.json";
 
     /// <summary>
+    /// Directory for open issue context files (deduplication).
+    /// </summary>
+    public const string OpenIssuesDirectory = ".agent/open-issues";
+
+    /// <summary>
+    /// Directory for sub-issue JSON output files.
+    /// </summary>
+    public const string SubIssuesDirectory = ".agent/sub-issues";
+
+    /// <summary>
+    /// File path for the decomposition plan output.
+    /// </summary>
+    public const string DecompositionPlanFilePath = ".agent/decomposition-plan.md";
+
+    /// <summary>
+    /// File path for the decomposition adversarial review findings.
+    /// </summary>
+    public const string DecompositionReviewFilePath = ".agent/decomposition-review.md";
+
+    /// <summary>
     /// Returns a per-agent findings file path to prevent sub-agent overwrite conflicts.
     /// Each review agent writes to its own isolated file.
     /// </summary>

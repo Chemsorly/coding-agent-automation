@@ -30,11 +30,12 @@
         @{
             var implRuns = _activeRuns.Count(r => r.RunType == PipelineRunType.Implementation);
             var reviewRuns = _activeRuns.Count(r => r.RunType == PipelineRunType.Review);
+            var decompRuns = _activeRuns.Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
         }
         @if (_activeRuns.Count > 0)
         {
             <div class="monitoring-run-counts" style="margin-bottom: 8px; font-size: 0.85rem; color: var(--text-muted);">
-                🔨 @implRuns implementation · 🔍 @reviewRuns review
+                🔨 @implRuns implementation · 🔍 @reviewRuns review · 🧩 @decompRuns decomposition
             </div>
         }
         @if (_activeRuns.Count == 0)
@@ -68,6 +69,14 @@
                                     @if (run.RunType == PipelineRunType.Review)
                                     {
                                         <span class="run-type-badge run-type-review" title="PR Review">🔍 Review</span>
+                                    }
+                                    else if (run.RunType == PipelineRunType.DecompositionAnalysis)
+                                    {
+                                        <span class="run-type-badge run-type-decomp" title="Decomposition Analysis">🧩 Decomp (Analysis)</span>
+                                    }
+                                    else if (run.RunType == PipelineRunType.Decomposition)
+                                    {
+                                        <span class="run-type-badge run-type-decomp" title="Decomposition">🧩 Decomp</span>
                                     }
                                     else
                                     {
@@ -445,6 +454,10 @@
                                         {
                                             <span class="run-type-badge run-type-review" title="PR Review">🔍</span>
                                         }
+                                        else if (run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+                                        {
+                                            <span class="run-type-badge run-type-decomp" title="@(run.RunType == PipelineRunType.DecompositionAnalysis ? "Decomposition Analysis" : "Decomposition")">🧩</span>
+                                        }
                                         else
                                         {
                                             <span class="run-type-badge run-type-impl" title="Implementation">🔨</span>
@@ -504,6 +517,10 @@
                     {
                         <span class="run-type-badge run-type-review">🔍 Review</span>
                     }
+                    else if (_selectedHistoryRun.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+                    {
+                        <span class="run-type-badge run-type-decomp">🧩 Decomp</span>
+                    }
                     Run @Truncate(_selectedHistoryRun.RunId, 12) — #@_selectedHistoryRun.IssueIdentifier @Truncate(_selectedHistoryRun.IssueTitle, 40)
                 </h3>
 
@@ -513,7 +530,7 @@
                 }
 
                 <div class="modal-provider-list">
-                    <div><strong>Run Type:</strong> @(_selectedHistoryRun.RunType == PipelineRunType.Review ? "PR Review" : "Implementation")</div>
+                    <div><strong>Run Type:</strong> @FormatRunType(_selectedHistoryRun.RunType)</div>
                     <div><strong>Final Step:</strong>
                         <span class="step-badge step-@_selectedHistoryRun.FinalStep.ToString().ToLowerInvariant()">
                             @FormatStep(_selectedHistoryRun.FinalStep)
@@ -540,6 +557,13 @@
                         else
                         {
                             <div><strong>Findings:</strong> ✅ No issues found</div>
+                        }
+                    }
+                    @if (_selectedHistoryRun.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+                    {
+                        @if (_selectedHistoryRun.DecompositionSubIssuesAttempted > 0)
+                        {
+                            <div><strong>Sub-Issues:</strong> @_selectedHistoryRun.DecompositionSubIssuesCreated/@_selectedHistoryRun.DecompositionSubIssuesAttempted created</div>
                         }
                     }
                     @if (_selectedHistoryRun.TotalCost is not null and > 0m)
@@ -859,10 +883,26 @@
         PipelineStep.CreatingPullRequest => "Creating PR",
         PipelineStep.ExtractingLinkedIssues => "Extracting Issues",
         PipelineStep.PostingFindings => "Posting Findings",
+        PipelineStep.DownloadingOpenIssues => "Downloading Issues",
+        PipelineStep.ExploringCodebase => "Exploring",
+        PipelineStep.GeneratingPlan => "Generating Plan",
+        PipelineStep.ReviewingPlan => "Reviewing Plan",
+        PipelineStep.PostingPlan => "Posting Plan",
+        PipelineStep.GeneratingSubIssues => "Generating Sub-Issues",
+        PipelineStep.CreatingIssues => "Creating Issues",
+        PipelineStep.PostingSummary => "Posting Summary",
         PipelineStep.Completed => "Completed",
         PipelineStep.Failed => "Failed",
         PipelineStep.Cancelled => "Cancelled",
         _ => step.ToString()
+    };
+
+    private static string FormatRunType(PipelineRunType runType) => runType switch
+    {
+        PipelineRunType.Review => "PR Review",
+        PipelineRunType.DecompositionAnalysis => "Decomposition (Analysis)",
+        PipelineRunType.Decomposition => "Decomposition",
+        _ => "Implementation"
     };
 
     private static string FormatDuration(DateTime startedAt, DateTime? completedAt)

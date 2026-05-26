@@ -42,6 +42,7 @@ public sealed class LocalPipelineExecutor
     private readonly IQualityGateValidator _qualityGateValidator;
     private readonly IBrainUpdateService? _brainUpdateService;
     private readonly IPipelineRunHistoryService? _historyService;
+    private readonly IOpenIssueContextWriter _openIssueContextWriter;
     private readonly FeedbackService _feedbackService;
     private readonly PullRequestFinalizationService _finalization;
     private readonly Serilog.ILogger _logger;
@@ -53,7 +54,8 @@ public sealed class LocalPipelineExecutor
         IQualityGateValidator qualityGateValidator,
         Serilog.ILogger logger,
         IBrainUpdateService? brainUpdateService = null,
-        IPipelineRunHistoryService? historyService = null)
+        IPipelineRunHistoryService? historyService = null,
+        IOpenIssueContextWriter? openIssueContextWriter = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
@@ -67,6 +69,7 @@ public sealed class LocalPipelineExecutor
         _qualityGateValidator = qualityGateValidator;
         _brainUpdateService = brainUpdateService;
         _historyService = historyService;
+        _openIssueContextWriter = openIssueContextWriter ?? new OpenIssueContextWriter(logger);
         _feedbackService = new FeedbackService(logger);
         _finalization = new PullRequestFinalizationService(logger);
         _logger = logger;
@@ -313,15 +316,30 @@ public sealed class LocalPipelineExecutor
             };
 
             // Build step pipeline based on run type
-            var steps = run.RunType == PipelineRunType.Review
-                ? BuildReviewStepPipeline()
-                : BuildAgentStepPipeline(job, connection);
+            var steps = run.RunType switch
+            {
+                PipelineRunType.Review => BuildReviewStepPipeline(),
+                PipelineRunType.DecompositionAnalysis => BuildDecompositionAnalysisStepPipeline(_openIssueContextWriter),
+                PipelineRunType.Decomposition => BuildDecompositionStepPipeline(),
+                _ => BuildAgentStepPipeline(job, connection)
+            };
 
             await PipelineStepRunner.ExecuteAsync(steps, context, linkedCt);
 
             // For review runs, the step pipeline ends at PostingFindings.
             // Transition to Completed here (implementation runs do this in CreatePullRequestAsync).
             if (run.RunType == PipelineRunType.Review
+                && run.CurrentStep != PipelineStep.Failed
+                && run.CurrentStep != PipelineStep.Cancelled)
+            {
+                run.CompletedAt = DateTime.UtcNow;
+                run.CurrentStep = PipelineStep.Completed;
+                run.FinalLabel ??= AgentLabels.Done;
+            }
+
+            // For decomposition runs, the step pipeline ends at PostPlan/PostSummary.
+            // Transition to Completed here (similar to review runs).
+            if (run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition
                 && run.CurrentStep != PipelineStep.Failed
                 && run.CurrentStep != PipelineStep.Cancelled)
             {
@@ -415,6 +433,40 @@ public sealed class LocalPipelineExecutor
             new ExtractLinkedIssuesStep(new IssueDescriptionParser()),
             new ReviewCodeStep(),
             new PostReviewFindingsStep()
+        };
+    }
+
+    /// <summary>
+    /// Builds the step pipeline for DecompositionAnalysis (Phase 1).
+    /// Sequence: Clone → SyncBrain → WriteOpenIssueContext → DecompositionAnalysis → PostDecompositionPlan.
+    /// IOpenIssueContextWriter is injected into the WriteOpenIssueContextStep via constructor.
+    /// </summary>
+    internal static IReadOnlyList<IPipelineStep> BuildDecompositionAnalysisStepPipeline(
+        IOpenIssueContextWriter openIssueContextWriter)
+    {
+        return new IPipelineStep[]
+        {
+            new CloneRepositoryStep(),
+            new SyncBrainPreRunStep(),
+            new WriteOpenIssueContextStep(openIssueContextWriter),
+            new DecompositionAnalysisStep(),
+            new PostDecompositionPlanStep()
+        };
+    }
+
+    /// <summary>
+    /// Builds the step pipeline for Decomposition (Phase 2).
+    /// Sequence: Clone → SyncBrain → Decomposition → CreateSubIssues → PostDecompositionSummary.
+    /// </summary>
+    internal static IReadOnlyList<IPipelineStep> BuildDecompositionStepPipeline()
+    {
+        return new IPipelineStep[]
+        {
+            new CloneRepositoryStep(),
+            new SyncBrainPreRunStep(),
+            new DecompositionStep(),
+            new CreateSubIssuesStep(),
+            new PostDecompositionSummaryStep()
         };
     }
 
@@ -546,6 +598,17 @@ public sealed class LocalPipelineExecutor
                 Add("CodeReviewIterationsCompleted", run.CodeReviewIterationsCompleted.ToString());
             if (run.CodeReviewIterationInProgress > 0)
                 Add("CodeReviewIterationInProgress", run.CodeReviewIterationInProgress.ToString());
+        }
+
+        // Decomposition: open issues downloaded
+        if (newStep > PipelineStep.DownloadingOpenIssues && run.OpenIssuesDownloaded > 0)
+            Add("OpenIssuesDownloaded", run.OpenIssuesDownloaded.ToString());
+
+        // Decomposition: sub-issue creation results
+        if (newStep > PipelineStep.CreatingIssues && run.DecompositionSubIssuesAttempted > 0)
+        {
+            Add("DecompositionSubIssuesCreated", run.DecompositionSubIssuesCreated.ToString());
+            Add("DecompositionSubIssuesAttempted", run.DecompositionSubIssuesAttempted.ToString());
         }
 
         return metadata;

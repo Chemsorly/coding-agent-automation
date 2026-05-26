@@ -350,26 +350,13 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     /// Sanitizes the proposal title for use in GitHub issue titles.
     /// Truncates to 200 chars and strips newlines.
     /// </summary>
-    internal static string SanitizeTitle(string title)
-    {
-        var sanitized = title
-            .Replace("\r", "")
-            .Replace("\n", " ")
-            .Trim();
-        return sanitized.Length > 200 ? sanitized[..200] : sanitized;
-    }
+    internal static string SanitizeTitle(string title) => TextSanitizer.SanitizeTitle(title);
 
     /// <summary>
     /// Escapes markdown-sensitive characters to prevent injection in GitHub issues.
-    /// Mirrors the logic in <see cref="FeedbackCommentFormatter"/>.
+    /// Delegates to <see cref="TextSanitizer.SanitizeMarkdown"/>.
     /// </summary>
-    private static string SanitizeMarkdown(string value)
-    {
-        return value
-            .Replace("@", "@\u200B")  // Zero-width space breaks @mention parsing
-            .Replace("<", "&lt;")     // Prevent HTML injection
-            .Replace(">", "&gt;");
-    }
+    private static string SanitizeMarkdown(string value) => TextSanitizer.SanitizeMarkdown(value);
 
     /// <summary>
     /// Formats the refactoring run summary with issue count and identifiers.

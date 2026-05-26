@@ -169,7 +169,7 @@ public class PipelineSectionComponentTests : BunitContext
     {
         var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
         var hints = cut.FindAll(".form-hint-icon");
-        Assert.Equal(4, hints.Count);
+        Assert.Equal(6, hints.Count);
     }
 
     // ═══ PipelinePromptsSection ═══
