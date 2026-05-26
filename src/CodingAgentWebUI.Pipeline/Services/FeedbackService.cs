@@ -169,6 +169,8 @@ public sealed partial class FeedbackService
 
     private RunFeedback DeserializeFeedback(string json, FeedbackOutcome outcome, DateTime collectedAtUtc)
     {
+        // TODO: Old options included DefaultIgnoreCondition=WhenWritingNull. Safe for deserialization-only usage,
+        // but if PipelineJsonOptions.Lenient is ever used for serialization, null properties will be included in output.
         var dto = JsonSerializer.Deserialize<FeedbackDto>(json, PipelineJsonOptions.Lenient);
 
         if (dto is null)

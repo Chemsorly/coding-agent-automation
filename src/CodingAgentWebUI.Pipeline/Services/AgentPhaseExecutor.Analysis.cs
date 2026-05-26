@@ -313,7 +313,8 @@ internal partial class AgentPhaseExecutor
         try
         {
             var json = await File.ReadAllTextAsync(assessmentPath, ct);
-            // TODO: PipelineJsonOptions.Lenient is more permissive than the original camelCase-only policy and adds JsonStringEnumConverter not previously present
+            // TODO: Behavioral change — old options used PropertyNamingPolicy=CamelCase (strict camelCase key matching);
+            // new Lenient uses PropertyNameCaseInsensitive=true (matches any casing). Verify AnalysisAssessment is only deserialized here.
             var result = JsonSerializer.Deserialize<AnalysisAssessment>(json, PipelineJsonOptions.Lenient);
             return result ?? throw new AnalysisIncompleteException("analysis-assessment.json deserialized to null");
         }
