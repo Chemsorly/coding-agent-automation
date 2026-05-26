@@ -2,7 +2,6 @@ name: E2E Tests
 
 on:
   push:
-    branches: [main, 'feature/**', 'fix/**']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
