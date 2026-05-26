@@ -139,8 +139,6 @@
             PipelineStep.PostingFindings
         }),
         new("Decomposition Analysis", "decomposition-analysis", new[] {
-            PipelineStep.CloningRepository,
-            PipelineStep.SyncingBrainRepoPreRun,
             PipelineStep.DownloadingOpenIssues,
             PipelineStep.ExploringCodebase,
             PipelineStep.GeneratingPlan,
@@ -148,8 +146,6 @@
             PipelineStep.PostingPlan
         }),
         new("Decomposition", "decomposition", new[] {
-            PipelineStep.CloningRepository,
-            PipelineStep.SyncingBrainRepoPreRun,
             PipelineStep.GeneratingSubIssues,
             PipelineStep.CreatingIssues,
             PipelineStep.PostingSummary
@@ -763,6 +759,118 @@
                 else
                 {
                     <span>⚠️ Brain updates not persisted</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.DownloadingOpenIssues)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>Downloading open issues...</span>
+                }
+                else if (Run.OpenIssuesDownloaded > 0)
+                {
+                    <span>✅ @Run.OpenIssuesDownloaded issues downloaded</span>
+                }
+                else
+                {
+                    <span>No open issues found</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.ExploringCodebase)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>🔍 Agent exploring codebase...</span>
+                }
+                else
+                {
+                    <span>Codebase explored</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.GeneratingPlan)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>📝 Generating decomposition plan...</span>
+                }
+                else
+                {
+                    <span>✅ Plan generated</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.ReviewingPlan)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>🔍 Adversarial review in progress...</span>
+                }
+                else
+                {
+                    <span>✅ Plan validated</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.PostingPlan)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>Posting plan comment...</span>
+                }
+                else
+                {
+                    <span>✅ Plan posted for review</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.GeneratingSubIssues)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>🤖 Agent generating sub-issues...</span>
+                }
+                else
+                {
+                    <span>Sub-issue files generated</span>
+                }
+            </div>
+        }
+        else if (step == PipelineStep.CreatingIssues)
+        {
+            <div class="step-detail-box">
+                @if (state == StepState.Active)
+                {
+                    <span>Creating GitHub issues...</span>
+                }
+                @if (Run.DecompositionSubIssuesAttempted > 0)
+                {
+                    <div>✅ @Run.DecompositionSubIssuesCreated/@Run.DecompositionSubIssuesAttempted created</div>
+                    @if (Run.DecompositionSubIssuesCreated < Run.DecompositionSubIssuesAttempted)
+                    {
+                        <div class="step-detail-warning">⚠️ @(Run.DecompositionSubIssuesAttempted - Run.DecompositionSubIssuesCreated) failed</div>
+                    }
+                }
+            </div>
+        }
+        else if (step == PipelineStep.PostingSummary)
+        {
+            <div class="step-detail">
+                @if (state == StepState.Active)
+                {
+                    <span>Posting summary comment...</span>
+                }
+                else
+                {
+                    <span>✅ Summary posted</span>
                 }
             </div>
         }

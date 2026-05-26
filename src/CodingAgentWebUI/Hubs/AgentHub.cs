@@ -330,6 +330,15 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
                 case "CodeReviewIterationInProgress":
                     if (int.TryParse(value, out var crip)) run.CodeReviewIterationInProgress = crip;
                     break;
+                case "OpenIssuesDownloaded":
+                    if (int.TryParse(value, out var oid)) run.OpenIssuesDownloaded = oid;
+                    break;
+                case "DecompositionSubIssuesCreated":
+                    if (int.TryParse(value, out var dsic)) run.DecompositionSubIssuesCreated = dsic;
+                    break;
+                case "DecompositionSubIssuesAttempted":
+                    if (int.TryParse(value, out var dsia)) run.DecompositionSubIssuesAttempted = dsia;
+                    break;
             }
         }
     }

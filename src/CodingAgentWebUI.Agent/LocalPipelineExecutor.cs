@@ -600,6 +600,17 @@ public sealed class LocalPipelineExecutor
                 Add("CodeReviewIterationInProgress", run.CodeReviewIterationInProgress.ToString());
         }
 
+        // Decomposition: open issues downloaded
+        if (newStep > PipelineStep.DownloadingOpenIssues && run.OpenIssuesDownloaded > 0)
+            Add("OpenIssuesDownloaded", run.OpenIssuesDownloaded.ToString());
+
+        // Decomposition: sub-issue creation results
+        if (newStep > PipelineStep.CreatingIssues && run.DecompositionSubIssuesAttempted > 0)
+        {
+            Add("DecompositionSubIssuesCreated", run.DecompositionSubIssuesCreated.ToString());
+            Add("DecompositionSubIssuesAttempted", run.DecompositionSubIssuesAttempted.ToString());
+        }
+
         return metadata;
     }
 

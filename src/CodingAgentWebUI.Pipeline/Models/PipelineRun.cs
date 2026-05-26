@@ -196,6 +196,9 @@ public sealed class PipelineRun
     /// <summary>Results of individual sub-issue creation attempts during the Decomposition phase.</summary>
     public IReadOnlyList<SubIssueCreationResult> SubIssueResults { get; set; } = [];
 
+    /// <summary>Number of open issues downloaded for deduplication context during decomposition.</summary>
+    public int OpenIssuesDownloaded { get; set; }
+
     /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
     // NOTE: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
     public PipelineRunSummary ToSummary() => new()

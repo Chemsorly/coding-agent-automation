@@ -28,6 +28,7 @@ internal sealed class WriteOpenIssueContextStep : IPipelineStep
         var count = await _writer.WriteOpenIssueContextAsync(
             context.IssueOps, context.Run.WorkspacePath!, maxIssues, ct);
 
+        context.Run.OpenIssuesDownloaded = count;
         context.Logger.Information("Wrote {Count} open issue context files", count);
         return StepResult.Continue;
     }
