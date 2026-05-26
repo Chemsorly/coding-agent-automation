@@ -45,14 +45,14 @@ public class PromptBuilderTests
     public void BuildAnalysisPrompt_ContainsAnalysisFilePath()
     {
         var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
-        result.Should().Contain(PromptBuilder.AnalysisFilePath);
+        result.Should().Contain(AgentWorkspacePaths.AnalysisFilePath);
     }
 
     [Fact]
     public void BuildAnalysisPrompt_ContainsAssessmentFilePath()
     {
         var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
-        result.Should().Contain(PromptBuilder.AnalysisAssessmentFilePath);
+        result.Should().Contain(AgentWorkspacePaths.AnalysisAssessmentFilePath);
     }
 
     [Fact]
@@ -77,7 +77,7 @@ public class PromptBuilderTests
     {
         var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
             brainContextWritten: true);
-        result.Should().Contain(PromptBuilder.BrainContextFilePath);
+        result.Should().Contain(AgentWorkspacePaths.BrainContextFilePath);
     }
 
     [Fact]
@@ -150,7 +150,7 @@ public class PromptBuilderTests
     public void BuildPrompt_ContainsAnalysisFileReference()
     {
         var result = PromptBuilder.BuildPrompt("Instructions", CreateIssue(), CreateParsedIssue());
-        result.Should().Contain(PromptBuilder.AnalysisFilePath);
+        result.Should().Contain(AgentWorkspacePaths.AnalysisFilePath);
     }
 
     [Fact]
@@ -174,7 +174,7 @@ public class PromptBuilderTests
     {
         var result = PromptBuilder.BuildPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
             brainContextWritten: true);
-        result.Should().Contain(PromptBuilder.BrainContextFilePath);
+        result.Should().Contain(AgentWorkspacePaths.BrainContextFilePath);
     }
 
     [Fact]
@@ -191,7 +191,7 @@ public class PromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_ContainsReviewInstructions()
     {
-        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
         var result = PromptBuilder.BuildReviewPrompt("Review this code", CreateIssue(), CreateParsedIssue(), findingsPath);
         result.Should().StartWith("Review this code");
     }
@@ -199,7 +199,7 @@ public class PromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_ContainsAgentSpecificFindingsFilePath()
     {
-        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("Correctness");
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("Correctness");
         var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath);
         result.Should().Contain(findingsPath);
         result.Should().Contain(".agent/review-findings-correctness.md");
@@ -208,7 +208,7 @@ public class PromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_ContainsGitRestriction()
     {
-        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
         var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath);
         result.Should().Contain("Do NOT run git write commands");
     }
@@ -217,7 +217,7 @@ public class PromptBuilderTests
     public void BuildReviewPrompt_ContainsIssueContext()
     {
         var issue = CreateIssue(title: "Add caching");
-        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
         var result = PromptBuilder.BuildReviewPrompt("Review", issue, CreateParsedIssue(), findingsPath);
         result.Should().Contain("Add caching");
     }
@@ -225,7 +225,7 @@ public class PromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_NullInstructions_Throws()
     {
-        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
         var act = () => PromptBuilder.BuildReviewPrompt(null!, CreateIssue(), CreateParsedIssue(), findingsPath);
         act.Should().Throw<ArgumentNullException>();
     }
@@ -240,7 +240,7 @@ public class PromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_Isolated_ContainsIndependentReviewerFraming()
     {
-        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
         var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath, isolated: true);
         result.Should().Contain("reviewing code changes made by another agent");
     }
@@ -248,7 +248,7 @@ public class PromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_Isolated_ContainsGitDiffInstruction()
     {
-        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
         var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath, isolated: true);
         result.Should().Contain("git diff");
     }
@@ -256,7 +256,7 @@ public class PromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_NotIsolated_NoIsolationFraming()
     {
-        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
         var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath, isolated: false);
         result.Should().NotContain("reviewing code changes made by another agent");
     }
@@ -268,28 +268,28 @@ public class PromptBuilderTests
     [Fact]
     public void GetReviewFindingsFilePath_ReturnsExpectedFormat()
     {
-        var result = PromptBuilder.GetReviewFindingsFilePath("Correctness");
+        var result = AgentWorkspacePaths.GetReviewFindingsFilePath("Correctness");
         result.Should().Be(".agent/review-findings-correctness.md");
     }
 
     [Fact]
     public void GetReviewFindingsFilePath_SanitizesSpaces()
     {
-        var result = PromptBuilder.GetReviewFindingsFilePath("DotNet Specialist");
+        var result = AgentWorkspacePaths.GetReviewFindingsFilePath("DotNet Specialist");
         result.Should().Be(".agent/review-findings-dotnet-specialist.md");
     }
 
     [Fact]
     public void GetReviewFindingsFilePath_SanitizesPathSeparators()
     {
-        var result = PromptBuilder.GetReviewFindingsFilePath("Agent/Sub\\Name");
+        var result = AgentWorkspacePaths.GetReviewFindingsFilePath("Agent/Sub\\Name");
         result.Should().Be(".agent/review-findings-agent-sub-name.md");
     }
 
     [Fact]
     public void GetReviewFindingsFilePath_NullName_Throws()
     {
-        var act = () => PromptBuilder.GetReviewFindingsFilePath(null!);
+        var act = () => AgentWorkspacePaths.GetReviewFindingsFilePath(null!);
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -308,7 +308,7 @@ public class PromptBuilderTests
     public void BuildFixPrompt_ContainsReviewFindingsReference()
     {
         var result = PromptBuilder.BuildFixPrompt("Fix");
-        result.Should().Contain(PromptBuilder.ReviewFindingsFilePath);
+        result.Should().Contain(AgentWorkspacePaths.ReviewFindingsFilePath);
     }
 
     [Fact]
@@ -417,7 +417,7 @@ public class PromptBuilderTests
             new[] { "file.cs" },
             Array.Empty<PullRequestReviewComment>());
 
-        result.Should().Contain(PromptBuilder.IssueContextFilePath);
+        result.Should().Contain(AgentWorkspacePaths.IssueContextFilePath);
     }
 
     #endregion
@@ -678,7 +678,7 @@ public class PromptBuilderTests
     public void BuildAnalysisReviewPrompt_ContainsReviewFilePath()
     {
         var result = PromptBuilder.BuildAnalysisReviewPrompt("Instructions", CreateIssue(), CreateParsedIssue());
-        result.Should().Contain(PromptBuilder.AnalysisReviewFilePath);
+        result.Should().Contain(AgentWorkspacePaths.AnalysisReviewFilePath);
     }
 
     [Fact]
@@ -741,21 +741,21 @@ public class PromptBuilderTests
     public void BuildAnalysisRefinementPrompt_ReferencesReviewFile()
     {
         var result = PromptBuilder.BuildAnalysisRefinementPrompt("Instructions");
-        result.Should().Contain(PromptBuilder.AnalysisReviewFilePath);
+        result.Should().Contain(AgentWorkspacePaths.AnalysisReviewFilePath);
     }
 
     [Fact]
     public void BuildAnalysisRefinementPrompt_ReferencesAnalysisFile()
     {
         var result = PromptBuilder.BuildAnalysisRefinementPrompt("Instructions");
-        result.Should().Contain(PromptBuilder.AnalysisFilePath);
+        result.Should().Contain(AgentWorkspacePaths.AnalysisFilePath);
     }
 
     [Fact]
     public void BuildAnalysisRefinementPrompt_ReferencesAssessmentFile()
     {
         var result = PromptBuilder.BuildAnalysisRefinementPrompt("Instructions");
-        result.Should().Contain(PromptBuilder.AnalysisAssessmentFilePath);
+        result.Should().Contain(AgentWorkspacePaths.AnalysisAssessmentFilePath);
     }
 
     [Fact]
