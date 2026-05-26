@@ -29,7 +29,7 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
     public ConfigurableQualityGateValidator QualityGateValidator { get; } = new();
     public InMemoryPipelineRunHistoryService HistoryService { get; } = new();
 
-    // Resettable service subclasses — created during ConfigureServices, used in ResetAll
+    // Resettable services — created during ConfigureServices, used in ResetAll
     private ResettablePipelineOrchestrationService? _orchestration;
     private AgentRegistryService? _registry;
     private OrchestratorRunService? _runService;
