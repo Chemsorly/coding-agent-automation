@@ -44,7 +44,7 @@ public class QualityGateValidator : IQualityGateValidator
         }
 
         // Clear quality gate output directory so the agent only sees output from this run
-        var qualityGatesDir = Path.Combine(workspacePath, PromptBuilder.QualityGatesOutputDirectory);
+        var qualityGatesDir = Path.Combine(workspacePath, AgentWorkspacePaths.QualityGatesOutputDirectory);
         try
         {
             if (Directory.Exists(qualityGatesDir))
@@ -453,7 +453,7 @@ public class QualityGateValidator : IQualityGateValidator
     {
         try
         {
-            var dir = Path.Combine(workspacePath, PromptBuilder.QualityGatesOutputDirectory);
+            var dir = Path.Combine(workspacePath, AgentWorkspacePaths.QualityGatesOutputDirectory);
             Directory.CreateDirectory(dir);
             if (!string.IsNullOrEmpty(stdout))
                 File.WriteAllText(Path.Combine(dir, $"{gateName}-stdout.txt"), stdout);

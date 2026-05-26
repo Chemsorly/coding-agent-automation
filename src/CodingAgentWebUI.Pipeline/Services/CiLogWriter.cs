@@ -36,7 +36,7 @@ public class CiLogWriter
         if (failedJobs.Count == 0)
             return result;
 
-        var logsDir = Path.Combine(workspacePath, PromptBuilder.QualityGatesOutputDirectory);
+        var logsDir = Path.Combine(workspacePath, AgentWorkspacePaths.QualityGatesOutputDirectory);
         try
         {
             Directory.CreateDirectory(logsDir);
@@ -62,7 +62,7 @@ public class CiLogWriter
                 File.WriteAllText(fullPath, job.LogContent);
 
                 // Store the workspace-relative path
-                var relativePath = Path.Combine(PromptBuilder.QualityGatesOutputDirectory, fileName).Replace('\\', '/');
+                var relativePath = Path.Combine(AgentWorkspacePaths.QualityGatesOutputDirectory, fileName).Replace('\\', '/');
                 result[job.JobId] = relativePath;
 
                 _logger.Debug("Wrote CI log for job '{JobName}' to {LogPath}", job.Name, relativePath);

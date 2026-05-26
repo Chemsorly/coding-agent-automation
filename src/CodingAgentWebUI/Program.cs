@@ -92,10 +92,6 @@ builder.Services.AddSingleton(sp => new OrchestratorRunService(
     Serilog.Log.Logger,
     pipelineConfig.OutputBufferCapacity));
 builder.Services.AddSingleton<IOrchestratorRunService>(sp => sp.GetRequiredService<OrchestratorRunService>());
-builder.Services.AddSingleton<IIssueProviderLabelSwapper>(sp => new IssueProviderLabelSwapper(
-    sp.GetRequiredService<IConfigurationStore>(),
-    sp.GetRequiredService<IProviderFactory>(),
-    Serilog.Log.Logger));
 builder.Services.AddSingleton<ILabelSwapper>(sp => new LabelSwapper(
     sp.GetRequiredService<IConfigurationStore>(),
     sp.GetRequiredService<IProviderFactory>(),

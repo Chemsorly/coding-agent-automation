@@ -428,7 +428,17 @@ public class PipelineLoopDispatchPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        await Task.Delay(300);
+        // Allow enough time for the loop to poll and populate the provider cache
+        var cacheDeadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < cacheDeadline)
+        {
+            lock (disposedProviders) { /* just sync */ }
+            await Task.Delay(100);
+            // Check if providers were created (factory was called)
+            if (mockFactory.Invocations.Count(i => i.Method.Name == "CreateIssueProvider") >= templates.Count)
+                break;
+        }
+
         svc.StopLoop();
 
         var deadline = DateTime.UtcNow.AddSeconds(5);

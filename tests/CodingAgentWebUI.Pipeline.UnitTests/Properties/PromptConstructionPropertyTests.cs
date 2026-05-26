@@ -44,7 +44,7 @@ public class PromptConstructionPropertyTests
 
         prompt.Should().Contain(issue.Title);
         prompt.Should().Contain(issue.Identifier);
-        prompt.Should().Contain(PromptBuilder.IssueContextFilePath);
+        prompt.Should().Contain(AgentWorkspacePaths.IssueContextFilePath);
 
         foreach (var criterion in parsed.AcceptanceCriteria)
         {
@@ -253,7 +253,7 @@ public class PromptConstructionPropertyTests
         prompt.Should().Contain("Test Coverage");
         prompt.Should().Contain("Add caching layer");
         prompt.Should().Contain("Cache hit rate > 90%");
-        prompt.Should().Contain(PromptBuilder.IssueContextFilePath);
+        prompt.Should().Contain(AgentWorkspacePaths.IssueContextFilePath);
     }
 
     /// <summary>
@@ -273,7 +273,7 @@ public class PromptConstructionPropertyTests
 
         prompt.Should().Contain("Custom analysis instructions");
         prompt.Should().Contain("Do NOT implement any changes");
-        prompt.Should().Contain(PromptBuilder.AnalysisFilePath);
+        prompt.Should().Contain(AgentWorkspacePaths.AnalysisFilePath);
         prompt.Should().Contain("sub-agents");
     }
 
@@ -294,7 +294,7 @@ public class PromptConstructionPropertyTests
 
         prompt.Should().Contain("Custom impl instructions");
         prompt.Should().Contain("Do NOT run git write commands");
-        prompt.Should().Contain(PromptBuilder.AnalysisFilePath);
+        prompt.Should().Contain(AgentWorkspacePaths.AnalysisFilePath);
         prompt.Should().Contain("Implement these changes now.");
     }
 
@@ -332,8 +332,8 @@ public class PromptConstructionPropertyTests
         var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(DefaultAnalysis, issue, parsed, brainContextWritten: true);
         var implPrompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed, brainContextWritten: true);
 
-        analysisPrompt.Should().Contain(PromptBuilder.BrainContextFilePath);
-        implPrompt.Should().Contain(PromptBuilder.BrainContextFilePath);
+        analysisPrompt.Should().Contain(AgentWorkspacePaths.BrainContextFilePath);
+        implPrompt.Should().Contain(AgentWorkspacePaths.BrainContextFilePath);
     }
 
     /// <summary>
@@ -352,8 +352,8 @@ public class PromptConstructionPropertyTests
         var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(DefaultAnalysis, issue, parsed);
         var implPrompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed);
 
-        analysisPrompt.Should().NotContain(PromptBuilder.BrainContextFilePath);
-        implPrompt.Should().NotContain(PromptBuilder.BrainContextFilePath);
+        analysisPrompt.Should().NotContain(AgentWorkspacePaths.BrainContextFilePath);
+        implPrompt.Should().NotContain(AgentWorkspacePaths.BrainContextFilePath);
     }
 
     // --- BuildFixPrompt tests ---
@@ -366,7 +366,7 @@ public class PromptConstructionPropertyTests
     {
         var prompt = PromptBuilder.BuildFixPrompt("Fix the issues.");
 
-        prompt.Should().Contain(PromptBuilder.ReviewFindingsFilePath);
+        prompt.Should().Contain(AgentWorkspacePaths.ReviewFindingsFilePath);
         prompt.Should().Contain("Read the file");
         prompt.Should().Contain("[CRITICAL]");
     }
@@ -399,7 +399,7 @@ public class PromptConstructionPropertyTests
     [Fact]
     public void QualityGatesOutputDirectory_IsKiroSubdirectory()
     {
-        PromptBuilder.QualityGatesOutputDirectory.Should().StartWith(".agent/");
+        AgentWorkspacePaths.QualityGatesOutputDirectory.Should().StartWith(".agent/");
     }
 
     // --- BuildQualityGateRetryPrompt tests ---
@@ -420,7 +420,7 @@ public class PromptConstructionPropertyTests
         prompt.Should().Contain("- Compilation: FAILED");
         prompt.Should().Contain("- Tests: PASSED");
         prompt.Should().Contain("- Coverage: PASSED");
-        prompt.Should().Contain(PromptBuilder.QualityGatesOutputDirectory);
+        prompt.Should().Contain(AgentWorkspacePaths.QualityGatesOutputDirectory);
         prompt.Should().Contain("List the files there and read the relevant ones");
     }
 
@@ -476,7 +476,7 @@ public class PromptConstructionPropertyTests
         var prompt = PromptBuilder.BuildAnalysisReviewPrompt("Custom review instructions", issue, parsed);
 
         prompt.Should().Contain("Custom review instructions");
-        prompt.Should().Contain(PromptBuilder.AnalysisReviewFilePath);
+        prompt.Should().Contain(AgentWorkspacePaths.AnalysisReviewFilePath);
         prompt.Should().Contain("Do NOT modify `.agent/analysis.md`");
         prompt.Should().Contain("Add caching");
         prompt.Should().Contain("Cache hit > 90%");
@@ -494,7 +494,7 @@ public class PromptConstructionPropertyTests
 
         var prompt = PromptBuilder.BuildAnalysisReviewPrompt(DefaultPrompts.AnalysisReview, issue, parsed);
 
-        prompt.Should().Contain(PromptBuilder.IssueContextFilePath);
+        prompt.Should().Contain(AgentWorkspacePaths.IssueContextFilePath);
         prompt.Should().Contain("[CRITICAL]");
         prompt.Should().Contain("[WARNING]");
         prompt.Should().Contain("[SUGGESTION]");
@@ -524,9 +524,9 @@ public class PromptConstructionPropertyTests
         var prompt = PromptBuilder.BuildAnalysisRefinementPrompt("Custom refinement instructions");
 
         prompt.Should().Contain("Custom refinement instructions");
-        prompt.Should().Contain(PromptBuilder.AnalysisReviewFilePath);
-        prompt.Should().Contain(PromptBuilder.AnalysisFilePath);
-        prompt.Should().Contain(PromptBuilder.AnalysisAssessmentFilePath);
+        prompt.Should().Contain(AgentWorkspacePaths.AnalysisReviewFilePath);
+        prompt.Should().Contain(AgentWorkspacePaths.AnalysisFilePath);
+        prompt.Should().Contain(AgentWorkspacePaths.AnalysisAssessmentFilePath);
     }
 
     [Fact]

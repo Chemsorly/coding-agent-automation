@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.IntegrationTests.Helpers;
@@ -108,7 +109,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
 
         await _validator.ValidateAsync(workspace, DefaultQgcs, CancellationToken.None);
 
-        var gatesDir = Path.Combine(workspace, PromptBuilder.QualityGatesOutputDirectory);
+        var gatesDir = Path.Combine(workspace, AgentWorkspacePaths.QualityGatesOutputDirectory);
         Directory.Exists(gatesDir).Should().BeTrue();
         File.Exists(Path.Combine(gatesDir, "Default-compilation-stdout.txt")).Should().BeTrue();
     }
@@ -152,7 +153,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
 
         await _validator.ValidateAsync(workspace, DefaultQgcs, CancellationToken.None);
 
-        var gatesDir = Path.Combine(workspace, PromptBuilder.QualityGatesOutputDirectory);
+        var gatesDir = Path.Combine(workspace, AgentWorkspacePaths.QualityGatesOutputDirectory);
         Directory.Exists(gatesDir).Should().BeTrue();
         // Test output is written as stdout (stderr may or may not be present depending on test runner version)
         File.Exists(Path.Combine(gatesDir, "Default-tests-stdout.txt")).Should().BeTrue();
@@ -181,7 +182,7 @@ public class QualityGateValidatorIntegrationTests : IDisposable
     public async Task QualityGatesDirectory_ClearedOnEachRun()
     {
         var workspace = CopyFixtureToTemp("FailingBuildProject");
-        var gatesDir = Path.Combine(workspace, PromptBuilder.QualityGatesOutputDirectory);
+        var gatesDir = Path.Combine(workspace, AgentWorkspacePaths.QualityGatesOutputDirectory);
 
         // Create a stale file that should be cleaned up
         Directory.CreateDirectory(gatesDir);

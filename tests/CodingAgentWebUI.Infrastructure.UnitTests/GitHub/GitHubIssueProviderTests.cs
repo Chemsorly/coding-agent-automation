@@ -533,6 +533,109 @@ public class GitHubIssueProviderTests
 
     // NOTE: [RES-03] Add tests for AbuseException wrapping — both RetryAfterSeconds.HasValue and fallback branches are untested (review finding #5)
 
+    [Fact]
+    public async Task ListClosedIssuesAsync_MapsIssuesToSummaries()
+    {
+        var issues = new List<Issue>
+        {
+            CreateOctokitIssue(10, "Closed One", body: "b", labels: ["refactoring", "agent:done"]),
+            CreateOctokitIssue(11, "Closed Two", body: "b", labels: ["refactoring", "agent:wont-do"])
+        };
+
+        _mockIssues
+            .Setup(i => i.GetAllForRepository("owner", "repo", It.IsAny<RepositoryIssueRequest>(), It.IsAny<ApiOptions>()))
+            .ReturnsAsync(issues.AsReadOnly());
+
+        var result = await _provider.ListClosedIssuesAsync(1, 25, null, null, CancellationToken.None);
+
+        result.Items.Should().HaveCount(2);
+        result.Items[0].Identifier.Should().Be("10");
+        result.Items[0].Labels.Should().Contain("agent:done");
+        result.Items[1].Identifier.Should().Be("11");
+        result.Page.Should().Be(1);
+        result.PageSize.Should().Be(25);
+        result.HasMore.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ListClosedIssuesAsync_PassesClosedStateAndSince()
+    {
+        var since = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        _mockIssues
+            .Setup(i => i.GetAllForRepository("owner", "repo",
+                It.Is<RepositoryIssueRequest>(r => r.State == ItemStateFilter.Closed && r.Since == since),
+                It.Is<ApiOptions>(o => o.StartPage == 1 && o.PageSize == 21 && o.PageCount == 1)))
+            .ReturnsAsync(new List<Issue>().AsReadOnly());
+
+        var result = await _provider.ListClosedIssuesAsync(1, 20, null, since, CancellationToken.None);
+
+        result.Items.Should().BeEmpty();
+        _mockIssues.Verify(i => i.GetAllForRepository("owner", "repo",
+            It.Is<RepositoryIssueRequest>(r => r.State == ItemStateFilter.Closed && r.Since == since),
+            It.Is<ApiOptions>(o => o.StartPage == 1 && o.PageSize == 21 && o.PageCount == 1)),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ListClosedIssuesAsync_PassesLabelsToRequest()
+    {
+        RepositoryIssueRequest? capturedRequest = null;
+        _mockIssues
+            .Setup(i => i.GetAllForRepository("owner", "repo", It.IsAny<RepositoryIssueRequest>(), It.IsAny<ApiOptions>()))
+            .Callback<string, string, RepositoryIssueRequest, ApiOptions>((_, _, req, _) => capturedRequest = req)
+            .ReturnsAsync(new List<Issue>().AsReadOnly());
+
+        var labels = new List<string> { "refactoring", "agent-generated" }.AsReadOnly();
+        await _provider.ListClosedIssuesAsync(1, 20, labels, null, CancellationToken.None);
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.Labels.Should().BeEquivalentTo(labels);
+    }
+
+    [Fact]
+    public async Task ListClosedIssuesAsync_FiltersPullRequests()
+    {
+        var pr = new PullRequest(0, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0, ItemState.Closed, "title", "body", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null, null, null, null, null, null, null, false, null, null, null, null, 0, 0, 0, 0, 0, null, false, null, null, null, null, null);
+        var issueWithPr = new Issue(
+            url: string.Empty, htmlUrl: string.Empty, commentsUrl: string.Empty, eventsUrl: string.Empty,
+            number: 1, state: ItemState.Closed, title: "PR", body: null, closedBy: null, user: null,
+            labels: new List<Label>().AsReadOnly(), assignee: null, assignees: null, milestone: null,
+            comments: 0, pullRequest: pr, closedAt: null, createdAt: DateTimeOffset.UtcNow,
+            updatedAt: null, id: 1, nodeId: string.Empty, locked: false, repository: null,
+            reactions: null, activeLockReason: null, stateReason: null);
+        var regularIssue = CreateOctokitIssue(2, "Real Issue", body: "b", labels: ["refactoring"]);
+
+        _mockIssues
+            .Setup(i => i.GetAllForRepository("owner", "repo", It.IsAny<RepositoryIssueRequest>(), It.IsAny<ApiOptions>()))
+            .ReturnsAsync(new List<Issue> { issueWithPr, regularIssue }.AsReadOnly());
+
+        var result = await _provider.ListClosedIssuesAsync(1, 25, null, null, CancellationToken.None);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Identifier.Should().Be("2");
+    }
+
+    [Fact]
+    public async Task ListClosedIssuesAsync_HasMore_WhenExtraItemReturned()
+    {
+        var issues = new List<Issue>
+        {
+            CreateOctokitIssue(1, "A", body: "b", labels: []),
+            CreateOctokitIssue(2, "B", body: "b", labels: []),
+            CreateOctokitIssue(3, "C", body: "b", labels: [])
+        };
+
+        _mockIssues
+            .Setup(i => i.GetAllForRepository("owner", "repo", It.IsAny<RepositoryIssueRequest>(), It.IsAny<ApiOptions>()))
+            .ReturnsAsync(issues.AsReadOnly());
+
+        var result = await _provider.ListClosedIssuesAsync(1, 2, null, null, CancellationToken.None);
+
+        result.Items.Should().HaveCount(2);
+        result.HasMore.Should().BeTrue();
+    }
+
     private static Issue CreateOctokitIssue(int number, string title, string? body, string[] labels)
     {
         var labelObjects = labels.Select(name =>

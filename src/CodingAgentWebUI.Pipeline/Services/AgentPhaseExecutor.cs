@@ -43,9 +43,9 @@ internal partial class AgentPhaseExecutor : IAgentPhaseExecutor
         var agentDir = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.MetadataDirectory);
         Directory.CreateDirectory(agentDir);
 
-        var contextPath = Path.Combine(run.WorkspacePath, PromptBuilder.BrainContextFilePath);
+        var contextPath = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.BrainContextFilePath);
         await File.WriteAllTextAsync(contextPath, brainContext, ct);
-        _logger.Debug("Pipeline {RunId} wrote brain context to {FilePath}", run.RunId, PromptBuilder.BrainContextFilePath);
+        _logger.Debug("Pipeline {RunId} wrote brain context to {FilePath}", run.RunId, AgentWorkspacePaths.BrainContextFilePath);
 
         return true;
     }

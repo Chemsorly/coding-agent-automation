@@ -6,8 +6,7 @@ namespace CodingAgentWebUI.Orchestration;
 
 /// <summary>
 /// Unified label management service that routes label operations to the correct provider
-/// based on <see cref="LabelTargetKind"/>. Supersedes <see cref="IssueProviderLabelSwapper"/>
-/// by adding PR label support while preserving identical issue label behavior.
+/// based on <see cref="LabelTargetKind"/>.
 /// All operations are best-effort (failures are caught and logged as warnings).
 /// </summary>
 public sealed class LabelSwapper : ILabelSwapper
@@ -126,7 +125,7 @@ public sealed class LabelSwapper : ILabelSwapper
     }
 
     /// <summary>
-    /// Swaps labels on an issue via IIssueProvider (existing behavior, identical to IssueProviderLabelSwapper).
+    /// Swaps labels on an issue via IIssueProvider.
     /// </summary>
     private async Task SwapIssueLabelAsync(
         string issueProviderConfigId,

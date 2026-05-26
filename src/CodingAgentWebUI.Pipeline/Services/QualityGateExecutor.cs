@@ -72,7 +72,7 @@ internal partial class QualityGateExecutor : IQualityGateExecutor
         if (report.ExternalCi != null)
             sb.AppendLine($"- External CI: {(report.ExternalCi.Passed ? "PASSED" : "FAILED")} ({report.ExternalCi.Details})");
         sb.AppendLine();
-        sb.AppendLine($"Diagnostic output has been written to `{PromptBuilder.QualityGatesOutputDirectory}/`.");
+        sb.AppendLine($"Diagnostic output has been written to `{AgentWorkspacePaths.QualityGatesOutputDirectory}/`.");
         sb.Append("List the files there and read the relevant ones to diagnose and fix the failures.");
         return sb.ToString();
     }

@@ -91,6 +91,21 @@ public interface IIssueProvider : IAsyncDisposable
     }
 
     /// <summary>
+    /// Lists closed issues with optional label filtering and date cutoff.
+    /// The <paramref name="since"/> parameter filters by last-updated date (Octokit semantics),
+    /// not close date. Returns empty results by default so existing implementations don't break.
+    /// </summary>
+    Task<PagedResult<IssueSummary>> ListClosedIssuesAsync(
+        int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since, CancellationToken ct)
+        => Task.FromResult(new PagedResult<IssueSummary>
+        {
+            Items = Array.Empty<IssueSummary>(),
+            Page = 1,
+            PageSize = pageSize,
+            HasMore = false
+        });
+
+    /// <summary>
     /// Creates a new issue with the given title, body, and optional labels.
     /// Returns the created issue's identifier and URL.
     /// </summary>

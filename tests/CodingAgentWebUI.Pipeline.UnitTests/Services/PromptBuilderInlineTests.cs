@@ -26,7 +26,7 @@ public class PromptBuilderInlineTests
 
     private static string BuildPrompt(bool inlineCommentsEnabled)
     {
-        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
         return PromptBuilder.BuildReviewPrompt(
             "Review this code carefully",
             CreateIssue(),
@@ -120,7 +120,7 @@ public class PromptBuilderInlineTests
     public void BuildReviewPrompt_InlineDisabled_PromptMatchesBaselineExactly()
     {
         // When disabled, the prompt should be identical to calling without the parameter
-        var findingsPath = PromptBuilder.GetReviewFindingsFilePath("TestAgent");
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
         var withFalse = PromptBuilder.BuildReviewPrompt(
             "Review", CreateIssue(), CreateParsedIssue(), findingsPath, inlineCommentsEnabled: false);
         var withoutParam = PromptBuilder.BuildReviewPrompt(
