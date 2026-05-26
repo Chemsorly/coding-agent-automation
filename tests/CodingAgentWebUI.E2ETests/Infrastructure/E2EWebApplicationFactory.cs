@@ -31,9 +31,9 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
 
     // Resettable service subclasses — created during ConfigureServices, used in ResetAll
     private ResettablePipelineOrchestrationService? _orchestration;
-    private ResettableAgentRegistryService? _registry;
-    private ResettableOrchestratorRunService? _runService;
-    private ResettableJobDispatcherService? _dispatcher;
+    private AgentRegistryService? _registry;
+    private OrchestratorRunService? _runService;
+    private JobDispatcherService? _dispatcher;
 
     public E2EWebApplicationFactory()
     {
@@ -78,25 +78,22 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
 
     private void ReplaceWithResettableServices(IServiceCollection services)
     {
-        // AgentRegistryService → ResettableAgentRegistryService
-        _registry = new ResettableAgentRegistryService(Serilog.Log.Logger);
+        // AgentRegistryService — sealed, uses internal Reset()
+        _registry = new AgentRegistryService(Serilog.Log.Logger);
         RemoveService<AgentRegistryService>(services);
         services.AddSingleton(_registry);
-        services.AddSingleton<AgentRegistryService>(_registry);
 
-        // OrchestratorRunService → ResettableOrchestratorRunService
-        _runService = new ResettableOrchestratorRunService(Serilog.Log.Logger);
+        // OrchestratorRunService — sealed, uses internal Reset()
+        _runService = new OrchestratorRunService(Serilog.Log.Logger);
         RemoveService<OrchestratorRunService>(services);
         RemoveService<IOrchestratorRunService>(services);
         services.AddSingleton(_runService);
-        services.AddSingleton<OrchestratorRunService>(_runService);
         services.AddSingleton<IOrchestratorRunService>(_runService);
 
-        // JobDispatcherService → ResettableJobDispatcherService
-        _dispatcher = new ResettableJobDispatcherService(_registry, Serilog.Log.Logger);
+        // JobDispatcherService — sealed, uses internal Reset()
+        _dispatcher = new JobDispatcherService(_registry, Serilog.Log.Logger);
         RemoveService<JobDispatcherService>(services);
         services.AddSingleton(_dispatcher);
-        services.AddSingleton<JobDispatcherService>(_dispatcher);
 
         // PipelineOrchestrationService → ResettablePipelineOrchestrationService
         _orchestration = new ResettablePipelineOrchestrationService(
