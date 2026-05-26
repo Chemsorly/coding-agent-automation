@@ -5,10 +5,12 @@
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Services
+@using CodingAgentWebUI.Orchestration.Dispatch
 @using Serilog
 @inject IConsolidationService ConsolidationService
 @inject ConsolidationBadgeService BadgeService
 @inject IConfigurationStore ConfigStore
+@inject ConsolidationQueueService ConsolidationQueue
 
 <div class="consolidation-page">
     <header class="consolidation-header">
@@ -166,6 +168,7 @@
                             <th>Started</th>
                             <th>Status</th>
                             <th>Summary</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -181,6 +184,12 @@
                                     </span>
                                 </td>
                                 <td class="consolidation-summary-cell" title="@(run.Summary ?? "—")">@(run.Summary ?? "—")</td>
+                                <td>
+                                    @if (run.Status == ConsolidationRunStatus.Queued)
+                                    {
+                                        <button class="btn-cancel" @onclick="() => CancelQueuedRun(run.RunId)">Cancel</button>
+                                    }
+                                </td>
                             </tr>
                         }
                     </tbody>
@@ -272,12 +281,17 @@
             {
                 _statusMessage = type switch
                 {
-                    ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — no agents available or already running.",
-                    ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — no agents available or already running.",
-                    ConsolidationRunType.HarnessSuggestions => "Harness suggestions rejected — no agents available or already running.",
+                    ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — already running or queued.",
+                    ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — already running or queued.",
+                    ConsolidationRunType.HarnessSuggestions => "Harness suggestions rejected — already running or queued.",
                     _ => "Consolidation rejected."
                 };
                 _statusIsError = true;
+            }
+            else if (run.Status == ConsolidationRunStatus.Queued)
+            {
+                _statusMessage = $"{FormatRunType(type)} queued — waiting for an idle agent.";
+                await LoadDataAsync();
             }
             else
             {
@@ -297,7 +311,14 @@
     {
         return _runHistory.Any(r => r.Type == type
             && r.TemplateId == templateId
-            && r.Status == ConsolidationRunStatus.Running);
+            && (r.Status == ConsolidationRunStatus.Running || r.Status == ConsolidationRunStatus.Queued));
+    }
+
+    private async Task CancelQueuedRun(string runId)
+    {
+        ConsolidationQueue.MarkCancelled(runId);
+        await ConsolidationService.CancelQueuedRunAsync(runId, CancellationToken.None);
+        await LoadDataAsync();
     }
 
     private async void HandleConsolidationChanged()

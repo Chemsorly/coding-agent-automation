@@ -1,10 +1,12 @@
 using Bunit;
 using CodingAgentWebUI.Components.Pages;
+using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
+using Serilog;
 
 namespace CodingAgentWebUI.UnitTests.Components;
 
@@ -44,6 +46,7 @@ public class ConsolidationPageComponentTests : BunitContext
         Services.AddSingleton<IConsolidationService>(_mockConsolidationService.Object);
         Services.AddSingleton<IConfigurationStore>(_mockConfigStore.Object);
         Services.AddSingleton(_badgeService);
+        Services.AddSingleton(new ConsolidationQueueService(new Mock<ILogger>().Object));
     }
 
     private static PipelineJobTemplate CreateTemplate(

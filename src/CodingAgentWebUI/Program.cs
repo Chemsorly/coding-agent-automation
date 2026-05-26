@@ -106,11 +106,15 @@ builder.Services.AddHostedService(sp => new HeartbeatMonitorService(
     Serilog.Log.Logger));
 
 // Job queue drain service — periodically matches queued jobs to idle agents
+builder.Services.AddSingleton<ConsolidationQueueService>(sp => new ConsolidationQueueService(Serilog.Log.Logger));
 builder.Services.AddSingleton(sp => new JobQueueDrainService(
     sp.GetRequiredService<JobDispatcherService>(),
     sp.GetRequiredService<AgentRegistryService>(),
     sp.GetRequiredService<IJobDispatcher>(),
-    Serilog.Log.Logger));
+    Serilog.Log.Logger,
+    sp.GetRequiredService<ConsolidationQueueService>(),
+    sp.GetRequiredService<IConsolidationDispatcher>(),
+    sp.GetRequiredService<IConsolidationService>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<JobQueueDrainService>());
 
 // Multi-agent job dispatcher (bridges loop service to agent dispatch)
@@ -130,7 +134,8 @@ builder.Services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationD
     sp.GetRequiredService<IConfigurationStore>(),
     sp.GetRequiredService<ITokenVendingService>(),
     pipelineConfig,
-    Serilog.Log.Logger));
+    Serilog.Log.Logger,
+    sp.GetRequiredService<ConsolidationQueueService>()));
 builder.Services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
     Serilog.Log.Logger,
     pipelineConfig,
@@ -261,6 +266,23 @@ app.MapRazorComponents<App>()
 // Clean up orphaned consolidation runs from previous sessions
 var consolidationService = app.Services.GetRequiredService<IConsolidationService>();
 await consolidationService.CleanupOrphanedRunsAsync(CancellationToken.None);
+
+// Rehydrate queued consolidation runs (re-enqueue into the consolidation queue)
+var consolidationQueue = app.Services.GetRequiredService<ConsolidationQueueService>();
+var queuedRuns = await consolidationService.RehydrateQueuedRunsAsync(CancellationToken.None);
+foreach (var queuedRun in queuedRuns)
+{
+    consolidationQueue.EnqueueJob(new PendingConsolidationJob
+    {
+        RunId = queuedRun.RunId,
+        Type = queuedRun.Type,
+        TemplateId = queuedRun.TemplateId,
+        TemplateName = queuedRun.TemplateName,
+        WorkspacePath = Path.Combine(pipelineConfig.WorkspaceBaseDirectory, "consolidation", queuedRun.RunId),
+        RequiredLabels = queuedRun.QueuedRequiredLabels ?? [],
+        EnqueuedAt = DateTimeOffset.UtcNow
+    });
+}
 
 app.Run();
 

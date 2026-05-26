@@ -53,6 +53,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
             _mockTokenVending.Object,
             config,
             _mockLogger.Object,
+            new ConsolidationQueueService(_mockLogger.Object),
             runsDir ?? _tempDir);
     }
 
@@ -73,49 +74,56 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     [Fact]
     public void Ctor_NullRegistry_Throws()
     {
-        var act = () => new ConsolidationDispatcher(null!, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(null!, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object, new ConsolidationQueueService(_mockLogger.Object));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullDispatcher_Throws()
     {
-        var act = () => new ConsolidationDispatcher(_registry, null!, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, null!, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object, new ConsolidationQueueService(_mockLogger.Object));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullAgentComm_Throws()
     {
-        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, null!, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, null!, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object, new ConsolidationQueueService(_mockLogger.Object));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullConfigStore_Throws()
     {
-        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, null!, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, null!, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object, new ConsolidationQueueService(_mockLogger.Object));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullTokenVending_Throws()
     {
-        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, null!, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, null!, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object, new ConsolidationQueueService(_mockLogger.Object));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullConfig_Throws()
     {
-        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, null!, _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, null!, _mockLogger.Object, new ConsolidationQueueService(_mockLogger.Object));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullLogger_Throws()
     {
-        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, null!);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, null!, new ConsolidationQueueService(_mockLogger.Object));
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Ctor_NullQueueService_Throws()
+    {
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, _mockLogger.Object, null!);
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -132,7 +140,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     }
 
     [Fact]
-    public async Task TryDispatchAsync_NoIdleAgent_ReturnsFalse()
+    public async Task TryDispatchAsync_NoIdleAgent_ReturnsQueued()
     {
         // No agents registered
         var svc = CreateService();
@@ -140,11 +148,11 @@ public sealed class ConsolidationDispatcherTests : IDisposable
 
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
-        result.Should().BeFalse();
+        result.Should().Be(ConsolidationDispatchResult.Queued);
     }
 
     [Fact]
-    public async Task TryDispatchAsync_AgentAvailable_DispatchesAndReturnsTrue()
+    public async Task TryDispatchAsync_AgentAvailable_DispatchesAndReturnsDispatched()
     {
         RegisterIdleAgent();
 
@@ -159,12 +167,12 @@ public sealed class ConsolidationDispatcherTests : IDisposable
 
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
-        result.Should().BeTrue();
+        result.Should().Be(ConsolidationDispatchResult.Dispatched);
         _mockAgentComm.Verify(c => c.AssignConsolidationJobAsync("conn-1", "agent-1", It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task TryDispatchAsync_DispatchThrows_ResetsAgentAndReturnsFalse()
+    public async Task TryDispatchAsync_DispatchThrows_ResetsAgentAndReturnsFailed()
     {
         RegisterIdleAgent();
 
@@ -182,7 +190,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
 
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
-        result.Should().BeFalse();
+        result.Should().Be(ConsolidationDispatchResult.Failed);
         // Agent should be back to Idle
         var agent = _registry.GetByAgentId("agent-1");
         agent!.Status.Should().Be(AgentStatus.Idle);
@@ -236,7 +244,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
 
         // Should succeed — null templateId means global scope, default labels
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.HarnessSuggestions, null, null, "/tmp", CancellationToken.None);
-        result.Should().BeTrue();
+        result.Should().Be(ConsolidationDispatchResult.Dispatched);
     }
 
     [Fact]
@@ -360,7 +368,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
 
         // Should not throw
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
-        result.Should().BeTrue();
+        result.Should().Be(ConsolidationDispatchResult.Dispatched);
     }
 
     #endregion

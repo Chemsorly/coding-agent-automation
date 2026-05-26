@@ -11,8 +11,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 public interface IConsolidationDispatcher
 {
     /// <summary>
-    /// Attempts to dispatch a consolidation run to an idle agent.
-    /// Returns <c>true</c> if the job was successfully dispatched; <c>false</c> if no idle agent is available.
+    /// Attempts to dispatch a consolidation run to an idle agent, or enqueues it if none available.
     /// </summary>
     /// <param name="run">The consolidation run to dispatch.</param>
     /// <param name="type">The consolidation run type.</param>
@@ -20,12 +19,21 @@ public interface IConsolidationDispatcher
     /// <param name="feedbackDataJson">Optional feedback data JSON for harness suggestion runs.</param>
     /// <param name="workspacePath">The workspace path for the consolidation run.</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <returns><c>true</c> if dispatched; <c>false</c> if no idle agent is available.</returns>
-    Task<bool> TryDispatchAsync(
+    /// <returns>The dispatch result: Dispatched, Queued, or Failed.</returns>
+    Task<ConsolidationDispatchResult> TryDispatchAsync(
         ConsolidationRun run,
         ConsolidationRunType type,
         string? templateId,
         string? feedbackDataJson,
         string workspacePath,
         CancellationToken ct);
+
+    /// <summary>
+    /// Attempts to dispatch a queued consolidation job to a specific agent (called by drain service).
+    /// </summary>
+    /// <param name="job">The pending consolidation job to dispatch.</param>
+    /// <param name="agentId">The target agent ID.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns><c>true</c> if dispatched successfully; <c>false</c> otherwise.</returns>
+    Task<bool> TryDispatchToAgentAsync(PendingConsolidationJob job, string agentId, CancellationToken ct);
 }

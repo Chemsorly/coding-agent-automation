@@ -17,6 +17,21 @@ public enum ConsolidationRunStatus
 {
     Running,
     Succeeded,
+    Failed,
+    Queued,
+    Cancelled
+}
+
+/// <summary>
+/// Result of a consolidation dispatch attempt.
+/// </summary>
+public enum ConsolidationDispatchResult
+{
+    /// <summary>Job was dispatched to an idle agent immediately.</summary>
+    Dispatched,
+    /// <summary>No idle agent available; job was enqueued for later dispatch.</summary>
+    Queued,
+    /// <summary>Dispatch failed (e.g., token vending error).</summary>
     Failed
 }
 
@@ -47,4 +62,10 @@ public sealed class ConsolidationRun
     /// <see cref="ConsolidationJobResult.DiffSummaryTokenUsage"/>.
     /// </summary>
     public long TotalTokens { get; set; }
+
+    /// <summary>
+    /// Required agent labels persisted when the run is queued, so label-based routing
+    /// survives application restart during rehydration.
+    /// </summary>
+    public IReadOnlyList<string>? QueuedRequiredLabels { get; set; }
 }

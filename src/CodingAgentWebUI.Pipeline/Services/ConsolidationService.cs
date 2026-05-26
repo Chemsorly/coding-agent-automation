@@ -156,23 +156,36 @@ public sealed class ConsolidationService : IConsolidationService
                     : null;
                 var workspacePath = GetWorkspacePath(run.RunId);
 
-                var dispatched = await _dispatcher.TryDispatchAsync(
+                var result = await _dispatcher.TryDispatchAsync(
                     run, type, templateId, feedbackDataJson, workspacePath, ct);
 
-                if (!dispatched)
+                switch (result)
                 {
-                    _logger.Warning(
-                        "Consolidation run {RunId} rejected: no idle agent available for {Type}/{TemplateName}",
-                        run.RunId, type, templateName);
+                    case ConsolidationDispatchResult.Dispatched:
+                        // Clear feedback data cache after successful dispatch
+                        ClearFeedbackDataForRun(run.RunId);
+                        break;
 
-                    _runningRuns.TryRemove(key, out _);
-                    DeletePersistedRun(run.RunId);
-                    ClearFeedbackDataForRun(run.RunId);
-                    return null;
+                    case ConsolidationDispatchResult.Queued:
+                        // Run stays in _runningRuns (concurrency guard), status transitions to Queued
+                        run.Status = ConsolidationRunStatus.Queued;
+                        await PersistRunAsync(run, ct);
+                        ClearFeedbackDataForRun(run.RunId);
+                        _logger.Information(
+                            "Consolidation run {RunId} queued: no idle agent for {Type}/{TemplateName}",
+                            run.RunId, type, templateName);
+                        OnChange?.Invoke();
+                        return run;
+
+                    case ConsolidationDispatchResult.Failed:
+                        _logger.Warning(
+                            "Consolidation run {RunId} dispatch failed for {Type}/{TemplateName}",
+                            run.RunId, type, templateName);
+                        _runningRuns.TryRemove(key, out _);
+                        DeletePersistedRun(run.RunId);
+                        ClearFeedbackDataForRun(run.RunId);
+                        return null;
                 }
-
-                // Clear feedback data cache after successful dispatch
-                ClearFeedbackDataForRun(run.RunId);
             }
             catch (Exception ex)
             {
@@ -284,7 +297,7 @@ public sealed class ConsolidationService : IConsolidationService
             await PersistRunAsync(run, ct);
 
             // Remove from running tracker if no longer running
-            if (status != ConsolidationRunStatus.Running)
+            if (status != ConsolidationRunStatus.Running && status != ConsolidationRunStatus.Queued)
             {
                 var key = (run.Type, run.TemplateId);
                 _runningRuns.TryRemove(key, out _);
@@ -347,6 +360,107 @@ public sealed class ConsolidationService : IConsolidationService
         {
             _logger.Error(ex, "Failed to save harness suggestions to {Path}", _harnessSuggestionsPath);
         }
+    }
+
+    /// <inheritdoc />
+    // TODO: TOCTOU race — read-check-write on JSON file without synchronization. If CancelQueuedRunAsync
+    // is called concurrently for the same runId, the cancel can be lost. Add a lock or use _runningRuns as source of truth.
+    public async Task TransitionToRunningAsync(string runId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(runId);
+        if (!Guid.TryParse(runId, out _)) return;
+
+        var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
+        if (!File.Exists(filePath)) return;
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(filePath, ct);
+            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+            if (run is null || run.Status != ConsolidationRunStatus.Queued) return;
+
+            run.Status = ConsolidationRunStatus.Running;
+            await PersistRunAsync(run, ct);
+
+            _logger.Information("Consolidation run {RunId} transitioned from Queued to Running", runId);
+            OnChange?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to transition consolidation run {RunId} to Running", runId);
+        }
+    }
+
+    /// <inheritdoc />
+    // TODO: TOCTOU race — same read-check-write pattern as TransitionToRunningAsync. Both methods can
+    // race on the same file without mutual exclusion. Add synchronization to prevent lost updates.
+    public async Task<bool> CancelQueuedRunAsync(string runId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(runId);
+        if (!Guid.TryParse(runId, out _)) return false;
+
+        var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
+        if (!File.Exists(filePath)) return false;
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(filePath, ct);
+            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+            if (run is null || run.Status != ConsolidationRunStatus.Queued) return false;
+
+            run.Status = ConsolidationRunStatus.Cancelled;
+            run.CompletedAtUtc = DateTime.UtcNow;
+            run.Summary = "Cancelled by user";
+            await PersistRunAsync(run, ct);
+
+            var key = (run.Type, run.TemplateId);
+            _runningRuns.TryRemove(key, out _);
+
+            _logger.Information("Consolidation run {RunId} cancelled", runId);
+            OnChange?.Invoke();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to cancel consolidation run {RunId}", runId);
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ConsolidationRun>> RehydrateQueuedRunsAsync(CancellationToken ct)
+    {
+        var queuedRuns = new List<ConsolidationRun>();
+
+        if (!Directory.Exists(_consolidationRunsDirectory))
+            return queuedRuns;
+
+        foreach (var file in Directory.GetFiles(_consolidationRunsDirectory, "*.json"))
+        {
+            try
+            {
+                var json = await File.ReadAllTextAsync(file, ct);
+                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+                if (run is null) continue;
+
+                if (run.Status == ConsolidationRunStatus.Queued)
+                {
+                    var key = (run.Type, run.TemplateId);
+                    _runningRuns.TryAdd(key, run);
+                    queuedRuns.Add(run);
+
+                    _logger.Information(
+                        "Rehydrated queued consolidation run {RunId} ({Type}/{TemplateId})",
+                        run.RunId, run.Type, run.TemplateId ?? "Global");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to process consolidation run file {File} during rehydration", file);
+            }
+        }
+
+        return queuedRuns;
     }
 
     /// <summary>

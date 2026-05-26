@@ -990,6 +990,8 @@ select option { background: var(--surface); color: var(--text); }
 .consolidation-status-running { background: var(--bg-info); color: var(--accent-light); }
 .consolidation-status-succeeded { background: var(--bg-success); color: var(--success); }
 .consolidation-status-failed { background: var(--bg-error); color: var(--error); }
+.consolidation-status-queued { background: var(--bg-warning, #3d3000); color: var(--warning, #f5a623); }
+.consolidation-status-cancelled { background: var(--bg); color: var(--text-muted); }
 
 .consolidation-suggestions-meta { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 12px; }
 .consolidation-suggestions-list { display: flex; flex-direction: column; gap: 10px; }
