@@ -220,6 +220,9 @@ public class ConsolidationPromptBuilderTests
         var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(3, null);
 
         result.Should().NotContain("Do Not Duplicate");
+    }
+
+    [Fact]
     public void BuildRefactoringDetectionPrompt_ContainsNewSchemaFields()
     {
         var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();

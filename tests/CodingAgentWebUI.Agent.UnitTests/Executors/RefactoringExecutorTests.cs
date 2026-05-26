@@ -323,6 +323,9 @@ public class RefactoringExecutorTests : IDisposable
         // Assert — old issue should be filtered out, no issue context in prompt
         capturedPrompt.Should().NotContain("Old issue");
         capturedPrompt.Should().NotContain("Do Not Duplicate");
+    }
+
+    [Fact]
     public void FormatIssueBody_WithNewFields_RendersMetadata()
     {
         var proposal = new RefactoringProposal
