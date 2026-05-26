@@ -79,8 +79,34 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                 }
             }
 
+            // 2.5. Query open issues for deduplication context
+            string? issueContext = null;
+            try
+            {
+                var refactoringResult = await issueProvider.ListOpenIssuesAsync(
+                    1, 30, new[] { AgentLabels.Refactoring, AgentLabels.AgentGenerated }, ct);
+                var openRefactoringIssues = refactoringResult.Items;
+
+                var allOpenResult = await issueProvider.ListOpenIssuesAsync(1, 50, null, ct);
+                var cutoff = DateTime.UtcNow.AddDays(-30);
+                var recentOpenIssues = allOpenResult.Items
+                    .Where(i => i.CreatedAt >= cutoff)
+                    .Where(i => !openRefactoringIssues.Any(r => r.Identifier == i.Identifier))
+                    .Take(50 - openRefactoringIssues.Count)
+                    .ToList();
+
+                issueContext = ConsolidationPromptBuilder.BuildOpenIssueContext(openRefactoringIssues, recentOpenIssues);
+                if (!string.IsNullOrEmpty(issueContext))
+                    Logger.Information("Including {Count} open issues as context for refactoring detection in run {RunId}",
+                        openRefactoringIssues.Count + recentOpenIssues.Count, job.JobId);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Logger.Warning(ex, "Failed to query open issues for context in run {RunId}, continuing without", job.JobId);
+            }
+
             // 3. Build prompt
-            var prompt = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(job.PipelineConfiguration.MaxRefactoringProposals);
+            var prompt = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(job.PipelineConfiguration.MaxRefactoringProposals, issueContext);
 
             // 4. Execute agent
             Logger.Information("Executing refactoring detection agent for run {RunId}", job.JobId);

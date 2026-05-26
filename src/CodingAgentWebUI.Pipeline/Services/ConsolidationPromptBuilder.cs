@@ -1,4 +1,5 @@
 using System.Text;
+using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -134,7 +135,7 @@ public static class ConsolidationPromptBuilder
     /// Instructs agent to produce bounded proposals as JSON.
     /// </summary>
     /// <param name="maxProposals">Maximum number of proposals the agent should produce.</param>
-    public static string BuildRefactoringDetectionPrompt(int maxProposals = 3)
+    public static string BuildRefactoringDetectionPrompt(int maxProposals = 3, string? issueContext = null)
     {
         var sb = new StringBuilder();
 
@@ -165,6 +166,13 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- Focus on areas with high file counts or deep nesting as indicators of complexity");
         sb.AppendLine("- Check for consistency in naming, structure, and patterns across similar components");
         sb.AppendLine();
+
+        // Insert issue context between Exploration Strategy and Output Format
+        if (!string.IsNullOrEmpty(issueContext))
+        {
+            sb.Append(issueContext);
+            sb.AppendLine();
+        }
 
         // Output format
         sb.AppendLine("## Output Format");
@@ -221,6 +229,47 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- Prefer proposals that are mechanical and low-risk (file moves, renames, extractions) over sweeping architectural changes");
         sb.AppendLine("- Do NOT propose changes that require coordinated modifications across serialization boundaries (e.g., JSON schema + MessagePack wire format + all consumers simultaneously)");
         sb.AppendLine("- If a large refactoring is warranted, propose only the smallest first step that delivers value independently");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds a prompt section listing open issues to prevent duplicate proposals.
+    /// Returns empty string if both lists are empty.
+    /// </summary>
+    public static string BuildOpenIssueContext(
+        IReadOnlyList<IssueSummary> refactoringIssues,
+        IReadOnlyList<IssueSummary> otherIssues)
+    {
+        ArgumentNullException.ThrowIfNull(refactoringIssues);
+        ArgumentNullException.ThrowIfNull(otherIssues);
+
+        if (refactoringIssues.Count == 0 && otherIssues.Count == 0)
+            return string.Empty;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("## Existing Open Issues — Do Not Duplicate");
+        sb.AppendLine();
+
+        if (refactoringIssues.Count > 0)
+        {
+            sb.AppendLine("### Open Refactoring Issues (agent-generated, still pending)");
+            foreach (var issue in refactoringIssues)
+                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
+            sb.AppendLine();
+        }
+
+        if (otherIssues.Count > 0)
+        {
+            sb.AppendLine("### Other Recent Open Issues (may overlap)");
+            foreach (var issue in otherIssues)
+                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("Do NOT propose refactoring that overlaps with any issue listed above.");
+        sb.AppendLine("If you identify an opportunity that partially overlaps, note the related issue number in your rationale and explain why your proposal is distinct.");
+        sb.AppendLine();
 
         return sb.ToString();
     }

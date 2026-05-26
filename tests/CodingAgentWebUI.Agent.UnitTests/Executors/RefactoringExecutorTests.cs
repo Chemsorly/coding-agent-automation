@@ -22,6 +22,12 @@ public class RefactoringExecutorTests : IDisposable
     {
         _tempDir = Path.Combine(Path.GetTempPath(), $"refactoring-test-{Guid.NewGuid()}");
         Directory.CreateDirectory(_tempDir);
+
+        // Default: return empty issue lists so the new issue-context query path succeeds
+        var emptyResult = new PagedResult<IssueSummary> { Items = [], Page = 1, PageSize = 50, HasMore = false };
+        _mockIssueProvider
+            .Setup(x => x.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(emptyResult);
     }
 
     public void Dispose()
@@ -208,6 +214,115 @@ public class RefactoringExecutorTests : IDisposable
         summary.Should().Contain("2");
         summary.Should().Contain("#10");
         summary.Should().Contain("#11");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_IssueQuerySucceeds_PromptContainsIssueContext()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        var refactoringIssues = new PagedResult<IssueSummary>
+        {
+            Items = [new IssueSummary { Identifier = "100", Title = "Extract retry logic", Labels = ["refactoring", "agent-generated"], CreatedAt = DateTime.UtcNow.AddDays(-5) }],
+            Page = 1, PageSize = 30, HasMore = false
+        };
+        var allIssues = new PagedResult<IssueSummary>
+        {
+            Items = [new IssueSummary { Identifier = "200", Title = "Add caching layer", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-2) }],
+            Page = 1, PageSize = 50, HasMore = false
+        };
+
+        _mockIssueProvider
+            .Setup(x => x.ListOpenIssuesAsync(1, 30, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(refactoringIssues);
+        _mockIssueProvider
+            .Setup(x => x.ListOpenIssuesAsync(1, 50, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(allIssues);
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        string? capturedPrompt = null;
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedPrompt = req.Prompt)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Act
+        await executor.ExecuteAsync(job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        capturedPrompt.Should().Contain("Do Not Duplicate");
+        capturedPrompt.Should().Contain("Extract retry logic");
+        capturedPrompt.Should().Contain("Add caching layer");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_IssueQueryThrows_ContinuesWithoutContext()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        _mockIssueProvider
+            .Setup(x => x.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Provider unavailable"));
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Act
+        var result = await executor.ExecuteAsync(job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — run should succeed (graceful degradation), not fail due to issue query
+        result.Success.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_IssueQueryReturnsOldIssues_FilteredOut()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        var emptyRefactoring = new PagedResult<IssueSummary> { Items = [], Page = 1, PageSize = 30, HasMore = false };
+        var oldIssues = new PagedResult<IssueSummary>
+        {
+            Items = [new IssueSummary { Identifier = "50", Title = "Old issue", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-60) }],
+            Page = 1, PageSize = 50, HasMore = false
+        };
+
+        _mockIssueProvider
+            .Setup(x => x.ListOpenIssuesAsync(1, 30, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(emptyRefactoring);
+        _mockIssueProvider
+            .Setup(x => x.ListOpenIssuesAsync(1, 50, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(oldIssues);
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        string? capturedPrompt = null;
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedPrompt = req.Prompt)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Act
+        await executor.ExecuteAsync(job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — old issue should be filtered out, no issue context in prompt
+        capturedPrompt.Should().NotContain("Old issue");
+        capturedPrompt.Should().NotContain("Do Not Duplicate");
     }
 
     [Fact]
