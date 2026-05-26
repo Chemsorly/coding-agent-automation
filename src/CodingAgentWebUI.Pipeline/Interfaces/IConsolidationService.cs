@@ -64,6 +64,31 @@ public interface IConsolidationService
     Task CleanupOrphanedRunsAsync(CancellationToken ct);
 
     /// <summary>
+    /// Cancels a queued consolidation run. Removes it from the queue and concurrency tracker,
+    /// and updates the persisted file to Cancelled status.
+    /// </summary>
+    /// <param name="runId">The run ID to cancel.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns><c>true</c> if the run was found and cancelled; <c>false</c> otherwise.</returns>
+    Task<bool> CancelQueuedRunAsync(string runId, CancellationToken ct);
+
+    /// <summary>
+    /// Transitions a queued run to Running status. Called by the drain service when
+    /// a queued consolidation job is dispatched to an agent.
+    /// </summary>
+    /// <param name="runId">The run ID to transition.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task TransitionToRunningAsync(string runId, CancellationToken ct);
+
+    /// <summary>
+    /// Rehydrates queued consolidation runs from persisted files on startup.
+    /// Re-adds them to the concurrency tracker and returns them for re-enqueuing.
+    /// </summary>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>List of runs that were in Queued status and need re-enqueuing.</returns>
+    Task<IReadOnlyList<ConsolidationRun>> RehydrateQueuedRunsAsync(CancellationToken ct);
+
+    /// <summary>
     /// Fired when any consolidation run changes state (created, completed, or failed).
     /// </summary>
     event Action? OnChange;

@@ -17,7 +17,9 @@ public enum ConsolidationRunStatus
 {
     Running,
     Succeeded,
-    Failed
+    Failed,
+    Queued,
+    Cancelled
 }
 
 /// <summary>
@@ -47,4 +49,10 @@ public sealed class ConsolidationRun
     /// <see cref="ConsolidationJobResult.DiffSummaryTokenUsage"/>.
     /// </summary>
     public long TotalTokens { get; set; }
+
+    /// <summary>
+    /// Required agent labels resolved at enqueue time. Persisted to enable restart rehydration
+    /// of queued runs without re-resolving provider configs.
+    /// </summary>
+    public IReadOnlyList<string>? QueuedRequiredLabels { get; set; }
 }
