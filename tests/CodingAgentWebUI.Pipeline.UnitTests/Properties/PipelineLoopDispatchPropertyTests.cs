@@ -2,7 +2,6 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using CodingAgentWebUI.Pipeline.UnitTests.Helpers;
 using FsCheck;
 using FsCheck.Xunit;
 using Moq;

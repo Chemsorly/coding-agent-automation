@@ -1,10 +1,13 @@
 using CodingAgentWebUI.Pipeline.Models;
 
-namespace CodingAgentWebUI.IntegrationTests.Helpers;
+namespace CodingAgentWebUI.TestUtilities;
 
 /// <summary>
 /// Factory for creating PipelineConfiguration instances in tests with all properties
 /// explicitly set. This prevents tests from silently breaking when production defaults change.
+/// 
+/// Use <see cref="Default"/> for most tests. Use <see cref="WithCodeReview"/> for tests
+/// that need code review enabled.
 /// </summary>
 public static class TestPipelineConfig
 {

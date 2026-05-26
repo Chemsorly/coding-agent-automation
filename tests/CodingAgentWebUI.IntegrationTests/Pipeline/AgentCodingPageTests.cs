@@ -6,6 +6,7 @@ using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.IntegrationTests.Helpers;
+using CodingAgentWebUI.TestUtilities;
 
 namespace CodingAgentWebUI.IntegrationTests.Pipeline;
 
