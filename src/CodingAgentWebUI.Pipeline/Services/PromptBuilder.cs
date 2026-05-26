@@ -10,7 +10,6 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// </summary>
 public static class PromptBuilder
 {
-
     /// <summary>
     /// Constructs an analysis-only prompt. The agent examines the codebase in context of the
     /// issue and writes its recommendation to .agent/analysis.md without making any other changes.
