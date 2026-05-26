@@ -10,51 +10,6 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// </summary>
 public static class PromptBuilder
 {
-    /// <summary>
-    /// The file path (relative to workspace) where the agent writes its analysis.
-    /// </summary>
-    public const string AnalysisFilePath = AgentWorkspacePaths.AnalysisFilePath;
-
-    /// <summary>
-    /// The file path (relative to workspace) where the agent writes its structured assessment.
-    /// </summary>
-    public const string AnalysisAssessmentFilePath = AgentWorkspacePaths.AnalysisAssessmentFilePath;
-
-    /// <summary>
-    /// The file path (relative to workspace) where the pipeline writes consolidated
-    /// review findings for the fix agent to read.
-    /// </summary>
-    public const string ReviewFindingsFilePath = AgentWorkspacePaths.ReviewFindingsFilePath;
-
-    /// <summary>
-    /// The file path (relative to workspace) where the analysis review agent writes its feedback.
-    /// </summary>
-    public const string AnalysisReviewFilePath = AgentWorkspacePaths.AnalysisReviewFilePath;
-
-    /// <summary>
-    /// Returns a per-agent findings file path to prevent sub-agent overwrite conflicts.
-    /// Each review agent writes to its own isolated file.
-    /// </summary>
-    public static string GetReviewFindingsFilePath(string agentName)
-        => AgentWorkspacePaths.GetReviewFindingsFilePath(agentName);
-
-    /// <summary>
-    /// The directory (relative to workspace) where quality gate output files are written.
-    /// Each gate writes its stdout/stderr here; the agent discovers files by listing the directory.
-    /// </summary>
-    public const string QualityGatesOutputDirectory = AgentWorkspacePaths.QualityGatesOutputDirectory;
-
-    /// <summary>
-    /// The file path (relative to workspace) where the pipeline writes issue context
-    /// (description + comments) for the agent to read on demand.
-    /// </summary>
-    public const string IssueContextFilePath = AgentWorkspacePaths.IssueContextFilePath;
-
-    /// <summary>
-    /// The file path (relative to workspace) where the pipeline writes brain context
-    /// for the agent to read on demand.
-    /// </summary>
-    public const string BrainContextFilePath = AgentWorkspacePaths.BrainContextFilePath;
 
     /// <summary>
     /// Constructs an analysis-only prompt. The agent examines the codebase in context of the
@@ -77,14 +32,14 @@ public static class PromptBuilder
         // Pipeline mechanics (non-configurable)
         sb.AppendLine("Do NOT implement any changes. Only analyze and recommend.");
         sb.AppendLine();
-        sb.AppendLine($"Write your analysis to the file `{AnalysisFilePath}` in the workspace. Do NOT print the analysis to stdout — only write it to that file.");
+        sb.AppendLine($"Write your analysis to the file `{AgentWorkspacePaths.AnalysisFilePath}` in the workspace. Do NOT print the analysis to stdout — only write it to that file.");
         sb.AppendLine();
         sb.AppendLine("Use sub-agents to cover more ground and provide a thorough analysis. For example, delegate parallel investigations to explore different parts of the codebase — one sub-agent could examine the data layer while another looks at the UI components, or one traces the call chain while another checks for test coverage gaps. This produces a more complete picture than a single-threaded read-through.");
         sb.AppendLine();
 
         AppendIssueContext(sb, issue, parsed);
 
-        sb.AppendLine($"After writing your analysis to `{AnalysisFilePath}`, also write a structured assessment to `{AnalysisAssessmentFilePath}` with this exact JSON schema:");
+        sb.AppendLine($"After writing your analysis to `{AgentWorkspacePaths.AnalysisFilePath}`, also write a structured assessment to `{AgentWorkspacePaths.AnalysisAssessmentFilePath}` with this exact JSON schema:");
         sb.AppendLine();
         sb.AppendLine("```json");
         sb.AppendLine("{");
@@ -105,11 +60,11 @@ public static class PromptBuilder
 
         if (brainContextWritten)
         {
-            sb.AppendLine($"Project knowledge and conventions are at `{BrainContextFilePath}` — consult it for coding standards and patterns.");
+            sb.AppendLine($"Project knowledge and conventions are at `{AgentWorkspacePaths.BrainContextFilePath}` — consult it for coding standards and patterns.");
             sb.AppendLine();
         }
 
-        sb.AppendLine($"Analyze the workspace now and write your recommendation to `{AnalysisFilePath}`.");
+        sb.AppendLine($"Analyze the workspace now and write your recommendation to `{AgentWorkspacePaths.AnalysisFilePath}`.");
 
         return sb.ToString().TrimEnd();
     }
@@ -129,7 +84,7 @@ public static class PromptBuilder
 
         sb.AppendLine(reviewInstructions);
         sb.AppendLine();
-        sb.AppendLine($"Write your findings to `{AnalysisReviewFilePath}`. Do NOT print findings to stdout — only write them to that file.");
+        sb.AppendLine($"Write your findings to `{AgentWorkspacePaths.AnalysisReviewFilePath}`. Do NOT print findings to stdout — only write them to that file.");
         sb.AppendLine();
         sb.AppendLine("Do NOT modify `.agent/analysis.md` or `.agent/analysis-assessment.json` — only write your review.");
         sb.AppendLine();
@@ -151,7 +106,7 @@ public static class PromptBuilder
 
         sb.AppendLine(refinementInstructions);
         sb.AppendLine();
-        sb.AppendLine($"The review findings are at `{AnalysisReviewFilePath}`. Read them, then rewrite `{AnalysisFilePath}` and update `{AnalysisAssessmentFilePath}` as needed.");
+        sb.AppendLine($"The review findings are at `{AgentWorkspacePaths.AnalysisReviewFilePath}`. Read them, then rewrite `{AgentWorkspacePaths.AnalysisFilePath}` and update `{AgentWorkspacePaths.AnalysisAssessmentFilePath}` as needed.");
 
         return sb.ToString().TrimEnd();
     }
@@ -177,14 +132,14 @@ public static class PromptBuilder
 
         // Pipeline mechanics (non-configurable)
         sb.AppendLine(PipelineConstants.GitRestrictionFull);
-        sb.AppendLine($"The analysis for this issue is at `{AnalysisFilePath}` — read it before implementing.");
+        sb.AppendLine($"The analysis for this issue is at `{AgentWorkspacePaths.AnalysisFilePath}` — read it before implementing.");
         sb.AppendLine();
 
         AppendIssueContext(sb, issue, parsed);
 
         if (brainContextWritten)
         {
-            sb.AppendLine($"Project knowledge and conventions are at `{BrainContextFilePath}` — consult it for coding standards and patterns.");
+            sb.AppendLine($"Project knowledge and conventions are at `{AgentWorkspacePaths.BrainContextFilePath}` — consult it for coding standards and patterns.");
             sb.AppendLine();
         }
 
@@ -274,14 +229,14 @@ public static class PromptBuilder
         sb.AppendLine();
         sb.AppendLine(PipelineConstants.GitRestrictionFull);
         sb.AppendLine();
-        sb.AppendLine($"Review findings have been written to `{ReviewFindingsFilePath}`. Read the file, then fix only items marked [CRITICAL].");
+        sb.AppendLine($"Review findings have been written to `{AgentWorkspacePaths.ReviewFindingsFilePath}`. Read the file, then fix only items marked [CRITICAL].");
         return sb.ToString().TrimEnd();
     }
 
     private static void AppendIssueContext(StringBuilder sb, IssueDetail issue, ParsedIssue parsed,
         string? issueContextPathOverride = null)
     {
-        var contextPath = issueContextPathOverride ?? IssueContextFilePath;
+        var contextPath = issueContextPathOverride ?? AgentWorkspacePaths.IssueContextFilePath;
         sb.AppendLine($"# Issue #{issue.Identifier}: {issue.Title}");
         sb.AppendLine();
         sb.AppendLine($"The full issue description and discussion thread are at `{contextPath}` — read it for context.");
@@ -580,7 +535,7 @@ public static class PromptBuilder
             }
         }
 
-        sb.AppendLine($"Refer to `{IssueContextFilePath}` for the full issue description and comments.");
+        sb.AppendLine($"Refer to `{AgentWorkspacePaths.IssueContextFilePath}` for the full issue description and comments.");
         sb.AppendLine();
         sb.AppendLine(PipelineConstants.GitRestrictionShort);
 

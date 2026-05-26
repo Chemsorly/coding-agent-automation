@@ -165,7 +165,7 @@ internal partial class AgentPhaseExecutor
                     });
                     context.Callbacks.NotifyChange();
 
-                    var agentFindingsRelativePath = PromptBuilder.GetReviewFindingsFilePath(agent.Name);
+                    var agentFindingsRelativePath = AgentWorkspacePaths.GetReviewFindingsFilePath(agent.Name);
                     var findingsFilePath = Path.Combine(run.WorkspacePath!, agentFindingsRelativePath);
                     if (File.Exists(findingsFilePath))
                         File.Delete(findingsFilePath);
@@ -255,7 +255,7 @@ internal partial class AgentPhaseExecutor
                     context.Callbacks.EmitOutputLine($"📝 Code review: {iterationCriticalCount} critical findings — sending fix prompt");
 
                     // Write concatenated findings from all agents to the file so the fix agent can read it
-                    var findingsFileForFix = Path.Combine(run.WorkspacePath!, PromptBuilder.ReviewFindingsFilePath);
+                    var findingsFileForFix = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReviewFindingsFilePath);
                     await File.WriteAllTextAsync(findingsFileForFix, iterationFindingsText, ct);
 
                     var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt);

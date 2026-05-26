@@ -182,7 +182,7 @@ public class AnalysisConfidenceGateTests
     [Fact]
     public void AnalysisAssessmentFilePath_IsCorrect()
     {
-        PromptBuilder.AnalysisAssessmentFilePath.Should().Be(".agent/analysis-assessment.json");
+        AgentWorkspacePaths.AnalysisAssessmentFilePath.Should().Be(".agent/analysis-assessment.json");
     }
 
     [Fact]
