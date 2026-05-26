@@ -224,6 +224,8 @@ public sealed class PipelineRun
         FailureReason = FailureReason,
         Feedback = Feedback,
         TotalTokens = TotalTokens,
-        TotalCost = TotalCost
+        TotalCost = TotalCost,
+        DecompositionSubIssuesCreated = DecompositionSubIssuesCreated,
+        DecompositionSubIssuesAttempted = DecompositionSubIssuesAttempted
     };
 }

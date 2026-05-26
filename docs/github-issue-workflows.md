@@ -17,6 +17,9 @@ The pipeline uses these `agent:*` labels (created automatically on first run):
 | `agent:wont-do` | ⚪ Gray | Agent determined no code changes are needed |
 | `agent:done` | 🔵 Blue | Pipeline completed, PR awaiting review |
 | `agent:cancelled` | 🟣 Light blue | Pipeline run was cancelled by user |
+| `agent:epic` | 🟣 Purple | Epic queued for decomposition analysis |
+| `agent:epic-review` | 🟡 Yellow | Decomposition plan posted, awaiting human approval |
+| `agent:epic-approved` | 🟢 Green | Plan approved, queued for sub-issue creation |
 
 Only one `agent:*` label should be present on an issue at a time. The pipeline swaps labels atomically (removes all, then adds the new one).
 
@@ -76,6 +79,20 @@ Only one `agent:*` label should be present on an issue at a time. The pipeline s
 
 If the user wants a fresh run instead of rework, they close the existing PR first, then add `agent:next`. The pipeline only enters rework mode when an open agent PR exists for the issue.
 
+## Flow 7: Epic Decomposition
+
+1. **User** adds `agent:epic` label to a high-level GitHub issue describing a feature or goal
+2. **Pipeline** picks it up (in closed-loop mode when `DecompositionEnabled` is true on the template)
+3. **Pipeline** swaps label to `agent:in-progress`
+4. **Pipeline** explores the codebase, downloads open issues for deduplication, generates a decomposition plan, validates it via adversarial review
+5. **Pipeline** posts the plan as a comment on the epic, swaps label to `agent:epic-review`
+6. **User** reviews the proposed sub-issues on GitHub
+7. **User** approves by swapping label to `agent:epic-approved`, OR requests changes by posting a comment and swapping back to `agent:epic`
+8. **Pipeline** picks up the approved epic, generates full sub-issue descriptions, creates GitHub issues sequentially with dependency resolution
+9. **Pipeline** posts a summary comment listing created sub-issues, swaps label to `agent:done`
+
+If either phase fails, the label is swapped to `agent:error`. The user can retry by removing `agent:error` and adding `agent:epic` (re-runs Phase 1) or `agent:epic-approved` (re-runs Phase 2 only).
+
 ## Closed-Loop Mode
 
 When the pipeline loop is active, it polls for `agent:next` issues automatically:
@@ -84,3 +101,4 @@ When the pipeline loop is active, it polls for `agent:next` issues automatically
 - Issues with `agent:error` or `agent:needs-refinement` are **skipped** (even if they also have `agent:next`)
 - One issue is processed at a time; the loop waits for the current run to finish before starting the next
 - Configurable poll interval, max runs per cycle, and backoff on failures
+- When `DecompositionEnabled` is true on a template, the loop also polls for `agent:epic` and `agent:epic-approved` issues and dispatches them for decomposition

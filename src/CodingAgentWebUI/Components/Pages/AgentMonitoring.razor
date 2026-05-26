@@ -559,6 +559,13 @@
                             <div><strong>Findings:</strong> ✅ No issues found</div>
                         }
                     }
+                    @if (_selectedHistoryRun.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+                    {
+                        @if (_selectedHistoryRun.DecompositionSubIssuesAttempted > 0)
+                        {
+                            <div><strong>Sub-Issues:</strong> @_selectedHistoryRun.DecompositionSubIssuesCreated/@_selectedHistoryRun.DecompositionSubIssuesAttempted created</div>
+                        }
+                    }
                     @if (_selectedHistoryRun.TotalCost is not null and > 0m)
                     {
                         <div><strong>Cost:</strong> @CostFormatter.FormatCost(_selectedHistoryRun.TotalCost)</div>

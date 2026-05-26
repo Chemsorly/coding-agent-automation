@@ -61,4 +61,10 @@ public sealed class PipelineRunSummary
 
     /// <summary>Accumulated total cost (USD), or null if no cost data available.</summary>
     public decimal? TotalCost { get; init; }
+
+    /// <summary>Number of sub-issues successfully created during the Decomposition phase.</summary>
+    public int DecompositionSubIssuesCreated { get; init; }
+
+    /// <summary>Total number of sub-issues attempted during the Decomposition phase.</summary>
+    public int DecompositionSubIssuesAttempted { get; init; }
 }
