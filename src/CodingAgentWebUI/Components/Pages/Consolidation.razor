@@ -89,14 +89,14 @@
                         <div class="consolidation-card-actions">
                             @if (supportsBrain)
                             {
-                                <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.BrainConsolidation, template.Id)"
+                                <button class="btn-trigger" disabled="@IsRunningOrQueued(ConsolidationRunType.BrainConsolidation, template.Id)"
                                         @onclick="() => TriggerConsolidation(ConsolidationRunType.BrainConsolidation, template.Id, template.Name)">
                                     🧠 Brain Consolidation
                                 </button>
                             }
                             @if (supportsRefactoring)
                             {
-                                <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.RefactoringDetection, template.Id)"
+                                <button class="btn-trigger" disabled="@IsRunningOrQueued(ConsolidationRunType.RefactoringDetection, template.Id)"
                                         @onclick="() => TriggerConsolidation(ConsolidationRunType.RefactoringDetection, template.Id, template.Name)">
                                     🔍 Refactoring Scan
                                 </button>
@@ -141,7 +141,7 @@
             }
         }
         <div class="consolidation-card-actions" style="margin-top: 12px;">
-            <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.HarnessSuggestions, null)"
+            <button class="btn-trigger" disabled="@IsRunningOrQueued(ConsolidationRunType.HarnessSuggestions, null)"
                     @onclick="() => TriggerConsolidation(ConsolidationRunType.HarnessSuggestions, null, null)">
                 ✨ Generate Suggestions
             </button>
@@ -166,6 +166,7 @@
                             <th>Started</th>
                             <th>Status</th>
                             <th>Summary</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -181,6 +182,12 @@
                                     </span>
                                 </td>
                                 <td class="consolidation-summary-cell" title="@(run.Summary ?? "—")">@(run.Summary ?? "—")</td>
+                                <td>
+                                    @if (run.Status == ConsolidationRunStatus.Queued)
+                                    {
+                                        <button class="btn-cancel" @onclick="() => CancelQueuedRun(run.RunId)">Cancel</button>
+                                    }
+                                </td>
                             </tr>
                         }
                     </tbody>
@@ -272,16 +279,19 @@
             {
                 _statusMessage = type switch
                 {
-                    ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — no agents available or already running.",
-                    ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — no agents available or already running.",
-                    ConsolidationRunType.HarnessSuggestions => "Harness suggestions rejected — no agents available or already running.",
+                    ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — already running or queued.",
+                    ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — already running or queued.",
+                    ConsolidationRunType.HarnessSuggestions => "Harness suggestions rejected — already running or queued.",
                     _ => "Consolidation rejected."
                 };
                 _statusIsError = true;
             }
             else
             {
-                _statusMessage = $"{FormatRunType(type)} triggered successfully.";
+                var statusText = run.Status == ConsolidationRunStatus.Queued
+                    ? "queued — waiting for an idle agent"
+                    : "triggered successfully";
+                _statusMessage = $"{FormatRunType(type)} {statusText}.";
                 await LoadDataAsync();
             }
         }
@@ -293,11 +303,28 @@
         }
     }
 
-    private bool IsRunning(ConsolidationRunType type, string? templateId)
+    private async Task CancelQueuedRun(string runId)
+    {
+        try
+        {
+            await ConsolidationService.CancelQueuedRunAsync(runId, CancellationToken.None);
+            _statusMessage = "Queued run cancelled.";
+            _statusIsError = false;
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to cancel queued run {RunId}", runId);
+            _statusMessage = $"Error cancelling run: {ex.Message}";
+            _statusIsError = true;
+        }
+    }
+
+    private bool IsRunningOrQueued(ConsolidationRunType type, string? templateId)
     {
         return _runHistory.Any(r => r.Type == type
             && r.TemplateId == templateId
-            && r.Status == ConsolidationRunStatus.Running);
+            && (r.Status == ConsolidationRunStatus.Running || r.Status == ConsolidationRunStatus.Queued));
     }
 
     private async void HandleConsolidationChanged()

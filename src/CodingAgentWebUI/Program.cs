@@ -109,11 +109,40 @@ builder.Services.AddHostedService(sp => new HeartbeatMonitorService(
     sp.GetRequiredService<IConfigurationStore>(),
     Serilog.Log.Logger));
 
+// Consolidation queue service
+builder.Services.AddSingleton(sp => new ConsolidationQueueService(Serilog.Log.Logger));
+
+// Consolidation services (registered before drain service so they're available)
+builder.Services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
+    Serilog.Log.Logger,
+    pipelineConfig,
+    sp.GetRequiredService<IPipelineRunHistoryService>()));
+builder.Services.AddSingleton<ConsolidationBadgeService>();
+
+// Agent communication abstraction (wraps SignalR IHubContext)
+builder.Services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
+    sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));
+
+// Consolidation dispatcher (needs IConsolidationService, queue service, agent comm)
+builder.Services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationDispatcher(
+    sp.GetRequiredService<AgentRegistryService>(),
+    sp.GetRequiredService<JobDispatcherService>(),
+    sp.GetRequiredService<ConsolidationQueueService>(),
+    sp.GetRequiredService<IAgentCommunication>(),
+    sp.GetRequiredService<IConfigurationStore>(),
+    sp.GetRequiredService<ITokenVendingService>(),
+    sp.GetRequiredService<IConsolidationService>(),
+    pipelineConfig,
+    Serilog.Log.Logger));
+
 // Job queue drain service — periodically matches queued jobs to idle agents
 builder.Services.AddSingleton(sp => new JobQueueDrainService(
     sp.GetRequiredService<JobDispatcherService>(),
     sp.GetRequiredService<AgentRegistryService>(),
     sp.GetRequiredService<IJobDispatcher>(),
+    sp.GetRequiredService<ConsolidationQueueService>(),
+    sp.GetRequiredService<IConsolidationDispatcher>(),
+    sp.GetRequiredService<IConsolidationService>(),
     Serilog.Log.Logger));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<JobQueueDrainService>());
 
@@ -121,26 +150,6 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<JobQueueDrainServi
 builder.Services.AddSingleton<ProfileResolver>();
 builder.Services.AddSingleton<QualityGateResolver>();
 builder.Services.AddSingleton<ReviewerResolver>();
-
-// Agent communication abstraction (wraps SignalR IHubContext)
-builder.Services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
-    sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));
-
-// Consolidation services
-builder.Services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationDispatcher(
-    sp.GetRequiredService<AgentRegistryService>(),
-    sp.GetRequiredService<JobDispatcherService>(),
-    sp.GetRequiredService<IAgentCommunication>(),
-    sp.GetRequiredService<IConfigurationStore>(),
-    sp.GetRequiredService<ITokenVendingService>(),
-    pipelineConfig,
-    Serilog.Log.Logger));
-builder.Services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
-    Serilog.Log.Logger,
-    pipelineConfig,
-    sp.GetRequiredService<IPipelineRunHistoryService>(),
-    sp.GetRequiredService<IConsolidationDispatcher>()));
-builder.Services.AddSingleton<ConsolidationBadgeService>();
 
 builder.Services.AddSingleton<ModelFetchService>(sp => new ModelFetchService(
     sp.GetRequiredService<AgentRegistryService>(),
@@ -265,6 +274,17 @@ app.MapRazorComponents<App>()
 // Clean up orphaned consolidation runs from previous sessions
 var consolidationService = app.Services.GetRequiredService<IConsolidationService>();
 await consolidationService.CleanupOrphanedRunsAsync(CancellationToken.None);
+
+// Wire up queue callbacks, dispatcher, and rehydrate queued runs
+var queueService = app.Services.GetRequiredService<ConsolidationQueueService>();
+var consolidationServiceImpl = (CodingAgentWebUI.Pipeline.Services.ConsolidationService)consolidationService;
+consolidationServiceImpl.SetQueueCallbacks(
+    queueService.EnqueueJob,
+    queueService.MarkCancelled,
+    queueService.RemoveFromQueue);
+consolidationServiceImpl.SetDispatcher(app.Services.GetRequiredService<IConsolidationDispatcher>());
+
+await consolidationService.RehydrateQueuedRunsAsync(CancellationToken.None);
 
 app.Run();
 

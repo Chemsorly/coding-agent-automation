@@ -28,7 +28,10 @@ public class JobQueueDrainServiceTests
         _registry = new AgentRegistryService(logger);
         _dispatcher = new JobDispatcherService(_registry, logger);
         _mockJobDispatcher = new Mock<IJobDispatcher>();
-        _service = new JobQueueDrainService(_dispatcher, _registry, _mockJobDispatcher.Object, logger);
+        var consolidationQueue = new ConsolidationQueueService(logger);
+        var mockConsolidationDispatcher = new Mock<IConsolidationDispatcher>();
+        var mockConsolidationService = new Mock<IConsolidationService>();
+        _service = new JobQueueDrainService(_dispatcher, _registry, _mockJobDispatcher.Object, consolidationQueue, mockConsolidationDispatcher.Object, mockConsolidationService.Object, logger);
     }
 
     private AgentEntry RegisterIdleAgent(string agentId = "agent-1", IReadOnlyList<string>? labels = null)

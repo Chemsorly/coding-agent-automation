@@ -117,7 +117,9 @@ public class ConsolidationRunArbitraries
             from status in Gen.Elements(
                 ConsolidationRunStatus.Running,
                 ConsolidationRunStatus.Succeeded,
-                ConsolidationRunStatus.Failed)
+                ConsolidationRunStatus.Failed,
+                ConsolidationRunStatus.Queued,
+                ConsolidationRunStatus.Cancelled)
             from hasSummary in Gen.Elements(true, false)
             from summary in Gen.Elements(SummaryPool)
             select new ConsolidationRun

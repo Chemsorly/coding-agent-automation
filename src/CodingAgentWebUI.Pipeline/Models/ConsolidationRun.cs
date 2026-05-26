@@ -17,6 +17,18 @@ public enum ConsolidationRunStatus
 {
     Running,
     Succeeded,
+    Failed,
+    Queued,
+    Cancelled
+}
+
+/// <summary>
+/// The result of a consolidation dispatch attempt.
+/// </summary>
+public enum ConsolidationDispatchResult
+{
+    Dispatched,
+    Queued,
     Failed
 }
 
@@ -47,4 +59,28 @@ public sealed class ConsolidationRun
     /// <see cref="ConsolidationJobResult.DiffSummaryTokenUsage"/>.
     /// </summary>
     public long TotalTokens { get; set; }
+
+    /// <summary>
+    /// Required agent labels persisted for restart rehydration of queued runs.
+    /// </summary>
+    public IReadOnlyList<string>? QueuedRequiredLabels { get; set; }
+}
+
+/// <summary>
+/// Represents a consolidation job waiting in the queue for dispatch.
+/// </summary>
+public sealed record PendingConsolidationJob
+{
+    public required string RunId { get; init; }
+    public required ConsolidationRunType Type { get; init; }
+    public string? TemplateId { get; init; }
+    public required string WorkspacePath { get; init; }
+    public IReadOnlyList<string> RequiredLabels { get; init; } = [];
+    public required DateTimeOffset EnqueuedAt { get; init; }
+    public int RetryCount { get; set; }
+
+    /// <summary>
+    /// For HarnessSuggestions: the timestamp to use when regenerating feedback data at dispatch time.
+    /// </summary>
+    public DateTime? FeedbackSinceUtc { get; init; }
 }

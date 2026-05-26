@@ -10,7 +10,7 @@ public interface IConsolidationService
 {
     /// <summary>
     /// Triggers a consolidation run of the specified type. Returns the created run,
-    /// or <c>null</c> if rejected (e.g., duplicate already running, no idle agent available).
+    /// or <c>null</c> if rejected (e.g., duplicate already running/queued).
     /// </summary>
     /// <param name="type">The type of consolidation loop to execute.</param>
     /// <param name="templateId">The Pipeline Job Template ID (null for harness suggestions which are global).</param>
@@ -62,6 +62,36 @@ public interface IConsolidationService
     /// Called at application startup to clean up orphaned runs from previous sessions.
     /// </summary>
     Task CleanupOrphanedRunsAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Rehydrates queued consolidation runs from disk on startup.
+    /// Re-adds them to the concurrency guard and re-enqueues them for dispatch.
+    /// Must be called after <see cref="CleanupOrphanedRunsAsync"/>.
+    /// </summary>
+    Task RehydrateQueuedRunsAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Transitions a queued run to Running status. Called by the drain service after successful dispatch.
+    /// </summary>
+    /// <param name="runId">The run ID to transition.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task TransitionToRunningAsync(string runId, CancellationToken ct);
+
+    /// <summary>
+    /// Cancels a queued run. Removes from queue, updates disk to Cancelled, removes from concurrency guard.
+    /// </summary>
+    /// <param name="runId">The run ID to cancel.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task CancelQueuedRunAsync(string runId, CancellationToken ct);
+
+    /// <summary>
+    /// Generates feedback data JSON for harness suggestions from pipeline run history since the given timestamp.
+    /// Used by the drain service to regenerate fresh feedback at dispatch time.
+    /// </summary>
+    /// <param name="sinceUtc">Only include feedback from runs started after this timestamp.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Serialized feedback JSON, or null if no feedback entries exist.</returns>
+    Task<string?> GenerateFeedbackDataJsonAsync(DateTime sinceUtc, CancellationToken ct);
 
     /// <summary>
     /// Fired when any consolidation run changes state (created, completed, or failed).

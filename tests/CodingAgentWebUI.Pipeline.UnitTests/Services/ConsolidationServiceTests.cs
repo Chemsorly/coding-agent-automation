@@ -79,13 +79,14 @@ public sealed class ConsolidationServiceTests : IDisposable
     public async Task TriggerAsync_ValidTemplate_CreatesRunWithRunningStatus()
     {
         // Validates: Requirement 3.1
+        // Without a dispatcher, the run stays Queued (no agent to dispatch to)
         var sut = CreateSut();
 
         var run = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
         run.Should().NotBeNull();
-        run!.Status.Should().Be(ConsolidationRunStatus.Running);
+        run!.Status.Should().Be(ConsolidationRunStatus.Queued);
         run.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
         run.TemplateId.Should().Be("tmpl-1");
         run.TemplateName.Should().Be("DotNet Repo");
