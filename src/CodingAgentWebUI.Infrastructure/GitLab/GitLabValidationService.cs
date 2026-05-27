@@ -38,6 +38,15 @@ public sealed class GitLabValidationService
         if (string.IsNullOrWhiteSpace(apiUrl))
             return new GitLabValidationResult(false, null, null, "API URL is required.");
 
+        // Validate URL scheme — only HTTP/HTTPS allowed
+        if (!Uri.TryCreate(apiUrl, UriKind.Absolute, out var parsedUri)
+            || (parsedUri.Scheme != "https" && parsedUri.Scheme != "http"))
+        {
+            var truncatedUrl = apiUrl.Length > 200 ? apiUrl[..200] + "…" : apiUrl;
+            return new GitLabValidationResult(false, null, null,
+                $"API URL must use https:// or http:// scheme. Got: '{truncatedUrl}'.");
+        }
+
         if (string.IsNullOrWhiteSpace(accessToken))
             return new GitLabValidationResult(false, null, null, "Access token is required.");
 
@@ -66,6 +75,9 @@ public sealed class GitLabValidationService
 
         try
         {
+            // Task.Run wraps the synchronous NGitLab indexer call. Cancellation relies on
+            // the HttpClient.Timeout configured in NGitLab rather than the CancellationToken,
+            // because the sync indexer does not accept a token parameter.
             var project = await Task.Run(() => client.Projects[numericProjectId], ct);
 
             var accessLevel = MapAccessLevel(project);
@@ -102,9 +114,10 @@ public sealed class GitLabValidationService
         }
         catch (HttpRequestException ex)
         {
-            _logger.Warning(ex, "GitLab validation failed: connectivity error for {ApiUrl}", apiUrl);
+            var truncatedUrl = apiUrl.Length > 200 ? apiUrl[..200] + "…" : apiUrl;
+            _logger.Warning(ex, "GitLab validation failed: connectivity error for {ApiUrl}", truncatedUrl);
             return new GitLabValidationResult(false, null, null,
-                $"Unable to connect to GitLab at '{apiUrl}'. Verify the URL is correct and the server is reachable.");
+                $"Unable to connect to GitLab at '{truncatedUrl}'. Verify the URL is correct and the server is reachable.");
         }
         catch (TaskCanceledException) when (ct.IsCancellationRequested)
         {
@@ -112,9 +125,10 @@ public sealed class GitLabValidationService
         }
         catch (TaskCanceledException ex)
         {
-            _logger.Warning(ex, "GitLab validation timed out for {ApiUrl}", apiUrl);
+            var truncatedUrl = apiUrl.Length > 200 ? apiUrl[..200] + "…" : apiUrl;
+            _logger.Warning(ex, "GitLab validation timed out for {ApiUrl}", truncatedUrl);
             return new GitLabValidationResult(false, null, null,
-                $"Request timed out connecting to GitLab at '{apiUrl}'.");
+                $"Request timed out connecting to GitLab at '{truncatedUrl}'.");
         }
         catch (Exception ex)
         {

@@ -48,7 +48,7 @@ public partial class GitLabRepositoryProvider
                 },
                 "CreateMergeRequest", ct);
 
-            return mr.WebUrl;
+            return mr.WebUrl ?? string.Empty;
         }
         catch (GitLabException ex) when ((int)ex.StatusCode == 409)
         {
@@ -65,12 +65,13 @@ public partial class GitLabRepositoryProvider
 
         try
         {
-            var client = await GetClientAsync(ct);
-            var mrClient = client.GetMergeRequest(ProjectId);
-
             // Get current MR to check title for Draft prefix
             var mr = await ExecuteWithResilienceAsync(
-                _ => Task.Run(() => mrClient[pullRequestNumber], ct),
+                client =>
+                {
+                    var mrClient = client.GetMergeRequest(ProjectId);
+                    return Task.Run(() => mrClient[pullRequestNumber], ct);
+                },
                 "UpdateMergeRequest.Get", ct);
 
             var update = new MergeRequestUpdate
@@ -85,7 +86,11 @@ public partial class GitLabRepositoryProvider
             }
 
             await ExecuteWriteWithResilienceAsync(
-                _ => mrClient.Update(pullRequestNumber, update),
+                client =>
+                {
+                    var mrClient = client.GetMergeRequest(ProjectId);
+                    return mrClient.Update(pullRequestNumber, update);
+                },
                 "UpdateMergeRequest.Update", ct);
         }
         catch (GitLabException ex) when ((int)ex.StatusCode == 404)
@@ -104,16 +109,13 @@ public partial class GitLabRepositoryProvider
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         var branchPrefix = $"{PipelineConstants.BranchPrefix}{issueIdentifier}-";
 
-        var client = await GetClientAsync(ct);
-        var mrClient = client.GetMergeRequest(ProjectId);
-
         // List all open MRs and filter by branch prefix (client-side)
         var allMrs = await ExecuteWithResilienceAsync(
-            _ => mrClient.Get(new MergeRequestQuery
+            client => client.GetMergeRequest(ProjectId).Get(new MergeRequestQuery
             {
                 State = MergeRequestState.opened,
                 PerPage = 100
-            }).ToList(),
+            }).Take(100).ToList(),
             "GetAgentMergeRequests.List", ct);
 
         var matching = allMrs
@@ -127,6 +129,7 @@ public partial class GitLabRepositoryProvider
         foreach (var mr in matching)
         {
             // Fetch discussion notes for review comments (filter pipeline-generated)
+            var client = await GetClientAsync(ct);
             var reviewComments = await GetMergeRequestReviewCommentsAsync(client, mr.Iid, ct);
 
             results.Add(new LinkedPullRequest
@@ -153,9 +156,6 @@ public partial class GitLabRepositoryProvider
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, 100);
 
-        var client = await GetClientAsync(ct);
-        var mrClient = client.GetMergeRequest(ProjectId);
-
         var query = new MergeRequestQuery
         {
             State = MergeRequestState.opened,
@@ -163,25 +163,19 @@ public partial class GitLabRepositoryProvider
             PerPage = pageSize
         };
 
-        // Use overfetch-by-one pattern to detect HasMore
-        var allItems = new List<MergeRequest>();
+        // Use overfetch-by-one pattern to detect HasMore (same as EnumerateIssuesAsync)
         var skipCount = (page - 1) * pageSize;
         var takeCount = pageSize + 1;
 
         var mrs = await ExecuteWithResilienceAsync(
-            _ => mrClient.Get(query).ToList(),
+            client => client.GetMergeRequest(ProjectId).Get(query)
+                .Skip(skipCount)
+                .Take(takeCount)
+                .ToList(),
             "ListOpenMergeRequests", ct);
 
-        // Apply skip/take manually since NGitLab auto-paginates
-        foreach (var mr in mrs)
-        {
-            if (skipCount > 0) { skipCount--; continue; }
-            allItems.Add(mr);
-            if (allItems.Count >= takeCount) break;
-        }
-
-        var hasMore = allItems.Count > pageSize;
-        var items = allItems.Take(pageSize).Select(mr => new PullRequestSummary
+        var hasMore = mrs.Count > pageSize;
+        var items = mrs.Take(pageSize).Select(mr => new PullRequestSummary
         {
             Number = (int)mr.Iid,
             Identifier = mr.Iid.ToString(),
@@ -253,11 +247,12 @@ public partial class GitLabRepositoryProvider
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ExtractLinkedIssuesAsync(int prNumber, CancellationToken ct)
     {
-        var client = await GetClientAsync(ct);
-        var mrClient = client.GetMergeRequest(ProjectId);
-
         var mr = await ExecuteWithResilienceAsync(
-            _ => Task.Run(() => mrClient[prNumber], ct),
+            client =>
+            {
+                var mrClient = client.GetMergeRequest(ProjectId);
+                return Task.Run(() => mrClient[prNumber], ct);
+            },
             "ExtractLinkedIssues.Get", ct);
 
         var issueNumbers = new HashSet<string>(StringComparer.Ordinal);
@@ -310,14 +305,13 @@ public partial class GitLabRepositoryProvider
             return;
         }
 
-        var client = await GetClientAsync(ct);
-        var mrClient = client.GetMergeRequest(ProjectId);
-
         // Get MR diff version SHAs for positioning inline comments
         MergeRequestVersion? latestVersion = null;
         try
         {
             var versions = new List<MergeRequestVersion>();
+            var client = await GetClientAsync(ct);
+            var mrClient = client.GetMergeRequest(ProjectId);
             await foreach (var v in mrClient.GetVersionsAsync(prNumber).WithCancellation(ct))
             {
                 versions.Add(v);
@@ -336,9 +330,9 @@ public partial class GitLabRepositoryProvider
         try
         {
             await ExecuteWriteWithResilienceAsync(
-                _ =>
+                client =>
                 {
-                    var commentClient = mrClient.Comments(prNumber);
+                    var commentClient = client.GetMergeRequest(ProjectId).Comments(prNumber);
                     return commentClient.Add(new MergeRequestCommentCreate
                     {
                         Body = submission.Body
@@ -353,8 +347,6 @@ public partial class GitLabRepositoryProvider
         }
 
         // Create discussion threads for each inline comment
-        var discussionClient = mrClient.Discussions(prNumber);
-
         foreach (var comment in submission.Comments)
         {
             try
@@ -363,25 +355,29 @@ public partial class GitLabRepositoryProvider
                 {
                     // Attempt inline discussion thread with position
                     await ExecuteWriteWithResilienceAsync(
-                        _ => Task.Run(() => discussionClient.Add(new MergeRequestDiscussionCreate
+                        client =>
                         {
-                            Body = comment.Body,
-                            Position = new Position
+                            var discussionClient = client.GetMergeRequest(ProjectId).Discussions(prNumber);
+                            return Task.Run(() => discussionClient.Add(new MergeRequestDiscussionCreate
                             {
-                                BaseSha = new Sha1(latestVersion.BaseCommitSha),
-                                HeadSha = new Sha1(latestVersion.HeadCommitSha),
-                                StartSha = new Sha1(latestVersion.StartCommitSha),
-                                PositionType = new DynamicEnum<PositionType>(NGitLab.Models.PositionType.Text),
-                                NewPath = comment.Path,
-                                NewLine = comment.Line
-                            }
-                        }), ct),
+                                Body = comment.Body,
+                                Position = new Position
+                                {
+                                    BaseSha = new Sha1(latestVersion.BaseCommitSha),
+                                    HeadSha = new Sha1(latestVersion.HeadCommitSha),
+                                    StartSha = new Sha1(latestVersion.StartCommitSha),
+                                    PositionType = new DynamicEnum<PositionType>(NGitLab.Models.PositionType.Text),
+                                    NewPath = comment.Path,
+                                    NewLine = comment.Line
+                                }
+                            }), ct);
+                        },
                         $"SubmitReview.InlineComment({comment.Path}:{comment.Line})", ct);
                 }
                 else
                 {
                     // No version info — fall back to non-inline note
-                    await CreateFallbackNoteAsync(discussionClient, comment, ct);
+                    await CreateFallbackNoteAsync(prNumber, comment, ct);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not InvalidOperationException)
@@ -393,7 +389,7 @@ public partial class GitLabRepositoryProvider
 
                 try
                 {
-                    await CreateFallbackNoteAsync(discussionClient, comment, ct);
+                    await CreateFallbackNoteAsync(prNumber, comment, ct);
                 }
                 catch (Exception fallbackEx) when (fallbackEx is not OperationCanceledException)
                 {
@@ -413,12 +409,13 @@ public partial class GitLabRepositoryProvider
         ArgumentNullException.ThrowIfNull(marker);
         ArgumentNullException.ThrowIfNull(reason);
 
-        var client = await GetClientAsync(ct);
-        var discussionClient = client.GetMergeRequest(ProjectId).Discussions(prNumber);
-
         // Get all discussions and resolve threads containing the marker
         var discussions = await ExecuteWithResilienceAsync(
-            _ => Task.Run(() => discussionClient.All.ToList(), ct),
+            client =>
+            {
+                var discussionClient = client.GetMergeRequest(ProjectId).Discussions(prNumber);
+                return Task.Run(() => discussionClient.All.ToList(), ct);
+            },
             "DismissPreviousReview.GetDiscussions", ct);
 
         var matchingThreads = discussions
@@ -441,11 +438,15 @@ public partial class GitLabRepositoryProvider
             try
             {
                 await ExecuteWriteWithResilienceAsync(
-                    _ => Task.Run(() => discussionClient.Resolve(new MergeRequestDiscussionResolve
+                    client =>
                     {
-                        Id = thread.Id,
-                        Resolved = true
-                    }), ct),
+                        var discussionClient = client.GetMergeRequest(ProjectId).Discussions(prNumber);
+                        return Task.Run(() => discussionClient.Resolve(new MergeRequestDiscussionResolve
+                        {
+                            Id = thread.Id,
+                            Resolved = true
+                        }), ct);
+                    },
                     $"DismissPreviousReview.Resolve({thread.Id})", ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -468,11 +469,12 @@ public partial class GitLabRepositoryProvider
     {
         ArgumentNullException.ThrowIfNull(marker);
 
-        var client = await GetClientAsync(ct);
-        var commentClient = client.GetMergeRequest(ProjectId).Comments(prNumber);
-
         var notes = await ExecuteWithResilienceAsync(
-            _ => Task.Run(() => commentClient.All.ToList(), ct),
+            client =>
+            {
+                var commentClient = client.GetMergeRequest(ProjectId).Comments(prNumber);
+                return Task.Run(() => commentClient.All.ToList(), ct);
+            },
             "FindExistingReviewComment.GetNotes", ct);
 
         var match = notes.FirstOrDefault(n =>
@@ -526,17 +528,24 @@ public partial class GitLabRepositoryProvider
     /// <summary>
     /// Creates a non-inline discussion note as a fallback when inline positioning fails.
     /// Includes the file path and line number in the body text.
+    /// Wrapped in the write resilience pipeline for consistency.
     /// </summary>
-    private Task CreateFallbackNoteAsync(
-        IMergeRequestDiscussionClient discussionClient,
+    private async Task CreateFallbackNoteAsync(
+        int prNumber,
         ReviewComment comment,
         CancellationToken ct)
     {
         var fallbackBody = $"**{comment.Path}:{comment.Line}**\n\n{comment.Body}";
-        return Task.Run(() => discussionClient.Add(new MergeRequestDiscussionCreate
-        {
-            Body = fallbackBody
-        }), ct);
+        await ExecuteWriteWithResilienceAsync(
+            client =>
+            {
+                var discussionClient = client.GetMergeRequest(ProjectId).Discussions(prNumber);
+                return Task.Run(() => discussionClient.Add(new MergeRequestDiscussionCreate
+                {
+                    Body = fallbackBody
+                }), ct);
+            },
+            "CreateFallbackNote", ct);
     }
 
     /// <summary>
@@ -548,9 +557,12 @@ public partial class GitLabRepositoryProvider
     {
         try
         {
-            var discussionClient = client.GetMergeRequest(ProjectId).Discussions(mrIid);
             var discussions = await ExecuteWithResilienceAsync(
-                _ => Task.Run(() => discussionClient.All.ToList(), ct),
+                c =>
+                {
+                    var discussionClient = c.GetMergeRequest(ProjectId).Discussions(mrIid);
+                    return Task.Run(() => discussionClient.All.ToList(), ct);
+                },
                 "GetMergeRequestReviewComments", ct);
 
             return discussions

@@ -93,11 +93,18 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
                 }
             };
 
-            await _gitPipeline.ExecuteAsync(async _ =>
+            try
             {
-                await Task.CompletedTask;
-                Repository.Clone(cloneUrl, workspacePath, options);
-            }, ct);
+                await _gitPipeline.ExecuteAsync(async _ =>
+                {
+                    await Task.CompletedTask;
+                    Repository.Clone(cloneUrl, workspacePath, options);
+                }, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                throw RedactTokenFromException(ex, token);
+            }
         }, ct);
     }
 
@@ -110,36 +117,43 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
         {
             var token = await GetTokenAsync(ct);
 
-            await _gitPipeline.ExecuteAsync(async _ =>
+            try
             {
-                await Task.CompletedTask;
-                using var repo = new Repository(workspacePath);
-                var remote = repo.Network.Remotes["origin"];
-
-                var fetchOptions = new FetchOptions
+                await _gitPipeline.ExecuteAsync(async _ =>
                 {
-                    CredentialsProvider = (_, _, _) =>
-                        new UsernamePasswordCredentials
-                        {
-                            Username = GitConstants.GitLabTokenUsername,
-                            Password = token
-                        }
-                };
-                var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
-                Commands.Fetch(repo, remote.Name, refSpecs, fetchOptions, null);
+                    await Task.CompletedTask;
+                    using var repo = new Repository(workspacePath);
+                    var remote = repo.Network.Remotes["origin"];
 
-                var trackingBranch = repo.Head.TrackedBranch
-                    ?? repo.Branches[$"origin/{_baseBranch}"];
-                if (trackingBranch != null)
-                {
-                    var signature = new Signature(
-                        GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
-                    repo.Merge(trackingBranch, signature, new MergeOptions
+                    var fetchOptions = new FetchOptions
                     {
-                        FastForwardStrategy = FastForwardStrategy.FastForwardOnly
-                    });
-                }
-            }, ct);
+                        CredentialsProvider = (_, _, _) =>
+                            new UsernamePasswordCredentials
+                            {
+                                Username = GitConstants.GitLabTokenUsername,
+                                Password = token
+                            }
+                    };
+                    var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
+                    Commands.Fetch(repo, remote.Name, refSpecs, fetchOptions, null);
+
+                    var trackingBranch = repo.Head.TrackedBranch
+                        ?? repo.Branches[$"origin/{_baseBranch}"];
+                    if (trackingBranch != null)
+                    {
+                        var signature = new Signature(
+                            GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
+                        repo.Merge(trackingBranch, signature, new MergeOptions
+                        {
+                            FastForwardStrategy = FastForwardStrategy.FastForwardOnly
+                        });
+                    }
+                }, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                throw RedactTokenFromException(ex, token);
+            }
         }, ct);
     }
 
@@ -307,24 +321,31 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
             if (forcePush)
                 Log.Information("Force-pushing branch {BranchName} (post-rebase history rewrite)", branchName);
 
-            await _gitPipeline.ExecuteAsync(async _ =>
+            try
             {
-                await Task.CompletedTask;
-                pushError = null;
-                repo.Network.Push(remote, refSpec, options);
-
-                if (pushError != null)
+                await _gitPipeline.ExecuteAsync(async _ =>
                 {
-                    var category = PushErrorClassifier.Classify(pushError);
-                    var message = PushErrorClassifier.GetActionableMessage(category, branchName);
-                    // Network and Unknown errors are potentially transient — throw LibGit2SharpException
-                    // so the Polly resilience pipeline can retry them.
-                    throw category is PushErrorClassifier.PushFailureCategory.Network
-                                   or PushErrorClassifier.PushFailureCategory.Unknown
-                        ? new LibGit2SharpException(pushError)
-                        : new InvalidOperationException(message);
-                }
-            }, ct);
+                    await Task.CompletedTask;
+                    pushError = null;
+                    repo.Network.Push(remote, refSpec, options);
+
+                    if (pushError != null)
+                    {
+                        var category = PushErrorClassifier.Classify(pushError);
+                        var message = PushErrorClassifier.GetActionableMessage(category, branchName);
+                        // Network and Unknown errors are potentially transient — throw LibGit2SharpException
+                        // so the Polly resilience pipeline can retry them.
+                        throw category is PushErrorClassifier.PushFailureCategory.Network
+                                       or PushErrorClassifier.PushFailureCategory.Unknown
+                            ? new LibGit2SharpException(pushError)
+                            : new InvalidOperationException(message);
+                    }
+                }, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not InvalidOperationException)
+            {
+                throw RedactTokenFromException(ex, token);
+            }
         }, ct);
     }
 
@@ -559,6 +580,7 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
     /// <summary>
     /// Builds an authenticated clone URL from the cached <c>http_url_to_repo</c>.
     /// Format: <c>https://oauth2:{token}@{host}/{namespace}/{project}.git</c>
+    /// Enforces HTTPS scheme regardless of what the API returns.
     /// </summary>
     private string BuildAuthenticatedCloneUrl(string token)
     {
@@ -569,7 +591,31 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
 
         // Insert oauth2:{token}@ into the URL after the scheme
         var uri = new Uri(httpUrl);
-        return $"{uri.Scheme}://{GitConstants.GitLabTokenUsername}:{token}@{uri.Host}{(uri.IsDefaultPort ? "" : $":{uri.Port}")}{uri.AbsolutePath}";
+
+        // Enforce HTTPS scheme regardless of what the API returns
+        var scheme = uri.Scheme == "http" || uri.Scheme == "https" ? "https" : throw new InvalidOperationException(
+            $"Clone URL has unsupported scheme '{uri.Scheme}'. Only HTTPS is supported for authenticated clone.");
+
+        return $"{scheme}://{GitConstants.GitLabTokenUsername}:{token}@{uri.Host}{(uri.IsDefaultPort ? "" : $":{uri.Port}")}{uri.AbsolutePath}";
+    }
+
+    /// <summary>
+    /// Redacts the access token from an exception message to prevent token leakage via logs or error handlers.
+    /// Returns a new exception of the same type with the token replaced by "[REDACTED]".
+    /// </summary>
+    private static Exception RedactTokenFromException(Exception ex, string token)
+    {
+        var message = ex.Message;
+        if (message.Contains(token, StringComparison.Ordinal))
+        {
+            message = message.Replace(token, "[REDACTED]", StringComparison.Ordinal);
+        }
+
+        return ex switch
+        {
+            LibGit2SharpException => new LibGit2SharpException(message, ex),
+            _ => new InvalidOperationException(message, ex)
+        };
     }
 
     private static List<FileChangeSummary> CollectChangesWithLineStats(

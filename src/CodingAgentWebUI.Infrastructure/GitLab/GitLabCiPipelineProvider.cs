@@ -82,7 +82,7 @@ public class GitLabCiPipelineProvider : GitLabProviderBase, IPipelineProvider
             client =>
             {
                 var pipelineClient = client.GetPipelines(ProjectId);
-                return pipelineClient.Search(query).ToList();
+                return pipelineClient.Search(query).Take(1).ToList();
             },
             "GetRunStatus.SearchPipelines", ct);
 
@@ -299,6 +299,8 @@ public class GitLabCiPipelineProvider : GitLabProviderBase, IPipelineProvider
             JobStatus.Failed => PipelineRunState.Failed,
             JobStatus.Canceled => PipelineRunState.Cancelled,
             JobStatus.Canceling => PipelineRunState.Cancelled,
+            // Skipped maps to Cancelled because PipelineRunState has no Skipped variant,
+            // and skipped jobs don't block the pipeline (they are non-blocking like cancelled jobs).
             JobStatus.Skipped => PipelineRunState.Cancelled,
             _ => PipelineRunState.Pending
         };

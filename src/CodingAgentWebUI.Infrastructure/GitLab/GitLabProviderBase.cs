@@ -60,6 +60,7 @@ public abstract class GitLabProviderBase : IAsyncDisposable
     {
         if (string.IsNullOrWhiteSpace(apiUrl))
             throw new ArgumentException("A valid API URL is required.", nameof(apiUrl));
+        ValidateApiUrlScheme(apiUrl);
         if (string.IsNullOrWhiteSpace(accessToken))
             throw new ArgumentException("A valid access token is required.", nameof(accessToken));
 
@@ -78,6 +79,7 @@ public abstract class GitLabProviderBase : IAsyncDisposable
     {
         if (string.IsNullOrWhiteSpace(apiUrl))
             throw new ArgumentException("A valid API URL is required.", nameof(apiUrl));
+        ValidateApiUrlScheme(apiUrl);
         ArgumentNullException.ThrowIfNull(tokenProvider);
 
         ApiUrl = apiUrl;
@@ -274,9 +276,24 @@ public abstract class GitLabProviderBase : IAsyncDisposable
     }
 
     /// <inheritdoc />
-    public virtual ValueTask DisposeAsync()
+    public virtual async ValueTask DisposeAsync()
     {
+        await _clientProvider.DisposeAsync();
         GC.SuppressFinalize(this);
-        return ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// Validates that the API URL uses an HTTP or HTTPS scheme.
+    /// Rejects file://, ftp://, and other non-HTTP schemes.
+    /// </summary>
+    private static void ValidateApiUrlScheme(string apiUrl)
+    {
+        if (!Uri.TryCreate(apiUrl, UriKind.Absolute, out var uri)
+            || (uri.Scheme != "https" && uri.Scheme != "http"))
+        {
+            throw new ArgumentException(
+                $"API URL must use https:// or http:// scheme. Got: '{apiUrl[..Math.Min(apiUrl.Length, 200)]}'.",
+                nameof(apiUrl));
+        }
     }
 }

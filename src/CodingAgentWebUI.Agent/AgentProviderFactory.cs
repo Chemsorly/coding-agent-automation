@@ -169,8 +169,8 @@ public sealed class AgentProviderFactory : IProviderFactory
             throw new ArgumentException(
                 $"Provider '{config.DisplayName}' has invalid projectId: '{projectIdStr}'.",
                 nameof(config));
-        var baseBranch = config.Settings.GetValueOrDefault(
-            ProviderSettingKeys.BaseBranch, ProviderSettingKeys.DefaultBaseBranch);
+        var baseBranch = config.Settings.TryGetValue(ProviderSettingKeys.BaseBranch, out var bb)
+            && !string.IsNullOrWhiteSpace(bb) ? bb : ProviderSettingKeys.DefaultBaseBranch;
 
         if (_orchestratorProxy is not null)
         {

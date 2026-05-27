@@ -10,7 +10,7 @@ namespace CodingAgentWebUI.Infrastructure.GitLab;
 /// (NGitLab's <see cref="GitLabClient"/> takes a static token at construction).
 /// Mirrors <see cref="GitHub.GitHubClientProvider"/> for consistency.
 /// </summary>
-internal sealed class GitLabClientProvider
+internal sealed class GitLabClientProvider : IAsyncDisposable
 {
     /// <summary>
     /// User agent string sent with all GitLab API requests from the pipeline.
@@ -120,7 +120,11 @@ internal sealed class GitLabClientProvider
             }
         }
 
-        return _staticToken!;
+        if (_staticToken is null)
+            throw new InvalidOperationException(
+                "Token not available for test-constructed providers. Git network operations require a real token.");
+
+        return _staticToken;
     }
 
     /// <summary>
@@ -135,5 +139,12 @@ internal sealed class GitLabClientProvider
         };
 
         return new GitLabClient(apiUrl, token, options);
+    }
+
+    /// <inheritdoc />
+    public ValueTask DisposeAsync()
+    {
+        _semaphore.Dispose();
+        return ValueTask.CompletedTask;
     }
 }

@@ -83,8 +83,8 @@ public class ProviderFactory : IProviderFactory
                 ProviderSettingKeys.AccessToken,
                 ProviderSettingKeys.ProjectId);
             var projectId = ParseProjectId(config);
-            var baseBranch = config.Settings.GetValueOrDefault(
-                ProviderSettingKeys.BaseBranch, ProviderSettingKeys.DefaultBaseBranch);
+            var baseBranch = config.Settings.TryGetValue(ProviderSettingKeys.BaseBranch, out var bb)
+                && !string.IsNullOrWhiteSpace(bb) ? bb : ProviderSettingKeys.DefaultBaseBranch;
             return new GitLabRepositoryProvider(
                 config.Settings[ProviderSettingKeys.ApiUrl],
                 config.Settings[ProviderSettingKeys.AccessToken],
