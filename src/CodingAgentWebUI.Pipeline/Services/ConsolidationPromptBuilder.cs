@@ -155,6 +155,10 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("3. **Naming inconsistencies** — Classes, methods, or variables that don't follow the project's conventions");
         sb.AppendLine("4. **Structural drift** — Areas where the architecture has diverged from the intended design due to incremental changes");
         sb.AppendLine("5. **Overly complex areas** — Methods or classes that have grown too large or have too many responsibilities");
+        sb.AppendLine("6. **Dead code & unused artifacts** — Unreferenced methods, properties, classes, or interfaces that are never called; orphaned files from removed features; unused using directives beyond IDE cleanup");
+        sb.AppendLine("7. **Obvious bugs** — High-confidence correctness issues: null dereference risks, off-by-one errors, unreachable code paths, resource leaks (opened but never disposed), logic errors (conditions always true/false), race conditions in shared state. Only flag issues where you have strong evidence the code is wrong, not merely suboptimal");
+        sb.AppendLine("8. **Stale documentation & misleading comments** — XML doc comments describing behavior the code no longer exhibits; README sections referencing removed features; comments explaining \"why\" that reference conditions no longer true; parameter descriptions that don't match actual parameters");
+        sb.AppendLine("9. **Primitive obsession** — String or int parameters representing domain concepts (emails, URLs, IDs, file paths) without validation or type safety; magic numbers/strings without named constants; repeated validation logic for the same concept scattered across multiple call sites");
         sb.AppendLine();
 
         // How to explore
@@ -186,6 +190,7 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("[");
         sb.AppendLine("  {");
         sb.AppendLine("    \"title\": \"Short descriptive title of the refactoring opportunity\",");
+        sb.AppendLine("    \"category\": \"refactoring\",");
         sb.AppendLine("    \"affectedFiles\": [\"src/path/to/File1.cs\", \"src/path/to/File2.cs\"],");
         sb.AppendLine("    \"description\": \"Detailed description of what should be changed and how\",");
         sb.AppendLine("    \"rationale\": \"Why this refactoring would improve the codebase (maintainability, readability, performance, etc.)\",");
@@ -205,6 +210,7 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- **estimatedEffort** — `small` (<5 files, mechanical changes), `medium` (5-15 files with logic changes), or `large` (15-30 files or architectural changes).");
         sb.AppendLine("- **riskLevel** — `low` (rename/move), `medium` (extract/restructure), or `high` (interface changes affecting consumers).");
         sb.AppendLine("- **technique** — Named refactoring pattern if applicable (e.g., Extract Method, Strangler Fig, Branch by Abstraction, Inline Class, Move Method).");
+        sb.AppendLine("- **category** — `refactoring` (structural improvements, default if omitted), `bug` (correctness issues), `documentation` (stale/misleading docs or comments), or `dead-code` (unused artifacts to remove).");
         sb.AppendLine();
 
         // Constraints
