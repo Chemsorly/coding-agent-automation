@@ -376,9 +376,9 @@ public sealed class PipelineLoopService : BackgroundService
             var issueProviderConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
             await ReconcileProviderCacheAsync(neededIds, issueProviderConfigs, ct);
 
-            // Reconcile repo provider cache for templates with ReviewEnabled
+            // Reconcile repo provider cache for templates with ReviewEnabled or DecompositionEnabled
             var neededRepoIds = enabledTemplates
-                .Where(t => t.ReviewEnabled)
+                .Where(t => t.ReviewEnabled || t.DecompositionEnabled)
                 .Select(t => t.RepoProviderId)
                 .ToHashSet();
             if (neededRepoIds.Count > 0)
@@ -395,9 +395,10 @@ public sealed class PipelineLoopService : BackgroundService
                 }
             }
 
-            // Step 3: Poll once per pollable template (issues + PRs)
+            // Step 3: Poll once per pollable template (issues + PRs + decomposition)
             var issueQueues = new Dictionary<string, List<IssueSummary>>();
             var prQueues = new Dictionary<string, List<PullRequestSummary>>();
+            var decompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
             for (int i = 0; i < pollableTemplates.Count; i++)
             {
                 if (_stopRequested || ct.IsCancellationRequested) break;
@@ -465,13 +466,58 @@ public sealed class PipelineLoopService : BackgroundService
                         }
                     }
 
+                    // ── Decomposition polling (only when DecompositionEnabled) ──
+                    // Wrapped in its own try-catch so that a decomposition polling failure does not
+                    // discard the already-fetched issue/PR queues for this template.
+                    decompositionQueues[template.Id] = new List<(IssueSummary, PipelineRunType)>();
+                    if (template.DecompositionEnabled)
+                    {
+                        try
+                        {
+                            if (!_providerCache.TryGetValue(template.IssueProviderId, out var decompProvider))
+                            {
+                                _logger.Warning("Template '{TemplateName}': issue provider '{IssueProviderId}' not found in cache, skipping decomposition polling",
+                                    template.Name, template.IssueProviderId);
+                            }
+                            else
+                            {
+                                // Validate that RepoProviderId references an existing provider config (Req 1.3)
+                                // IssueProviderId is already validated by the provider cache lookup above.
+                                if (!_repoProviderCache.ContainsKey(template.RepoProviderId))
+                                {
+                                    _logger.Warning("Template '{TemplateName}': decomposition skipped — RepoProviderId '{RepoProviderId}' references non-existent provider config",
+                                        template.Name, template.RepoProviderId);
+                                }
+                                else
+                                {
+                                    // Poll for agent:epic issues (Phase 1 candidates)
+                                    var epicIssues = await FetchEpicIssuesAsync(decompProvider, AgentLabels.Epic, maxPagesToFetch, ct);
+                                    foreach (var epic in epicIssues)
+                                        decompositionQueues[template.Id].Add((epic, PipelineRunType.DecompositionAnalysis));
+
+                                    // Poll for agent:epic-approved issues (Phase 2 candidates)
+                                    var approvedIssues = await FetchEpicIssuesAsync(decompProvider, AgentLabels.EpicApproved, maxPagesToFetch, ct);
+                                    foreach (var approved in approvedIssues)
+                                        decompositionQueues[template.Id].Add((approved, PipelineRunType.Decomposition));
+                                }
+                            }
+                        }
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception ex)
+                        {
+                            _logger.Warning(ex, "Template '{TemplateName}' decomposition polling failed, issue/PR polling unaffected: {Error}",
+                                template.Name, ex.Message);
+                        }
+                    }
+
                     // Success — update status
                     var issueCount = issueQueues[template.Id].Count;
                     var prCount = prQueues[template.Id].Count;
+                    var decompCount = decompositionQueues[template.Id].Count;
                     _templateStatuses[template.Id] = new ConfigStatusSnapshot
                     {
                         LastPollTime = DateTimeOffset.UtcNow,
-                        LastPollIssueCount = issueCount + prCount,
+                        LastPollIssueCount = issueCount + prCount + decompCount,
                         LastError = null,
                         ConsecutiveFailures = 0,
                         RateLimitResetAt = null,
@@ -494,6 +540,7 @@ public sealed class PipelineLoopService : BackgroundService
                     };
                     issueQueues[template.Id] = new List<IssueSummary>();
                     prQueues[template.Id] = new List<PullRequestSummary>();
+                    decompositionQueues[template.Id] = new List<(IssueSummary, PipelineRunType)>();
                 }
                 catch (Exception ex) when (IsAuthError(ex))
                 {
@@ -509,6 +556,7 @@ public sealed class PipelineLoopService : BackgroundService
                     };
                     issueQueues[template.Id] = new List<IssueSummary>();
                     prQueues[template.Id] = new List<PullRequestSummary>();
+                    decompositionQueues[template.Id] = new List<(IssueSummary, PipelineRunType)>();
                 }
                 catch (Exception ex)
                 {
@@ -523,6 +571,7 @@ public sealed class PipelineLoopService : BackgroundService
                     };
                     issueQueues[template.Id] = new List<IssueSummary>();
                     prQueues[template.Id] = new List<PullRequestSummary>();
+                    decompositionQueues[template.Id] = new List<(IssueSummary, PipelineRunType)>();
                 }
             }
 
@@ -551,9 +600,10 @@ public sealed class PipelineLoopService : BackgroundService
                 continue;
             }
 
-            // Step 5: Fair dispatch — interleaved round-robin between issues and PRs
-            // Alternates between dispatching one round of issues (one per template) and one round
-            // of PRs (one per template) to ensure both queue types get fair access to the budget.
+            // Step 5: Fair dispatch — three-way interleaved round-robin (issues → PRs → decomposition)
+            // Alternates between dispatching one round of issues (one per template), one round
+            // of PRs (one per template), and one round of decomposition (one per template) to
+            // ensure all three queue types get fair access to the budget.
             // Within each round, templates are served round-robin (one item per template per pass).
             if (_jobDispatcher != null)
             {
@@ -562,8 +612,12 @@ public sealed class PipelineLoopService : BackgroundService
                 // Per-cycle dependency state cache shared across all issue evaluations
                 var cycleStateCache = new Dictionary<int, bool>();
 
-                // Track which queue type to dispatch next (true = issue turn, false = PR turn)
-                bool issuesTurn = true;
+                // Count active decomposition runs for concurrency enforcement
+                var activeDecompositionCount = _orchestration.GetAllActiveRuns()
+                    .Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
+
+                // Three-way turn tracking: 0 = issues, 1 = PRs, 2 = decomposition
+                int currentTurn = 0;
 
                 while (remaining > 0)
                 {
@@ -571,12 +625,31 @@ public sealed class PipelineLoopService : BackgroundService
 
                     bool issueMadeProgress = false;
                     bool prMadeProgress = false;
+                    bool decompMadeProgress = false;
 
                     bool hasIssues = HasEligibleIssues(pollableTemplates, issueQueues);
                     bool hasPrs = HasEligiblePrs(pollableTemplates, prQueues);
+                    bool hasDecomp = HasEligibleDecomposition(pollableTemplates, decompositionQueues)
+                        && activeDecompositionCount < config.MaxConcurrentDecompositions;
+
+                    // Determine which queue to dispatch from this iteration.
+                    // If the current turn's queue is empty, try the next non-empty queue.
+                    int startTurn = currentTurn;
+                    bool foundTurn = false;
+                    for (int attempt = 0; attempt < 3; attempt++)
+                    {
+                        int tryTurn = (startTurn + attempt) % 3;
+                        if ((tryTurn == 0 && hasIssues) || (tryTurn == 1 && hasPrs) || (tryTurn == 2 && hasDecomp))
+                        {
+                            currentTurn = tryTurn;
+                            foundTurn = true;
+                            break;
+                        }
+                    }
+                    if (!foundTurn) break; // All queues exhausted
 
                     // ── Issue dispatch (one per template per pass) ──
-                    if (hasIssues && (issuesTurn || !hasPrs))
+                    if (currentTurn == 0 && hasIssues)
                     {
                         foreach (var template in pollableTemplates)
                         {
@@ -670,7 +743,7 @@ public sealed class PipelineLoopService : BackgroundService
                     if (_stopRequested || ct.IsCancellationRequested || remaining <= 0) break;
 
                     // ── PR review dispatch (one per template per pass) ──
-                    if (hasPrs && (!issuesTurn || !hasIssues))
+                    if (currentTurn == 1 && hasPrs)
                     {
                         foreach (var template in pollableTemplates)
                         {
@@ -749,11 +822,95 @@ public sealed class PipelineLoopService : BackgroundService
                         }
                     }
 
-                    // If neither queue made progress, both are exhausted
-                    if (!issueMadeProgress && !prMadeProgress) break;
+                    if (_stopRequested || ct.IsCancellationRequested || remaining <= 0) break;
 
-                    // Alternate turns for next iteration
-                    issuesTurn = !issuesTurn;
+                    // ── Decomposition dispatch (one per template per pass) ──
+                    if (currentTurn == 2 && hasDecomp)
+                    {
+                        foreach (var template in pollableTemplates)
+                        {
+                            if (remaining <= 0) break;
+                            if (_stopRequested || ct.IsCancellationRequested) break;
+                            if (!template.DecompositionEnabled) continue;
+                            if (!decompositionQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
+                                continue;
+
+                            // Re-check concurrency limit before each dispatch
+                            if (activeDecompositionCount >= config.MaxConcurrentDecompositions)
+                            {
+                                _logger.Information("Decomposition concurrency limit reached ({Active}/{Max}), skipping remaining decomposition dispatch",
+                                    activeDecompositionCount, config.MaxConcurrentDecompositions);
+                                break;
+                            }
+
+                            // Dequeue next valid epic
+                            (IssueSummary Issue, PipelineRunType Phase)? epic = null;
+                            while (queue.Count > 0)
+                            {
+                                var candidate = queue[0];
+                                queue.RemoveAt(0);
+
+                                // Skip already processing
+                                if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier))
+                                    continue;
+                                if (_jobDispatcher.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier))
+                                    continue;
+
+                                epic = candidate;
+                                break;
+                            }
+
+                            if (epic is null) continue;
+
+                            var epicItem = epic.Value;
+                            CurrentIssueIdentifier = epicItem.Issue.Identifier;
+                            var phaseLabel = epicItem.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
+                            StatusMessage = $"🧩 Dispatching epic #{epicItem.Issue.Identifier} {phaseLabel} from '{template.Name}'";
+                            NotifyChange();
+
+                            try
+                            {
+                                var dispatched = await _jobDispatcher.TryDispatchDecompositionAsync(
+                                    epicItem.Issue.Identifier,
+                                    epicItem.Issue.Title,
+                                    epicItem.Phase,
+                                    template.IssueProviderId,
+                                    template.RepoProviderId,
+                                    template.BrainProviderId,
+                                    initiatedBy: "loop",
+                                    stoppingToken);
+
+                                if (dispatched)
+                                {
+                                    ProcessedCount++;
+                                    remaining--;
+                                    activeDecompositionCount++;
+                                    decompMadeProgress = true;
+                                    _logger.Information("Dispatched epic #{EpicIdentifier} ({Phase}) from template '{Template}'",
+                                        epicItem.Issue.Identifier, epicItem.Phase, template.Name);
+                                }
+                            }
+                            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                            {
+                                break;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.Error(ex, "Dispatch failed for epic #{EpicIdentifier} ({Phase}) from template '{Template}'",
+                                    epicItem.Issue.Identifier, epicItem.Phase, template.Name);
+                                FailedCount++;
+                                ProcessedCount++;
+                                remaining--;
+                                decompMadeProgress = true;
+                            }
+                        }
+                    }
+
+                    // If no queue made progress, all are exhausted
+                    if (!issueMadeProgress && !prMadeProgress && !decompMadeProgress) break;
+
+                    // Advance to next turn for fair alternation
+                    currentTurn = (currentTurn + 1) % 3;
                 }
             }
 
@@ -796,6 +953,23 @@ public sealed class PipelineLoopService : BackgroundService
         {
             if (!template.ReviewEnabled) continue;
             if (prQueues.TryGetValue(template.Id, out var queue) && queue.Count > 0)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Checks whether any pollable template has eligible decomposition epics remaining in its queue.
+    /// Used by the fair alternation logic to allow the other queues to consume remaining budget.
+    /// </summary>
+    private static bool HasEligibleDecomposition(
+        List<PipelineJobTemplate> pollableTemplates,
+        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues)
+    {
+        foreach (var template in pollableTemplates)
+        {
+            if (!template.DecompositionEnabled) continue;
+            if (decompositionQueues.TryGetValue(template.Id, out var queue) && queue.Count > 0)
                 return true;
         }
         return false;
@@ -872,6 +1046,61 @@ public sealed class PipelineLoopService : BackgroundService
             pr.Labels.Contains(AgentLabels.Cancelled));
 
         // FIFO: oldest first, PRs without CreatedAt go last
+        result.Sort((a, b) =>
+        {
+            var aDate = a.CreatedAt ?? DateTime.MaxValue;
+            var bDate = b.CreatedAt ?? DateTime.MaxValue;
+            return aDate.CompareTo(bDate);
+        });
+
+        return result;
+    }
+
+    /// <summary>
+    /// Fetches epic issues with a specific label from a provider, applies eligibility filters,
+    /// and orders by CreatedAt ascending (FIFO). Used for decomposition polling.
+    /// </summary>
+    /// <param name="provider">The issue provider to query.</param>
+    /// <param name="label">The label to filter by (agent:epic or agent:epic-approved).</param>
+    /// <param name="maxPages">Maximum pages to fetch.</param>
+    /// <param name="ct">Cancellation token.</param>
+    private async Task<List<IssueSummary>> FetchEpicIssuesAsync(
+        IIssueProvider provider, string label, int maxPages, CancellationToken ct)
+    {
+        var result = new List<IssueSummary>();
+        int page = 1;
+        const int pageSize = PipelineConstants.DefaultPageSize;
+
+        while (true)
+        {
+            var pagedResult = await provider.ListOpenIssuesAsync(page, pageSize,
+                new[] { label }, ct);
+            result.AddRange(pagedResult.Items);
+            if (!pagedResult.HasMore) break;
+            if (page >= maxPages) break;
+            page++;
+        }
+
+        // Apply eligibility filters based on the label type:
+        if (label == AgentLabels.Epic)
+        {
+            // Phase 1: skip if also has agent:epic-review, agent:in-progress, agent:error, or agent:done
+            result.RemoveAll(issue =>
+                issue.Labels.Contains(AgentLabels.EpicReview) ||
+                issue.Labels.Contains(AgentLabels.InProgress) ||
+                issue.Labels.Contains(AgentLabels.Error) ||
+                issue.Labels.Contains(AgentLabels.Done));
+        }
+        else if (label == AgentLabels.EpicApproved)
+        {
+            // Phase 2: skip if also has agent:in-progress, agent:error, or agent:done
+            result.RemoveAll(issue =>
+                issue.Labels.Contains(AgentLabels.InProgress) ||
+                issue.Labels.Contains(AgentLabels.Error) ||
+                issue.Labels.Contains(AgentLabels.Done));
+        }
+
+        // FIFO: oldest first
         result.Sort((a, b) =>
         {
             var aDate = a.CreatedAt ?? DateTime.MaxValue;

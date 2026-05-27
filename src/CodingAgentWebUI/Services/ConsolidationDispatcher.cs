@@ -11,6 +11,7 @@ namespace CodingAgentWebUI.Services;
 /// Implements <see cref="IConsolidationDispatcher"/> by selecting an idle agent from the
 /// <see cref="AgentRegistryService"/>, building a <see cref="ConsolidationJobMessage"/>,
 /// and dispatching it via <see cref="IAgentCommunication"/>.
+/// When no idle agent is available, enqueues the job in <see cref="ConsolidationQueueService"/>.
 /// </summary>
 public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 {
@@ -20,6 +21,8 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private readonly IConfigurationStore _configStore;
     private readonly ITokenVendingService _tokenVending;
     private readonly PipelineConfiguration _config;
+    private readonly ConsolidationQueueService _queueService;
+    private readonly IPipelineRunHistoryService _runHistoryService;
     private readonly ILogger _logger;
     private readonly string _consolidationRunsDirectory;
 
@@ -30,6 +33,8 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         IConfigurationStore configStore,
         ITokenVendingService tokenVending,
         PipelineConfiguration config,
+        ConsolidationQueueService queueService,
+        IPipelineRunHistoryService runHistoryService,
         ILogger logger,
         string consolidationRunsDirectory = PipelineConstants.ConsolidationRunsDirectory)
     {
@@ -39,6 +44,8 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(tokenVending);
         ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(queueService);
+        ArgumentNullException.ThrowIfNull(runHistoryService);
         ArgumentNullException.ThrowIfNull(logger);
 
         _registry = registry;
@@ -47,12 +54,14 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         _configStore = configStore;
         _tokenVending = tokenVending;
         _config = config;
+        _queueService = queueService;
+        _runHistoryService = runHistoryService;
         _logger = logger;
         _consolidationRunsDirectory = consolidationRunsDirectory;
     }
 
     /// <inheritdoc />
-    public async Task<bool> TryDispatchAsync(
+    public async Task<ConsolidationDispatchResult> TryDispatchAsync(
         ConsolidationRun run,
         ConsolidationRunType type,
         string? templateId,
@@ -70,51 +79,32 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         var agent = _jobDispatcher.SelectAgent(requiredLabels);
         if (agent is null)
         {
-            _logger.Warning(
-                "No idle agent available for consolidation run {RunId} (type={Type}, labels=[{Labels}])",
-                run.RunId, type, string.Join(", ", requiredLabels));
-            return false;
+            // No idle agent — enqueue for later dispatch
+            var pendingJob = new PendingConsolidationJob
+            {
+                RunId = run.RunId,
+                Type = type,
+                TemplateId = templateId,
+                WorkspacePath = workspacePath,
+                RequiredLabels = requiredLabels,
+                EnqueuedAt = DateTimeOffset.UtcNow
+            };
+
+            // Store required labels on the run for restart rehydration
+            run.QueuedRequiredLabels = requiredLabels.ToList();
+
+            _queueService.EnqueueJob(pendingJob);
+
+            _logger.Information(
+                "No idle agent for consolidation run {RunId} (type={Type}), enqueued for later dispatch",
+                run.RunId, type);
+            return ConsolidationDispatchResult.Queued;
         }
 
         try
         {
-            // Build provider configs for the consolidation job and vend tokens
-            // Include issues:write permission only for refactoring jobs that create issues
-            var includeIssuePermission = type == ConsolidationRunType.RefactoringDetection;
-            var rawConfigs = await BuildProviderConfigsAsync(type, templateId, ct);
-            var repoProviderId = templateId is not null
-                ? _config.PipelineJobTemplates.FirstOrDefault(t => t.Id == templateId)?.RepoProviderId ?? ""
-                : "";
-            var providerConfigs = await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct, includeIssuePermission);
-
-            // Resolve last successful run timestamp for this type+template
-            var lastSuccessfulRunUtc = await GetLastSuccessfulRunUtcAsync(type, templateId, ct);
-
-            // Build the ConsolidationJobMessage
-            var message = new ConsolidationJobMessage
-            {
-                JobId = run.RunId,
-                Type = type,
-                TemplateId = templateId,
-                TemplateName = run.TemplateName,
-                ProviderConfigs = providerConfigs,
-                PipelineConfiguration = _config,
-                LastSuccessfulRunUtc = lastSuccessfulRunUtc,
-                FeedbackDataJson = feedbackDataJson,
-                WorkspacePath = workspacePath
-            };
-
-            // Assign the job to the agent
-            agent.ActiveJobId = run.RunId;
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
-
-            await _agentComm.AssignConsolidationJobAsync(agent.ConnectionId, agent.AgentId, message, ct);
-
-            _logger.Information(
-                "Consolidation job {RunId} dispatched to agent {AgentId} (type={Type}, template={TemplateName})",
-                run.RunId, agent.AgentId, type, run.TemplateName);
-
-            return true;
+            await DispatchToAgentAsync(run, type, templateId, feedbackDataJson, workspacePath, agent, ct);
+            return ConsolidationDispatchResult.Dispatched;
         }
         catch (Exception ex)
         {
@@ -126,28 +116,188 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
             agent.ActiveJobId = null;
             _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
-            return false;
+            return ConsolidationDispatchResult.Failed;
         }
     }
 
     /// <summary>
-    /// Resolves required agent labels for the given template. For template-scoped runs,
-    /// uses the template's repo provider config labels. For global runs, uses default labels.
+    /// Dispatches a queued consolidation job to a specific agent. Called by the drain service.
+    /// Token vending happens here (at dispatch time, not enqueue time).
     /// </summary>
-    private async Task<IReadOnlyList<string>> ResolveRequiredLabelsAsync(string? templateId, CancellationToken ct)
+    public async Task<bool> TryDispatchToAgentAsync(
+        string runId,
+        ConsolidationRunType type,
+        string? templateId,
+        string workspacePath,
+        string agentId,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(runId);
+        ArgumentNullException.ThrowIfNull(workspacePath);
+        ArgumentNullException.ThrowIfNull(agentId);
+
+        // Cancel-during-dispatch race check
+        if (_queueService.IsRunCancelled(runId))
+        {
+            _logger.Information("Consolidation job {RunId} was cancelled, skipping dispatch", runId);
+            return false;
+        }
+
+        var agent = _registry.GetByAgentId(agentId);
+        if (agent is null || agent.Status != AgentStatus.Idle)
+            return false;
+
+        // Load the run from disk to get template name
+        var run = await LoadRunAsync(runId, ct);
+        if (run is null)
+            return false;
+
+        try
+        {
+            // Regenerate feedback data at dispatch time for harness suggestions
+            string? feedbackDataJson = null;
+            if (type == ConsolidationRunType.HarnessSuggestions)
+            {
+                feedbackDataJson = await RegenerateFeedbackDataAsync(runId, ct);
+            }
+
+            await DispatchToAgentAsync(run, type, templateId, feedbackDataJson, workspacePath, agent, ct);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex,
+                "Failed to dispatch queued consolidation job {RunId} to agent {AgentId}",
+                runId, agentId);
+
+            agent.ActiveJobId = null;
+            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
+    public void NotifyRunCancelled(string runId)
+    {
+        ArgumentNullException.ThrowIfNull(runId);
+        _queueService.CancelRun(runId);
+    }
+
+    private async Task DispatchToAgentAsync(
+        ConsolidationRun run,
+        ConsolidationRunType type,
+        string? templateId,
+        string? feedbackDataJson,
+        string workspacePath,
+        AgentEntry agent,
+        CancellationToken ct)
+    {
+        // Build provider configs for the consolidation job and vend tokens
+        var includeIssuePermission = type == ConsolidationRunType.RefactoringDetection;
+        var rawConfigs = await BuildProviderConfigsAsync(type, templateId, ct);
+        var repoProviderId = templateId is not null
+            ? _config.PipelineJobTemplates.FirstOrDefault(t => t.Id == templateId)?.RepoProviderId ?? ""
+            : "";
+        var providerConfigs = await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct, includeIssuePermission);
+
+        // Resolve last successful run timestamp for this type+template
+        var lastSuccessfulRunUtc = await GetLastSuccessfulRunUtcAsync(type, templateId, ct);
+
+        // Build the ConsolidationJobMessage
+        var message = new ConsolidationJobMessage
+        {
+            JobId = run.RunId,
+            Type = type,
+            TemplateId = templateId,
+            TemplateName = run.TemplateName,
+            ProviderConfigs = providerConfigs,
+            PipelineConfiguration = _config,
+            LastSuccessfulRunUtc = lastSuccessfulRunUtc,
+            FeedbackDataJson = feedbackDataJson,
+            WorkspacePath = workspacePath
+        };
+
+        // Assign the job to the agent
+        agent.ActiveJobId = run.RunId;
+        _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
+
+        await _agentComm.AssignConsolidationJobAsync(agent.ConnectionId, agent.AgentId, message, ct);
+
+        _logger.Information(
+            "Consolidation job {RunId} dispatched to agent {AgentId} (type={Type}, template={TemplateName})",
+            run.RunId, agent.AgentId, type, run.TemplateName);
+    }
+
+    private async Task<ConsolidationRun?> LoadRunAsync(string runId, CancellationToken ct)
+    {
+        var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
+        if (!File.Exists(filePath))
+            return null;
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(filePath, ct);
+            return System.Text.Json.JsonSerializer.Deserialize<ConsolidationRun>(json, Pipeline.PipelineJsonOptions.Default);
+        }
+        catch (OperationCanceledException) { throw; } // TODO: Bare catch was swallowing OperationCanceledException — propagate cancellation properly
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Regenerates feedback data at dispatch time for harness suggestion runs.
+    /// This ensures fresh data that includes feedback collected while the job was queued.
+    /// </summary>
+    private async Task<string?> RegenerateFeedbackDataAsync(string runId, CancellationToken ct)
+    {
+        try
+        {
+            // Determine the "since" timestamp from the last successful harness suggestion run
+            var sinceUtc = await GetLastSuccessfulRunUtcAsync(
+                ConsolidationRunType.HarnessSuggestions, null, ct) ?? DateTime.MinValue;
+
+            var allRuns = _runHistoryService.GetRunHistory();
+            var feedbackEntries = allRuns
+                .Where(r => r.Feedback is not null && r.StartedAt > sinceUtc)
+                .Select(r => r.Feedback!)
+                .ToList();
+
+            if (feedbackEntries.Count == 0)
+            {
+                _logger.Information(
+                    "No new RunFeedback entries found since {SinceUtc} for queued harness suggestion run {RunId}",
+                    sinceUtc, runId);
+                return null;
+            }
+
+            var feedbackJson = System.Text.Json.JsonSerializer.Serialize(feedbackEntries, Pipeline.PipelineJsonOptions.Default);
+            _logger.Information(
+                "Regenerated {Count} RunFeedback entries for queued harness suggestion run {RunId}",
+                feedbackEntries.Count, runId);
+            return feedbackJson;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to regenerate feedback data for harness suggestion run {RunId}", runId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Resolves required agent labels for the given template.
+    /// </summary>
+    internal async Task<IReadOnlyList<string>> ResolveRequiredLabelsAsync(string? templateId, CancellationToken ct)
     {
         if (templateId is null)
-        {
-            // Global (harness suggestions) — use default labels
             return JobDispatcherService.ResolveRequiredLabels(null, _config);
-        }
 
         var template = _config.PipelineJobTemplates.FirstOrDefault(t => t.Id == templateId);
         if (template is null)
             return JobDispatcherService.ResolveRequiredLabels(null, _config);
 
-        var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == template.RepoProviderId);
+        var repoConfig = await _configStore.GetProviderConfigByIdAsync(template.RepoProviderId, ProviderKind.Repository, ct);
         return JobDispatcherService.ResolveRequiredLabels(repoConfig, _config);
     }
 
@@ -194,8 +344,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         // Add issue provider for refactoring detection
         if (type == ConsolidationRunType.RefactoringDetection && !string.IsNullOrEmpty(template.IssueProviderId))
         {
-            var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
-            var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == template.IssueProviderId);
+            var issueConfig = await _configStore.GetProviderConfigByIdAsync(template.IssueProviderId, ProviderKind.Issue, ct);
             if (issueConfig is not null)
                 configs.Add(issueConfig);
         }
@@ -205,7 +354,6 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
     /// <summary>
     /// Gets the CompletedAtUtc of the last successful run for the given type and template.
-    /// Used to set LastSuccessfulRunUtc on the job message for incremental processing.
     /// </summary>
     private async Task<DateTime?> GetLastSuccessfulRunUtcAsync(
         ConsolidationRunType type,
@@ -221,8 +369,6 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
             try
             {
                 var json = await File.ReadAllTextAsync(file, ct);
-                // TODO: Old options did not include WriteIndented/TimeSpanJsonConverter. Current ConsolidationRun has no
-                // TimeSpan properties so behavior is unchanged, but be aware if the model evolves.
                 var historicRun = System.Text.Json.JsonSerializer.Deserialize<ConsolidationRun>(json, Pipeline.PipelineJsonOptions.Default);
 
                 if (historicRun is not null

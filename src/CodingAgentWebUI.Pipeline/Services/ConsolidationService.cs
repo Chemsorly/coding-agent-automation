@@ -328,7 +328,7 @@ public sealed class ConsolidationService : IConsolidationService
         try
         {
             var json = await File.ReadAllTextAsync(filePath, ct);
-            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
             if (run is null || run.Status != ConsolidationRunStatus.Queued)
                 return false;
 
@@ -370,7 +370,7 @@ public sealed class ConsolidationService : IConsolidationService
         try
         {
             var json = await File.ReadAllTextAsync(filePath, ct);
-            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
             if (run is null || run.Status != ConsolidationRunStatus.Queued)
                 return;
 
@@ -399,7 +399,7 @@ public sealed class ConsolidationService : IConsolidationService
             try
             {
                 var json = await File.ReadAllTextAsync(file, ct);
-                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
                 if (run is null) continue;
 
                 if (run.Status == ConsolidationRunStatus.Queued)
