@@ -437,6 +437,7 @@
                                 <th>Issue</th>
                                 <th>Agent</th>
                                 <th>Final Step</th>
+                                <th>Started</th>
                                 <th>Duration</th>
                                 <th>Tokens</th>
                                 <th>PR</th>
@@ -479,6 +480,7 @@
                                             @FormatStep(run.FinalStep)
                                         </span>
                                     </td>
+                                    <td title="@run.StartedAt.ToString("yyyy-MM-dd HH:mm:ss")">@FormatTimestamp(run.StartedAt)</td>
                                     <td>@FormatDuration(run.StartedAt, run.CompletedAt)</td>
                                     <td><span class="token-badge">@CostFormatter.FormatTokens(run.TotalTokens)</span></td>
                                     <td>
@@ -910,6 +912,16 @@
         if (completedAt is null) return "—";
         var duration = completedAt.Value - startedAt;
         return duration.ToString(@"hh\:mm\:ss");
+    }
+
+    private static string FormatTimestamp(DateTime timestamp)
+    {
+        var local = timestamp.Kind == DateTimeKind.Utc ? timestamp.ToLocalTime() : timestamp;
+        var ago = DateTime.Now - local;
+        if (ago.TotalMinutes < 60) return $"{(int)ago.TotalMinutes}m ago";
+        if (ago.TotalHours < 24) return $"{(int)ago.TotalHours}h ago";
+        if (ago.TotalDays < 7) return $"{(int)ago.TotalDays}d ago";
+        return local.ToString("yyyy-MM-dd HH:mm");
     }
 
     private static string FormatTimeAgo(DateTimeOffset timestamp)
