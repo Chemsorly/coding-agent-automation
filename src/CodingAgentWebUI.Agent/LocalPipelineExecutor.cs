@@ -96,7 +96,8 @@ public sealed class LocalPipelineExecutor
         activity?.SetTag("pipeline.agent_id", Environment.MachineName);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        PipelineTelemetry.JobsDispatched.Add(1);
+        var runTypeTag = PipelineTelemetry.RunTypeTag(job.RunType);
+        PipelineTelemetry.JobsDispatched.Add(1, runTypeTag);
 
         var config = job.PipelineConfiguration;
         var issueOps = new OrchestratorProxy(connection, job.JobId);
@@ -167,11 +168,11 @@ public sealed class LocalPipelineExecutor
         finally
         {
             sw.Stop();
-            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds);
+            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, runTypeTag);
             if (result is null || result.FinalStep != PipelineStep.Completed)
-                PipelineTelemetry.JobsFailed.Add(1);
+                PipelineTelemetry.JobsFailed.Add(1, runTypeTag);
             else
-                PipelineTelemetry.JobsCompleted.Add(1);
+                PipelineTelemetry.JobsCompleted.Add(1, runTypeTag);
 
             if (repoProvider is IAsyncDisposable rd) await rd.DisposeAsync();
             if (agentProvider is IAsyncDisposable ad) await ad.DisposeAsync();

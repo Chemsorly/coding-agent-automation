@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Telemetry;
 
@@ -19,4 +20,8 @@ public static class PipelineTelemetry
     public static readonly Counter<long> JobsFailed = Meter.CreateCounter<long>("pipeline.jobs.failed");
     public static readonly Histogram<double> JobDuration = Meter.CreateHistogram<double>(
         "pipeline.jobs.duration", "s", "Duration of pipeline jobs in seconds");
+
+    /// <summary>Creates a run_type tag from the given <see cref="PipelineRunType"/>.</summary>
+    public static KeyValuePair<string, object?> RunTypeTag(PipelineRunType runType) =>
+        new("run_type", runType.ToString().ToLowerInvariant());
 }
