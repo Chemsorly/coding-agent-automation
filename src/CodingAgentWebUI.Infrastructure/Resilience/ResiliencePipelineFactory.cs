@@ -1,5 +1,6 @@
 using System.Net.Sockets;
 using LibGit2Sharp;
+using NGitLab;
 using Octokit;
 using Polly;
 using Polly.Retry;
@@ -179,6 +180,82 @@ public static class ResiliencePipelineFactory
                 }
             })
             .Build();
+    }
+
+    /// <summary>
+    /// Creates a resilience pipeline for GitLab API (NGitLab) read calls.
+    /// Retries on transient errors (5xx, 408, 429, network) with exponential backoff + jitter.
+    /// </summary>
+    public static ResiliencePipeline CreateGitLabApiPipeline(ILogger logger)
+    {
+        return new ResiliencePipelineBuilder()
+            .AddRetry(new RetryStrategyOptions
+            {
+                MaxRetryAttempts = DefaultMaxRetryAttempts,
+                BackoffType = DelayBackoffType.Exponential,
+                UseJitter = true,
+                Delay = TimeSpan.FromSeconds(1),
+                ShouldHandle = new PredicateBuilder()
+                    .Handle<HttpRequestException>()
+                    .Handle<SocketException>()
+                    .Handle<TaskCanceledException>(ex => ex.InnerException is TimeoutException)
+                    .Handle<GitLabException>(ex => IsRetryableGitLabException(ex)),
+                OnRetry = args =>
+                {
+                    logger.Warning(
+                        "{Operation} retry {Attempt}/{MaxAttempts} after {Exception}",
+                        args.Context.OperationKey ?? "GitLabApi",
+                        args.AttemptNumber + 1,
+                        DefaultMaxRetryAttempts,
+                        args.Outcome.Exception?.GetType().Name ?? "unknown");
+                    return ValueTask.CompletedTask;
+                }
+            })
+            .AddTimeout(DefaultTimeout)
+            .Build();
+    }
+
+    /// <summary>
+    /// Creates a resilience pipeline for GitLab API write operations (safe-to-retry POST/PUT).
+    /// Only retries on 5xx server errors (not 429/408) since write operations may not be idempotent for those.
+    /// </summary>
+    public static ResiliencePipeline CreateGitLabWritePipeline(ILogger logger)
+    {
+        const int writeMaxRetryAttempts = 2;
+
+        return new ResiliencePipelineBuilder()
+            .AddRetry(new RetryStrategyOptions
+            {
+                MaxRetryAttempts = writeMaxRetryAttempts,
+                BackoffType = DelayBackoffType.Exponential,
+                UseJitter = true,
+                Delay = TimeSpan.FromSeconds(1),
+                ShouldHandle = new PredicateBuilder()
+                    .Handle<HttpRequestException>()
+                    .Handle<SocketException>()
+                    .Handle<TaskCanceledException>(ex => ex.InnerException is TimeoutException)
+                    .Handle<GitLabException>(ex => (int)ex.StatusCode >= 500),
+                OnRetry = args =>
+                {
+                    logger.Warning(
+                        "Write operation {Operation} retry {Attempt}/{MaxAttempts}",
+                        args.Context.OperationKey ?? "GitLabWrite",
+                        args.AttemptNumber + 1,
+                        writeMaxRetryAttempts);
+                    return ValueTask.CompletedTask;
+                }
+            })
+            .AddTimeout(DefaultTimeout)
+            .Build();
+    }
+
+    /// <summary>
+    /// Determines if a <see cref="GitLabException"/> is retryable (5xx, 408 Request Timeout, 429 Too Many Requests).
+    /// </summary>
+    internal static bool IsRetryableGitLabException(GitLabException ex)
+    {
+        var code = (int)ex.StatusCode;
+        return code >= 500 || code == 408 || code == 429;
     }
 
     /// <summary>

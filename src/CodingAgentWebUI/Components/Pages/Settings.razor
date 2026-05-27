@@ -4,6 +4,7 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Infrastructure.GitHub
+@using CodingAgentWebUI.Infrastructure.GitLab
 @using CodingAgentWebUI.Orchestration
 @using CodingAgentWebUI.Orchestration.Dispatch
 @using CodingAgentWebUI.Orchestration.Health
@@ -12,6 +13,7 @@
 @using Serilog
 @inject IConfigurationStore ConfigStore
 @inject GitHubValidationService GitHubValidator
+@inject GitLabValidationService GitLabValidator
 @inject IProviderFactory ProviderFactory
 @inject ModelFetchService ModelFetchService
 
@@ -38,6 +40,7 @@
                         Providers="_issueProviders"
                         ConfigStore="ConfigStore"
                         GitHubValidator="GitHubValidator"
+                        GitLabValidator="GitLabValidator"
                         ProviderFactory="ProviderFactory"
                         OnDelete="id => DeleteProvider(id, ProviderKind.Issue)"
                         OnSaved="OnIssueProviderSaved" />
@@ -47,6 +50,7 @@
                         Providers="_repoProviders"
                         ConfigStore="ConfigStore"
                         GitHubValidator="GitHubValidator"
+                        GitLabValidator="GitLabValidator"
                         OnDelete="id => DeleteProvider(id, ProviderKind.Repository)"
                         OnSaved="OnGitHubProviderSaved" />
                     break;
@@ -64,6 +68,7 @@
                         Providers="_pipelineProviders"
                         ConfigStore="ConfigStore"
                         GitHubValidator="GitHubValidator"
+                        GitLabValidator="GitLabValidator"
                         OnDelete="id => DeleteProvider(id, ProviderKind.Pipeline)"
                         OnSaved="OnGitHubProviderSaved" />
                     break;

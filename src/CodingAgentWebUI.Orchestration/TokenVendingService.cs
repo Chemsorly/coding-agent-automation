@@ -222,9 +222,17 @@ public sealed partial class TokenVendingService : ITokenVendingService
             }
             else
             {
-                // Clone non-repo configs as-is (strip any private keys from non-repo configs too)
+                // Clone non-GitHub-App configs as-is (strip any private keys)
                 var clonedSettings = new Dictionary<string, string>(config.Settings);
                 clonedSettings.Remove(ProviderSettingKeys.PrivateKeyBase64);
+
+                // GitLab: copy AccessToken to standard token key for agent consumption
+                if (clonedSettings.TryGetValue(ProviderSettingKeys.AccessToken, out var accessToken)
+                    && !string.IsNullOrWhiteSpace(accessToken))
+                {
+                    clonedSettings[ProviderSettingKeys.Token] = accessToken;
+                    clonedSettings.Remove(ProviderSettingKeys.AccessToken);
+                }
 
                 result.Add(new ProviderConfig
                 {

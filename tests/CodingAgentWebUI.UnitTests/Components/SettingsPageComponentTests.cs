@@ -29,6 +29,7 @@ public class SettingsPageComponentTests : BunitContext
         SetupDefaults();
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(new CodingAgentWebUI.Infrastructure.GitHub.GitHubValidationService());
+        Services.AddSingleton(new CodingAgentWebUI.Infrastructure.GitLab.GitLabValidationService());
         Services.AddSingleton(_mockProviderFactory.Object);
         Services.AddSingleton(new ModelFetchService(
             new AgentRegistryService(Serilog.Log.Logger),

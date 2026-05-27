@@ -236,6 +236,39 @@ The `docker-compose.yml` defines 5 services: 1 orchestrator + 2 .NET agents + 1 
 
 5. **Start a run** — Select a template, browse issues, and dispatch. Or enable closed-loop mode to process `agent:next` issues automatically.
 
+## Provider Configuration
+
+The pipeline supports multiple provider backends. Each provider type requires specific settings.
+
+### GitHub Configuration
+
+```json
+{
+  "providerType": "GitHub",
+  "settings": {
+    "owner": "my-org",
+    "repo": "my-repo",
+    "appId": "123456",
+    "privateKeyBase64": "base64-encoded-pem-key",
+    "installationId": "78901234"
+  }
+}
+```
+
+### GitLab Configuration
+
+```json
+{
+  "providerType": "GitLab",
+  "settings": {
+    "apiUrl": "https://gitlab.com",
+    "accessToken": "glpat-xxxxxxxxxxxxxxxxxxxx",
+    "projectId": "12345",
+    "baseBranch": "main"
+  }
+}
+```
+
 ## Project Structure
 
 ```
@@ -330,14 +363,14 @@ graph TB
 
 The pipeline defines abstract provider interfaces in the core layer. Concrete implementations live in the Infrastructure and Agent projects.
 
-| Provider | Interface | Purpose | Current Implementation |
-|----------|-----------|---------|----------------------|
-| Issue | `IIssueProvider` | Fetch issues, manage labels, post comments, create PRs | GitHub (Octokit) |
-| Repository | `IRepositoryProvider` | Clone repos, create branches, commit/push changes | GitHub (LibGit2Sharp) |
+| Provider | Interface | Purpose | Implementations |
+|----------|-----------|---------|----------------|
+| Issue | `IIssueProvider` | Fetch issues, manage labels, post comments, create issues | GitHub (Octokit), GitLab (NGitLab) |
+| Repository | `IRepositoryProvider` | Clone repos, create branches, commit/push, create MRs/PRs | GitHub (LibGit2Sharp + Octokit), GitLab (LibGit2Sharp + NGitLab) |
 | Agent | `IAgentProvider` | Execute coding agent for analysis/implementation/review | Kiro CLI (process wrapper) |
-| Pipeline/CI | `IPipelineProvider` | Check external CI status for a branch/commit | GitHub Actions (Octokit) |
+| Pipeline/CI | `IPipelineProvider` | Check external CI status for a branch/commit | GitHub Actions (Octokit), GitLab CI (NGitLab) |
 
-Adding a new implementation (e.g., GitLab issue provider, Jenkins CI provider) requires implementing the corresponding interface and registering it in the DI container.
+Adding a new implementation requires implementing the corresponding interface and registering it in the provider factory. GitLab is a working example of this extensibility — see the `src/CodingAgentWebUI.Infrastructure/GitLab/` directory for the full implementation pattern.
 
 ## Testing
 

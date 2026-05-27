@@ -2,6 +2,7 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Infrastructure.GitHub
+@using CodingAgentWebUI.Infrastructure.GitLab
 
 <section class="settings-section">
     <h2>Repository Providers</h2>
@@ -32,82 +33,136 @@
     </div>
     @if (_showForm)
     {
-        <GitHubAppProviderForm
-            SectionTitle="Repository Provider"
-            DisplayNamePlaceholder="My GitHub Repo"
-            IsEditing="@(_editingProvider is not null)"
-            ProviderType="@_form.ProviderType" ProviderTypeChanged="v => _form.ProviderType = v"
-            DisplayName="@_form.DisplayName" DisplayNameChanged="v => _form.DisplayName = v"
-            ApiUrl="@_form.ApiUrl" ApiUrlChanged="v => _form.ApiUrl = v"
-            ClientId="@_form.ClientId" ClientIdChanged="v => _form.ClientId = v"
-            InstallationId="@_form.InstallationId" InstallationIdChanged="v => _form.InstallationId = v"
-            PrivateKeyBase64="@_form.PrivateKeyBase64" PrivateKeyBase64Changed="v => _form.PrivateKeyBase64 = v"
-            Owner="@_form.Owner" OwnerChanged="v => _form.Owner = v"
-            Repo="@_form.Repo" RepoChanged="v => _form.Repo = v"
-            AvailableRepos="_availableRepos"
-            SelectedRepo="@_selectedRepo" SelectedRepoChanged="v => _selectedRepo = v"
-            LoadingRepos="_loadingRepos"
-            ValidationMessage="@_validationMessage"
-            ValidationSuccess="_validationSuccess"
-            Saving="_saving"
-            OnSave="SaveProvider"
-            OnCancel="CancelForm"
-            OnFetchRepos="FetchRepos">
-            <AdditionalFields>
-                <div class="form-group">
-                    <label>Base Branch</label>
-                    <input type="text" @bind="_form.BaseBranch" placeholder="@ProviderSettingKeys.DefaultBaseBranch" />
-                </div>
-                <div class="form-group">
-                    <label>Repository Role</label>
-                    <select @bind="_form.RepositoryRole">
-                        <option value="Work">Work</option>
-                        <option value="Brain">Brain</option>
-                    </select>
-                </div>
-                @if (_form.RepositoryRole != "Brain")
-                {
+        @if (_form.ProviderType == "GitLab")
+        {
+            <GitLabProviderForm
+                SectionTitle="Repository Provider"
+                DisplayNamePlaceholder="My GitLab Repo"
+                IsEditing="@(_editingProvider is not null)"
+                ShowBaseBranch="true"
+                ProviderType="@_form.ProviderType" ProviderTypeChanged="OnProviderTypeChanged"
+                DisplayName="@_form.DisplayName" DisplayNameChanged="v => _form.DisplayName = v"
+                ApiUrl="@_form.GitLabApiUrl" ApiUrlChanged="v => _form.GitLabApiUrl = v"
+                AccessToken="@_form.GitLabAccessToken" AccessTokenChanged="v => _form.GitLabAccessToken = v"
+                ProjectId="@_form.GitLabProjectId" ProjectIdChanged="v => _form.GitLabProjectId = v"
+                BaseBranch="@_form.BaseBranch" BaseBranchChanged="v => _form.BaseBranch = v"
+                ValidationMessage="@_validationMessage"
+                ValidationSuccess="_validationSuccess"
+                Saving="_saving"
+                OnSave="SaveGitLabProvider"
+                OnCancel="CancelForm">
+                <AdditionalFields>
                     <div class="form-group">
-                        <label>Required Agent Labels <span class="form-hint">(comma-separated — determines agent routing and quality gates)</span></label>
-                        <input type="text" @bind="_form.RequiredLabels" placeholder="e.g. kiro, dotnet, dotnet10" />
-                    </div>
-                    <div class="form-group">
-                        <div class="label-with-hint">
-                            <label>Blacklisted Paths</label>
-                            <span class="form-hint-icon" aria-hidden="true" title="Comma-separated path prefixes excluded from agent commits (e.g. .kiro, .github). Leave empty to use global defaults.">?</span>
-                        </div>
-                        <input type="text" @bind="_form.BlacklistedPaths" placeholder=".kiro, .github, .brain" />
-                    </div>
-                    <div class="form-group">
-                        <label>Blacklist Mode</label>
-                        <select @bind="_form.BlacklistMode">
-                            <option value="">— Use Global Default —</option>
-                            <option value="WarnAndExclude">Warn &amp; Exclude (unstage and continue)</option>
-                            <option value="Fail">Fail (stop pipeline on violation)</option>
+                        <label>Repository Role</label>
+                        <select @bind="_form.RepositoryRole">
+                            <option value="Work">Work</option>
+                            <option value="Brain">Brain</option>
                         </select>
                     </div>
-                }
-            </AdditionalFields>
-            <HelpContent>
-                <h4>🔐 GitHub App Setup</h4>
-                <p>Configure a <strong>GitHub App</strong> for authentication. See
-                    <a href="https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app" target="_blank">GitHub App docs</a>.</p>
-                <p class="help-heading">Required permissions:</p>
-                <ul>
-                    <li><strong>Contents: Read &amp; write</strong> — clone, push branches, commit</li>
-                    <li><strong>Pull requests: Read &amp; write</strong> — create PRs</li>
-                </ul>
-                <p class="help-heading">Fields:</p>
-                <ul>
-                    <li><strong>Client ID</strong> — from the App's General settings page (e.g. <code>Iv1.abc123...</code>)</li>
-                    <li><strong>Installation ID</strong> — from the installation URL (<code>github.com/settings/installations/{'{'}id{'}'}</code>)</li>
-                    <li><strong>Private Key</strong> — upload the .pem file downloaded from the App's settings</li>
-                    <li><strong>API URL</strong> — use <code>https://api.github.com</code> for github.com, or your GitHub Enterprise URL</li>
-                    <li><strong>Base Branch</strong> — the branch PRs will target (e.g. <code>main</code>, <code>develop</code>)</li>
-                </ul>
-                <p class="help-tip">💡 Use the same GitHub App as the Issue Provider — just ensure it has Contents and Pull requests permissions.</p>
-            </HelpContent>
-        </GitHubAppProviderForm>
+                    @if (_form.RepositoryRole != "Brain")
+                    {
+                        <div class="form-group">
+                            <label>Required Agent Labels <span class="form-hint">(comma-separated — determines agent routing and quality gates)</span></label>
+                            <input type="text" @bind="_form.RequiredLabels" placeholder="e.g. kiro, dotnet, dotnet10" />
+                        </div>
+                        <div class="form-group">
+                            <div class="label-with-hint">
+                                <label>Blacklisted Paths</label>
+                                <span class="form-hint-icon" aria-hidden="true" title="Comma-separated path prefixes excluded from agent commits (e.g. .kiro, .github). Leave empty to use global defaults.">?</span>
+                            </div>
+                            <input type="text" @bind="_form.BlacklistedPaths" placeholder=".kiro, .github, .brain" />
+                        </div>
+                        <div class="form-group">
+                            <label>Blacklist Mode</label>
+                            <select @bind="_form.BlacklistMode">
+                                <option value="">— Use Global Default —</option>
+                                <option value="WarnAndExclude">Warn &amp; Exclude (unstage and continue)</option>
+                                <option value="Fail">Fail (stop pipeline on violation)</option>
+                            </select>
+                        </div>
+                    }
+                </AdditionalFields>
+            </GitLabProviderForm>
+        }
+        else
+        {
+            <GitHubAppProviderForm
+                SectionTitle="Repository Provider"
+                DisplayNamePlaceholder="My GitHub Repo"
+                IsEditing="@(_editingProvider is not null)"
+                ProviderType="@_form.ProviderType" ProviderTypeChanged="OnProviderTypeChanged"
+                DisplayName="@_form.DisplayName" DisplayNameChanged="v => _form.DisplayName = v"
+                ApiUrl="@_form.ApiUrl" ApiUrlChanged="v => _form.ApiUrl = v"
+                ClientId="@_form.ClientId" ClientIdChanged="v => _form.ClientId = v"
+                InstallationId="@_form.InstallationId" InstallationIdChanged="v => _form.InstallationId = v"
+                PrivateKeyBase64="@_form.PrivateKeyBase64" PrivateKeyBase64Changed="v => _form.PrivateKeyBase64 = v"
+                Owner="@_form.Owner" OwnerChanged="v => _form.Owner = v"
+                Repo="@_form.Repo" RepoChanged="v => _form.Repo = v"
+                AvailableRepos="_availableRepos"
+                SelectedRepo="@_selectedRepo" SelectedRepoChanged="v => _selectedRepo = v"
+                LoadingRepos="_loadingRepos"
+                ValidationMessage="@_validationMessage"
+                ValidationSuccess="_validationSuccess"
+                Saving="_saving"
+                OnSave="SaveProvider"
+                OnCancel="CancelForm"
+                OnFetchRepos="FetchRepos">
+                <AdditionalFields>
+                    <div class="form-group">
+                        <label>Base Branch</label>
+                        <input type="text" @bind="_form.BaseBranch" placeholder="@ProviderSettingKeys.DefaultBaseBranch" />
+                    </div>
+                    <div class="form-group">
+                        <label>Repository Role</label>
+                        <select @bind="_form.RepositoryRole">
+                            <option value="Work">Work</option>
+                            <option value="Brain">Brain</option>
+                        </select>
+                    </div>
+                    @if (_form.RepositoryRole != "Brain")
+                    {
+                        <div class="form-group">
+                            <label>Required Agent Labels <span class="form-hint">(comma-separated — determines agent routing and quality gates)</span></label>
+                            <input type="text" @bind="_form.RequiredLabels" placeholder="e.g. kiro, dotnet, dotnet10" />
+                        </div>
+                        <div class="form-group">
+                            <div class="label-with-hint">
+                                <label>Blacklisted Paths</label>
+                                <span class="form-hint-icon" aria-hidden="true" title="Comma-separated path prefixes excluded from agent commits (e.g. .kiro, .github). Leave empty to use global defaults.">?</span>
+                            </div>
+                            <input type="text" @bind="_form.BlacklistedPaths" placeholder=".kiro, .github, .brain" />
+                        </div>
+                        <div class="form-group">
+                            <label>Blacklist Mode</label>
+                            <select @bind="_form.BlacklistMode">
+                                <option value="">— Use Global Default —</option>
+                                <option value="WarnAndExclude">Warn &amp; Exclude (unstage and continue)</option>
+                                <option value="Fail">Fail (stop pipeline on violation)</option>
+                            </select>
+                        </div>
+                    }
+                </AdditionalFields>
+                <HelpContent>
+                    <h4>🔐 GitHub App Setup</h4>
+                    <p>Configure a <strong>GitHub App</strong> for authentication. See
+                        <a href="https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app" target="_blank">GitHub App docs</a>.</p>
+                    <p class="help-heading">Required permissions:</p>
+                    <ul>
+                        <li><strong>Contents: Read &amp; write</strong> — clone, push branches, commit</li>
+                        <li><strong>Pull requests: Read &amp; write</strong> — create PRs</li>
+                    </ul>
+                    <p class="help-heading">Fields:</p>
+                    <ul>
+                        <li><strong>Client ID</strong> — from the App's General settings page (e.g. <code>Iv1.abc123...</code>)</li>
+                        <li><strong>Installation ID</strong> — from the installation URL (<code>github.com/settings/installations/{'{'}id{'}'}</code>)</li>
+                        <li><strong>Private Key</strong> — upload the .pem file downloaded from the App's settings</li>
+                        <li><strong>API URL</strong> — use <code>https://api.github.com</code> for github.com, or your GitHub Enterprise URL</li>
+                        <li><strong>Base Branch</strong> — the branch PRs will target (e.g. <code>main</code>, <code>develop</code>)</li>
+                    </ul>
+                    <p class="help-tip">💡 Use the same GitHub App as the Issue Provider — just ensure it has Contents and Pull requests permissions.</p>
+                </HelpContent>
+            </GitHubAppProviderForm>
+        }
     }
     else
     {
@@ -119,6 +174,7 @@
     [Parameter, EditorRequired] public List<ProviderConfig> Providers { get; set; } = new();
     [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
     [Parameter, EditorRequired] public GitHubValidationService GitHubValidator { get; set; } = default!;
+    [Parameter] public GitLabValidationService? GitLabValidator { get; set; }
     [Parameter] public EventCallback<string> OnDelete { get; set; }
     [Parameter] public EventCallback<ProviderConfig> OnSaved { get; set; }
 
@@ -159,7 +215,10 @@
             RepositoryRole = p.RepositoryRole.ToString(),
             RequiredLabels = p.RequiredLabels != null ? string.Join(", ", p.RequiredLabels) : p.Settings.GetValueOrDefault(ProviderSettingKeys.RequiredAgentLabels, ""),
             BlacklistedPaths = p.BlacklistedPaths != null ? string.Join(", ", p.BlacklistedPaths) : "",
-            BlacklistMode = p.BlacklistMode?.ToString() ?? ""
+            BlacklistMode = p.BlacklistMode?.ToString() ?? "",
+            GitLabApiUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, ProviderSettingKeys.DefaultGitLabApiUrl),
+            GitLabAccessToken = p.Settings.GetValueOrDefault(ProviderSettingKeys.AccessToken, ""),
+            GitLabProjectId = p.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId, "")
         };
         _showForm = true;
     }
@@ -317,6 +376,108 @@
         public string RequiredLabels { get; set; } = "";
         public string BlacklistedPaths { get; set; } = "";
         public string BlacklistMode { get; set; } = "";
+        // GitLab-specific fields
+        public string GitLabApiUrl { get; set; } = ProviderSettingKeys.DefaultGitLabApiUrl;
+        public string GitLabAccessToken { get; set; } = "";
+        public string GitLabProjectId { get; set; } = "";
+    }
+
+    private void OnProviderTypeChanged(string newType)
+    {
+        _form.ProviderType = newType;
+        _validationMessage = null;
+        StateHasChanged();
+    }
+
+    private async Task SaveGitLabProvider()
+    {
+        if (string.IsNullOrWhiteSpace(_form.DisplayName))
+        {
+            _validationMessage = "Display Name is required.";
+            _validationSuccess = false;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_form.GitLabAccessToken))
+        {
+            _validationMessage = "Access Token is required.";
+            _validationSuccess = false;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_form.GitLabProjectId))
+        {
+            _validationMessage = "Project ID is required.";
+            _validationSuccess = false;
+            return;
+        }
+
+        _saving = true;
+        _validationMessage = "Validating GitLab credentials...";
+        _validationSuccess = true;
+        StateHasChanged();
+
+        try
+        {
+            var apiUrl = string.IsNullOrWhiteSpace(_form.GitLabApiUrl)
+                ? ProviderSettingKeys.DefaultGitLabApiUrl
+                : _form.GitLabApiUrl;
+
+            if (GitLabValidator is not null)
+            {
+                var result = await GitLabValidator.ValidateAsync(
+                    apiUrl, _form.GitLabAccessToken, _form.GitLabProjectId, CancellationToken.None);
+
+                if (!result.Success)
+                {
+                    _validationMessage = result.ErrorMessage;
+                    _validationSuccess = false;
+                    _saving = false;
+                    return;
+                }
+
+                _validationMessage = $"✅ Connected to {result.ProjectPath} (access: {result.AccessLevel})";
+                _validationSuccess = true;
+            }
+
+            var baseBranch = string.IsNullOrWhiteSpace(_form.BaseBranch)
+                ? ProviderSettingKeys.DefaultBaseBranch
+                : _form.BaseBranch;
+
+            var config = new ProviderConfig
+            {
+                Id = _editingProvider?.Id ?? Guid.NewGuid().ToString(),
+                Kind = ProviderKind.Repository,
+                ProviderType = "GitLab",
+                DisplayName = _form.DisplayName,
+                RepositoryRole = Enum.TryParse<RepositoryRole>(_form.RepositoryRole, out var role) ? role : RepositoryRole.Work,
+                RequiredLabels = ParseLabels(_form.RequiredLabels),
+                BlacklistedPaths = ParseBlacklistedPaths(_form.BlacklistedPaths),
+                BlacklistMode = Enum.TryParse<BlacklistMode>(_form.BlacklistMode, out var mode) ? mode : null,
+                Settings = new Dictionary<string, string>
+                {
+                    [ProviderSettingKeys.ApiUrl] = apiUrl,
+                    [ProviderSettingKeys.AccessToken] = _form.GitLabAccessToken,
+                    [ProviderSettingKeys.ProjectId] = _form.GitLabProjectId,
+                    [ProviderSettingKeys.BaseBranch] = baseBranch
+                }
+            };
+
+            await ConfigStore.SaveProviderConfigAsync(config, CancellationToken.None);
+            _showForm = false;
+            _availableRepos.Clear();
+            _validationMessage = null;
+            await OnSaved.InvokeAsync(config);
+        }
+        catch (Exception ex)
+        {
+            _validationMessage = $"Failed to save: {ex.Message}";
+            _validationSuccess = false;
+        }
+        finally
+        {
+            _saving = false;
+        }
     }
 
     private static IReadOnlyList<string>? ParseLabels(string? input)
