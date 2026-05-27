@@ -143,6 +143,26 @@ public class ConsolidationPromptBuilderTests
     }
 
     [Fact]
+    public void BuildRefactoringDetectionPrompt_ContainsNewSchemaFields()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
+
+        result.Should().Contain("prerequisites");
+        result.Should().Contain("estimatedEffort");
+        result.Should().Contain("riskLevel");
+        result.Should().Contain("technique");
+    }
+
+    [Fact]
+    public void BuildRefactoringDetectionPrompt_ContainsHotspotFileReference()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
+
+        result.Should().Contain("hotspot-analysis.txt");
+        result.Should().Contain("Prioritization Data");
+    }
+
+    [Fact]
     public void BuildOpenIssueContext_BothListsPopulated_ContainsTitlesAndHeader()
     {
         var refactoring = new List<IssueSummary>
@@ -220,17 +240,6 @@ public class ConsolidationPromptBuilderTests
         var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(3, null);
 
         result.Should().NotContain("Do Not Duplicate");
-    }
-
-    [Fact]
-    public void BuildRefactoringDetectionPrompt_ContainsNewSchemaFields()
-    {
-        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
-
-        result.Should().Contain("prerequisites");
-        result.Should().Contain("estimatedEffort");
-        result.Should().Contain("riskLevel");
-        result.Should().Contain("technique");
     }
 
     [Fact]

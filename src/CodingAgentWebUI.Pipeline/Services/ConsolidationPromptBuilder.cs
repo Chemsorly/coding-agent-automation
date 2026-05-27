@@ -171,12 +171,21 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- Check for consistency in naming, structure, and patterns across similar components");
         sb.AppendLine();
 
-        // Insert issue context between Exploration Strategy and Output Format
+        // Insert issue context between Exploration Strategy and Prioritization Data
         if (!string.IsNullOrEmpty(issueContext))
         {
             sb.Append(issueContext);
             sb.AppendLine();
         }
+
+        // Prioritization data
+        sb.AppendLine("## Prioritization Data");
+        sb.AppendLine();
+        sb.AppendLine("Consult `.agent/hotspot-analysis.txt` for git change frequency data.");
+        sb.AppendLine("Files with high change counts are actively developed — refactoring these areas delivers more value because improvements benefit more future changes.");
+        sb.AppendLine("Prioritize proposals that affect frequently-changed files over rarely-touched code.");
+        sb.AppendLine("If the hotspot file does not exist, prioritize based on your own judgment of code quality and impact.");
+        sb.AppendLine();
 
         // Output format
         sb.AppendLine("## Output Format");

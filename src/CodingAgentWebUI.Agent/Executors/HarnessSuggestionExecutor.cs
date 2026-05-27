@@ -13,11 +13,6 @@ namespace CodingAgentWebUI.Agent.Executors;
 /// </summary>
 public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     protected override string WorkspaceSuffix => "harness";
     protected override string ExecutorName => "Harness suggestion";
 
@@ -296,7 +291,7 @@ public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
 
         try
         {
-            return JsonSerializer.Deserialize<HarnessSuggestions>(jsonBlock, JsonOptions);
+            return JsonSerializer.Deserialize<HarnessSuggestions>(jsonBlock, PipelineJsonOptions.Lenient);
         }
         catch (JsonException)
         {

@@ -337,35 +337,38 @@ public sealed record PipelineConfiguration
     public int MaxRefactoringProposals { get; init; } = 3;
 
     /// <summary>
-    /// Maximum number of sub-issues the decomposition agent may propose per epic.
-    /// Controls both the prompt instruction and the executor's creation cap.
-    /// Valid range: 1–20. Default: 10.
+    /// Time window for git hotspot analysis in refactoring detection.
+    /// Only commits within this window are counted. Default: 90 days.
     /// </summary>
-    public int MaxDecompositionSubIssues
-    {
-        get => _maxDecompositionSubIssues;
-        init => _maxDecompositionSubIssues = value is >= 1 and <= 20
-            ? value
-            : throw new ArgumentOutOfRangeException(nameof(MaxDecompositionSubIssues), value, "Value must be between 1 and 20.");
-    }
-    private readonly int _maxDecompositionSubIssues = 10;
+    public TimeSpan HotspotAnalysisLookback { get; init; } = TimeSpan.FromDays(90);
 
     /// <summary>
-    /// Maximum number of decomposition runs (across both phases) that can execute simultaneously.
-    /// The pipeline loop skips decomposition dispatch when this limit is reached. Default: 2.
+    /// Maximum number of sub-issues per epic decomposition (range: 1–20). Default: 10.
+    /// </summary>
+    // TODO: This refactor from backing field to C# 13 `field` keyword changes the exception message format — verify no consumers depend on the old message.
+    public int MaxDecompositionSubIssues
+    {
+        get => field;
+        init
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 20);
+            field = value;
+        }
+    } = 10;
+
+    /// <summary>
+    /// Maximum simultaneous decomposition runs. Default: 2.
     /// </summary>
     public int MaxConcurrentDecompositions { get; init; } = 2;
 
     /// <summary>
-    /// Timeout applied to decomposition phases, separate from AgentTimeout.
-    /// Accounts for additional time needed for codebase exploration in Phase 1.
-    /// Default: 15 minutes.
+    /// Timeout for each decomposition phase. Default: 15 minutes.
     /// </summary>
     public TimeSpan DecompositionTimeout { get; init; } = TimeSpan.FromMinutes(15);
 
     /// <summary>
-    /// Maximum number of open issues to download for deduplication context.
-    /// Default: 50. Minimum: 1.
+    /// Maximum open issues downloaded for deduplication context. Default: 50.
     /// </summary>
     public int MaxOpenIssuesForContext { get; init; } = 50;
 

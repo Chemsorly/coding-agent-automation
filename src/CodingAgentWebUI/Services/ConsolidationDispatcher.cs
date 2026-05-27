@@ -26,12 +26,6 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private readonly ILogger _logger;
     private readonly string _consolidationRunsDirectory;
 
-    private static readonly System.Text.Json.JsonSerializerOptions s_jsonOptions = new()
-    {
-        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
-        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-    };
-
     public ConsolidationDispatcher(
         AgentRegistryService registry,
         JobDispatcherService jobDispatcher,
@@ -243,7 +237,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         try
         {
             var json = await File.ReadAllTextAsync(filePath, ct);
-            return System.Text.Json.JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+            return System.Text.Json.JsonSerializer.Deserialize<ConsolidationRun>(json, Pipeline.PipelineJsonOptions.Default);
         }
         catch (OperationCanceledException) { throw; } // TODO: Bare catch was swallowing OperationCanceledException — propagate cancellation properly
         catch
@@ -278,7 +272,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
                 return null;
             }
 
-            var feedbackJson = System.Text.Json.JsonSerializer.Serialize(feedbackEntries, s_jsonOptions);
+            var feedbackJson = System.Text.Json.JsonSerializer.Serialize(feedbackEntries, Pipeline.PipelineJsonOptions.Default);
             _logger.Information(
                 "Regenerated {Count} RunFeedback entries for queued harness suggestion run {RunId}",
                 feedbackEntries.Count, runId);
@@ -375,7 +369,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
             try
             {
                 var json = await File.ReadAllTextAsync(file, ct);
-                var historicRun = System.Text.Json.JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+                var historicRun = System.Text.Json.JsonSerializer.Deserialize<ConsolidationRun>(json, Pipeline.PipelineJsonOptions.Default);
 
                 if (historicRun is not null
                     && historicRun.Type == type

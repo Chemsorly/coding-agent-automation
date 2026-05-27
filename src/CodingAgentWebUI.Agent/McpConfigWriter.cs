@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Agent;
@@ -11,12 +12,6 @@ namespace CodingAgentWebUI.Agent;
 /// </summary>
 public static class McpConfigWriter
 {
-    private static readonly JsonSerializerOptions SerializerOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
-
     /// <summary>
     /// Writes MCP server configuration to the specified file path.
     /// Creates the parent directory if it does not exist.
@@ -59,7 +54,7 @@ public static class McpConfigWriter
         }
 
         var mcpConfig = new { mcpServers = serversDict };
-        var json = JsonSerializer.Serialize(mcpConfig, SerializerOptions);
+        var json = JsonSerializer.Serialize(mcpConfig, PipelineJsonOptions.Default);
 
         File.WriteAllText(fullPath, json);
     }

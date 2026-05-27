@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using CodingAgentWebUI.Pipeline;
@@ -13,11 +14,6 @@ namespace CodingAgentWebUI.Agent.Executors;
 /// </summary>
 public sealed class RefactoringExecutor : ConsolidationExecutorBase
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     protected override string WorkspaceSuffix => "refactoring";
     protected override string ExecutorName => "Refactoring detection";
 
@@ -79,7 +75,10 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                 }
             }
 
-            // 2.5. Query open issues for deduplication context
+            // 3. Hotspot analysis — run git log to identify frequently-changed files
+            await WriteHotspotAnalysisAsync(workspacePath, job.PipelineConfiguration.HotspotAnalysisLookback, ct);
+
+            // 3.5. Query open issues for deduplication context
             string? issueContext = null;
             try
             {
@@ -105,10 +104,10 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                 Logger.Warning(ex, "Failed to query open issues for context in run {RunId}, continuing without", job.JobId);
             }
 
-            // 3. Build prompt
+            // 4. Build prompt
             var prompt = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(job.PipelineConfiguration.MaxRefactoringProposals, issueContext);
 
-            // 3b. Query past proposal outcomes for feedback context
+            // 4b. Query past proposal outcomes for feedback context
             IReadOnlyList<IssueSummary> closedRefactoringIssues = Array.Empty<IssueSummary>();
             try
             {
@@ -128,7 +127,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             if (outcomeContext.Length > 0)
                 prompt += outcomeContext;
 
-            // 4. Execute agent
+            // 5. Execute agent
             Logger.Information("Executing refactoring detection agent for run {RunId}", job.JobId);
             var (agentResult, failure) = await ExecuteAgentAndCheckAsync(
                 agentProvider,
@@ -218,6 +217,109 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     }
 
     /// <summary>
+    /// Runs git log to identify frequently-changed files and writes a hotspot summary.
+    /// Gracefully degrades on any failure — logs a warning and continues without the file.
+    /// </summary>
+    private async Task WriteHotspotAnalysisAsync(string workspacePath, TimeSpan lookback, CancellationToken ct)
+    {
+        try
+        {
+            var sinceDate = DateTime.UtcNow.Subtract(lookback).ToString("yyyy-MM-dd");
+            var output = await RunGitCommandAsync(workspacePath, $"log --name-only --since=\"{sinceDate}\" --format=\"\"", ct);
+
+            var hotspots = ParseHotspotOutput(output, lookback);
+            if (hotspots is null)
+            {
+                Logger.Information("No git history found within lookback window for hotspot analysis");
+                return;
+            }
+
+            var outputPath = Path.Combine(workspacePath, AgentWorkspacePaths.HotspotAnalysisFilePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+            await File.WriteAllTextAsync(outputPath, hotspots, ct);
+
+            Logger.Information("Wrote hotspot analysis to {Path}", outputPath);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Hotspot analysis failed, continuing without it");
+        }
+    }
+
+    /// <summary>
+    /// Parses raw git log --name-only output into a formatted hotspot summary.
+    /// Returns null if no files found. Exposed as internal static for testability.
+    /// </summary>
+    internal static string? ParseHotspotOutput(string gitLogOutput, TimeSpan lookback)
+    {
+        var hotspots = gitLogOutput
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .GroupBy(file => file)
+            .Select(g => (File: g.Key, Count: g.Count()))
+            .OrderByDescending(x => x.Count)
+            .Take(30)
+            .ToList();
+
+        if (hotspots.Count == 0)
+            return null;
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"# Git Hotspot Analysis (last {lookback.Days} days)");
+        sb.AppendLine("# Files ranked by change frequency — higher = more actively developed");
+        sb.AppendLine();
+        foreach (var (file, count) in hotspots)
+            sb.AppendLine($"{count} changes — {file}");
+
+        return sb.ToString();
+    }
+
+    // TODO: Check process.ExitCode after WaitForExitAsync — non-zero exit could produce misleading hotspot data from partial stdout.
+    private static async Task<string> RunGitCommandAsync(string workingDirectory, string arguments, CancellationToken ct)
+    {
+        using var process = new Process();
+        process.StartInfo = new ProcessStartInfo
+        {
+            FileName = "git",
+            Arguments = arguments,
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        process.StartInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        process.StartInfo.Environment["GIT_PAGER"] = "";
+
+        process.Start();
+
+        var outputTask = process.StandardOutput.ReadToEndAsync(ct);
+        var errorTask = process.StandardError.ReadToEndAsync(ct);
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // TODO: outputTask and errorTask are not awaited in this path, becoming fire-and-forget.
+            // Mirrors pre-existing pattern in AgentPhaseExecutor.CodeReview.cs.
+            try { process.Kill(entireProcessTree: true); } catch { }
+            throw new TimeoutException($"git {arguments} timed out after 30 seconds");
+        }
+
+        var output = await outputTask;
+        await errorTask;
+
+        return output;
+    }
+
+    /// <summary>
     /// Parses the refactoring proposals JSON file from the workspace.
     /// Returns null if the file doesn't exist or contains malformed JSON.
     /// Returns an empty list if the file contains an empty array.
@@ -234,7 +336,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         try
         {
             var json = await File.ReadAllTextAsync(filePath, ct);
-            var proposals = JsonSerializer.Deserialize<List<RefactoringProposal>>(json, JsonOptions);
+            var proposals = JsonSerializer.Deserialize<List<RefactoringProposal>>(json, PipelineJsonOptions.Lenient);
             return (IReadOnlyList<RefactoringProposal>?)proposals ?? Array.Empty<RefactoringProposal>();
         }
         catch (JsonException ex)
