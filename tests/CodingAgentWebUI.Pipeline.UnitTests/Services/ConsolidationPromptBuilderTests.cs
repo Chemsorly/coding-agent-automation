@@ -234,6 +234,42 @@ public class ConsolidationPromptBuilderTests
     }
 
     [Fact]
+    public void BuildRefactoringDetectionPrompt_ContainsAllNineCategories()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
+
+        result.Should().Contain("TODO comments");
+        result.Should().Contain("Duplicated logic");
+        result.Should().Contain("Naming inconsistencies");
+        result.Should().Contain("Structural drift");
+        result.Should().Contain("Overly complex areas");
+        result.Should().Contain("Dead code & unused artifacts");
+        result.Should().Contain("Obvious bugs");
+        result.Should().Contain("Stale documentation & misleading comments");
+        result.Should().Contain("Primitive obsession");
+    }
+
+    [Fact]
+    public void BuildRefactoringDetectionPrompt_BugCategoryIncludesConfidenceConstraint()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
+
+        result.Should().Contain("strong evidence the code is wrong, not merely suboptimal");
+    }
+
+    [Fact]
+    public void BuildRefactoringDetectionPrompt_ContainsCategoryField()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
+
+        result.Should().Contain("\"category\"");
+        result.Should().Contain("`refactoring`");
+        result.Should().Contain("`bug`");
+        result.Should().Contain("`documentation`");
+        result.Should().Contain("`dead-code`");
+    }
+
+    [Fact]
     public void BuildProposalOutcomeContext_EmptyList_ReturnsEmptyString()
     {
         var result = ConsolidationPromptBuilder.BuildProposalOutcomeContext(Array.Empty<IssueSummary>());

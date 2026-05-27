@@ -24,7 +24,8 @@ public class RefactoringProposalDeserializationTests
                     "prerequisites": ["Add tests for A.cs", "Review B.cs"],
                     "estimatedEffort": "medium",
                     "riskLevel": "low",
-                    "technique": "Extract Method"
+                    "technique": "Extract Method",
+                    "category": "bug"
                 }
             ]
             """;
@@ -37,6 +38,7 @@ public class RefactoringProposalDeserializationTests
         p.EstimatedEffort.Should().Be("medium");
         p.RiskLevel.Should().Be("low");
         p.Technique.Should().Be("Extract Method");
+        p.Category.Should().Be("bug");
     }
 
     [Fact]
@@ -61,5 +63,6 @@ public class RefactoringProposalDeserializationTests
         p.EstimatedEffort.Should().BeNull();
         p.RiskLevel.Should().BeNull();
         p.Technique.Should().BeNull();
+        p.Category.Should().BeNull();
     }
 }
