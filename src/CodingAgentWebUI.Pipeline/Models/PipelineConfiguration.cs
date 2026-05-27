@@ -341,4 +341,41 @@ public sealed record PipelineConfiguration
     /// Only commits within this window are counted. Default: 90 days.
     /// </summary>
     public TimeSpan HotspotAnalysisLookback { get; init; } = TimeSpan.FromDays(90);
+
+    /// <summary>
+    /// Maximum number of sub-issues per epic decomposition (range: 1–20). Default: 5.
+    /// </summary>
+    // TODO: This refactor from backing field to C# 13 `field` keyword changes the exception message format — verify no consumers depend on the old message.
+    public int MaxDecompositionSubIssues
+    {
+        get => field;
+        init
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 20);
+            field = value;
+        }
+    } = 5;
+
+    /// <summary>
+    /// Maximum simultaneous decomposition runs. Default: 2.
+    /// </summary>
+    public int MaxConcurrentDecompositions { get; init; } = 2;
+
+    /// <summary>
+    /// Timeout for each decomposition phase. Default: 15 minutes.
+    /// </summary>
+    public TimeSpan DecompositionTimeout { get; init; } = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// Maximum open issues downloaded for deduplication context. Default: 50.
+    /// </summary>
+    public int MaxOpenIssuesForContext { get; init; } = 50;
+
+    /// <summary>
+    /// Time window for querying past refactoring proposal outcomes.
+    /// Only closed issues within this window are included in the feedback context.
+    /// Default: 90 days.
+    /// </summary>
+    public TimeSpan RefactoringOutcomeLookback { get; init; } = TimeSpan.FromDays(90);
 }

@@ -44,6 +44,11 @@ public static class TestPipelineConfig
         ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15),
         ClosedLoopMaxPagesToFetch = 10,
         MaxRefactoringProposals = 3,
+        HotspotAnalysisLookback = TimeSpan.FromDays(90),
+        MaxDecompositionSubIssues = 5,
+        MaxConcurrentDecompositions = 2,
+        DecompositionTimeout = TimeSpan.FromMinutes(15),
+        MaxOpenIssuesForContext = 50,
         RefactoringOutcomeLookback = TimeSpan.FromDays(90),
     };
 
@@ -80,6 +85,11 @@ public static class TestPipelineConfig
         ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15),
         ClosedLoopMaxPagesToFetch = 10,
         MaxRefactoringProposals = 3,
+        HotspotAnalysisLookback = TimeSpan.FromDays(90),
+        MaxDecompositionSubIssues = 5,
+        MaxConcurrentDecompositions = 2,
+        DecompositionTimeout = TimeSpan.FromMinutes(15),
+        MaxOpenIssuesForContext = 50,
         RefactoringOutcomeLookback = TimeSpan.FromDays(90),
     };
 }

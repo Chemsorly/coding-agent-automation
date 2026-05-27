@@ -83,8 +83,54 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             // 3. Hotspot analysis — run git log to identify frequently-changed files
             await WriteHotspotAnalysisAsync(workspacePath, job.PipelineConfiguration.HotspotAnalysisLookback, ct);
 
+            // 3.5. Query open issues for deduplication context
+            string? issueContext = null;
+            try
+            {
+                var refactoringResult = await issueProvider.ListOpenIssuesAsync(
+                    1, 30, new[] { AgentLabels.Refactoring, AgentLabels.AgentGenerated }, ct);
+                var openRefactoringIssues = refactoringResult.Items;
+
+                var allOpenResult = await issueProvider.ListOpenIssuesAsync(1, 50, null, ct);
+                var cutoff = DateTime.UtcNow.AddDays(-30);
+                var recentOpenIssues = allOpenResult.Items
+                    .Where(i => i.CreatedAt >= cutoff)
+                    .Where(i => !openRefactoringIssues.Any(r => r.Identifier == i.Identifier))
+                    .Take(50 - openRefactoringIssues.Count)
+                    .ToList();
+
+                issueContext = ConsolidationPromptBuilder.BuildOpenIssueContext(openRefactoringIssues, recentOpenIssues);
+                if (!string.IsNullOrEmpty(issueContext))
+                    Logger.Information("Including {Count} open issues as context for refactoring detection in run {RunId}",
+                        openRefactoringIssues.Count + recentOpenIssues.Count, job.JobId);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Logger.Warning(ex, "Failed to query open issues for context in run {RunId}, continuing without", job.JobId);
+            }
+
             // 4. Build prompt
-            var prompt = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(job.PipelineConfiguration.MaxRefactoringProposals);
+            var prompt = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(job.PipelineConfiguration.MaxRefactoringProposals, issueContext);
+
+            // 4b. Query past proposal outcomes for feedback context
+            IReadOnlyList<IssueSummary> closedRefactoringIssues = Array.Empty<IssueSummary>();
+            try
+            {
+                var since = DateTime.UtcNow - job.PipelineConfiguration.RefactoringOutcomeLookback;
+                var closedResult = await issueProvider.ListClosedIssuesAsync(
+                    page: 1, pageSize: 20,
+                    labels: new[] { AgentLabels.Refactoring, AgentLabels.AgentGenerated },
+                    since: since, ct);
+                closedRefactoringIssues = closedResult.Items;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Logger.Warning(ex, "Failed to query closed issues for feedback context in run {RunId}", job.JobId);
+            }
+
+            var outcomeContext = ConsolidationPromptBuilder.BuildProposalOutcomeContext(closedRefactoringIssues);
+            if (outcomeContext.Length > 0)
+                prompt += outcomeContext;
 
             // 5. Execute agent
             Logger.Information("Executing refactoring detection agent for run {RunId}", job.JobId);
@@ -234,6 +280,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         return sb.ToString();
     }
 
+    // TODO: Check process.ExitCode after WaitForExitAsync — non-zero exit could produce misleading hotspot data from partial stdout.
     private static async Task<string> RunGitCommandAsync(string workingDirectory, string arguments, CancellationToken ct)
     {
         using var process = new Process();
@@ -265,6 +312,8 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
+            // TODO: outputTask and errorTask are not awaited in this path, becoming fire-and-forget.
+            // Mirrors pre-existing pattern in AgentPhaseExecutor.CodeReview.cs.
             try { process.Kill(entireProcessTree: true); } catch { }
             throw new TimeoutException($"git {arguments} timed out after 30 seconds");
         }
@@ -408,26 +457,13 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     /// Sanitizes the proposal title for use in GitHub issue titles.
     /// Truncates to 200 chars and strips newlines.
     /// </summary>
-    internal static string SanitizeTitle(string title)
-    {
-        var sanitized = title
-            .Replace("\r", "")
-            .Replace("\n", " ")
-            .Trim();
-        return sanitized.Length > 200 ? sanitized[..200] : sanitized;
-    }
+    internal static string SanitizeTitle(string title) => TextSanitizer.SanitizeTitle(title);
 
     /// <summary>
     /// Escapes markdown-sensitive characters to prevent injection in GitHub issues.
-    /// Mirrors the logic in <see cref="FeedbackCommentFormatter"/>.
+    /// Delegates to <see cref="TextSanitizer.SanitizeMarkdown"/>.
     /// </summary>
-    private static string SanitizeMarkdown(string value)
-    {
-        return value
-            .Replace("@", "@\u200B")  // Zero-width space breaks @mention parsing
-            .Replace("<", "&lt;")     // Prevent HTML injection
-            .Replace(">", "&gt;");
-    }
+    private static string SanitizeMarkdown(string value) => TextSanitizer.SanitizeMarkdown(value);
 
     /// <summary>
     /// Formats the refactoring run summary with issue count and identifiers.

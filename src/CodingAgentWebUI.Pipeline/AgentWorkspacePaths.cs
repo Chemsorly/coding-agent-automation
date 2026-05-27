@@ -110,6 +110,28 @@ public static class AgentWorkspacePaths
     public const string HotspotAnalysisFilePath = ".agent/hotspot-analysis.txt";
 
     /// <summary>
+    /// The directory (relative to workspace) where open issue context files are written
+    /// for the agent to consult during decomposition and refactoring detection.
+    /// </summary>
+    public const string OpenIssuesDirectory = ".agent/open-issues";
+
+    /// <summary>
+    /// The file path (relative to workspace) where the decomposition plan is written.
+    /// </summary>
+    public const string DecompositionPlanFilePath = ".agent/decomposition-plan.md";
+
+    /// <summary>
+    /// The file path (relative to workspace) where the decomposition review agent writes its findings.
+    /// </summary>
+    public const string DecompositionReviewFilePath = ".agent/decomposition-review.md";
+
+    /// <summary>
+    /// The directory (relative to workspace) where sub-issue JSON files are written
+    /// by the decomposition agent for subsequent issue creation.
+    /// </summary>
+    public const string SubIssuesDirectory = ".agent/sub-issues";
+
+    /// <summary>
     /// Returns a per-agent findings file path to prevent sub-agent overwrite conflicts.
     /// Each review agent writes to its own isolated file.
     /// </summary>

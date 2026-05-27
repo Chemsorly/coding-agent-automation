@@ -1,5 +1,6 @@
 // Feature: 021-consolidation-loops, Task 5.4: Unit tests for ConsolidationPromptBuilder content
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
@@ -159,5 +160,191 @@ public class ConsolidationPromptBuilderTests
 
         result.Should().Contain("hotspot-analysis.txt");
         result.Should().Contain("Prioritization Data");
+    }
+
+    [Fact]
+    public void BuildOpenIssueContext_BothListsPopulated_ContainsTitlesAndHeader()
+    {
+        var refactoring = new List<IssueSummary>
+        {
+            new() { Identifier = "10", Title = "Extract shared retry logic", Labels = ["refactoring", "agent-generated"] }
+        };
+        var other = new List<IssueSummary>
+        {
+            new() { Identifier = "20", Title = "Add pagination support", Labels = [] }
+        };
+
+        var result = ConsolidationPromptBuilder.BuildOpenIssueContext(refactoring, other);
+
+        result.Should().Contain("Do Not Duplicate");
+        result.Should().Contain("#10");
+        result.Should().Contain("Extract shared retry logic");
+        result.Should().Contain("#20");
+        result.Should().Contain("Add pagination support");
+    }
+
+    [Fact]
+    public void BuildOpenIssueContext_BothListsEmpty_ReturnsEmptyString()
+    {
+        var result = ConsolidationPromptBuilder.BuildOpenIssueContext([], []);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void BuildOpenIssueContext_OnlyRefactoringIssues_ContainsOnlyRefactoringSection()
+    {
+        var refactoring = new List<IssueSummary>
+        {
+            new() { Identifier = "5", Title = "Rename methods", Labels = ["refactoring"] }
+        };
+
+        var result = ConsolidationPromptBuilder.BuildOpenIssueContext(refactoring, []);
+
+        result.Should().Contain("Open Refactoring Issues");
+        result.Should().NotContain("Other Recent Open Issues");
+    }
+
+    [Fact]
+    public void BuildOpenIssueContext_OnlyOtherIssues_ContainsOnlyOtherSection()
+    {
+        var other = new List<IssueSummary>
+        {
+            new() { Identifier = "7", Title = "Fix bug", Labels = [] }
+        };
+
+        var result = ConsolidationPromptBuilder.BuildOpenIssueContext([], other);
+
+        result.Should().NotContain("Open Refactoring Issues");
+        result.Should().Contain("Other Recent Open Issues");
+    }
+
+    [Fact]
+    public void BuildRefactoringDetectionPrompt_WithIssueContext_InsertsBeforeOutputFormat()
+    {
+        var context = "## Existing Open Issues — Do Not Duplicate\n\n- #1 \"Test\"\n";
+
+        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(3, context);
+
+        var contextIndex = result.IndexOf("Do Not Duplicate");
+        var outputFormatIndex = result.IndexOf("## Output Format");
+        var explorationIndex = result.IndexOf("## Exploration Strategy");
+
+        contextIndex.Should().BeGreaterThan(explorationIndex);
+        contextIndex.Should().BeLessThan(outputFormatIndex);
+    }
+
+    [Fact]
+    public void BuildRefactoringDetectionPrompt_WithNullIssueContext_NoExtraSection()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(3, null);
+
+        result.Should().NotContain("Do Not Duplicate");
+    }
+
+    [Fact]
+    public void BuildRefactoringDetectionPrompt_ContainsAllNineCategories()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
+
+        result.Should().Contain("TODO comments");
+        result.Should().Contain("Duplicated logic");
+        result.Should().Contain("Naming inconsistencies");
+        result.Should().Contain("Structural drift");
+        result.Should().Contain("Overly complex areas");
+        result.Should().Contain("Dead code & unused artifacts");
+        result.Should().Contain("Obvious bugs");
+        result.Should().Contain("Stale documentation & misleading comments");
+        result.Should().Contain("Primitive obsession");
+    }
+
+    [Fact]
+    public void BuildRefactoringDetectionPrompt_BugCategoryIncludesConfidenceConstraint()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
+
+        result.Should().Contain("strong evidence the code is wrong, not merely suboptimal");
+    }
+
+    [Fact]
+    public void BuildRefactoringDetectionPrompt_ContainsCategoryField()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
+
+        result.Should().Contain("\"category\"");
+        result.Should().Contain("`refactoring`");
+        result.Should().Contain("`bug`");
+        result.Should().Contain("`documentation`");
+        result.Should().Contain("`dead-code`");
+    }
+
+    [Fact]
+    public void BuildProposalOutcomeContext_EmptyList_ReturnsEmptyString()
+    {
+        var result = ConsolidationPromptBuilder.BuildProposalOutcomeContext(Array.Empty<IssueSummary>());
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void BuildProposalOutcomeContext_OnlyAmbiguousIssues_ReturnsEmptyString()
+    {
+        var issues = new[]
+        {
+            new IssueSummary { Identifier = "1", Title = "Ambiguous", Labels = new[] { "refactoring" } }
+        };
+
+        var result = ConsolidationPromptBuilder.BuildProposalOutcomeContext(issues);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void BuildProposalOutcomeContext_ImplementedIssues_FormatsCorrectly()
+    {
+        var issues = new[]
+        {
+            new IssueSummary { Identifier = "315", Title = "Extract shared retry logic", Labels = new[] { "refactoring", "agent:done" } }
+        };
+
+        var result = ConsolidationPromptBuilder.BuildProposalOutcomeContext(issues);
+
+        result.Should().Contain("Implemented (team valued these)");
+        result.Should().Contain("#315 \"Extract shared retry logic\"");
+        result.Should().NotContain("Rejected");
+    }
+
+    [Fact]
+    public void BuildProposalOutcomeContext_RejectedIssues_FormatsCorrectly()
+    {
+        var issues = new[]
+        {
+            new IssueSummary { Identifier = "320", Title = "Restructure interfaces", Labels = new[] { "refactoring", "agent:wont-do" } },
+            new IssueSummary { Identifier = "322", Title = "Replace serializer", Labels = new[] { "refactoring", "agent:cancelled" } }
+        };
+
+        var result = ConsolidationPromptBuilder.BuildProposalOutcomeContext(issues);
+
+        result.Should().Contain("Rejected (avoid similar proposals)");
+        result.Should().Contain("#320 \"Restructure interfaces\"");
+        result.Should().Contain("#322 \"Replace serializer\"");
+        result.Should().Contain("Do NOT propose refactorings similar to rejected items above.");
+    }
+
+    [Fact]
+    public void BuildProposalOutcomeContext_MixedIssues_ExcludesAmbiguous()
+    {
+        var issues = new[]
+        {
+            new IssueSummary { Identifier = "1", Title = "Done", Labels = new[] { "agent:done" } },
+            new IssueSummary { Identifier = "2", Title = "Ambiguous", Labels = new[] { "refactoring" } },
+            new IssueSummary { Identifier = "3", Title = "Rejected", Labels = new[] { "agent:wont-do" } }
+        };
+
+        var result = ConsolidationPromptBuilder.BuildProposalOutcomeContext(issues);
+
+        result.Should().Contain("#1 \"Done\"");
+        result.Should().Contain("#3 \"Rejected\"");
+        result.Should().NotContain("#2");
     }
 }

@@ -1,4 +1,5 @@
 using System.Text;
+using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -134,7 +135,7 @@ public static class ConsolidationPromptBuilder
     /// Instructs agent to produce bounded proposals as JSON.
     /// </summary>
     /// <param name="maxProposals">Maximum number of proposals the agent should produce.</param>
-    public static string BuildRefactoringDetectionPrompt(int maxProposals = 3)
+    public static string BuildRefactoringDetectionPrompt(int maxProposals = 3, string? issueContext = null)
     {
         var sb = new StringBuilder();
 
@@ -154,6 +155,10 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("3. **Naming inconsistencies** — Classes, methods, or variables that don't follow the project's conventions");
         sb.AppendLine("4. **Structural drift** — Areas where the architecture has diverged from the intended design due to incremental changes");
         sb.AppendLine("5. **Overly complex areas** — Methods or classes that have grown too large or have too many responsibilities");
+        sb.AppendLine("6. **Dead code & unused artifacts** — Unreferenced methods, properties, classes, or interfaces that are never called; orphaned files from removed features; unused using directives beyond IDE cleanup");
+        sb.AppendLine("7. **Obvious bugs** — High-confidence correctness issues: null dereference risks, off-by-one errors, unreachable code paths, resource leaks (opened but never disposed), logic errors (conditions always true/false), race conditions in shared state. Only flag issues where you have strong evidence the code is wrong, not merely suboptimal");
+        sb.AppendLine("8. **Stale documentation & misleading comments** — XML doc comments describing behavior the code no longer exhibits; README sections referencing removed features; comments explaining \"why\" that reference conditions no longer true; parameter descriptions that don't match actual parameters");
+        sb.AppendLine("9. **Primitive obsession** — String or int parameters representing domain concepts (emails, URLs, IDs, file paths) without validation or type safety; magic numbers/strings without named constants; repeated validation logic for the same concept scattered across multiple call sites");
         sb.AppendLine();
 
         // How to explore
@@ -165,6 +170,13 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- Focus on areas with high file counts or deep nesting as indicators of complexity");
         sb.AppendLine("- Check for consistency in naming, structure, and patterns across similar components");
         sb.AppendLine();
+
+        // Insert issue context between Exploration Strategy and Prioritization Data
+        if (!string.IsNullOrEmpty(issueContext))
+        {
+            sb.Append(issueContext);
+            sb.AppendLine();
+        }
 
         // Prioritization data
         sb.AppendLine("## Prioritization Data");
@@ -187,6 +199,7 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("[");
         sb.AppendLine("  {");
         sb.AppendLine("    \"title\": \"Short descriptive title of the refactoring opportunity\",");
+        sb.AppendLine("    \"category\": \"refactoring\",");
         sb.AppendLine("    \"affectedFiles\": [\"src/path/to/File1.cs\", \"src/path/to/File2.cs\"],");
         sb.AppendLine("    \"description\": \"Detailed description of what should be changed and how\",");
         sb.AppendLine("    \"rationale\": \"Why this refactoring would improve the codebase (maintainability, readability, performance, etc.)\",");
@@ -206,6 +219,7 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- **estimatedEffort** — `small` (<5 files, mechanical changes), `medium` (5-15 files with logic changes), or `large` (15-30 files or architectural changes).");
         sb.AppendLine("- **riskLevel** — `low` (rename/move), `medium` (extract/restructure), or `high` (interface changes affecting consumers).");
         sb.AppendLine("- **technique** — Named refactoring pattern if applicable (e.g., Extract Method, Strangler Fig, Branch by Abstraction, Inline Class, Move Method).");
+        sb.AppendLine("- **category** — `refactoring` (structural improvements, default if omitted), `bug` (correctness issues), `documentation` (stale/misleading docs or comments), or `dead-code` (unused artifacts to remove).");
         sb.AppendLine();
 
         // Constraints
@@ -230,6 +244,47 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- Prefer proposals that are mechanical and low-risk (file moves, renames, extractions) over sweeping architectural changes");
         sb.AppendLine("- Do NOT propose changes that require coordinated modifications across serialization boundaries (e.g., JSON schema + MessagePack wire format + all consumers simultaneously)");
         sb.AppendLine("- If a large refactoring is warranted, propose only the smallest first step that delivers value independently");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds a prompt section listing open issues to prevent duplicate proposals.
+    /// Returns empty string if both lists are empty.
+    /// </summary>
+    public static string BuildOpenIssueContext(
+        IReadOnlyList<IssueSummary> refactoringIssues,
+        IReadOnlyList<IssueSummary> otherIssues)
+    {
+        ArgumentNullException.ThrowIfNull(refactoringIssues);
+        ArgumentNullException.ThrowIfNull(otherIssues);
+
+        if (refactoringIssues.Count == 0 && otherIssues.Count == 0)
+            return string.Empty;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("## Existing Open Issues — Do Not Duplicate");
+        sb.AppendLine();
+
+        if (refactoringIssues.Count > 0)
+        {
+            sb.AppendLine("### Open Refactoring Issues (agent-generated, still pending)");
+            foreach (var issue in refactoringIssues)
+                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
+            sb.AppendLine();
+        }
+
+        if (otherIssues.Count > 0)
+        {
+            sb.AppendLine("### Other Recent Open Issues (may overlap)");
+            foreach (var issue in otherIssues)
+                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("Do NOT propose refactoring that overlaps with any issue listed above.");
+        sb.AppendLine("If you identify an opportunity that partially overlaps, note the related issue number in your rationale and explain why your proposal is distinct.");
+        sb.AppendLine();
 
         return sb.ToString();
     }
@@ -571,6 +626,55 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("This summary will be reviewed by an independent agent — be thorough and specific.");
         sb.AppendLine();
         sb.AppendLine("Do NOT make additional modifications to `.brain/` files in this step.");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds a prompt section summarizing past refactoring proposal outcomes.
+    /// Categorizes closed issues as implemented (agent:done) or rejected (agent:wont-do/agent:cancelled).
+    /// Issues without agent labels are excluded. Returns empty string if no categorizable issues.
+    /// </summary>
+    public static string BuildProposalOutcomeContext(IReadOnlyList<IssueSummary> closedIssues)
+    {
+        var implemented = new List<IssueSummary>();
+        var rejected = new List<IssueSummary>();
+
+        foreach (var issue in closedIssues)
+        {
+            if (issue.Labels.Contains(AgentLabels.Done))
+                implemented.Add(issue);
+            else if (issue.Labels.Contains(AgentLabels.WontDo) || issue.Labels.Contains(AgentLabels.Cancelled))
+                rejected.Add(issue);
+            // Ambiguous closures (no agent label) are excluded
+        }
+
+        if (implemented.Count == 0 && rejected.Count == 0)
+            return string.Empty;
+
+        var sb = new StringBuilder();
+        sb.AppendLine();
+        sb.AppendLine("## Past Proposal Outcomes — Learn From History");
+        sb.AppendLine();
+
+        if (implemented.Count > 0)
+        {
+            sb.AppendLine("### Implemented (team valued these)");
+            foreach (var issue in implemented)
+                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
+            sb.AppendLine();
+        }
+
+        if (rejected.Count > 0)
+        {
+            sb.AppendLine("### Rejected (avoid similar proposals)");
+            foreach (var issue in rejected)
+                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("Do NOT propose refactorings similar to rejected items above.");
+        sb.AppendLine("Proposals similar to implemented items are encouraged — the team values this type of improvement.");
 
         return sb.ToString();
     }
