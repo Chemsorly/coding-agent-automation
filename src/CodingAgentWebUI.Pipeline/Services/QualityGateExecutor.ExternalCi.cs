@@ -94,8 +94,9 @@ internal partial class QualityGateExecutor
                 }
             }
 
-            await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, ct);
-            _logger.Information("Pipeline {RunId} pushed branch {BranchName} for CI validation", run.RunId, run.BranchName);
+            await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: run.MergeForceResolved, ct);
+            _logger.Information("Pipeline {RunId} pushed branch {BranchName} for CI validation{ForceNote}",
+                run.RunId, run.BranchName, run.MergeForceResolved ? " (force-push after rebase)" : "");
             callbacks.EmitOutputLine($"📦 Committed changes for CI validation");
             callbacks.EmitOutputLine($"🔀 Pushed to origin/{run.BranchName}");
 
