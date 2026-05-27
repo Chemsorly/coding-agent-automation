@@ -22,7 +22,8 @@ internal sealed class GenerateCodeStep : IPipelineStep
             reworkPromptOverride = PromptBuilder.BuildReworkPrompt(
                 context.Run.MergeConflictFiles,
                 context.Run.LinkedPullRequest.ReviewComments,
-                isDraft: context.Run.LinkedPullRequest.IsDraft);
+                isDraft: context.Run.LinkedPullRequest.IsDraft,
+                forceResolved: context.Run.MergeForceResolved);
 
             if (reworkPromptOverride is null)
             {

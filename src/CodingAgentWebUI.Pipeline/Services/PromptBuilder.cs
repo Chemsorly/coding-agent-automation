@@ -483,7 +483,8 @@ public static class PromptBuilder
     public static string? BuildReworkPrompt(
         IReadOnlyList<string> conflictFiles,
         IReadOnlyList<PullRequestReviewComment> reviewComments,
-        bool isDraft = false)
+        bool isDraft = false,
+        bool forceResolved = false)
     {
         if (conflictFiles.Count == 0 && reviewComments.Count == 0 && !isDraft)
             return null; // Nothing to rework — skip code gen
@@ -502,7 +503,23 @@ public static class PromptBuilder
             sb.AppendLine();
         }
 
-        if (conflictFiles.Count > 0)
+        if (conflictFiles.Count > 0 && forceResolved)
+        {
+            sb.AppendLine("## Force-Rebased Files (Main Wins)");
+            sb.AppendLine();
+            sb.AppendLine("The branch was rebased onto the latest main. The following files had " +
+                "conflicts that were **force-resolved by accepting main's version** (incoming wins). " +
+                "Your previous branch changes for these files were discarded.");
+            sb.AppendLine();
+            sb.AppendLine("You must **re-implement your changes** for these files on top of the " +
+                "current main state. The files currently contain main's version — there are NO " +
+                "conflict markers. Review the issue requirements and apply the necessary changes:");
+            sb.AppendLine();
+            foreach (var file in conflictFiles)
+                sb.AppendLine($"- `{file}`");
+            sb.AppendLine();
+        }
+        else if (conflictFiles.Count > 0)
         {
             sb.AppendLine("## Merge Conflicts");
             sb.AppendLine();

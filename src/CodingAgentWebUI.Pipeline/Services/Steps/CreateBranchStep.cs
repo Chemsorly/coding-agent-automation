@@ -44,7 +44,14 @@ internal sealed class CreateBranchStep : IPipelineStep
         {
             var mergeResult = await context.RepoProvider.MergeFromBaseAsync(context.Run.WorkspacePath!, ct);
             context.Run.MergeConflictFiles = mergeResult.ConflictFiles;
-            if (mergeResult.HasConflicts)
+            context.Run.MergeForceResolved = mergeResult.ForceResolved;
+            if (mergeResult.HasConflicts && mergeResult.ForceResolved)
+            {
+                context.Callbacks.EmitOutputLine($"⚠️ Rebase onto {context.RepoProvider.BaseBranch} had {mergeResult.ConflictFiles.Count} conflict(s) — force-resolved using incoming (main wins)");
+                context.Logger.Information("Pipeline {RunId} rebase force-resolved {ConflictCount} conflict(s) using incoming",
+                    context.Run.RunId, mergeResult.ConflictFiles.Count);
+            }
+            else if (mergeResult.HasConflicts)
             {
                 context.Callbacks.EmitOutputLine($"⚠️ Rebase onto {context.RepoProvider.BaseBranch} failed with {mergeResult.ConflictFiles.Count} conflict(s)");
                 context.Logger.Information("Pipeline {RunId} rebase onto base had {ConflictCount} conflict(s)",

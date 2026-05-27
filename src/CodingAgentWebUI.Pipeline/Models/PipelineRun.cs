@@ -142,6 +142,9 @@ public sealed class PipelineRun
     /// <summary>Files with conflicts from rebase onto base branch, empty if no conflicts.</summary>
     public IReadOnlyList<string> MergeConflictFiles { get; set; } = Array.Empty<string>();
 
+    /// <summary>Whether merge conflicts were force-resolved using incoming (main wins).</summary>
+    public bool MergeForceResolved { get; set; }
+
     /// <summary>How this run was initiated: "manual" or "loop".</summary>
     public string InitiatedBy { get; init; } = "manual";
 

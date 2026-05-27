@@ -631,26 +631,56 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
 
             if (rebaseResult.Status == RebaseStatus.Conflicts)
             {
-                // Collect conflicting files before aborting
+                // Collect conflicting files
                 var conflictFiles = repo.Index.Conflicts
                     .Select(c => c.Ancestor?.Path ?? c.Ours?.Path ?? c.Theirs?.Path)
                     .Where(p => p != null)
                     .Distinct()
                     .ToList();
 
-                // Abort the rebase to leave the workspace in a clean state
-                repo.Rebase.Abort();
-
                 Log.Warning(
-                    "Rebase: branch {BranchName} onto origin/{BaseBranch} produced {ConflictCount} conflict(s) at step {CurrentStep}/{TotalSteps}, aborted. Conflicts: {@ConflictFiles}",
+                    "Rebase: branch {BranchName} onto origin/{BaseBranch} produced {ConflictCount} conflict(s) at step {CurrentStep}/{TotalSteps}. Force-resolving using incoming (main wins). Conflicts: {@ConflictFiles}",
                     headBranchName, _baseBranch, conflictFiles.Count,
                     rebaseResult.CompletedStepCount + 1, rebaseResult.TotalStepCount,
                     conflictFiles);
 
+                // Force-resolve all conflicts by accepting "theirs" (incoming/base branch version).
+                // Main always has priority — the code generation phase will re-implement branch changes.
+                ForceResolveConflictsUsingTheirs(repo, workspacePath);
+
+                // Continue the rebase after resolving conflicts
+                var continueIdentity = new Identity(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail);
+                var continueResult = repo.Rebase.Continue(continueIdentity, new RebaseOptions());
+
+                // Handle any further conflicts in subsequent rebase steps
+                while (continueResult.Status == RebaseStatus.Conflicts)
+                {
+                    var additionalConflicts = repo.Index.Conflicts
+                        .Select(c => c.Ancestor?.Path ?? c.Ours?.Path ?? c.Theirs?.Path)
+                        .Where(p => p != null)
+                        .Distinct()
+                        .ToList();
+
+                    foreach (var f in additionalConflicts.Where(f => !conflictFiles.Contains(f)))
+                        conflictFiles.Add(f!);
+
+                    Log.Warning(
+                        "Rebase: additional conflict(s) at step {CurrentStep}/{TotalSteps}, force-resolving. New conflicts: {@AdditionalConflicts}",
+                        continueResult.CompletedStepCount + 1, continueResult.TotalStepCount, additionalConflicts);
+
+                    ForceResolveConflictsUsingTheirs(repo, workspacePath);
+                    continueResult = repo.Rebase.Continue(continueIdentity, new RebaseOptions());
+                }
+
+                Log.Information(
+                    "Rebase: force-resolved {ConflictCount} file(s) using incoming (main wins), rebase completed. New HEAD={NewHeadSha}",
+                    conflictFiles.Count, repo.Head.Tip.Sha[..8]);
+
                 return new MergeResult
                 {
-                    Success = false,
+                    Success = true,
                     HasConflicts = true,
+                    ForceResolved = true,
                     ConflictFiles = conflictFiles!
                 };
             }
@@ -754,6 +784,69 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
             repo.Index.Write();
             Log.Information("Auto-resolved {Count} rename/delete conflict(s)", resolvedCount);
         }
+    }
+
+    /// <summary>
+    /// Force-resolves all conflicts by accepting "theirs" (incoming/base branch version).
+    /// Main always wins — the code generation phase will re-implement the branch's changes
+    /// on top of the current main state.
+    /// </summary>
+    private static void ForceResolveConflictsUsingTheirs(Repository repo, string workspacePath)
+    {
+        var conflicts = repo.Index.Conflicts.ToList();
+        var resolvedCount = 0;
+
+        foreach (var conflict in conflicts)
+        {
+            var conflictPath = conflict.Ancestor?.Path ?? conflict.Ours?.Path ?? conflict.Theirs?.Path;
+            if (conflictPath == null) continue;
+
+            try
+            {
+                if (conflict.Theirs != null)
+                {
+                    // Accept the incoming (base/main) version of the file
+                    var blob = repo.Lookup<LibGit2Sharp.Blob>(conflict.Theirs.Id);
+                    if (blob != null)
+                    {
+                        var filePath = Path.Combine(workspacePath, conflict.Theirs.Path.Replace('/', Path.DirectorySeparatorChar));
+                        var dir = Path.GetDirectoryName(filePath);
+                        if (dir != null && !Directory.Exists(dir))
+                            Directory.CreateDirectory(dir);
+
+                        using (var contentStream = blob.GetContentStream())
+                        using (var fileStream = File.Create(filePath))
+                        {
+                            contentStream.CopyTo(fileStream);
+                        }
+
+                        Commands.Stage(repo, conflict.Theirs.Path);
+                        resolvedCount++;
+                    }
+                }
+                else
+                {
+                    // File was deleted on base (theirs is null) — accept the deletion
+                    var pathToRemove = conflict.Ours?.Path ?? conflict.Ancestor?.Path;
+                    if (pathToRemove != null)
+                    {
+                        var filePath = Path.Combine(workspacePath, pathToRemove.Replace('/', Path.DirectorySeparatorChar));
+                        if (File.Exists(filePath))
+                            File.Delete(filePath);
+                        repo.Index.Remove(pathToRemove);
+                        resolvedCount++;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to force-resolve conflict for {Path}, skipping", conflictPath);
+            }
+        }
+
+        repo.Index.Write();
+        Log.Information("Force-resolved {Count}/{Total} conflict(s) using incoming (main wins)",
+            resolvedCount, conflicts.Count);
     }
 
     public async Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool markReady, CancellationToken ct)
