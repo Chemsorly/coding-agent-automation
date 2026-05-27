@@ -54,9 +54,6 @@ public static class McpConfigWriter
         }
 
         var mcpConfig = new { mcpServers = serversDict };
-        // TODO: PipelineJsonOptions.Default adds NumberHandling, TimeSpanJsonConverter, and JsonStringEnumConverter
-        // beyond the original WriteIndented+CamelCase. Current anonymous types use only strings/bools/lists so output
-        // is identical, but be aware if serialized structure changes to include enums or TimeSpans.
         var json = JsonSerializer.Serialize(mcpConfig, PipelineJsonOptions.Default);
 
         File.WriteAllText(fullPath, json);
