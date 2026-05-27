@@ -25,8 +25,7 @@ internal sealed class ReviewCodeStep : IPipelineStep
         {
             var allReviewerConfigs = await context.ConfigStore.LoadReviewerConfigsAsync(ct);
             var reviewerResolver = new ReviewerResolver();
-            var repoConfigs = await context.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-            var repoConfigForLabels = repoConfigs.FirstOrDefault(c => c.Id == context.Run.RepoProviderConfigId);
+            var repoConfigForLabels = await context.ConfigStore.GetProviderConfigByIdAsync(context.Run.RepoProviderConfigId, ProviderKind.Repository, ct);
             var requiredLabelsForReview = LabelResolver.ResolveRequiredLabels(repoConfigForLabels, context.Config);
             resolvedReviewers = reviewerResolver.Resolve(allReviewerConfigs, requiredLabelsForReview);
         }

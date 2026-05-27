@@ -102,8 +102,10 @@ public class BrainTokenRefreshRegressionTests
         };
 
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { workConfig, brainConfig });
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("brain-repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(brainConfig);
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("work-repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workConfig);
 
         ProviderConfig? capturedConfig = null;
         _mockTokenVending
@@ -159,8 +161,8 @@ public class BrainTokenRefreshRegressionTests
         };
 
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { workConfig });
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("work-repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workConfig);
 
         ProviderConfig? capturedConfig = null;
         _mockTokenVending
@@ -216,8 +218,9 @@ public class BrainTokenRefreshRegressionTests
         };
 
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { workConfig });
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("work-repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workConfig);
+        // brain-repo-missing returns null (default Moq behavior)
 
         ProviderConfig? capturedConfig = null;
         _mockTokenVending
@@ -270,8 +273,8 @@ public class BrainTokenRefreshRegressionTests
         };
 
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { workConfig });
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("work-repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workConfig);
 
         ProviderConfig? capturedConfig = null;
         _mockTokenVending

@@ -303,8 +303,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         if (template is null)
             return JobDispatcherService.ResolveRequiredLabels(null, _config);
 
-        var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == template.RepoProviderId);
+        var repoConfig = await _configStore.GetProviderConfigByIdAsync(template.RepoProviderId, ProviderKind.Repository, ct);
         return JobDispatcherService.ResolveRequiredLabels(repoConfig, _config);
     }
 
@@ -351,8 +350,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         // Add issue provider for refactoring detection
         if (type == ConsolidationRunType.RefactoringDetection && !string.IsNullOrEmpty(template.IssueProviderId))
         {
-            var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
-            var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == template.IssueProviderId);
+            var issueConfig = await _configStore.GetProviderConfigByIdAsync(template.IssueProviderId, ProviderKind.Issue, ct);
             if (issueConfig is not null)
                 configs.Add(issueConfig);
         }

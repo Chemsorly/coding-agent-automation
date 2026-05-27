@@ -164,9 +164,8 @@
         // Resolve MCP config path and model from the agent provider config
         if (_resolvedProfile is not null)
         {
-            var agentConfigs = await ConfigStore.LoadProviderConfigsAsync(
-                ProviderKind.Agent, CancellationToken.None);
-            var agentConfig = agentConfigs.FirstOrDefault(c => c.Id == _resolvedProfile.AgentProviderConfigId);
+            var agentConfig = await ConfigStore.GetProviderConfigByIdAsync(
+                _resolvedProfile.AgentProviderConfigId, ProviderKind.Agent, CancellationToken.None);
 
             _resolvedModel = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto") ?? "auto";
 

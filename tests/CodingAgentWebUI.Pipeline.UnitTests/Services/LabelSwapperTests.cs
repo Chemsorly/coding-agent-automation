@@ -35,6 +35,8 @@ public class LabelSwapperTests
 
         _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { issueConfig });
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
         _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig))
             .Returns(issueProvider.Object);
 
@@ -71,6 +73,8 @@ public class LabelSwapperTests
 
         _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { repoConfig });
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("rp-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfig);
         _providerFactory.Setup(f => f.CreateRepositoryProvider(repoConfig))
             .Returns(repoProvider.Object);
 
@@ -107,6 +111,8 @@ public class LabelSwapperTests
 
         _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { issueConfig });
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
         _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig))
             .Returns(issueProvider.Object);
 
@@ -138,6 +144,8 @@ public class LabelSwapperTests
 
         _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { issueConfig });
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
         _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig))
             .Returns(issueProvider.Object);
 
@@ -167,6 +175,8 @@ public class LabelSwapperTests
 
         _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { repoConfig });
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("rp-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfig);
         _providerFactory.Setup(f => f.CreateRepositoryProvider(repoConfig))
             .Returns(repoProvider.Object);
 
@@ -194,6 +204,8 @@ public class LabelSwapperTests
 
         _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { repoConfig });
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("rp-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfig);
         _providerFactory.Setup(f => f.CreateRepositoryProvider(repoConfig))
             .Returns(repoProvider.Object);
 
@@ -237,6 +249,8 @@ public class LabelSwapperTests
 
         _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { issueConfig });
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
         _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig))
             .Returns(issueProvider.Object);
 
