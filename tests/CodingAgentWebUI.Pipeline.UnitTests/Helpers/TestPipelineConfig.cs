@@ -1,6 +1,6 @@
 using CodingAgentWebUI.Pipeline.Models;
 
-namespace CodingAgentWebUI.TestUtilities;
+namespace CodingAgentWebUI.Pipeline.UnitTests.Helpers;
 
 /// <summary>
 /// Factory for creating PipelineConfiguration instances in tests with all properties

@@ -23,7 +23,7 @@ public class RefactoringExecutorTests : IDisposable
         _tempDir = Path.Combine(Path.GetTempPath(), $"refactoring-test-{Guid.NewGuid()}");
         Directory.CreateDirectory(_tempDir);
 
-        // Default: return empty issue lists so the new issue-context query path succeeds
+        // Default: return empty issue lists so the issue-context query path succeeds
         var emptyResult = new PagedResult<IssueSummary> { Items = [], Page = 1, PageSize = 50, HasMore = false };
         _mockIssueProvider
             .Setup(x => x.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
@@ -326,51 +326,6 @@ public class RefactoringExecutorTests : IDisposable
     }
 
     [Fact]
-    public void FormatIssueBody_WithNewFields_RendersMetadata()
-    {
-        var proposal = new RefactoringProposal
-        {
-            Title = "Extract validation",
-            AffectedFiles = ["src/A.cs"],
-            Description = "Extract shared logic",
-            Rationale = "DRY violation",
-            Prerequisites = ["Add tests for A.cs"],
-            EstimatedEffort = "medium",
-            RiskLevel = "low",
-            Technique = "Extract Method"
-        };
-
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
-
-        body.Should().Contain("**Effort:** medium");
-        body.Should().Contain("**Risk:** low");
-        body.Should().Contain("**Technique:** Extract Method");
-        body.Should().Contain("## Prerequisites");
-        body.Should().Contain("- Add tests for A.cs");
-    }
-
-    [Fact]
-    public void FormatIssueBody_WithNullFields_OmitsOptionalSections()
-    {
-        var proposal = new RefactoringProposal
-        {
-            Title = "Rename methods",
-            AffectedFiles = ["src/X.cs"],
-            Description = "Inconsistent naming",
-            Rationale = "Convention violation"
-        };
-
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
-
-        body.Should().NotContain("**Effort:**");
-        body.Should().NotContain("**Risk:**");
-        body.Should().NotContain("**Technique:**");
-        body.Should().NotContain("## Prerequisites");
-        body.Should().Contain("## Summary");
-        body.Should().Contain("## Affected Components");
-    }
-
-    [Fact]
     public async Task ExecuteAsync_ClosedIssueQueryFails_ContinuesWithoutContext()
     {
         var executor = CreateExecutor();
@@ -439,5 +394,110 @@ public class RefactoringExecutorTests : IDisposable
         capturedRequest.Prompt.Should().Contain("#100 \"Implemented refactoring\"");
         capturedRequest.Prompt.Should().Contain("#101 \"Rejected refactoring\"");
         capturedRequest.Prompt.Should().Contain("Do NOT propose refactorings similar to rejected items above.");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithNewFields_RendersMetadata()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Extract validation",
+            AffectedFiles = ["src/A.cs"],
+            Description = "Extract shared logic",
+            Rationale = "DRY violation",
+            Prerequisites = ["Add tests for A.cs"],
+            EstimatedEffort = "medium",
+            RiskLevel = "low",
+            Technique = "Extract Method"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("**Effort:** medium");
+        body.Should().Contain("**Risk:** low");
+        body.Should().Contain("**Technique:** Extract Method");
+        body.Should().Contain("## Prerequisites");
+        body.Should().Contain("- Add tests for A.cs");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithNullFields_OmitsOptionalSections()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Rename methods",
+            AffectedFiles = ["src/X.cs"],
+            Description = "Inconsistent naming",
+            Rationale = "Convention violation"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().NotContain("**Effort:**");
+        body.Should().NotContain("**Risk:**");
+        body.Should().NotContain("**Technique:**");
+        body.Should().NotContain("## Prerequisites");
+        body.Should().Contain("## Summary");
+        body.Should().Contain("## Affected Components");
+    }
+
+    [Fact]
+    public void ParseHotspotOutput_WithValidOutput_ReturnsFormattedSummary()
+    {
+        var gitOutput = "src/File1.cs\nsrc/File2.cs\nsrc/File1.cs\nsrc/File1.cs\nsrc/File2.cs\n";
+
+        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90));
+
+        result.Should().NotBeNull();
+        result.Should().Contain("3 changes — src/File1.cs");
+        result.Should().Contain("2 changes — src/File2.cs");
+        result.Should().Contain("last 90 days");
+    }
+
+    [Fact]
+    public void ParseHotspotOutput_WithEmptyOutput_ReturnsNull()
+    {
+        var result = RefactoringExecutor.ParseHotspotOutput("", TimeSpan.FromDays(90));
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void ParseHotspotOutput_WithOnlyWhitespace_ReturnsNull()
+    {
+        var result = RefactoringExecutor.ParseHotspotOutput("\n\n  \n", TimeSpan.FromDays(90));
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void ParseHotspotOutput_CapsAtThirtyFiles()
+    {
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < 50; i++)
+            sb.AppendLine($"src/File{i:D2}.cs");
+
+        var result = RefactoringExecutor.ParseHotspotOutput(sb.ToString(), TimeSpan.FromDays(90));
+
+        result.Should().NotBeNull();
+        // Each file appears once, so 30 lines of "1 changes — ..."
+        var lines = result!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Where(l => l.Contains("changes —")).ToList();
+        lines.Should().HaveCount(30);
+    }
+
+    [Fact]
+    public void ParseHotspotOutput_SortsDescendingByCount()
+    {
+        var gitOutput = "src/Rare.cs\nsrc/Common.cs\nsrc/Common.cs\nsrc/Common.cs\nsrc/Medium.cs\nsrc/Medium.cs\n";
+
+        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90));
+
+        result.Should().NotBeNull();
+        var lines = result!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Where(l => l.Contains("changes —")).ToList();
+        lines[0].Should().Contain("src/Common.cs");
+        lines[1].Should().Contain("src/Medium.cs");
+        lines[2].Should().Contain("src/Rare.cs");
     }
 }

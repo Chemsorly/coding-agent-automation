@@ -1,4 +1,3 @@
-using System.Text.Json;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
@@ -13,8 +12,6 @@ internal partial class AgentPhaseExecutor : IAgentPhaseExecutor
 {
     /// <summary>Minimum length in bytes for analysis.md to be considered valid.</summary>
     internal const int MinAnalysisLength = PipelineConstants.MinAnalysisLength;
-
-    private static readonly JsonSerializerOptions s_camelCaseOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     private readonly Serilog.ILogger _logger;
 

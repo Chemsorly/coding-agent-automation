@@ -2,21 +2,32 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace CodingAgentWebUI.Infrastructure.Persistence;
+namespace CodingAgentWebUI.Pipeline;
 
 /// <summary>
-/// Shared JSON serialization options used across pipeline persistence services.
-/// Consolidates identical options previously defined independently in
-/// <see cref="JsonConfigurationStore"/> and <see cref="PipelineRunHistoryService"/>.
+/// Shared JSON serialization options used across all pipeline layers.
+/// Provides presets for both serialization (Default) and deserialization (Lenient) scenarios.
 /// </summary>
 public static class PipelineJsonOptions
 {
+    /// <summary>
+    /// Standard options for serialization: camelCase, indented, enum-as-string, TimeSpan support.
+    /// </summary>
     public static JsonSerializerOptions Default { get; } = new()
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
         Converters = { new TimeSpanJsonConverter(), new JsonStringEnumConverter() }
+    };
+
+    /// <summary>
+    /// Lenient options for deserialization: case-insensitive property matching, enum-as-string.
+    /// </summary>
+    public static JsonSerializerOptions Lenient { get; } = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() }
     };
 
     /// <summary>
