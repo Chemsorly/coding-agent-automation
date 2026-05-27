@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Parsers;
 using Serilog;
@@ -13,13 +12,6 @@ namespace CodingAgentWebUI.Pipeline.Services;
 public sealed class FeedbackService
 {
     private readonly ILogger _logger;
-
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        Converters = { new JsonStringEnumConverter() },
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
 
     public FeedbackService(ILogger logger)
     {
@@ -97,7 +89,7 @@ public sealed class FeedbackService
 
     private RunFeedback DeserializeFeedback(string json, FeedbackOutcome outcome, DateTime collectedAtUtc)
     {
-        var dto = JsonSerializer.Deserialize<FeedbackDto>(json, JsonOptions);
+        var dto = JsonSerializer.Deserialize<FeedbackDto>(json, PipelineJsonOptions.Lenient);
 
         if (dto is null)
         {

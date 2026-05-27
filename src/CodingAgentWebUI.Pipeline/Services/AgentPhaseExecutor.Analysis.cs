@@ -313,7 +313,7 @@ internal partial class AgentPhaseExecutor
         try
         {
             var json = await File.ReadAllTextAsync(assessmentPath, ct);
-            var result = JsonSerializer.Deserialize<AnalysisAssessment>(json, s_camelCaseOptions);
+            var result = JsonSerializer.Deserialize<AnalysisAssessment>(json, PipelineJsonOptions.Lenient);
             return result ?? throw new AnalysisIncompleteException("analysis-assessment.json deserialized to null");
         }
         catch (JsonException ex)

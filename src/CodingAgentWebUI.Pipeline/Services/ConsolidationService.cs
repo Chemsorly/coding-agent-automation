@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
@@ -24,13 +23,6 @@ public sealed class ConsolidationService : IConsolidationService
     /// Tracks currently running consolidation runs by (type, templateId) to enforce concurrency guard.
     /// </summary>
     private readonly ConcurrentDictionary<(ConsolidationRunType, string?), ConsolidationRun> _runningRuns = new();
-
-    private static readonly JsonSerializerOptions s_jsonOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        Converters = { new JsonStringEnumConverter() }
-    };
 
     /// <inheritdoc />
     public event Action? OnChange;
@@ -66,7 +58,7 @@ public sealed class ConsolidationService : IConsolidationService
             try
             {
                 var json = await File.ReadAllTextAsync(file, ct);
-                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
                 if (run is null) continue;
 
                 if (run.Status == ConsolidationRunStatus.Running)
@@ -75,7 +67,7 @@ public sealed class ConsolidationService : IConsolidationService
                     run.Summary = "Orphaned: application restarted before completion";
                     run.CompletedAtUtc = DateTime.UtcNow;
 
-                    var updatedJson = JsonSerializer.Serialize(run, s_jsonOptions);
+                    var updatedJson = JsonSerializer.Serialize(run, PipelineJsonOptions.Default);
                     await File.WriteAllTextAsync(file, updatedJson, ct);
 
                     _logger.Information(
@@ -226,7 +218,7 @@ public sealed class ConsolidationService : IConsolidationService
             try
             {
                 var json = await File.ReadAllTextAsync(file, ct);
-                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
                 if (run is not null)
                     runs.Add(run);
             }
@@ -282,7 +274,7 @@ public sealed class ConsolidationService : IConsolidationService
         try
         {
             var json = await File.ReadAllTextAsync(filePath, ct);
-            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
             if (run is null)
             {
                 _logger.Warning("Cannot update consolidation run {RunId}: deserialization returned null", runId);
@@ -336,7 +328,7 @@ public sealed class ConsolidationService : IConsolidationService
         try
         {
             var json = await File.ReadAllTextAsync(filePath, ct);
-            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
             if (run is null || run.Status != ConsolidationRunStatus.Queued)
                 return false;
 
@@ -378,7 +370,7 @@ public sealed class ConsolidationService : IConsolidationService
         try
         {
             var json = await File.ReadAllTextAsync(filePath, ct);
-            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
             if (run is null || run.Status != ConsolidationRunStatus.Queued)
                 return;
 
@@ -407,7 +399,7 @@ public sealed class ConsolidationService : IConsolidationService
             try
             {
                 var json = await File.ReadAllTextAsync(file, ct);
-                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
                 if (run is null) continue;
 
                 if (run.Status == ConsolidationRunStatus.Queued)
@@ -440,7 +432,7 @@ public sealed class ConsolidationService : IConsolidationService
         try
         {
             var json = await File.ReadAllTextAsync(_harnessSuggestionsPath, ct);
-            return JsonSerializer.Deserialize<HarnessSuggestions>(json, s_jsonOptions);
+            return JsonSerializer.Deserialize<HarnessSuggestions>(json, PipelineJsonOptions.Default);
         }
         catch (Exception ex)
         {
@@ -460,7 +452,7 @@ public sealed class ConsolidationService : IConsolidationService
             if (directory is not null && !Directory.Exists(directory))
                 Directory.CreateDirectory(directory);
 
-            var json = JsonSerializer.Serialize(suggestions, s_jsonOptions);
+            var json = JsonSerializer.Serialize(suggestions, PipelineJsonOptions.Default);
             await File.WriteAllTextAsync(_harnessSuggestionsPath, json, ct);
 
             _logger.Information("Harness suggestions saved to {Path}", _harnessSuggestionsPath);
@@ -497,7 +489,7 @@ public sealed class ConsolidationService : IConsolidationService
                 return;
             }
 
-            var feedbackJson = JsonSerializer.Serialize(feedbackEntries, s_jsonOptions);
+            var feedbackJson = JsonSerializer.Serialize(feedbackEntries, PipelineJsonOptions.Default);
             _logger.Information(
                 "Prepared {Count} RunFeedback entries (since {SinceUtc}) for harness suggestion analysis",
                 feedbackEntries.Count, sinceUtc);
@@ -527,7 +519,7 @@ public sealed class ConsolidationService : IConsolidationService
             try
             {
                 var json = await File.ReadAllTextAsync(file, ct);
-                var historicRun = JsonSerializer.Deserialize<ConsolidationRun>(json, s_jsonOptions);
+                var historicRun = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
                 if (historicRun is not null
                     && historicRun.Type == ConsolidationRunType.HarnessSuggestions
                     && historicRun.Status == ConsolidationRunStatus.Succeeded
@@ -575,7 +567,7 @@ public sealed class ConsolidationService : IConsolidationService
                 Directory.CreateDirectory(_consolidationRunsDirectory);
 
             var filePath = Path.Combine(_consolidationRunsDirectory, $"{run.RunId}.json");
-            var json = JsonSerializer.Serialize(run, s_jsonOptions);
+            var json = JsonSerializer.Serialize(run, PipelineJsonOptions.Default);
             await File.WriteAllTextAsync(filePath, json, ct);
         }
         catch (Exception ex)

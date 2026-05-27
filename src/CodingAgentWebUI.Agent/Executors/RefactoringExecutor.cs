@@ -13,11 +13,6 @@ namespace CodingAgentWebUI.Agent.Executors;
 /// </summary>
 public sealed class RefactoringExecutor : ConsolidationExecutorBase
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     protected override string WorkspaceSuffix => "refactoring";
     protected override string ExecutorName => "Refactoring detection";
 
@@ -234,7 +229,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         try
         {
             var json = await File.ReadAllTextAsync(filePath, ct);
-            var proposals = JsonSerializer.Deserialize<List<RefactoringProposal>>(json, JsonOptions);
+            var proposals = JsonSerializer.Deserialize<List<RefactoringProposal>>(json, PipelineJsonOptions.Lenient);
             return (IReadOnlyList<RefactoringProposal>?)proposals ?? Array.Empty<RefactoringProposal>();
         }
         catch (JsonException ex)
