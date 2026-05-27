@@ -519,15 +519,13 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
         if (providerKind == ProviderKind.Brain && !string.IsNullOrEmpty(run.BrainProviderConfigId))
         {
-            var repoConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
-            targetConfig = repoConfigs.FirstOrDefault(c => c.Id == run.BrainProviderConfigId);
+            targetConfig = await _facade.GetProviderConfigByIdAsync(run.BrainProviderConfigId, ProviderKind.Repository, CancellationToken.None);
         }
 
         if (targetConfig is null)
         {
             // Default: use the work repo config (covers Repository kind and fallback)
-            var repoConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
-            targetConfig = repoConfigs.FirstOrDefault(c => c.Id == run.RepoProviderConfigId);
+            targetConfig = await _facade.GetProviderConfigByIdAsync(run.RepoProviderConfigId, ProviderKind.Repository, CancellationToken.None);
         }
 
         if (targetConfig is null)
@@ -877,8 +875,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
     {
         try
         {
-            var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
-            var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
+            var issueConfig = await _facade.GetProviderConfigByIdAsync(run.IssueProviderConfigId, ProviderKind.Issue, CancellationToken.None);
             if (issueConfig is null)
             {
                 _logger.Warning("Issue provider config '{ConfigId}' not found for run {RunId}", run.IssueProviderConfigId, run.RunId);

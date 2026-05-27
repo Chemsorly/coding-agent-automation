@@ -111,6 +111,10 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _configStore.LoadProviderConfigsAsync(kind, ct);
 
     /// <inheritdoc />
+    public Task<ProviderConfig?> GetProviderConfigByIdAsync(string id, ProviderKind kind, CancellationToken ct)
+        => _configStore.GetProviderConfigByIdAsync(id, kind, ct);
+
+    /// <inheritdoc />
     public IIssueProvider CreateIssueProvider(ProviderConfig config)
         => _providerFactory.CreateIssueProvider(config);
 }

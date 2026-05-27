@@ -38,8 +38,7 @@ public class PipelineProviderManager : IAsyncDisposable
     /// </summary>
     public async Task<ProviderConfig> ResolveProviderConfigAsync(string providerId, ProviderKind kind, CancellationToken ct)
     {
-        var configs = await _configStore.LoadProviderConfigsAsync(kind, ct);
-        return configs.FirstOrDefault(c => c.Id == providerId)
+        return await _configStore.GetProviderConfigByIdAsync(providerId, kind, ct)
             ?? throw new InvalidOperationException($"Provider config '{providerId}' of kind '{kind}' not found.");
     }
 

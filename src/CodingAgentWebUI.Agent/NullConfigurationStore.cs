@@ -22,6 +22,9 @@ internal sealed class NullConfigurationStore : IConfigurationStore
     public Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<ProviderConfig>>([]);
 
+    public Task<ProviderConfig?> GetProviderConfigByIdAsync(string id, ProviderKind kind, CancellationToken ct) =>
+        Task.FromResult<ProviderConfig?>(null);
+
     public Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct) =>
         Task.CompletedTask;
 

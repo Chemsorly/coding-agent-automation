@@ -173,6 +173,12 @@ public class PipelineRunHighWaterMarkTests
             {
                 new() { Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test" }
             });
+        _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .Returns((string id, ProviderKind kind, CancellationToken ct) =>
+            {
+                var configs = _mockConfigStore.Object.LoadProviderConfigsAsync(kind, ct).GetAwaiter().GetResult();
+                return Task.FromResult(configs.FirstOrDefault(c => c.Id == id));
+            });
             _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new List<QualityGateConfiguration>
                 {

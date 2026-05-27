@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Orchestration;
@@ -80,8 +81,7 @@ public sealed class LabelSwapper : ILabelSwapper
             {
                 case LabelTargetKind.Issue:
                 {
-                    var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
-                    var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == providerConfigId);
+                    var issueConfig = await _configStore.GetProviderConfigByIdAsync(providerConfigId, ProviderKind.Issue, ct);
                     if (issueConfig is null)
                     {
                         _logger.Warning(
@@ -96,8 +96,7 @@ public sealed class LabelSwapper : ILabelSwapper
 
                 case LabelTargetKind.PullRequest:
                 {
-                    var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-                    var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == providerConfigId);
+                    var repoConfig = await _configStore.GetProviderConfigByIdAsync(providerConfigId, ProviderKind.Repository, ct);
                     if (repoConfig is null)
                     {
                         _logger.Warning(
@@ -133,8 +132,7 @@ public sealed class LabelSwapper : ILabelSwapper
         string newLabel,
         CancellationToken ct)
     {
-        var issueConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
-        var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == issueProviderConfigId);
+        var issueConfig = await _configStore.GetProviderConfigByIdAsync(issueProviderConfigId, ProviderKind.Issue, ct);
         if (issueConfig is null)
         {
             _logger.Warning(
@@ -145,17 +143,11 @@ public sealed class LabelSwapper : ILabelSwapper
 
         await using var issueProvider = _providerFactory.CreateIssueProvider(issueConfig);
 
-        foreach (var label in AgentLabels.All)
-        {
-            // Skip removing the label we're about to add — avoids a redundant remove+add
-            // that shows up as a confusing "added X and removed X" event on GitHub.
-            if (string.Equals(label, newLabel, StringComparison.Ordinal))
-                continue;
-            await issueProvider.RemoveLabelAsync(issueIdentifier, label, ct);
-        }
-
-        if (!string.IsNullOrEmpty(newLabel))
-            await issueProvider.AddLabelAsync(issueIdentifier, newLabel, ct);
+        await AgentLabelOperations.SwapAsync(
+            (label, c) => issueProvider.RemoveLabelAsync(issueIdentifier, label, c),
+            (label, c) => issueProvider.AddLabelAsync(issueIdentifier, label, c),
+            newLabel,
+            ct);
     }
 
     /// <summary>
@@ -167,8 +159,7 @@ public sealed class LabelSwapper : ILabelSwapper
         string newLabel,
         CancellationToken ct)
     {
-        var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == repoProviderConfigId);
+        var repoConfig = await _configStore.GetProviderConfigByIdAsync(repoProviderConfigId, ProviderKind.Repository, ct);
         if (repoConfig is null)
         {
             _logger.Warning(
@@ -187,16 +178,10 @@ public sealed class LabelSwapper : ILabelSwapper
 
         await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
 
-        foreach (var label in AgentLabels.All)
-        {
-            // Skip removing the label we're about to add — avoids a redundant remove+add
-            // that shows up as a confusing "added X and removed X" event on GitHub.
-            if (string.Equals(label, newLabel, StringComparison.Ordinal))
-                continue;
-            await repoProvider.RemovePrLabelAsync(prNumber, label, ct);
-        }
-
-        if (!string.IsNullOrEmpty(newLabel))
-            await repoProvider.AddPrLabelAsync(prNumber, newLabel, ct);
+        await AgentLabelOperations.SwapAsync(
+            (label, c) => repoProvider.RemovePrLabelAsync(prNumber, label, c),
+            (label, c) => repoProvider.AddPrLabelAsync(prNumber, label, c),
+            newLabel,
+            ct);
     }
 }

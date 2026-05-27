@@ -72,6 +72,13 @@ public class JsonConfigurationStore : IConfigurationStore
         return await LoadAllFromDirectoryAsync<ProviderConfig>(directory, ct);
     }
 
+    public async Task<ProviderConfig?> GetProviderConfigByIdAsync(string id, ProviderKind kind, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        var path = Path.Combine(GetProviderDirectory(kind), $"{id}.json");
+        return await LoadJsonAsync<ProviderConfig>(path, ct);
+    }
+
     public async Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(config);
@@ -92,76 +99,51 @@ public class JsonConfigurationStore : IConfigurationStore
 
     // --- Agent Profiles ---
 
-    public async Task<IReadOnlyList<AgentProfile>> LoadAgentProfilesAsync(CancellationToken ct)
-    {
-        var directory = Path.Combine(_baseDirectory, "profiles");
-        return await LoadAllFromDirectoryAsync<AgentProfile>(directory, ct);
-    }
+    public Task<IReadOnlyList<AgentProfile>> LoadAgentProfilesAsync(CancellationToken ct)
+        => LoadEntitiesAsync<AgentProfile>("profiles", ct);
 
-    public async Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(profile);
-        var directory = Path.Combine(_baseDirectory, "profiles");
-        var path = Path.Combine(directory, $"{profile.Id}.json");
-        await SaveJsonAsync(path, profile, ct);
-    }
+    public Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct)
+        => SaveEntityAsync(profile, "profiles", p => p.Id, ct);
 
     public Task DeleteAgentProfileAsync(string id, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(id);
-        var path = Path.Combine(_baseDirectory, "profiles", $"{id}.json");
-        if (File.Exists(path))
-            File.Delete(path);
-
-        return Task.CompletedTask;
-    }
+        => DeleteEntityAsync(id, "profiles");
 
     // --- Quality Gate Configurations ---
 
-    public async Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct)
-    {
-        var directory = Path.Combine(_baseDirectory, "quality-gates");
-        return await LoadAllFromDirectoryAsync<QualityGateConfiguration>(directory, ct);
-    }
+    public Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct)
+        => LoadEntitiesAsync<QualityGateConfiguration>("quality-gates", ct);
 
-    public async Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(config);
-        var directory = Path.Combine(_baseDirectory, "quality-gates");
-        var path = Path.Combine(directory, $"{config.Id}.json");
-        await SaveJsonAsync(path, config, ct);
-    }
+    public Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct)
+        => SaveEntityAsync(config, "quality-gates", c => c.Id, ct);
 
     public Task DeleteQualityGateConfigAsync(string id, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(id);
-        var path = Path.Combine(_baseDirectory, "quality-gates", $"{id}.json");
-        if (File.Exists(path))
-            File.Delete(path);
-
-        return Task.CompletedTask;
-    }
+        => DeleteEntityAsync(id, "quality-gates");
 
     // --- Reviewer Configurations ---
 
-    public async Task<IReadOnlyList<ReviewerConfiguration>> LoadReviewerConfigsAsync(CancellationToken ct)
-    {
-        var directory = Path.Combine(_baseDirectory, "reviewers");
-        return await LoadAllFromDirectoryAsync<ReviewerConfiguration>(directory, ct);
-    }
+    public Task<IReadOnlyList<ReviewerConfiguration>> LoadReviewerConfigsAsync(CancellationToken ct)
+        => LoadEntitiesAsync<ReviewerConfiguration>("reviewers", ct);
 
-    public async Task SaveReviewerConfigAsync(ReviewerConfiguration config, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(config);
-        var directory = Path.Combine(_baseDirectory, "reviewers");
-        var path = Path.Combine(directory, $"{config.Id}.json");
-        await SaveJsonAsync(path, config, ct);
-    }
+    public Task SaveReviewerConfigAsync(ReviewerConfiguration config, CancellationToken ct)
+        => SaveEntityAsync(config, "reviewers", c => c.Id, ct);
 
     public Task DeleteReviewerConfigAsync(string id, CancellationToken ct)
+        => DeleteEntityAsync(id, "reviewers");
+
+    private Task<IReadOnlyList<T>> LoadEntitiesAsync<T>(string subfolder, CancellationToken ct) where T : class
+        => LoadAllFromDirectoryAsync<T>(Path.Combine(_baseDirectory, subfolder), ct);
+
+    private async Task SaveEntityAsync<T>(T entity, string subfolder, Func<T, string> idSelector, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(entity);
+        var path = Path.Combine(_baseDirectory, subfolder, $"{idSelector(entity)}.json");
+        await SaveJsonAsync(path, entity, ct);
+    }
+
+    private Task DeleteEntityAsync(string id, string subfolder)
     {
         ArgumentNullException.ThrowIfNull(id);
-        var path = Path.Combine(_baseDirectory, "reviewers", $"{id}.json");
+        var path = Path.Combine(_baseDirectory, subfolder, $"{id}.json");
         if (File.Exists(path))
             File.Delete(path);
 

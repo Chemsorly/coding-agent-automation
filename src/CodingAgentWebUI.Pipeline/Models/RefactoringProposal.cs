@@ -14,4 +14,5 @@ public sealed class RefactoringProposal
     public string? EstimatedEffort { get; init; }
     public string? RiskLevel { get; init; }
     public string? Technique { get; init; }
+    public string? Category { get; init; }
 }
