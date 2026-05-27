@@ -339,7 +339,7 @@ public sealed record PipelineConfiguration
     /// <summary>
     /// Maximum number of sub-issues the decomposition agent may propose per epic.
     /// Controls both the prompt instruction and the executor's creation cap.
-    /// Valid range: 1–20. Default: 5.
+    /// Valid range: 1–20. Default: 10.
     /// </summary>
     public int MaxDecompositionSubIssues
     {
@@ -348,7 +348,7 @@ public sealed record PipelineConfiguration
             ? value
             : throw new ArgumentOutOfRangeException(nameof(MaxDecompositionSubIssues), value, "Value must be between 1 and 20.");
     }
-    private readonly int _maxDecompositionSubIssues = 5;
+    private readonly int _maxDecompositionSubIssues = 10;
 
     /// <summary>
     /// Maximum number of decomposition runs (across both phases) that can execute simultaneously.

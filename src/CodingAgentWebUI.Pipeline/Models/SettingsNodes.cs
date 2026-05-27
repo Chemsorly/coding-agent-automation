@@ -15,6 +15,7 @@ public static class SettingsNodes
     public const string PipelinePrompts = "pipeline-prompts";
     public const string PipelineImplementation = "pipeline-implementation";
     public const string PipelineReview = "pipeline-review";
+    public const string PipelineDecomposition = "pipeline-decomposition";
     public const string PipelineConsolidation = "pipeline-consolidation";
     public const string AgentProfiles = "agent-profiles";
     public const string QualityGateConfigs = "quality-gate-configs";
