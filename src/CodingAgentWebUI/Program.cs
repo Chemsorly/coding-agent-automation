@@ -227,6 +227,10 @@ builder.Services.AddOpenTelemetry()
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
         .AddMeter(PipelineTelemetry.SourceName)
+        .AddView("pipeline.jobs.duration", new ExplicitBucketHistogramConfiguration
+        {
+            Boundaries = new double[] { 30, 60, 120, 300, 600, 900, 1800, 3600 }
+        })
         .AddOtlpExporter());
 
 var app = builder.Build();
