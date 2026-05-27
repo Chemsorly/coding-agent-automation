@@ -40,6 +40,7 @@ internal sealed class PostDecompositionSummaryStep : IPipelineStep
         }
 
         // Swap label (non-fatal on failure — run will complete without label transition)
+        context.Run.FinalLabel = targetLabel;
         try
         {
             await context.IssueOps.SwapLabelAsync(context.Run.IssueIdentifier, targetLabel, ct);
