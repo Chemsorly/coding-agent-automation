@@ -174,6 +174,7 @@ Detailed documentation lives in the [`docs/`](docs/) folder. Suggested reading o
 3. [Label Routing](docs/label-routing.md) — Label hierarchy, agent selection, quality gate configs, setting up new stacks
 4. [Configuration](docs/configuration.md) — Pipeline settings, job templates, MCP server support
 5. [Feedback & Consolidation](docs/feedback-and-consolidation.md) — Agent feedback loops, brain consolidation, refactoring detection
+6. [Observability](docs/observability.md) — Metrics, traces, OTLP configuration, verification
 
 ## Features
 
