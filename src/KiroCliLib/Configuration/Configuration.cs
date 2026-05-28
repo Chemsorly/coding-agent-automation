@@ -10,6 +10,6 @@ public class Configuration
     public string KiroCliPath { get; init; } = "/root/.local/bin/kiro-cli";
     public bool UseWsl { get; init; } = OperatingSystem.IsWindows();
     public string WorkspaceDirectory { get; init; } = "./workspace";
-    public TimeSpan Timeout { get; init; } = TimeSpan.FromMinutes(30);
+    public TimeSpan Timeout { get; init; } = KiroCliConstants.DefaultTimeout;
     public LogEventLevel LogLevel { get; init; } = LogEventLevel.Information;
 }
