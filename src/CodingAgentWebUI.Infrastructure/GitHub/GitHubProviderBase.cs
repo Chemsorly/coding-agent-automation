@@ -21,50 +21,44 @@ public abstract class GitHubProviderBase : IAsyncDisposable
     /// <summary>Repository name.</summary>
     protected string Repo { get; }
 
-    protected GitHubProviderBase(string apiUrl, string token, string owner, string repo)
+    protected GitHubProviderBase(GitHubConnectionInfo connection, string token)
     {
-        ArgumentNullException.ThrowIfNull(apiUrl);
+        ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(token);
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(repo);
-        _clientProvider = new GitHubClientProvider(apiUrl, token);
-        Owner = owner;
-        Repo = repo;
+        _clientProvider = new GitHubClientProvider(connection.ApiUrl, token);
+        Owner = connection.Owner;
+        Repo = connection.Repo;
         _resiliencePipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);
     }
 
-    protected GitHubProviderBase(string apiUrl, Func<CancellationToken, Task<string>> tokenProvider, string owner, string repo)
+    protected GitHubProviderBase(GitHubConnectionInfo connection, Func<CancellationToken, Task<string>> tokenProvider)
     {
-        ArgumentNullException.ThrowIfNull(apiUrl);
+        ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(tokenProvider);
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(repo);
-        _clientProvider = new GitHubClientProvider(apiUrl, tokenProvider);
-        Owner = owner;
-        Repo = repo;
+        _clientProvider = new GitHubClientProvider(connection.ApiUrl, tokenProvider);
+        Owner = connection.Owner;
+        Repo = connection.Repo;
         _resiliencePipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);
     }
 
-    protected GitHubProviderBase(IGitHubClient client, string owner, string repo)
+    protected GitHubProviderBase(GitHubConnectionInfo connection, IGitHubClient client)
     {
+        ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(client);
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(repo);
         _clientProvider = new GitHubClientProvider(client);
-        Owner = owner;
-        Repo = repo;
+        Owner = connection.Owner;
+        Repo = connection.Repo;
         _resiliencePipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);
     }
 
-    protected GitHubProviderBase(IGitHubClient client, string token, string owner, string repo)
+    protected GitHubProviderBase(GitHubConnectionInfo connection, IGitHubClient client, string token)
     {
+        ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(token);
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(repo);
         _clientProvider = new GitHubClientProvider(client, token);
-        Owner = owner;
-        Repo = repo;
+        Owner = connection.Owner;
+        Repo = connection.Repo;
         _resiliencePipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);
     }
 

@@ -39,7 +39,7 @@ public class GitHubIssueProviderPropertyTests
                 (_, _, req, _) => capturedRequest = req)
             .ReturnsAsync(new List<Issue>().AsReadOnly());
 
-        var provider = new GitHubIssueProvider(mockClient.Object, "owner", "repo");
+        var provider = new GitHubIssueProvider(new GitHubConnectionInfo("https://api.github.com", "owner", "repo"), mockClient.Object);
 
         // Act
         provider.ListOpenIssuesAsync(1, 10, input.Labels, CancellationToken.None)

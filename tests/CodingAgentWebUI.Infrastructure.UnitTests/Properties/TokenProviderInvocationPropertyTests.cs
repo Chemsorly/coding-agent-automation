@@ -69,7 +69,7 @@ public class TokenProviderInvocationPropertyTests
                 case ApiMethodChoice.IssueProvider_GetIssue:
                 {
                     var provider = new GitHubIssueProvider(
-                        FakeApiUrl, trackingDelegate, input.Owner, input.Repo);
+                        new GitHubConnectionInfo(FakeApiUrl, input.Owner, input.Repo), trackingDelegate);
                     provider.GetIssueAsync(
                         input.IssueNumber.ToString(), CancellationToken.None)
                         .GetAwaiter().GetResult();
@@ -78,7 +78,7 @@ public class TokenProviderInvocationPropertyTests
                 case ApiMethodChoice.IssueProvider_ListOpenIssues:
                 {
                     var provider = new GitHubIssueProvider(
-                        FakeApiUrl, trackingDelegate, input.Owner, input.Repo);
+                        new GitHubConnectionInfo(FakeApiUrl, input.Owner, input.Repo), trackingDelegate);
                     provider.ListOpenIssuesAsync(1, 25, CancellationToken.None)
                         .GetAwaiter().GetResult();
                     break;
@@ -86,7 +86,7 @@ public class TokenProviderInvocationPropertyTests
                 case ApiMethodChoice.RepoProvider_CreatePullRequest:
                 {
                     var provider = new GitHubRepositoryProvider(
-                        FakeApiUrl, trackingDelegate, input.Owner, input.Repo, input.BaseBranch);
+                        new GitHubConnectionInfo(FakeApiUrl, input.Owner, input.Repo), trackingDelegate, input.BaseBranch);
                     var prInfo = new PullRequestInfo
                     {
                         Title = input.PrTitle,

@@ -19,7 +19,7 @@ public class ParseIssueIdentifierPropertyTests
     private sealed class TestableGitHubProvider : GitHubProviderBase
     {
         public TestableGitHubProvider()
-            : base(new Mock<IGitHubClient>().Object, "test-owner", "test-repo")
+            : base(new GitHubConnectionInfo("https://api.github.com", "test-owner", "test-repo"), new Mock<IGitHubClient>().Object)
         {
         }
 

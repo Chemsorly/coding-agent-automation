@@ -18,11 +18,11 @@ public class GitHubActionsPipelineProviderWireMockTests : WireMockTestBase
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(50);
 
     private GitHubActionsPipelineProvider CreateProvider() =>
-        new(Server.Url!, Token, Owner, Repo, PollInterval);
+        new(new GitHubConnectionInfo(Server.Url!, Owner, Repo), Token, PollInterval);
 
     private GitHubActionsPipelineProvider CreateProviderWithTokenProvider(
         Func<CancellationToken, Task<string>> tokenProvider) =>
-        new(Server.Url!, tokenProvider, Owner, Repo, PollInterval);
+        new(new GitHubConnectionInfo(Server.Url!, Owner, Repo), tokenProvider, PollInterval);
 
     private string RunsPath => ApiPath($"/repos/{Owner}/{Repo}/actions/runs");
     private string JobsPath(long runId) => ApiPath($"/repos/{Owner}/{Repo}/actions/runs/{runId}/jobs");

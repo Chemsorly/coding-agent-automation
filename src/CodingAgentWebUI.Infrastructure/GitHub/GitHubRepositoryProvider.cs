@@ -62,8 +62,8 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     /// <summary>
     /// Creates a provider with a static token (backward compatible).
     /// </summary>
-    public GitHubRepositoryProvider(string apiUrl, string token, string owner, string repo, string baseBranch)
-        : base(apiUrl, token, owner, repo)
+    public GitHubRepositoryProvider(GitHubConnectionInfo connection, string token, string baseBranch)
+        : base(connection, token)
     {
         ArgumentNullException.ThrowIfNull(baseBranch);
         _baseBranch = baseBranch;
@@ -73,8 +73,8 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     /// <summary>
     /// Creates a provider with a token provider delegate (for GitHub App auth).
     /// </summary>
-    public GitHubRepositoryProvider(string apiUrl, Func<CancellationToken, Task<string>> tokenProvider, string owner, string repo, string baseBranch)
-        : base(apiUrl, tokenProvider, owner, repo)
+    public GitHubRepositoryProvider(GitHubConnectionInfo connection, Func<CancellationToken, Task<string>> tokenProvider, string baseBranch)
+        : base(connection, tokenProvider)
     {
         ArgumentNullException.ThrowIfNull(baseBranch);
         _baseBranch = baseBranch;
@@ -84,8 +84,8 @@ public class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
     /// <summary>
     /// Internal constructor for testing with a mock IGitHubClient.
     /// </summary>
-    internal GitHubRepositoryProvider(IGitHubClient gitHubClient, string token, string owner, string repo, string baseBranch)
-        : base(gitHubClient, token, owner, repo)
+    internal GitHubRepositoryProvider(GitHubConnectionInfo connection, IGitHubClient gitHubClient, string token, string baseBranch)
+        : base(connection, gitHubClient, token)
     {
         ArgumentNullException.ThrowIfNull(baseBranch);
         _baseBranch = baseBranch;

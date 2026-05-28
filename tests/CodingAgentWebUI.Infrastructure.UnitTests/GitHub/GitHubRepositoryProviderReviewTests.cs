@@ -23,7 +23,7 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
     private const string BaseBranch = "main";
 
     private GitHubRepositoryProvider CreateProvider() =>
-        new(Server.Url!, Token, Owner, Repo, BaseBranch);
+        new(new GitHubConnectionInfo(Server.Url!, Owner, Repo), Token, BaseBranch);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

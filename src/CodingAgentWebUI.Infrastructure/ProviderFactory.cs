@@ -30,35 +30,33 @@ public class ProviderFactory : IProviderFactory
         {
             ValidateRequiredSettings(config, ProviderSettingKeys.ApiUrl, ProviderSettingKeys.ClientId, ProviderSettingKeys.InstallationId, ProviderSettingKeys.PrivateKeyBase64, ProviderSettingKeys.Owner, ProviderSettingKeys.Repo);
             var authService = GetOrCreateAuthService(config);
-            return new GitHubIssueProvider(
+            var connection = new GitHubConnectionInfo(
                 config.Settings[ProviderSettingKeys.ApiUrl],
-                authService.GetTokenAsync,
                 config.Settings[ProviderSettingKeys.Owner],
                 config.Settings[ProviderSettingKeys.Repo]);
+            return new GitHubIssueProvider(connection, authService.GetTokenAsync);
         });
 
         RegisterRepositoryProvider("GitHub", config =>
         {
             ValidateRequiredSettings(config, ProviderSettingKeys.ApiUrl, ProviderSettingKeys.ClientId, ProviderSettingKeys.InstallationId, ProviderSettingKeys.PrivateKeyBase64, ProviderSettingKeys.Owner, ProviderSettingKeys.Repo, ProviderSettingKeys.BaseBranch);
             var authService = GetOrCreateAuthService(config);
-            return new GitHubRepositoryProvider(
+            var connection = new GitHubConnectionInfo(
                 config.Settings[ProviderSettingKeys.ApiUrl],
-                authService.GetTokenAsync,
                 config.Settings[ProviderSettingKeys.Owner],
-                config.Settings[ProviderSettingKeys.Repo],
-                config.Settings[ProviderSettingKeys.BaseBranch]);
+                config.Settings[ProviderSettingKeys.Repo]);
+            return new GitHubRepositoryProvider(connection, authService.GetTokenAsync, config.Settings[ProviderSettingKeys.BaseBranch]);
         });
 
         RegisterPipelineProvider("GitHub", config =>
         {
             ValidateRequiredSettings(config, ProviderSettingKeys.ApiUrl, ProviderSettingKeys.ClientId, ProviderSettingKeys.InstallationId, ProviderSettingKeys.PrivateKeyBase64, ProviderSettingKeys.Owner, ProviderSettingKeys.Repo);
             var authService = GetOrCreateAuthService(config);
-            return new GitHubActionsPipelineProvider(
+            var connection = new GitHubConnectionInfo(
                 config.Settings[ProviderSettingKeys.ApiUrl],
-                authService.GetTokenAsync,
                 config.Settings[ProviderSettingKeys.Owner],
-                config.Settings[ProviderSettingKeys.Repo],
-                _pipelineConfig.ExternalCiPollInterval);
+                config.Settings[ProviderSettingKeys.Repo]);
+            return new GitHubActionsPipelineProvider(connection, authService.GetTokenAsync, _pipelineConfig.ExternalCiPollInterval);
         });
     }
 

@@ -31,7 +31,7 @@ public class GitHubActionsPipelineProviderTests
         _mockWorkflows.Setup(w => w.Jobs).Returns(_mockJobs.Object);
 
         _provider = new GitHubActionsPipelineProvider(
-            _mockClient.Object, "owner", "repo", TimeSpan.FromMilliseconds(50));
+            new GitHubConnectionInfo("https://api.github.com", "owner", "repo"), _mockClient.Object, TimeSpan.FromMilliseconds(50));
     }
 
     [Fact]
