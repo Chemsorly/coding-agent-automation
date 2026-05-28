@@ -28,12 +28,15 @@ public sealed class ConsolidationQueueService
 {
     private readonly ConcurrentQueue<PendingConsolidationJob> _queue = new();
     private readonly ConcurrentDictionary<string, bool> _queuedRunIds = new();
-    private readonly ConcurrentDictionary<string, bool> _cancelledRunIds = new(); // TODO: This dictionary grows unbounded. Consider pruning entries after the job is confirmed removed from the queue or implementing time-based eviction.
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _cancelledRunIds = new();
     private readonly ILogger _logger;
     private readonly object _queueLock = new();
 
     /// <summary>Maximum dispatch retry attempts before marking a run as permanently failed.</summary>
     internal const int MaxRetryCount = 5;
+
+    /// <summary>How long cancelled run IDs are retained before eviction.</summary>
+    internal static readonly TimeSpan EvictionWindow = TimeSpan.FromMinutes(5);
 
     public ConsolidationQueueService(ILogger logger)
     {
@@ -68,6 +71,13 @@ public sealed class ConsolidationQueueService
     {
         ArgumentNullException.ThrowIfNull(agent);
 
+        var cutoff = DateTimeOffset.UtcNow - EvictionWindow;
+        foreach (var kvp in _cancelledRunIds)
+        {
+            if (kvp.Value < cutoff)
+                _cancelledRunIds.TryRemove(kvp.Key, out _);
+        }
+
         lock (_queueLock)
         {
             var count = _queue.Count;
@@ -96,7 +106,7 @@ public sealed class ConsolidationQueueService
     public void CancelRun(string runId)
     {
         ArgumentNullException.ThrowIfNull(runId);
-        _cancelledRunIds.TryAdd(runId, true);
+        _cancelledRunIds.TryAdd(runId, DateTimeOffset.UtcNow);
         RemoveFromQueue(runId);
     }
 
