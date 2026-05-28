@@ -130,4 +130,37 @@ internal sealed class PipelineStepContext
         Callbacks.TransitionTo(PipelineStep.Failed);
         Callbacks.AddRunToHistory(Run);
     }
+
+    /// <summary>
+    /// Executes a critical async action. On failure (non-cancellation), logs an error,
+    /// fails the run, and returns <see cref="StepResult.Stop"/>.
+    /// Returns <see cref="StepResult.Continue"/> on success.
+    /// </summary>
+    public async Task<StepResult> TryCriticalAsync(Func<Task> action, string actionDescription, CancellationToken ct = default)
+    {
+        try { await action(); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Error(ex, "Pipeline {RunId} {ActionDescription} failed", Run.RunId, actionDescription);
+            await FailRunAsync($"{actionDescription} failed: {ex.Message}", ct);
+            return StepResult.Stop;
+        }
+        return StepResult.Continue;
+    }
+
+    /// <summary>
+    /// Executes a non-critical async action. On failure (non-cancellation), logs a warning
+    /// and invokes the optional <paramref name="onFailure"/> callback.
+    /// Always returns <see cref="StepResult.Continue"/>.
+    /// </summary>
+    public async Task<StepResult> TryNonCriticalAsync(Func<Task> action, string actionDescription, CancellationToken ct = default, Action? onFailure = null)
+    {
+        try { await action(); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Pipeline {RunId} {ActionDescription} failed, continuing", Run.RunId, actionDescription);
+            onFailure?.Invoke();
+        }
+        return StepResult.Continue;
+    }
 }

@@ -13,16 +13,11 @@ internal sealed class SyncBrainPreRunStep : IPipelineStep
             return StepResult.Continue;
 
         context.Callbacks.TransitionTo(PipelineStep.SyncingBrainRepoPreRun);
-        try
-        {
-            await context.BrainSync.SyncPreRunAsync(
-                context.Run, context.BrainProvider, context.Run.WorkspacePath!, ct, context.Callbacks.EmitOutputLine);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            context.Logger.Warning(ex, "Pipeline {RunId} brain sync failed, continuing without brain context", context.Run.RunId);
-            context.Run.BrainContextLoaded = false;
-        }
+        await context.TryNonCriticalAsync(
+            () => context.BrainSync.SyncPreRunAsync(
+                context.Run, context.BrainProvider, context.Run.WorkspacePath!, ct, context.Callbacks.EmitOutputLine),
+            "brain sync", ct,
+            onFailure: () => context.Run.BrainContextLoaded = false);
 
         await context.Callbacks.ReportBrainSyncResult(context.Run.BrainContextLoaded, context.Run.BrainKnowledgeFileCount);
 

@@ -11,12 +11,8 @@ internal sealed class BrainPullBeforeWriteStep : IPipelineStep
             || context.Config.BrainReadOnly || !context.Run.BrainContextLoaded)
             return StepResult.Continue;
 
-        try { await context.BrainSync.PullBeforeWriteAsync(context.Run, context.BrainProvider, ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            context.Logger.Warning(ex, "Pipeline {RunId} brain repo pull-before-write failed, continuing", context.Run.RunId);
-        }
-
-        return StepResult.Continue;
+        return await context.TryNonCriticalAsync(
+            () => context.BrainSync.PullBeforeWriteAsync(context.Run, context.BrainProvider, ct),
+            "brain repo pull-before-write", ct);
     }
 }

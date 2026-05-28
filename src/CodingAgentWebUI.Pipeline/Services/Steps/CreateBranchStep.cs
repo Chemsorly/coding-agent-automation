@@ -20,27 +20,23 @@ internal sealed class CreateBranchStep : IPipelineStep
     private static async Task<StepResult> CheckoutAndMergeAsync(PipelineStepContext context, CancellationToken ct)
     {
         var pr = context.Run.LinkedPullRequest!;
-        try
+        var checkoutResult = await context.TryCriticalAsync(async () =>
         {
             await context.RepoProvider.CheckoutRemoteBranchAsync(context.Run.WorkspacePath!, pr.BranchName, ct);
             context.Run.BranchName = pr.BranchName;
             context.Callbacks.EmitOutputLine($"🌿 Checked out existing branch {context.Run.BranchName}");
             context.Logger.Information("Pipeline {RunId} checked out existing branch {BranchName}",
                 context.Run.RunId, context.Run.BranchName);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            context.Logger.Error(ex, "Pipeline {RunId} failed to checkout branch {BranchName}",
-                context.Run.RunId, pr.BranchName);
-            await context.FailRunAsync($"Branch checkout failed: {ex.Message}");
+        }, "Branch checkout", ct);
+
+        if (checkoutResult == StepResult.Stop)
             return StepResult.Stop;
-        }
 
         // Skip merge for review runs — review the PR branch as-is
         if (context.Run.RunType == PipelineRunType.Review)
             return StepResult.Continue;
 
-        try
+        return await context.TryCriticalAsync(async () =>
         {
             var mergeResult = await context.RepoProvider.MergeFromBaseAsync(context.Run.WorkspacePath!, ct);
             context.Run.MergeConflictFiles = mergeResult.ConflictFiles;
@@ -62,15 +58,7 @@ internal sealed class CreateBranchStep : IPipelineStep
                 context.Callbacks.EmitOutputLine($"🔀 Rebased onto {context.RepoProvider.BaseBranch} (no conflicts)");
                 context.Logger.Information("Pipeline {RunId} rebased onto base (no conflicts)", context.Run.RunId);
             }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            context.Logger.Error(ex, "Pipeline {RunId} failed to rebase onto base branch", context.Run.RunId);
-            await context.FailRunAsync($"Base branch rebase failed: {ex.Message}");
-            return StepResult.Stop;
-        }
-
-        return StepResult.Continue;
+        }, "Base branch rebase", ct);
     }
 
     private static async Task<StepResult> CreateNewBranchAsync(PipelineStepContext context, CancellationToken ct)
@@ -79,7 +67,7 @@ internal sealed class CreateBranchStep : IPipelineStep
             throw new InvalidOperationException("Issue must be fetched before creating a branch. Ensure FetchIssueStep runs before CreateBranchStep.");
 
         context.Callbacks.EmitOutputLine("🌿 Creating branch...");
-        try
+        return await context.TryCriticalAsync(async () =>
         {
             var branchName = PipelineFormatting.GenerateBranchName(
                 context.Run.IssueIdentifier, context.Issue.Title, context.Run.RunId);
@@ -88,14 +76,6 @@ internal sealed class CreateBranchStep : IPipelineStep
             context.Logger.Information("Pipeline {RunId} branch {BranchName} created",
                 context.Run.RunId, context.Run.BranchName);
             context.Callbacks.EmitOutputLine($"🌿 Created branch {context.Run.BranchName}");
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            context.Logger.Error(ex, "Pipeline {RunId} failed to create branch", context.Run.RunId);
-            await context.FailRunAsync($"Branch creation failed: {ex.Message}");
-            return StepResult.Stop;
-        }
-
-        return StepResult.Continue;
+        }, "Branch creation", ct);
     }
 }
