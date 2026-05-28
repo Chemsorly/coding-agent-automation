@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
@@ -26,6 +27,11 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
 
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("CreateSubIssues");
+        activity?.SetTag("pipeline.run_id", context.Run.RunId);
+        activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        activity?.SetTag("pipeline.run_type", context.Run.RunType.ToString());
+
         // 1. Transition to CreatingIssues
         context.Callbacks.TransitionTo(PipelineStep.CreatingIssues);
 

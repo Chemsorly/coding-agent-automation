@@ -1,6 +1,7 @@
 using System.Text;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
@@ -21,6 +22,11 @@ internal sealed class DecompositionAnalysisStep : IPipelineStep
 {
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("DecompositionAnalysis");
+        activity?.SetTag("pipeline.run_id", context.Run.RunId);
+        activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        activity?.SetTag("pipeline.run_type", context.Run.RunType.ToString());
+
         var run = context.Run;
         var config = context.Config;
         var logger = context.Logger;
