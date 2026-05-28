@@ -21,6 +21,11 @@ public static class PipelineTelemetry
     public static readonly Histogram<double> JobDuration = Meter.CreateHistogram<double>(
         "pipeline.jobs.duration", "s", "Duration of pipeline jobs in seconds");
 
+    public static readonly Counter<long> SubIssuesCreated = Meter.CreateCounter<long>("pipeline.decomposition.sub_issues.created");
+    public static readonly Counter<long> SubIssuesFailed = Meter.CreateCounter<long>("pipeline.decomposition.sub_issues.failed");
+    public static readonly Histogram<double> DecompositionDuration = Meter.CreateHistogram<double>(
+        "pipeline.decomposition.duration", "s", "Duration of decomposition phases in seconds");
+
     /// <summary>Creates a run_type tag from the given <see cref="PipelineRunType"/>.</summary>
     public static KeyValuePair<string, object?> RunTypeTag(PipelineRunType runType) =>
         new("run_type", runType.ToString().ToLowerInvariant());

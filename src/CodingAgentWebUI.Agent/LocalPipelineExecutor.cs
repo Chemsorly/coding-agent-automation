@@ -169,6 +169,12 @@ public sealed class LocalPipelineExecutor
         {
             sw.Stop();
             PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, runTypeTag);
+            if (job.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+            {
+                var phase = job.RunType == PipelineRunType.DecompositionAnalysis ? "analysis" : "creation";
+                PipelineTelemetry.DecompositionDuration.Record(sw.Elapsed.TotalSeconds,
+                    new KeyValuePair<string, object?>("phase", phase));
+            }
             if (result is null || result.FinalStep != PipelineStep.Completed)
                 PipelineTelemetry.JobsFailed.Add(1, runTypeTag);
             else
