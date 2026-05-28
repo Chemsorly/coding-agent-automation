@@ -279,6 +279,14 @@ public class ConsolidationPromptBuilderTests
     }
 
     [Fact]
+    public void BuildRefactoringDetectionPrompt_ContainsSubAgentInstruction()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
+
+        result.Should().Contain("sub-agent");
+    }
+
+    [Fact]
     public void BuildProposalOutcomeContext_EmptyList_ReturnsEmptyString()
     {
         var result = ConsolidationPromptBuilder.BuildProposalOutcomeContext(Array.Empty<IssueSummary>());

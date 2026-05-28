@@ -164,11 +164,17 @@ public static class ConsolidationPromptBuilder
         // How to explore
         sb.AppendLine("## Exploration Strategy");
         sb.AppendLine();
-        sb.AppendLine("- Start by understanding the project structure (solution file, project files, directory layout)");
-        sb.AppendLine("- Read key architectural files (README, design docs, brain knowledge if available)");
-        sb.AppendLine("- Scan source directories for patterns and anomalies");
-        sb.AppendLine("- Focus on areas with high file counts or deep nesting as indicators of complexity");
-        sb.AppendLine("- Check for consistency in naming, structure, and patterns across similar components");
+        sb.AppendLine("1. **Orient first** (do this yourself):");
+        sb.AppendLine("   - Understand the project structure (solution file, project files, directory layout)");
+        sb.AppendLine("   - Read key architectural files (README, design docs, brain knowledge if available)");
+        sb.AppendLine();
+        sb.AppendLine("2. **Delegate parallel investigations** using sub-agents to cover more ground:");
+        sb.AppendLine("   - Assign different project areas to different sub-agents (e.g., one for the Pipeline project, one for Infrastructure, one for the Agent project)");
+        sb.AppendLine("   - Or assign different detection categories to different sub-agents (e.g., one hunting dead code, another checking documentation freshness, another looking for bugs)");
+        sb.AppendLine("   - Each sub-agent should report back with specific file paths, line numbers, and evidence");
+        sb.AppendLine("   - This produces a more thorough analysis than a single-threaded read-through");
+        sb.AppendLine();
+        sb.AppendLine("3. **Aggregate and prioritize** — collect findings from sub-agents, deduplicate, and select the highest-impact proposals for the output file");
         sb.AppendLine();
 
         // Insert issue context between Exploration Strategy and Prioritization Data
