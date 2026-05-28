@@ -49,6 +49,10 @@
                      @onclick="() => SelectNode(SettingsNodes.PipelinePrompts)">
                     Prompts
                 </div>
+                <div class="tree-node @(SelectedNode == SettingsNodes.PipelineDecomposition ? "active" : "")"
+                     @onclick="() => SelectNode(SettingsNodes.PipelineDecomposition)">
+                    Decomposition
+                </div>
                 <div class="tree-node @(SelectedNode == SettingsNodes.PipelineImplementation ? "active" : "")"
                      @onclick="() => SelectNode(SettingsNodes.PipelineImplementation)">
                     Implementation

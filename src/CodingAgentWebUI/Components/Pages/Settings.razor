@@ -93,6 +93,11 @@
                         ConfigStore="ConfigStore"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
+                case SettingsNodes.PipelineDecomposition:
+                    <PipelineDecompositionSection
+                        ConfigStore="ConfigStore"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
                 case SettingsNodes.PipelineConsolidation:
                     <PipelineConsolidationSection
                         ConfigStore="ConfigStore"

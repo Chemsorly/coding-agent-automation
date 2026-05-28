@@ -1,0 +1,81 @@
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+
+<section class="settings-section">
+    <h2>Decomposition</h2>
+    <p class="section-description">Controls the epic decomposition pipeline — how epics labeled <code>agent:epic</code> are broken into implementation-ready sub-issues.</p>
+    <div class="provider-form">
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Max Sub-Issues Per Epic</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum number of sub-issues the decomposition agent may propose per epic. Valid range: 1–20. Default: 10">?</span>
+            </div>
+            <input type="number" @bind="_maxDecompositionSubIssues" min="1" max="20" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Max Concurrent Decompositions</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum number of decomposition runs (across both phases) that can execute simultaneously. Default: 2">?</span>
+            </div>
+            <input type="number" @bind="_maxConcurrentDecompositions" min="1" max="10" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Decomposition Timeout (minutes)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Timeout for each decomposition phase. Accounts for codebase exploration time. Default: 15 minutes">?</span>
+            </div>
+            <input type="number" @bind="_decompositionTimeoutMinutes" min="5" max="60" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Max Open Issues for Context</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum open issues downloaded for deduplication context before the agent runs. Default: 50">?</span>
+            </div>
+            <input type="number" @bind="_maxOpenIssuesForContext" min="1" max="200" />
+        </div>
+
+        <div class="pipeline-form-actions">
+            <button class="btn-save" @onclick="SaveAsync">Save Decomposition Settings</button>
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private int _maxDecompositionSubIssues = 10;
+    private int _maxConcurrentDecompositions = 2;
+    private int _decompositionTimeoutMinutes = 15;
+    private int _maxOpenIssuesForContext = 50;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        _maxDecompositionSubIssues = config.MaxDecompositionSubIssues;
+        _maxConcurrentDecompositions = config.MaxConcurrentDecompositions;
+        _decompositionTimeoutMinutes = (int)config.DecompositionTimeout.TotalMinutes;
+        _maxOpenIssuesForContext = config.MaxOpenIssuesForContext;
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            await ConfigStore.UpdatePipelineConfigAsync(
+                current => current with
+                {
+                    MaxDecompositionSubIssues = _maxDecompositionSubIssues,
+                    MaxConcurrentDecompositions = _maxConcurrentDecompositions,
+                    DecompositionTimeout = TimeSpan.FromMinutes(_decompositionTimeoutMinutes),
+                    MaxOpenIssuesForContext = _maxOpenIssuesForContext
+                },
+                CancellationToken.None);
+            await OnShowStatus.InvokeAsync(("Decomposition settings saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+}

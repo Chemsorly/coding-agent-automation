@@ -343,7 +343,7 @@ public sealed record PipelineConfiguration
     public TimeSpan HotspotAnalysisLookback { get; init; } = TimeSpan.FromDays(90);
 
     /// <summary>
-    /// Maximum number of sub-issues per epic decomposition (range: 1–20). Default: 5.
+    /// Maximum number of sub-issues per epic decomposition (range: 1–20). Default: 10.
     /// </summary>
     // TODO: This refactor from backing field to C# 13 `field` keyword changes the exception message format — verify no consumers depend on the old message.
     public int MaxDecompositionSubIssues
@@ -355,7 +355,7 @@ public sealed record PipelineConfiguration
             ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 20);
             field = value;
         }
-    } = 5;
+    } = 10;
 
     /// <summary>
     /// Maximum simultaneous decomposition runs. Default: 2.

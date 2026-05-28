@@ -34,22 +34,6 @@
             <input type="number" @bind="_closedLoopMaxBackoffIntervalSeconds" min="10" max="3600" />
         </div>
 
-        <h3 style="margin-top: 16px; font-size: 0.95rem;">Decomposition</h3>
-        <div class="form-group">
-            <div class="label-with-hint">
-                <label>Max Sub-Issues Per Epic</label>
-                <span class="form-hint-icon" aria-hidden="true" title="Maximum number of sub-issues the decomposition agent may propose per epic. Valid range: 1–20. Default: 5">?</span>
-            </div>
-            <input type="number" @bind="_maxDecompositionSubIssues" min="1" max="20" />
-        </div>
-        <div class="form-group">
-            <div class="label-with-hint">
-                <label>Max Concurrent Decompositions</label>
-                <span class="form-hint-icon" aria-hidden="true" title="Maximum number of decomposition runs (across both phases) that can execute simultaneously. Default: 2">?</span>
-            </div>
-            <input type="number" @bind="_maxConcurrentDecompositions" min="1" max="10" />
-        </div>
-
         <div class="pipeline-form-actions">
             <button class="btn-save" @onclick="SaveAsync">Save Pipeline Loop Settings</button>
         </div>
@@ -64,8 +48,6 @@
     private int _closedLoopMaxRunsPerCycle = 0;
     private int _closedLoopMaxConsecutivePollFailures = 5;
     private int _closedLoopMaxBackoffIntervalSeconds = 900;
-    private int _maxDecompositionSubIssues = 5;
-    private int _maxConcurrentDecompositions = 2;
 
     protected override async Task OnInitializedAsync()
     {
@@ -74,8 +56,6 @@
         _closedLoopMaxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
         _closedLoopMaxConsecutivePollFailures = config.ClosedLoopMaxConsecutivePollFailures;
         _closedLoopMaxBackoffIntervalSeconds = (int)config.ClosedLoopMaxBackoffInterval.TotalSeconds;
-        _maxDecompositionSubIssues = config.MaxDecompositionSubIssues;
-        _maxConcurrentDecompositions = config.MaxConcurrentDecompositions;
     }
 
     private async Task SaveAsync()
@@ -88,9 +68,7 @@
                     ClosedLoopPollInterval = TimeSpan.FromSeconds(_closedLoopPollIntervalSeconds),
                     ClosedLoopMaxRunsPerCycle = _closedLoopMaxRunsPerCycle,
                     ClosedLoopMaxConsecutivePollFailures = _closedLoopMaxConsecutivePollFailures,
-                    ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(_closedLoopMaxBackoffIntervalSeconds),
-                    MaxDecompositionSubIssues = _maxDecompositionSubIssues,
-                    MaxConcurrentDecompositions = _maxConcurrentDecompositions
+                    ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(_closedLoopMaxBackoffIntervalSeconds)
                 },
                 CancellationToken.None);
             await OnShowStatus.InvokeAsync(("Pipeline loop settings saved.", false));
