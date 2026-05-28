@@ -1,8 +1,10 @@
 using AwesomeAssertions;
+using System.Diagnostics.Metrics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Services.Steps;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using Moq;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Steps;
@@ -333,5 +335,37 @@ public class CreateSubIssuesStepTests : IDisposable
         run.SubIssueResults[1].Success.Should().BeFalse();
         run.SubIssueResults[2].Success.Should().BeTrue();
         run.DecompositionSubIssuesCreated.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SuccessfulCreation_IncrementsSubIssuesCreatedCounter()
+    {
+        WriteSubIssueFile("01-feature.json", "Add feature", "Feature body");
+
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "900", Url = "https://github.com/test/900" });
+
+        long createdCount = 0;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meterListener) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
+                meterListener.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
+        {
+            if (instrument.Name == "pipeline.decomposition.sub_issues.created")
+                Interlocked.Add(ref createdCount, measurement);
+        });
+        listener.Start();
+
+        var run = CreateRun();
+        var context = BuildContext(run);
+        var step = new CreateSubIssuesStep();
+
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        createdCount.Should().Be(1);
     }
 }

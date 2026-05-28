@@ -77,6 +77,8 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
                     "Creation timeout exceeded; marking remaining sub-issues as failed. Title: {Title}",
                     proposal.Title);
 
+                PipelineTelemetry.SubIssuesFailed.Add(1, PipelineTelemetry.RunTypeTag(context.Run.RunType));
+
                 results.Add(new SubIssueCreationResult
                 {
                     Title = proposal.Title,
@@ -159,6 +161,8 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
                     "Created sub-issue {Identifier}: {Title}",
                     created.Identifier, sanitizedTitle);
 
+                PipelineTelemetry.SubIssuesCreated.Add(1, PipelineTelemetry.RunTypeTag(context.Run.RunType));
+
                 return new SubIssueCreationResult
                 {
                     Title = proposal.Title,
@@ -170,6 +174,7 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
             catch (OperationCanceledException)
             {
                 // Timeout or external cancellation — don't retry
+                PipelineTelemetry.SubIssuesFailed.Add(1, PipelineTelemetry.RunTypeTag(context.Run.RunType));
                 return new SubIssueCreationResult
                 {
                     Title = proposal.Title,
@@ -191,6 +196,8 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
                         "Exhausted retries for sub-issue '{Title}': {Error}",
                         proposal.Title, ex.Message);
 
+                    PipelineTelemetry.SubIssuesFailed.Add(1, PipelineTelemetry.RunTypeTag(context.Run.RunType));
+
                     return new SubIssueCreationResult
                     {
                         Title = proposal.Title,
@@ -206,6 +213,8 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
                     ex,
                     "Non-transient error creating sub-issue '{Title}': {Error}",
                     proposal.Title, ex.Message);
+
+                PipelineTelemetry.SubIssuesFailed.Add(1, PipelineTelemetry.RunTypeTag(context.Run.RunType));
 
                 return new SubIssueCreationResult
                 {
