@@ -22,14 +22,7 @@ internal sealed class CloneRepositoryStep : IPipelineStep
         if (string.IsNullOrEmpty(context.Run.AgentId))
             await context.Callbacks.SwapAgentLabel(context.Run.IssueIdentifier, AgentLabels.InProgress, ct);
 
-        try { await context.RepoProvider.CloneAsync(workspacePath, ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            context.Logger.Error(ex, "Pipeline {RunId} failed to clone repository", context.Run.RunId);
-            await context.FailRunAsync($"Repository clone failed: {ex.Message}");
-            return StepResult.Stop;
-        }
-
-        return StepResult.Continue;
+        return await context.TryCriticalAsync(
+            () => context.RepoProvider.CloneAsync(workspacePath, ct), "Repository clone", ct);
     }
 }

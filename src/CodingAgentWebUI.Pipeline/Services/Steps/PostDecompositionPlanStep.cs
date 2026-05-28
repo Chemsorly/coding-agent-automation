@@ -45,7 +45,7 @@ internal sealed class PostDecompositionPlanStep : IPipelineStep
         var commentBody = FormatPlanComment(planContent);
 
         // 3. Check for existing plan comment (most recent with marker)
-        try
+        var postResult = await context.TryCriticalAsync(async () =>
         {
             var comments = await context.IssueOps.ListCommentsAsync(context.Run.IssueIdentifier, ct);
             var existingComment = FindMostRecentPlanComment(comments);
@@ -67,15 +67,10 @@ internal sealed class PostDecompositionPlanStep : IPipelineStep
                     "Posted new decomposition plan comment on issue {IssueId}",
                     context.Run.IssueIdentifier);
             }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            context.Logger.Error(ex,
-                "Failed to post/update decomposition plan comment on issue {IssueId}",
-                context.Run.IssueIdentifier);
-            await context.FailRunAsync($"Failed to post decomposition plan comment: {ex.Message}", ct);
+        }, "Post decomposition plan comment", ct);
+
+        if (postResult == StepResult.Stop)
             return StepResult.Stop;
-        }
 
         // 4. Swap label to agent:epic-review
         await context.IssueOps.SwapLabelAsync(context.Run.IssueIdentifier, AgentLabels.EpicReview, ct);

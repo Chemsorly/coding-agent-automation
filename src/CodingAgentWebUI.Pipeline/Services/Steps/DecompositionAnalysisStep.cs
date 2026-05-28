@@ -55,8 +55,8 @@ internal sealed class DecompositionAnalysisStep : IPipelineStep
         context.Callbacks.EmitOutputLine("📝 Executing agent to generate decomposition plan...");
 
         // 5. Execute agent expecting .agent/decomposition-plan.md output
-        AgentResult agentResult;
-        try
+        AgentResult? agentResult = null;
+        var execResult = await context.TryCriticalAsync(async () =>
         {
             agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
                 context.AgentProvider,
@@ -69,18 +69,14 @@ internal sealed class DecompositionAnalysisStep : IPipelineStep
                 },
                 run, config, "Decomposition analysis agent", context.Callbacks.NotifyChange, logger, ct,
                 line => context.Callbacks.EmitOutputLine(line));
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.Error(ex, "Agent execution failed for decomposition analysis run {RunId}", run.RunId);
-            context.Callbacks.EmitOutputLine($"❌ Agent execution failed: {ex.Message}");
-            await context.FailRunAsync($"Agent execution failed: {ex.Message}", ct);
+        }, "Agent execution", ct);
+
+        if (execResult == StepResult.Stop)
             return StepResult.Stop;
-        }
 
-        run.AccumulateTokenUsage(agentResult);
+        run.AccumulateTokenUsage(agentResult!);
 
-        if (!agentResult.Success)
+        if (!agentResult!.Success)
         {
             logger.Warning("Agent exited with code {ExitCode} for decomposition analysis run {RunId}",
                 agentResult.ExitCode, run.RunId);
