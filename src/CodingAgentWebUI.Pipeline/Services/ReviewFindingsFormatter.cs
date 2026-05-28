@@ -9,12 +9,10 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// </summary>
 internal static class ReviewFindingsFormatter
 {
-    internal const string Marker = "<!-- agent:pr-review -->";
-
     public static string Format(PipelineRun run)
     {
         var sb = new StringBuilder();
-        sb.AppendLine(Marker);
+        sb.AppendLine(CommentMarkers.PrReview);
         sb.AppendLine("## 🤖 Automated Code Review");
         sb.AppendLine();
 

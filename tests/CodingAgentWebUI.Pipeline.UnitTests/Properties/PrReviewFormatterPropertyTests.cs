@@ -37,7 +37,7 @@ public class PrReviewFormatterPropertyTests
 
         var result = ReviewFindingsFormatter.Format(run);
 
-        result.Should().Contain(ReviewFindingsFormatter.Marker);
+        result.Should().Contain(CommentMarkers.PrReview);
     }
 
     /// <summary>
