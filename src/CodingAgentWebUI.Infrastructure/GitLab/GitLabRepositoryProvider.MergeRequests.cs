@@ -367,6 +367,7 @@ public partial class GitLabRepositoryProvider
                                     HeadSha = new Sha1(latestVersion.HeadCommitSha),
                                     StartSha = new Sha1(latestVersion.StartCommitSha),
                                     PositionType = new DynamicEnum<PositionType>(NGitLab.Models.PositionType.Text),
+                                    OldPath = comment.Path,
                                     NewPath = comment.Path,
                                     NewLine = comment.Line
                                 }
