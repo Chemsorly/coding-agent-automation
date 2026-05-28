@@ -337,7 +337,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
         // Simulate existing review comment found on first call, then null (collapsed)
         var callCount = 0;
         _repoProvider.Setup(r => r.FindExistingReviewCommentAsync(
-            42, ReviewFindingsFormatter.Marker, It.IsAny<CancellationToken>()))
+            42, CommentMarkers.PrReview, It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => Interlocked.Increment(ref callCount) == 1 ? 99999L : null);
         _repoProvider.Setup(r => r.UpdateReviewCommentAsync(
             42, 99999L, It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -350,7 +350,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
 
         // Verify collapse was called (FindExistingReviewCommentAsync + UpdateReviewCommentAsync)
         _repoProvider.Verify(r => r.FindExistingReviewCommentAsync(
-            42, ReviewFindingsFormatter.Marker, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+            42, CommentMarkers.PrReview, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
         _repoProvider.Verify(r => r.UpdateReviewCommentAsync(
             42, 99999L, It.Is<string>(body => body.Contains("Superseded")), It.IsAny<CancellationToken>()), Times.Once);
         // Verify DismissPreviousReviewAsync was NOT called (non-inline provider)

@@ -24,8 +24,6 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
 
     private const string SupersededSuffix = "\n</details>";
 
-    private const string ReviewMarker = "<!-- agent:pr-review -->";
-
     private const string DismissReason = "Superseded by a newer automated review.";
 
     private const string FollowUpPromptTemplate =
@@ -94,7 +92,7 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
 
         // Step 2: Determine the body and review type
         var body = context.Run.CodeReviewAgentsRun.Count == 0
-            ? $"{ReviewFindingsFormatter.Marker}\n{NoReviewerMessage}"
+            ? $"{CommentMarkers.PrReview}\n{NoReviewerMessage}"
             : ReviewFindingsFormatter.Format(context.Run);
 
         var reviewType = DetermineReviewType(context.Run);
@@ -382,7 +380,7 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
         try
         {
             await context.RepoProvider.DismissPreviousReviewAsync(
-                prNumber, ReviewMarker, DismissReason, ct);
+                prNumber, CommentMarkers.PrReview, DismissReason, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -400,7 +398,7 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
         try
         {
             var existingId = await context.RepoProvider.FindExistingReviewCommentAsync(
-                prNumber, ReviewFindingsFormatter.Marker, ct);
+                prNumber, CommentMarkers.PrReview, ct);
 
             const int maxCollapseIterations = 20;
             var iterations = 0;
@@ -415,7 +413,7 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
                     existingId.Value, prNumber);
 
                 existingId = await context.RepoProvider.FindExistingReviewCommentAsync(
-                    prNumber, ReviewFindingsFormatter.Marker, ct);
+                    prNumber, CommentMarkers.PrReview, ct);
             }
 
             if (iterations >= maxCollapseIterations)

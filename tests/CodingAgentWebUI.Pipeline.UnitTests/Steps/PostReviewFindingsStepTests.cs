@@ -93,7 +93,7 @@ public class PostReviewFindingsStepTests : IDisposable
 
         // Simulate existing review comment found on first call, then null (collapsed)
         var callCount = 0;
-        _repoProvider.Setup(r => r.FindExistingReviewCommentAsync(55, ReviewFindingsFormatter.Marker, It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(r => r.FindExistingReviewCommentAsync(55, CommentMarkers.PrReview, It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => Interlocked.Increment(ref callCount) == 1 ? 12345L : null);
 
         var context = BuildContext(run);
@@ -126,7 +126,7 @@ public class PostReviewFindingsStepTests : IDisposable
         run.CodeReviewAgentFindings["StyleBot"] = "Naming convention issues";
 
         // No existing review found
-        _repoProvider.Setup(r => r.FindExistingReviewCommentAsync(60, ReviewFindingsFormatter.Marker, It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(r => r.FindExistingReviewCommentAsync(60, CommentMarkers.PrReview, It.IsAny<CancellationToken>()))
             .ReturnsAsync((long?)null);
 
         var context = BuildContext(run);
@@ -235,7 +235,7 @@ public class PostReviewFindingsStepTests : IDisposable
         await step.ExecuteAsync(context, CancellationToken.None);
 
         postedBody.Should().NotBeNull();
-        postedBody.Should().Contain(ReviewFindingsFormatter.Marker);
+        postedBody.Should().Contain(CommentMarkers.PrReview);
         postedBody.Should().Contain("Automated Code Review");
         postedBody.Should().Contain("[CRITICAL]");
     }

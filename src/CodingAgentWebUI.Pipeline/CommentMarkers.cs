@@ -29,4 +29,7 @@ public static class CommentMarkers
 
     /// <summary>HTML marker for the decomposition summary comment.</summary>
     public const string DecompositionSummary = "<!-- agent:decomposition-summary -->";
+
+    /// <summary>HTML marker for the PR review comment.</summary>
+    public const string PrReview = "<!-- agent:pr-review -->";
 }
