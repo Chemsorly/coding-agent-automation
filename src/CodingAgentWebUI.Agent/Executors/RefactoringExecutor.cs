@@ -275,8 +275,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         return sb.ToString();
     }
 
-    // TODO: Check process.ExitCode after WaitForExitAsync — non-zero exit could produce misleading hotspot data from partial stdout.
-    private static async Task<string> RunGitCommandAsync(string workingDirectory, string arguments, CancellationToken ct)
+    internal static async Task<string> RunGitCommandAsync(string workingDirectory, string arguments, CancellationToken ct)
     {
         using var process = new Process();
         process.StartInfo = new ProcessStartInfo
@@ -314,7 +313,10 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         }
 
         var output = await outputTask;
-        await errorTask;
+        var stderr = await errorTask;
+
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"git {arguments} failed with exit code {process.ExitCode}: {stderr}");
 
         return output;
     }
@@ -423,8 +425,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         {
             sb.AppendLine("## Prerequisites");
             sb.AppendLine();
-            // TODO: Guard against null entries in Prerequisites list (System.Text.Json may deserialize JSON nulls into non-nullable list elements)
-            foreach (var prereq in proposal.Prerequisites)
+            foreach (var prereq in proposal.Prerequisites.Where(p => p is not null))
                 sb.AppendLine($"- {SanitizeMarkdown(prereq)}");
             sb.AppendLine();
         }
