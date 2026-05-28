@@ -27,8 +27,7 @@
 
     <div class="settings-layout">
         <SettingsTreeNav SelectedNode="@_selectedNode"
-                         OnNodeSelected="SelectNode"
-                         PipelineProviderCount="_pipelineProviders.Count" />
+                         OnNodeSelected="SelectNode" />
 
         <div class="settings-content">
             @switch (_selectedNode)
@@ -85,7 +84,6 @@
                 case SettingsNodes.PipelineImplementation:
                     <PipelineQualityGatesSection
                         ConfigStore="ConfigStore"
-                        PipelineProviderCount="_pipelineProviders.Count"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineReview:
