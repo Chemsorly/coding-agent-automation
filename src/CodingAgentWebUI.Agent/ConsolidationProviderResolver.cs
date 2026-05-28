@@ -189,7 +189,8 @@ internal sealed class ConsolidationProviderResolver
             ?? throw new InvalidOperationException(
                 $"Issue provider '{issueConfig.DisplayName}' is missing 'repo' setting for consolidation");
 
-        return new GitHubIssueProvider(apiUrl, token, owner, repo);
+        var connection = new GitHubConnectionInfo(apiUrl, owner, repo);
+        return new GitHubIssueProvider(connection, token);
     }
 }
 

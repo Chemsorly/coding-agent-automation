@@ -23,13 +23,11 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
     /// Creates a provider with a token provider delegate (for GitHub App auth).
     /// </summary>
     public GitHubActionsPipelineProvider(
-        string apiUrl,
+        GitHubConnectionInfo connection,
         Func<CancellationToken, Task<string>> tokenProvider,
-        string owner,
-        string repo,
         TimeSpan pollInterval,
         Serilog.ILogger? logger = null)
-        : base(apiUrl, tokenProvider, owner, repo)
+        : base(connection, tokenProvider)
     {
         _pollInterval = pollInterval;
         _logger = logger ?? Serilog.Log.Logger;
@@ -40,13 +38,11 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
     /// Creates a provider with a static token.
     /// </summary>
     public GitHubActionsPipelineProvider(
-        string apiUrl,
+        GitHubConnectionInfo connection,
         string token,
-        string owner,
-        string repo,
         TimeSpan pollInterval,
         Serilog.ILogger? logger = null)
-        : base(apiUrl, token, owner, repo)
+        : base(connection, token)
     {
         _pollInterval = pollInterval;
         _logger = logger ?? Serilog.Log.Logger;
@@ -57,12 +53,11 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
     /// Internal constructor for testing with a mock IGitHubClient.
     /// </summary>
     internal GitHubActionsPipelineProvider(
+        GitHubConnectionInfo connection,
         IGitHubClient client,
-        string owner,
-        string repo,
         TimeSpan pollInterval,
         Serilog.ILogger? logger = null)
-        : base(client, owner, repo)
+        : base(connection, client)
     {
         _pollInterval = pollInterval;
         _logger = logger ?? Serilog.Log.Logger;

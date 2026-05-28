@@ -15,7 +15,7 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
     private const string BaseBranch = "main";
 
     private GitHubRepositoryProvider CreateProvider() =>
-        new(Server.Url!, Token, Owner, Repo, BaseBranch);
+        new(new GitHubConnectionInfo(Server.Url!, Owner, Repo), Token, BaseBranch);
 
     // NOTE: HasCommitsAheadAsync is listed in the issue as a required test scenario, but it uses
     // LibGit2Sharp (local git operations), not the GitHub HTTP API, so it cannot be tested via WireMock.

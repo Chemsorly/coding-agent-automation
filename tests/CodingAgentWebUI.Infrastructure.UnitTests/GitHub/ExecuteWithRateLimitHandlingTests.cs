@@ -202,7 +202,7 @@ public class ExecuteWithRateLimitHandlingTests
     private sealed class TestableGitHubProvider : CodingAgentWebUI.Infrastructure.GitHub.GitHubProviderBase
     {
         public TestableGitHubProvider(IGitHubClient client)
-            : base(client, "test-owner", "test-repo")
+            : base(new CodingAgentWebUI.Infrastructure.GitHub.GitHubConnectionInfo("https://api.github.com", "test-owner", "test-repo"), client)
         {
         }
 

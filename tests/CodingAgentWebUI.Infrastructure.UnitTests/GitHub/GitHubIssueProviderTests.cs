@@ -19,7 +19,7 @@ public class GitHubIssueProviderTests
         _mockClient = new Mock<IGitHubClient>();
         _mockIssues = new Mock<IIssuesClient>();
         _mockClient.Setup(c => c.Issue).Returns(_mockIssues.Object);
-        _provider = new GitHubIssueProvider(_mockClient.Object, "owner", "repo");
+        _provider = new GitHubIssueProvider(new GitHubConnectionInfo("https://api.github.com", "owner", "repo"), _mockClient.Object);
     }
 
     [Fact]

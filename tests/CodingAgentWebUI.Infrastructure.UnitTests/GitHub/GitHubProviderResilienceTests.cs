@@ -176,7 +176,7 @@ public class GitHubProviderResilienceTests
     private sealed class TestableResilienceProvider : CodingAgentWebUI.Infrastructure.GitHub.GitHubProviderBase
     {
         public TestableResilienceProvider(IGitHubClient client)
-            : base(client, "test-owner", "test-repo")
+            : base(new CodingAgentWebUI.Infrastructure.GitHub.GitHubConnectionInfo("https://api.github.com", "test-owner", "test-repo"), client)
         {
         }
 

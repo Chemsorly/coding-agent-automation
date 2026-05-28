@@ -45,7 +45,7 @@ public class InlineReviewIntegrationTests : IAsyncDisposable
     }
 
     private GitHubRepositoryProvider CreateProvider() =>
-        new(_server.Url!, Token, Owner, Repo, BaseBranch);
+        new(new GitHubConnectionInfo(_server.Url!, Owner, Repo), Token, BaseBranch);
 
     /// <summary>
     /// Prepends the /api/v3 prefix that Octokit adds for non-github.com base URLs.

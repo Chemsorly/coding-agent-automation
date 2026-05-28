@@ -28,10 +28,9 @@ public class GitHubRepositoryProviderPropertyTests
         // Arrange — use the internal test constructor with a mock IGitHubClient
         var mockClient = new Mock<IGitHubClient>();
         var provider = new GitHubRepositoryProvider(
+            new GitHubConnectionInfo("https://api.github.com", owner.Get, repo.Get),
             gitHubClient: mockClient.Object,
             token: "test-token",
-            owner: owner.Get,
-            repo: repo.Get,
             baseBranch: "main");
 
         // Act

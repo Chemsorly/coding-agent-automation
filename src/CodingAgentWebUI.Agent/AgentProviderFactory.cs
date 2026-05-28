@@ -88,6 +88,7 @@ public sealed class AgentProviderFactory : IProviderFactory
         var owner = GetRequiredSetting(config, ProviderSettingKeys.Owner);
         var repo = GetRequiredSetting(config, ProviderSettingKeys.Repo);
         var baseBranch = GetRequiredSetting(config, ProviderSettingKeys.BaseBranch);
+        var connection = new GitHubConnectionInfo(apiUrl, owner, repo);
 
         if (_orchestratorProxy is not null)
         {
@@ -99,11 +100,11 @@ public sealed class AgentProviderFactory : IProviderFactory
 
             Func<CancellationToken, Task<string>> tokenProvider =
                 ct => _orchestratorProxy.RequestTokenRefreshAsync(kind, ct);
-            return new GitHubRepositoryProvider(apiUrl, tokenProvider, owner, repo, baseBranch);
+            return new GitHubRepositoryProvider(connection, tokenProvider, baseBranch);
         }
 
         var token = GetRequiredSetting(config, ProviderSettingKeys.Token);
-        return new GitHubRepositoryProvider(apiUrl, token, owner, repo, baseBranch);
+        return new GitHubRepositoryProvider(connection, token, baseBranch);
     }
 
     private KiroCliAgentProvider CreateKiroCliAgentProvider(ProviderConfig config)
@@ -138,18 +139,19 @@ public sealed class AgentProviderFactory : IProviderFactory
         var apiUrl = GetRequiredSetting(config, ProviderSettingKeys.ApiUrl);
         var owner = GetRequiredSetting(config, ProviderSettingKeys.Owner);
         var repo = GetRequiredSetting(config, ProviderSettingKeys.Repo);
+        var connection = new GitHubConnectionInfo(apiUrl, owner, repo);
 
         if (_orchestratorProxy is not null)
         {
             Func<CancellationToken, Task<string>> tokenProvider =
                 ct => _orchestratorProxy.RequestTokenRefreshAsync(ProviderKind.Pipeline, ct);
             return new GitHubActionsPipelineProvider(
-                apiUrl, tokenProvider, owner, repo, _pipelineConfig.ExternalCiPollInterval);
+                connection, tokenProvider, _pipelineConfig.ExternalCiPollInterval);
         }
 
         var token = GetRequiredSetting(config, ProviderSettingKeys.Token);
         return new GitHubActionsPipelineProvider(
-            apiUrl, token, owner, repo, _pipelineConfig.ExternalCiPollInterval);
+            connection, token, _pipelineConfig.ExternalCiPollInterval);
     }
 
     private static string GetRequiredSetting(ProviderConfig config, string key)

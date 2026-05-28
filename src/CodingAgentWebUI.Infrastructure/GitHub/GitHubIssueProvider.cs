@@ -18,21 +18,21 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     /// <summary>
     /// Creates a provider with a static token (backward compatible).
     /// </summary>
-    public GitHubIssueProvider(string apiUrl, string token, string owner, string repo)
-        : base(apiUrl, token, owner, repo) { }
+    public GitHubIssueProvider(GitHubConnectionInfo connection, string token)
+        : base(connection, token) { }
 
     /// <summary>
     /// Creates a provider with a token provider delegate (for GitHub App auth).
     /// The delegate is called before each API call to obtain a fresh token.
     /// </summary>
-    public GitHubIssueProvider(string apiUrl, Func<CancellationToken, Task<string>> tokenProvider, string owner, string repo)
-        : base(apiUrl, tokenProvider, owner, repo) { }
+    public GitHubIssueProvider(GitHubConnectionInfo connection, Func<CancellationToken, Task<string>> tokenProvider)
+        : base(connection, tokenProvider) { }
 
     /// <summary>
     /// Internal constructor for testing with a mock IGitHubClient.
     /// </summary>
-    internal GitHubIssueProvider(IGitHubClient client, string owner, string repo)
-        : base(client, owner, repo) { }
+    internal GitHubIssueProvider(GitHubConnectionInfo connection, IGitHubClient client)
+        : base(connection, client) { }
 
     public async Task<IssueDetail> GetIssueAsync(string identifier, CancellationToken ct)
     {

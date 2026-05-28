@@ -15,10 +15,10 @@ public class GitHubIssueProviderWireMockTests : WireMockTestBase
     private const string Token = "fake-token-12345";
 
     private GitHubIssueProvider CreateProvider() =>
-        new(Server.Url!, Token, Owner, Repo);
+        new(new GitHubConnectionInfo(Server.Url!, Owner, Repo), Token);
 
     private GitHubIssueProvider CreateProviderWithTokenProvider(Func<CancellationToken, Task<string>> tokenProvider) =>
-        new(Server.Url!, tokenProvider, Owner, Repo);
+        new(new GitHubConnectionInfo(Server.Url!, Owner, Repo), tokenProvider);
 
     // --- Happy paths ---
 
