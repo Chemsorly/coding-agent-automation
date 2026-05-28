@@ -3,6 +3,7 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -531,12 +532,40 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         if (targetConfig is null)
             throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
 
-        var (token, expiresAt) = await _tokenVending.GenerateAgentTokenAsync(targetConfig, CancellationToken.None);
+        // GitHub App auth: generate a short-lived scoped token via JWT exchange
+        if (targetConfig.Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64))
+        {
+            var (token, expiresAt) = await _tokenVending.GenerateAgentTokenAsync(targetConfig, CancellationToken.None);
 
-        _logger.Information("Token refreshed for job {JobId} (kind: {ProviderKind}), expires at {ExpiresAt}",
-            jobId, providerKind, expiresAt);
+            _logger.Information("Token refreshed for job {JobId} (kind: {ProviderKind}), expires at {ExpiresAt}",
+                jobId, providerKind, expiresAt);
 
-        return new TokenRefreshResponse { Token = token, ExpiresAt = expiresAt };
+            return new TokenRefreshResponse { Token = token, ExpiresAt = expiresAt };
+        }
+
+        // GitLab PAT / static token: return the access token directly (no vending needed)
+        if (targetConfig.Settings.TryGetValue(ProviderSettingKeys.AccessToken, out var accessToken)
+            && !string.IsNullOrWhiteSpace(accessToken))
+        {
+            _logger.Information("Returning static access token for job {JobId} (kind: {ProviderKind})",
+                jobId, providerKind);
+
+            // Use a far-future expiry since PATs don't expire through this mechanism
+            return new TokenRefreshResponse { Token = accessToken, ExpiresAt = DateTimeOffset.UtcNow.AddHours(1) };
+        }
+
+        // Fallback: check if a pre-vended token already exists in settings
+        if (targetConfig.Settings.TryGetValue(ProviderSettingKeys.Token, out var existingToken)
+            && !string.IsNullOrWhiteSpace(existingToken))
+        {
+            _logger.Information("Returning existing token for job {JobId} (kind: {ProviderKind})",
+                jobId, providerKind);
+
+            return new TokenRefreshResponse { Token = existingToken, ExpiresAt = DateTimeOffset.UtcNow.AddHours(1) };
+        }
+
+        throw new HubException($"Provider config for job {jobId} (kind: {providerKind}) has no supported authentication method. " +
+            "Expected 'privateKeyBase64' (GitHub App), 'accessToken' (GitLab PAT), or 'token'.");
     }
 
     // ── Interactive chat ─────────────────────────────────────────────────

@@ -135,6 +135,7 @@
 
 @code {
     private CancellationTokenSource _cts = new();
+    private CancellationTokenSource? _toastCts;
     private SettingsModals? _modals;
     private string _selectedNode = SettingsNodes.ProvidersIssue;
 
@@ -230,6 +231,24 @@
     {
         _statusMessage = message;
         _isError = isError;
+
+        _toastCts?.Cancel();
+        _toastCts?.Dispose();
+        _toastCts = new CancellationTokenSource();
+        var token = _toastCts.Token;
+
+        _ = DismissAfterDelay(token);
+    }
+
+    private async Task DismissAfterDelay(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(4000, token);
+            _statusMessage = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException) { }
     }
 
     private void SelectNode(string nodeId)
@@ -239,6 +258,8 @@
 
     public async ValueTask DisposeAsync()
     {
+        _toastCts?.Cancel();
+        _toastCts?.Dispose();
         await _cts.CancelAsync();
         _cts.Dispose();
     }

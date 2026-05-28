@@ -214,6 +214,13 @@
                 && steps.Contains(PipelineStep.ExtractingLinkedIssues))
                 continue;
 
+            // Hide duplicate ReviewingCode in the "Code Generation" phase for review runs
+            // (it's already shown in "Review" phase)
+            if (Run.RunType == PipelineRunType.Review
+                && step == PipelineStep.ReviewingCode
+                && steps.Contains(PipelineStep.GeneratingCode))
+                continue;
+
             // Hide decomposition-only phases for non-decomposition runs
             if (Run.RunType is not PipelineRunType.DecompositionAnalysis
                 && step is PipelineStep.DownloadingOpenIssues or PipelineStep.ExploringCodebase

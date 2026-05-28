@@ -304,16 +304,16 @@ public class GitHubAppAuthServicePropertyTests
             {
                 // Synchronize all threads to start at the same time.
                 // Generous timeout to avoid flakiness on resource-constrained CI runners.
-                barrier.SignalAndWait(TimeSpan.FromSeconds(60));
+                barrier.SignalAndWait(TimeSpan.FromSeconds(120));
                 return authService.GetTokenAsync(CancellationToken.None);
             });
         }
 
         // Wait for all concurrent calls to complete.
-        // 120s is generous — the actual work is a fast cache read, but CI runners
-        // can be slow to schedule 20 threads through a barrier.
-        var allCompleted = Task.WhenAll(tasks).Wait(TimeSpan.FromSeconds(120));
-        Assert.True(allCompleted, $"Not all {input.ConcurrentCallers} concurrent calls completed within 120 seconds");
+        // 300s is generous — the actual work is a fast cache read, but CI runners
+        // can be slow to schedule 20 threads through a barrier under heavy parallel test load.
+        var allCompleted = Task.WhenAll(tasks).Wait(TimeSpan.FromSeconds(300));
+        Assert.True(allCompleted, $"Not all {input.ConcurrentCallers} concurrent calls completed within 300 seconds");
 
         // Assert: All N callers received the exact same token string
         var results = tasks.Select(t => t.Result).ToArray();
