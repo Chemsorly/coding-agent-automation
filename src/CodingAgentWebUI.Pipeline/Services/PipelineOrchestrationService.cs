@@ -309,7 +309,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         activity?.SetTag("pipeline.issue", run.IssueIdentifier);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        PipelineTelemetry.JobsDispatched.Add(1);
+        var runTypeTag = PipelineTelemetry.RunTypeTag(run.RunType);
+        PipelineTelemetry.JobsDispatched.Add(1, runTypeTag);
 
         IAgentIssueOperations issueOps = new IssueProviderIssueOperations(issueProvider, _logger);
         Steps.PipelineStepContext? ctx = null;
@@ -333,19 +334,19 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             await Steps.PipelineStepRunner.ExecuteAsync(BuildStepPipeline(), ctx, ct);
 
             sw.Stop();
-            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds);
+            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, runTypeTag);
             if (run.CurrentStep == PipelineStep.Completed)
-                PipelineTelemetry.JobsCompleted.Add(1);
+                PipelineTelemetry.JobsCompleted.Add(1, runTypeTag);
             else
-                PipelineTelemetry.JobsFailed.Add(1);
+                PipelineTelemetry.JobsFailed.Add(1, runTypeTag);
 
             activity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
         }
         catch (OperationCanceledException)
         {
             sw.Stop();
-            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds);
-            PipelineTelemetry.JobsFailed.Add(1);
+            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, runTypeTag);
+            PipelineTelemetry.JobsFailed.Add(1, runTypeTag);
             activity?.SetTag("pipeline.final_step", "Cancelled");
 
             if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
