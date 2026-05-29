@@ -651,13 +651,11 @@ public sealed class PipelineLoopService : BackgroundService
                     // ── Issue dispatch (one per template per pass) ──
                     if (currentTurn == 0 && hasIssues)
                     {
-                        foreach (var template in pollableTemplates)
+                        var (progress, count) = await DispatchRoundAsync(pollableTemplates, async (template, stopToken) =>
                         {
-                            if (remaining <= 0) break;
-                            if (_stopRequested || ct.IsCancellationRequested) break;
-                            if (!template.ImplementationEnabled) continue;
+                            if (!template.ImplementationEnabled) return DispatchAttemptResult.Skip;
                             if (!issueQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
-                                continue;
+                                return DispatchAttemptResult.Skip;
 
                             // Dequeue next valid issue
                             IssueSummary? issue = null;
@@ -666,16 +664,13 @@ public sealed class PipelineLoopService : BackgroundService
                                 var candidate = queue[0];
                                 queue.RemoveAt(0);
 
-                                // Skip errored/needs-refinement
                                 if (candidate.Labels.Contains(AgentLabels.Error) || candidate.Labels.Contains(AgentLabels.NeedsRefinement))
                                     continue;
-                                // Skip already processing
                                 if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
                                     continue;
-                                if (_jobDispatcher.IsIssueBeingProcessedOrQueued(candidate.Identifier))
+                                if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier))
                                     continue;
 
-                                // Dependency check — skip blocked issues, try next candidate
                                 if (_dependencyChecker != null)
                                 {
                                     if (!_providerCache.TryGetValue(template.IssueProviderId, out var provider))
@@ -699,45 +694,28 @@ public sealed class PipelineLoopService : BackgroundService
                                 break;
                             }
 
-                            if (issue is null) continue;
+                            if (issue is null) return DispatchAttemptResult.Skip;
 
                             CurrentIssueIdentifier = issue.Identifier;
                             StatusMessage = $"🔄 Dispatching #{issue.Identifier} from '{template.Name}'";
                             NotifyChange();
 
-                            try
-                            {
-                                var dispatched = await _jobDispatcher.TryDispatchAsync(
-                                    issue.Identifier,
-                                    template.IssueProviderId, template.RepoProviderId,
-                                    template.BrainProviderId, template.PipelineProviderId,
-                                    initiatedBy: "loop",
-                                    stoppingToken,
-                                    issueTitle: issue.Title);
+                            var dispatched = await _jobDispatcher!.TryDispatchAsync(
+                                issue.Identifier,
+                                template.IssueProviderId, template.RepoProviderId,
+                                template.BrainProviderId, template.PipelineProviderId,
+                                initiatedBy: "loop",
+                                stopToken,
+                                issueTitle: issue.Title);
 
-                                if (dispatched)
-                                {
-                                    ProcessedCount++;
-                                    remaining--;
-                                    issueMadeProgress = true;
-                                    _logger.Information("Dispatched issue #{Issue} from template '{Template}'",
-                                        issue.Identifier, template.Name);
-                                }
-                            }
-                            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                            {
-                                break;
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.Error(ex, "Dispatch failed for issue #{Issue} from template '{Template}'",
+                            if (dispatched)
+                                _logger.Information("Dispatched issue #{Issue} from template '{Template}'",
                                     issue.Identifier, template.Name);
-                                FailedCount++;
-                                ProcessedCount++;
-                                remaining--;
-                                issueMadeProgress = true;
-                            }
-                        }
+
+                            return new DispatchAttemptResult(dispatched);
+                        }, remaining, stoppingToken, ct);
+                        issueMadeProgress = progress;
+                        remaining -= count;
                     }
 
                     if (_stopRequested || ct.IsCancellationRequested || remaining <= 0) break;
@@ -745,81 +723,59 @@ public sealed class PipelineLoopService : BackgroundService
                     // ── PR review dispatch (one per template per pass) ──
                     if (currentTurn == 1 && hasPrs)
                     {
-                        foreach (var template in pollableTemplates)
+                        var (progress, count) = await DispatchRoundAsync(pollableTemplates, async (template, stopToken) =>
                         {
-                            if (remaining <= 0) break;
-                            if (_stopRequested || ct.IsCancellationRequested) break;
-                            if (!template.ReviewEnabled) continue;
+                            if (!template.ReviewEnabled) return DispatchAttemptResult.Skip;
                             if (!prQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
-                                continue;
+                                return DispatchAttemptResult.Skip;
 
-                            // Dequeue next valid PR
                             PullRequestSummary? pr = null;
                             while (queue.Count > 0)
                             {
                                 var candidate = queue[0];
                                 queue.RemoveAt(0);
 
-                                // Skip PRs with terminal/in-progress status labels
                                 if (candidate.Labels.Contains(AgentLabels.Error) ||
                                     candidate.Labels.Contains(AgentLabels.InProgress) ||
                                     candidate.Labels.Contains(AgentLabels.Done) ||
                                     candidate.Labels.Contains(AgentLabels.Cancelled))
                                     continue;
-                                // Skip already processing
                                 if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
                                     continue;
-                                if (_jobDispatcher.IsIssueBeingProcessedOrQueued(candidate.Identifier))
+                                if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier))
                                     continue;
 
                                 pr = candidate;
                                 break;
                             }
 
-                            if (pr is null) continue;
+                            if (pr is null) return DispatchAttemptResult.Skip;
 
                             CurrentIssueIdentifier = pr.Identifier;
                             StatusMessage = $"🔄 Dispatching PR #{pr.Identifier} review from '{template.Name}'";
                             NotifyChange();
 
-                            try
-                            {
-                                var dispatched = await _jobDispatcher.TryDispatchReviewAsync(
-                                    pr.Identifier,
-                                    pr.BranchName,
-                                    pr.Title,
-                                    pr.Description,
-                                    pr.Url,
-                                    pr.TargetBranch,
-                                    template.IssueProviderId,
-                                    template.RepoProviderId,
-                                    template.BrainProviderId,
-                                    initiatedBy: "loop",
-                                    stoppingToken);
+                            var dispatched = await _jobDispatcher!.TryDispatchReviewAsync(
+                                pr.Identifier,
+                                pr.BranchName,
+                                pr.Title,
+                                pr.Description,
+                                pr.Url,
+                                pr.TargetBranch,
+                                template.IssueProviderId,
+                                template.RepoProviderId,
+                                template.BrainProviderId,
+                                initiatedBy: "loop",
+                                stopToken);
 
-                                if (dispatched)
-                                {
-                                    ProcessedCount++;
-                                    remaining--;
-                                    prMadeProgress = true;
-                                    _logger.Information("Dispatched PR #{PrIdentifier} review from template '{Template}'",
-                                        pr.Identifier, template.Name);
-                                }
-                            }
-                            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                            {
-                                break;
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.Error(ex, "Dispatch failed for PR #{PrIdentifier} review from template '{Template}'",
+                            if (dispatched)
+                                _logger.Information("Dispatched PR #{PrIdentifier} review from template '{Template}'",
                                     pr.Identifier, template.Name);
-                                FailedCount++;
-                                ProcessedCount++;
-                                remaining--;
-                                prMadeProgress = true;
-                            }
-                        }
+
+                            return new DispatchAttemptResult(dispatched);
+                        }, remaining, stoppingToken, ct);
+                        prMadeProgress = progress;
+                        remaining -= count;
                     }
 
                     if (_stopRequested || ct.IsCancellationRequested || remaining <= 0) break;
@@ -827,83 +783,65 @@ public sealed class PipelineLoopService : BackgroundService
                     // ── Decomposition dispatch (one per template per pass) ──
                     if (currentTurn == 2 && hasDecomp)
                     {
-                        foreach (var template in pollableTemplates)
+                        var (progress, count) = await DispatchRoundAsync(pollableTemplates, async (template, stopToken) =>
                         {
-                            if (remaining <= 0) break;
-                            if (_stopRequested || ct.IsCancellationRequested) break;
-                            if (!template.DecompositionEnabled) continue;
+                            if (!template.DecompositionEnabled) return DispatchAttemptResult.Skip;
                             if (!decompositionQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
-                                continue;
+                                return DispatchAttemptResult.Skip;
 
                             // Re-check concurrency limit before each dispatch
                             if (activeDecompositionCount >= config.MaxConcurrentDecompositions)
                             {
                                 _logger.Information("Decomposition concurrency limit reached ({Active}/{Max}), skipping remaining decomposition dispatch",
                                     activeDecompositionCount, config.MaxConcurrentDecompositions);
-                                break;
+                                return DispatchAttemptResult.Abort;
                             }
 
-                            // Dequeue next valid epic
                             (IssueSummary Issue, PipelineRunType Phase)? epic = null;
                             while (queue.Count > 0)
                             {
                                 var candidate = queue[0];
                                 queue.RemoveAt(0);
 
-                                // Skip already processing
                                 if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier))
                                     continue;
-                                if (_jobDispatcher.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier))
+                                if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier))
                                     continue;
 
                                 epic = candidate;
                                 break;
                             }
 
-                            if (epic is null) continue;
+                            if (epic is null) return DispatchAttemptResult.Skip;
 
                             var epicItem = epic.Value;
-                            CurrentIssueIdentifier = epicItem.Issue.Identifier;
                             var phaseLabel = epicItem.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
+
+                            CurrentIssueIdentifier = epicItem.Issue.Identifier;
                             StatusMessage = $"🧩 Dispatching epic #{epicItem.Issue.Identifier} {phaseLabel} from '{template.Name}'";
                             NotifyChange();
 
-                            try
-                            {
-                                var dispatched = await _jobDispatcher.TryDispatchDecompositionAsync(
-                                    epicItem.Issue.Identifier,
-                                    epicItem.Issue.Title,
-                                    epicItem.Phase,
-                                    template.IssueProviderId,
-                                    template.RepoProviderId,
-                                    template.BrainProviderId,
-                                    initiatedBy: "loop",
-                                    stoppingToken);
+                            var dispatched = await _jobDispatcher!.TryDispatchDecompositionAsync(
+                                epicItem.Issue.Identifier,
+                                epicItem.Issue.Title,
+                                epicItem.Phase,
+                                template.IssueProviderId,
+                                template.RepoProviderId,
+                                template.BrainProviderId,
+                                initiatedBy: "loop",
+                                stopToken);
 
-                                if (dispatched)
-                                {
-                                    ProcessedCount++;
-                                    remaining--;
-                                    activeDecompositionCount++;
-                                    decompMadeProgress = true;
-                                    _logger.Information("Dispatched epic #{EpicIdentifier} ({Phase}) from template '{Template}'",
-                                        epicItem.Issue.Identifier, epicItem.Phase, template.Name);
-                                }
-                            }
-                            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                            if (dispatched)
                             {
-                                break;
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.Error(ex, "Dispatch failed for epic #{EpicIdentifier} ({Phase}) from template '{Template}'",
+                                activeDecompositionCount++;
+                                _logger.Information("Dispatched epic #{EpicIdentifier} ({Phase}) from template '{Template}'",
                                     epicItem.Issue.Identifier, epicItem.Phase, template.Name);
-                                FailedCount++;
-                                ProcessedCount++;
-                                remaining--;
-                                decompMadeProgress = true;
                             }
-                        }
+
+                            return new DispatchAttemptResult(dispatched);
+                        }, remaining, stoppingToken, ct);
+                        decompMadeProgress = progress;
+                        remaining -= count;
                     }
 
                     // If no queue made progress, all are exhausted
@@ -922,6 +860,75 @@ public sealed class PipelineLoopService : BackgroundService
             NotifyChange();
             await DelayOrStop(pollInterval, ct);
         }
+    }
+
+    /// <summary>
+    /// Result of a single-template dispatch attempt within <see cref="DispatchRoundAsync"/>.
+    /// </summary>
+    private readonly record struct DispatchAttemptResult(bool Dispatched, bool Attempted = true, bool AbortRemaining = false)
+    {
+        /// <summary>No candidate found for this template — skip it.</summary>
+        public static readonly DispatchAttemptResult Skip = new(false, Attempted: false);
+
+        /// <summary>Abort remaining templates (e.g., concurrency limit reached).</summary>
+        public static readonly DispatchAttemptResult Abort = new(false, Attempted: false, AbortRemaining: true);
+    }
+
+    /// <summary>
+    /// Shared dispatch helper that iterates templates, invokes the dispatch delegate inside
+    /// a try/catch, and manages counters and progress tracking. Eliminates the triplicated
+    /// dispatch pattern for issues, PRs, and decomposition.
+    /// The delegate is responsible for setting <see cref="CurrentIssueIdentifier"/>,
+    /// <see cref="StatusMessage"/>, and calling <see cref="NotifyChange"/> before dispatching.
+    /// </summary>
+    /// <returns>Whether any dispatch was attempted (progress) and how many items were consumed.</returns>
+    private async Task<(bool madeProgress, int consumed)> DispatchRoundAsync(
+        List<PipelineJobTemplate> pollableTemplates,
+        Func<PipelineJobTemplate, CancellationToken, Task<DispatchAttemptResult>> tryDispatchOne,
+        int remainingBudget,
+        CancellationToken stoppingToken,
+        CancellationToken ct)
+    {
+        bool madeProgress = false;
+        int consumed = 0;
+
+        foreach (var template in pollableTemplates)
+        {
+            if (remainingBudget - consumed <= 0) break;
+            if (_stopRequested || ct.IsCancellationRequested) break;
+
+            DispatchAttemptResult result;
+            try
+            {
+                result = await tryDispatchOne(template, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Dispatch failed for {Identifier} from template '{Template}'",
+                    CurrentIssueIdentifier, template.Name);
+                FailedCount++;
+                ProcessedCount++;
+                consumed++;
+                madeProgress = true;
+                continue;
+            }
+
+            if (result.AbortRemaining) break;
+            if (!result.Attempted) continue;
+
+            if (result.Dispatched)
+            {
+                ProcessedCount++;
+                consumed++;
+                madeProgress = true;
+            }
+        }
+
+        return (madeProgress, consumed);
     }
 
     /// <summary>
