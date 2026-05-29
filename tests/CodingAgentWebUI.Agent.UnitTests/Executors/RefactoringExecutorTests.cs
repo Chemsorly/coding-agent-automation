@@ -500,4 +500,40 @@ public class RefactoringExecutorTests : IDisposable
         lines[1].Should().Contain("src/Medium.cs");
         lines[2].Should().Contain("src/Rare.cs");
     }
+
+    [Fact]
+    public void FormatIssueBody_WithNullEntriesInPrerequisites_SkipsNulls()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Test",
+            Description = "desc",
+            Rationale = "rationale",
+            AffectedFiles = ["src/File.cs"],
+            Prerequisites = ["valid prerequisite", null!, "another valid one"]
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("valid prerequisite");
+        body.Should().Contain("another valid one");
+    }
+
+    [Fact]
+    public async Task RunGitCommandAsync_NonZeroExitCode_ThrowsWithStderr()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"git-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var act = () => RefactoringExecutor.RunGitCommandAsync(tempDir, "log --oneline -1", CancellationToken.None);
+
+            var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+            ex.Which.Message.Should().Contain("failed with exit code");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
 }
