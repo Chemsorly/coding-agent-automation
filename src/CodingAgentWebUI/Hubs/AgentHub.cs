@@ -171,28 +171,7 @@ public sealed class AgentHub : Hub<IAgentHubClient>, IAgentHub
         if (run is not null)
         {
             // Update run with completion data
-            run.CurrentStep = payload.FinalStep;
-            run.CompletedAt = payload.CompletedAt.UtcDateTime;
-            run.FailureReason = payload.FailureReason;
-            run.PullRequestUrl = payload.PullRequestUrl;
-            run.PullRequestNumber = payload.PullRequestNumber;
-            run.IsDraftPr = payload.IsDraftPr;
-            run.RetryCount = payload.RetryCount;
-            run.FilesChangedCount = payload.FilesChangedCount;
-            run.LinesAdded = payload.LinesAdded;
-            run.LinesRemoved = payload.LinesRemoved;
-            run.BrainUpdatesPushed = payload.BrainUpdatesPushed;
-            run.AnalysisRecommendation = payload.AnalysisRecommendation;
-            run.AnalysisConcerns = payload.AnalysisConcerns;
-            run.AnalysisBlockingIssues = payload.AnalysisBlockingIssues;
-            run.BlacklistedFilesDetected = payload.BlacklistedFilesDetected;
-            run.CodeReviewAgentsRun = payload.CodeReviewAgentsRun;
-            Interlocked.Exchange(ref run.CodeReviewCriticalCount, payload.CodeReviewCriticalCount);
-            Interlocked.Exchange(ref run.CodeReviewWarningCount, payload.CodeReviewWarningCount);
-            Interlocked.Exchange(ref run.CodeReviewSuggestionCount, payload.CodeReviewSuggestionCount);
-            run.Feedback = payload.Feedback;
-            run.TotalTokens = payload.TotalTokens;
-            run.TotalCost = payload.TotalCost;
+            JobCompletionMapper.Apply(run, payload);
 
             // Persist to history and remove from active runs
             _facade.AddRunToHistory(run);
