@@ -50,8 +50,6 @@
 
 @code {
     [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
-    // TODO: PipelineProviderCount parameter is dead code after removing the External CI checkbox — clean up here and in parent Settings.razor
-    [Parameter] public int PipelineProviderCount { get; set; }
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private bool _codeReviewEnabled = true;
