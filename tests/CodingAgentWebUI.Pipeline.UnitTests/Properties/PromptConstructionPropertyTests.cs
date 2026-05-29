@@ -3,6 +3,7 @@ using FsCheck;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Services.Prompts;
 using Xunit;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;

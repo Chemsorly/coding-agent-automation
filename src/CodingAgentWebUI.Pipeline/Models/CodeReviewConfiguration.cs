@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using CodingAgentWebUI.Pipeline.CodeReview.Models;
 
 namespace CodingAgentWebUI.Pipeline.Models;
 

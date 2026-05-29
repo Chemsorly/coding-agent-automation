@@ -1,4 +1,4 @@
-namespace CodingAgentWebUI.Pipeline.Models;
+namespace CodingAgentWebUI.Pipeline.CodeReview.Models;
 
 /// <summary>
 /// A single inline review comment to be submitted as part of a pull request review.

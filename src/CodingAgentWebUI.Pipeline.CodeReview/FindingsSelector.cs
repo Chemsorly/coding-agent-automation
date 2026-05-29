@@ -1,6 +1,6 @@
-using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.CodeReview.Models;
 
-namespace CodingAgentWebUI.Pipeline.Services;
+namespace CodingAgentWebUI.Pipeline.CodeReview;
 
 /// <summary>
 /// Pure transformation pipeline: filter by threshold → order by severity → cap at max → consolidate same file:line.

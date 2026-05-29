@@ -3,6 +3,7 @@ using NGitLab;
 using NGitLab.Models;
 using Serilog;
 using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.CodeReview.Models;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 

@@ -1,4 +1,4 @@
-namespace CodingAgentWebUI.Pipeline.Models;
+namespace CodingAgentWebUI.Pipeline.CodeReview.Models;
 
 /// <summary>
 /// Controls inline review comment behavior: severity threshold, maximum comments,

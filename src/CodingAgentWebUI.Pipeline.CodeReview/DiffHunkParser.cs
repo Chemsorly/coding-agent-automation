@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace CodingAgentWebUI.Pipeline.Services;
+namespace CodingAgentWebUI.Pipeline.CodeReview;
 
 /// <summary>
 /// Parses unified diff output to extract valid line ranges per file.

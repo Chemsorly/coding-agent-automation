@@ -1,6 +1,7 @@
 // Feature: 024-adversarial-review-loops, Task 10: Unit tests for review and refinement prompt builder methods
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Services.Prompts;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 

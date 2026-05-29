@@ -1,7 +1,7 @@
 using System.Text;
 using CodingAgentWebUI.Pipeline.Models;
 
-namespace CodingAgentWebUI.Pipeline.Services;
+namespace CodingAgentWebUI.Pipeline.Services.Prompts;
 
 /// <summary>
 /// Builds feedback-specific prompts for agent feedback collection.

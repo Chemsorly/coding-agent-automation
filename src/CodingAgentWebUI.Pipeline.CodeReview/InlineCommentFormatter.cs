@@ -1,6 +1,6 @@
-using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.CodeReview.Models;
 
-namespace CodingAgentWebUI.Pipeline.Services;
+namespace CodingAgentWebUI.Pipeline.CodeReview;
 
 /// <summary>
 /// Formats individual inline comment bodies with severity emoji, message, and agent attribution.

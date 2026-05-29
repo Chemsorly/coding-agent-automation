@@ -1,4 +1,4 @@
-namespace CodingAgentWebUI.Pipeline.Models;
+namespace CodingAgentWebUI.Pipeline.CodeReview.Models;
 
 /// <summary>
 /// A parsed code review finding with file/line metadata extracted from agent output.

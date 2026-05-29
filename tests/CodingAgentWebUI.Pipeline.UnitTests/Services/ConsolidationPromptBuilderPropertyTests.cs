@@ -6,6 +6,7 @@ using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Services.Prompts;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 

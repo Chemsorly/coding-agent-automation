@@ -1,5 +1,7 @@
 using System.Text.Json;
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline.CodeReview;
+using CodingAgentWebUI.Pipeline.CodeReview.Models;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using FsCheck;
