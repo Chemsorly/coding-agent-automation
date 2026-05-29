@@ -18,6 +18,8 @@
     <PackageReference Include="FsCheck.Xunit" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Moq" />
+    <PackageReference Include="NGitLab" />
+    <PackageReference Include="NGitLab.Mock" />
     <PackageReference Include="WireMock.Net" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">
@@ -32,6 +34,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Infrastructure\CodingAgentWebUI.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgentWebUI.Orchestration\CodingAgentWebUI.Orchestration.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
   </ItemGroup>
 

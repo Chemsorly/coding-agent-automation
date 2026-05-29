@@ -2,7 +2,7 @@ using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Interfaces;
 
-public enum PipelineProviderType { GitHubActions }
+public enum PipelineProviderType { GitHubActions, GitLabCI }
 
 /// <summary>
 /// Connects to an external CI/CD system and reads pipeline run status

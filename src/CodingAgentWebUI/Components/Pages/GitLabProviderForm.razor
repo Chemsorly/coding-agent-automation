@@ -1,0 +1,111 @@
+@using CodingAgentWebUI.Pipeline
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Infrastructure.GitLab
+
+<div class="provider-form-row">
+    <div class="provider-form">
+        <h3>@(IsEditing ? "Edit" : "Add") @SectionTitle</h3>
+        <div class="form-group">
+            <label>Provider Type</label>
+            <select @bind="ProviderType" @bind:after="() => ProviderTypeChanged.InvokeAsync(ProviderType)">
+                <option value="GitHub">GitHub</option>
+                <option value="GitLab">GitLab</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Display Name</label>
+            <input type="text" @bind="DisplayName" @bind:event="oninput" @bind:after="() => DisplayNameChanged.InvokeAsync(DisplayName)" placeholder="@DisplayNamePlaceholder" />
+        </div>
+        <div class="form-group">
+            <label>API URL</label>
+            <input type="text" @bind="ApiUrl" @bind:event="oninput" @bind:after="() => ApiUrlChanged.InvokeAsync(ApiUrl)" placeholder="@ProviderSettingKeys.DefaultGitLabApiUrl" />
+        </div>
+        <div class="form-group">
+            <label>Access Token</label>
+            <input type="password" @bind="AccessToken" @bind:event="oninput" @bind:after="() => AccessTokenChanged.InvokeAsync(AccessToken)" placeholder="glpat-xxxxxxxxxxxxxxxxxxxx" autocomplete="off" />
+        </div>
+        <div class="form-group">
+            <label>Project ID</label>
+            <input type="text" @bind="ProjectId" @bind:event="oninput" @bind:after="() => ProjectIdChanged.InvokeAsync(ProjectId)" placeholder="12345" />
+        </div>
+        @if (ShowBaseBranch)
+        {
+            <div class="form-group">
+                <label>Base Branch</label>
+                <input type="text" @bind="BaseBranch" @bind:event="oninput" @bind:after="() => BaseBranchChanged.InvokeAsync(BaseBranch)" placeholder="@ProviderSettingKeys.DefaultBaseBranch" />
+            </div>
+        }
+        @if (AdditionalFields is not null)
+        {
+            @AdditionalFields
+        }
+        @if (!string.IsNullOrEmpty(ValidationMessage))
+        {
+            <div class="settings-status @(ValidationSuccess ? "status-success" : "status-error")">@ValidationMessage</div>
+        }
+        <div class="form-buttons">
+            <button class="btn-save" @onclick="OnSave" disabled="@Saving">
+                @(Saving ? "Validating..." : "Save")
+            </button>
+            <button class="btn-cancel" @onclick="OnCancel">Cancel</button>
+        </div>
+    </div>
+    <div class="provider-help">
+        @if (HelpContent is not null)
+        {
+            @HelpContent
+        }
+        else
+        {
+            <h4>🦊 GitLab Setup</h4>
+            <p>Configure a <strong>GitLab access token</strong> for authentication. Supports gitlab.com and self-hosted instances.</p>
+            <p class="help-heading">Token requirements:</p>
+            <ul>
+                <li><strong>api</strong> scope — full API access for issues, MRs, and pipelines</li>
+                <li><strong>read_repository</strong> + <strong>write_repository</strong> — for clone and push operations</li>
+            </ul>
+            <p class="help-heading">Fields:</p>
+            <ul>
+                <li><strong>API URL</strong> — use <code>https://gitlab.com</code> for gitlab.com, or your self-hosted instance URL</li>
+                <li><strong>Access Token</strong> — personal, project, or group access token</li>
+                <li><strong>Project ID</strong> — numeric ID from the project's General settings page</li>
+                @if (ShowBaseBranch)
+                {
+                    <li><strong>Base Branch</strong> — the branch MRs will target (e.g. <code>main</code>, <code>develop</code>)</li>
+                }
+            </ul>
+            <p class="help-tip">💡 You can find the Project ID on the project's main page or under Settings → General.</p>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public string SectionTitle { get; set; } = "";
+    [Parameter] public string DisplayNamePlaceholder { get; set; } = "";
+    [Parameter] public bool IsEditing { get; set; }
+    [Parameter] public bool ShowBaseBranch { get; set; }
+
+    [Parameter] public string ProviderType { get; set; } = "GitLab";
+    [Parameter] public EventCallback<string> ProviderTypeChanged { get; set; }
+    [Parameter] public string DisplayName { get; set; } = "";
+    [Parameter] public EventCallback<string> DisplayNameChanged { get; set; }
+    [Parameter] public string ApiUrl { get; set; } = ProviderSettingKeys.DefaultGitLabApiUrl;
+    [Parameter] public EventCallback<string> ApiUrlChanged { get; set; }
+    [Parameter] public string AccessToken { get; set; } = "";
+    [Parameter] public EventCallback<string> AccessTokenChanged { get; set; }
+    [Parameter] public string ProjectId { get; set; } = "";
+    [Parameter] public EventCallback<string> ProjectIdChanged { get; set; }
+    [Parameter] public string BaseBranch { get; set; } = ProviderSettingKeys.DefaultBaseBranch;
+    [Parameter] public EventCallback<string> BaseBranchChanged { get; set; }
+
+    [Parameter] public string? ValidationMessage { get; set; }
+    [Parameter] public bool ValidationSuccess { get; set; }
+    [Parameter] public bool Saving { get; set; }
+
+    [Parameter] public EventCallback OnSave { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    [Parameter] public RenderFragment? AdditionalFields { get; set; }
+    [Parameter] public RenderFragment? HelpContent { get; set; }
+}

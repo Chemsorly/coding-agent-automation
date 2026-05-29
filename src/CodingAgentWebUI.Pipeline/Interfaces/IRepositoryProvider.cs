@@ -2,7 +2,7 @@ using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Interfaces;
 
-public enum RepositoryProviderType { GitHub }
+public enum RepositoryProviderType { GitHub, GitLab }
 
 public interface IRepositoryProvider : IAsyncDisposable
 {

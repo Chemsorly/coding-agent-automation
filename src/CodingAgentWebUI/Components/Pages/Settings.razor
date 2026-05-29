@@ -4,6 +4,7 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Infrastructure.GitHub
+@using CodingAgentWebUI.Infrastructure.GitLab
 @using CodingAgentWebUI.Orchestration
 @using CodingAgentWebUI.Orchestration.Dispatch
 @using CodingAgentWebUI.Orchestration.Health
@@ -12,6 +13,7 @@
 @using Serilog
 @inject IConfigurationStore ConfigStore
 @inject GitHubValidationService GitHubValidator
+@inject GitLabValidationService GitLabValidator
 @inject IProviderFactory ProviderFactory
 @inject ModelFetchService ModelFetchService
 
@@ -37,6 +39,7 @@
                         Providers="_issueProviders"
                         ConfigStore="ConfigStore"
                         GitHubValidator="GitHubValidator"
+                        GitLabValidator="GitLabValidator"
                         ProviderFactory="ProviderFactory"
                         OnDelete="id => DeleteProvider(id, ProviderKind.Issue)"
                         OnSaved="OnIssueProviderSaved" />
@@ -46,6 +49,7 @@
                         Providers="_repoProviders"
                         ConfigStore="ConfigStore"
                         GitHubValidator="GitHubValidator"
+                        GitLabValidator="GitLabValidator"
                         OnDelete="id => DeleteProvider(id, ProviderKind.Repository)"
                         OnSaved="OnGitHubProviderSaved" />
                     break;
@@ -63,6 +67,7 @@
                         Providers="_pipelineProviders"
                         ConfigStore="ConfigStore"
                         GitHubValidator="GitHubValidator"
+                        GitLabValidator="GitLabValidator"
                         OnDelete="id => DeleteProvider(id, ProviderKind.Pipeline)"
                         OnSaved="OnGitHubProviderSaved" />
                     break;
@@ -133,6 +138,7 @@
 
 @code {
     private CancellationTokenSource _cts = new();
+    private CancellationTokenSource? _toastCts;
     private SettingsModals? _modals;
     private string _selectedNode = SettingsNodes.ProvidersIssue;
 
@@ -228,6 +234,24 @@
     {
         _statusMessage = message;
         _isError = isError;
+
+        _toastCts?.Cancel();
+        _toastCts?.Dispose();
+        _toastCts = new CancellationTokenSource();
+        var token = _toastCts.Token;
+
+        _ = DismissAfterDelay(token);
+    }
+
+    private async Task DismissAfterDelay(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(4000, token);
+            _statusMessage = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException) { }
     }
 
     private void SelectNode(string nodeId)
@@ -237,6 +261,8 @@
 
     public async ValueTask DisposeAsync()
     {
+        _toastCts?.Cancel();
+        _toastCts?.Dispose();
         await _cts.CancelAsync();
         _cts.Dispose();
     }

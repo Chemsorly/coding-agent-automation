@@ -8,7 +8,7 @@
         <h3>@(IsEditing ? "Edit" : "Add") @SectionTitle</h3>
         <div class="form-group">
             <label>Provider Type</label>
-            <select @bind="ProviderType" @bind:after="() => ProviderTypeChanged.InvokeAsync(ProviderType)"><option value="GitHub">GitHub</option></select>
+            <select @bind="ProviderType" @bind:after="() => ProviderTypeChanged.InvokeAsync(ProviderType)"><option value="GitHub">GitHub</option><option value="GitLab">GitLab</option></select>
         </div>
         <div class="form-group">
             <label>Display Name</label>

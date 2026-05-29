@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Infrastructure.GitHub;
+using CodingAgentWebUI.Infrastructure.GitLab;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -57,6 +58,50 @@ public class ProviderFactory : IProviderFactory
                 config.Settings[ProviderSettingKeys.Owner],
                 config.Settings[ProviderSettingKeys.Repo]);
             return new GitHubActionsPipelineProvider(connection, authService.GetTokenAsync, _pipelineConfig.ExternalCiPollInterval);
+        });
+
+        // Register GitLab providers
+        RegisterIssueProvider("GitLab", config =>
+        {
+            ValidateRequiredSettings(config,
+                ProviderSettingKeys.ApiUrl,
+                ProviderSettingKeys.AccessToken,
+                ProviderSettingKeys.ProjectId);
+            var projectId = ParseProjectId(config);
+            return new GitLabIssueProvider(
+                config.Settings[ProviderSettingKeys.ApiUrl],
+                config.Settings[ProviderSettingKeys.AccessToken],
+                projectId);
+        });
+
+        RegisterRepositoryProvider("GitLab", config =>
+        {
+            ValidateRequiredSettings(config,
+                ProviderSettingKeys.ApiUrl,
+                ProviderSettingKeys.AccessToken,
+                ProviderSettingKeys.ProjectId);
+            var projectId = ParseProjectId(config);
+            var baseBranch = config.Settings.TryGetValue(ProviderSettingKeys.BaseBranch, out var bb)
+                && !string.IsNullOrWhiteSpace(bb) ? bb : ProviderSettingKeys.DefaultBaseBranch;
+            return new GitLabRepositoryProvider(
+                config.Settings[ProviderSettingKeys.ApiUrl],
+                config.Settings[ProviderSettingKeys.AccessToken],
+                projectId,
+                baseBranch);
+        });
+
+        RegisterPipelineProvider("GitLab", config =>
+        {
+            ValidateRequiredSettings(config,
+                ProviderSettingKeys.ApiUrl,
+                ProviderSettingKeys.AccessToken,
+                ProviderSettingKeys.ProjectId);
+            var projectId = ParseProjectId(config);
+            return new GitLabCiPipelineProvider(
+                config.Settings[ProviderSettingKeys.ApiUrl],
+                config.Settings[ProviderSettingKeys.AccessToken],
+                projectId,
+                _pipelineConfig.ExternalCiPollInterval);
         });
     }
 
@@ -118,6 +163,20 @@ public class ProviderFactory : IProviderFactory
             throw new ArgumentException(
                 $"Provider '{config.DisplayName}' (type: {config.ProviderType}) is missing required settings: {string.Join(", ", missingKeys)}",
                 nameof(config));
+    }
+
+    /// <summary>
+    /// Parses the <see cref="ProviderSettingKeys.ProjectId"/> setting from the config as a numeric integer.
+    /// Throws <see cref="ArgumentException"/> if the value is not a valid integer.
+    /// </summary>
+    internal static int ParseProjectId(ProviderConfig config)
+    {
+        var projectIdStr = config.Settings[ProviderSettingKeys.ProjectId];
+        if (!int.TryParse(projectIdStr, out var projectId))
+            throw new ArgumentException(
+                $"Provider '{config.DisplayName}' (type: {config.ProviderType}) has invalid projectId: '{projectIdStr}'. Expected a numeric value.",
+                nameof(config));
+        return projectId;
     }
 
     /// <summary>

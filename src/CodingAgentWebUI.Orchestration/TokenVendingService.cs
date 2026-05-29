@@ -222,9 +222,21 @@ public sealed partial class TokenVendingService : ITokenVendingService
             }
             else
             {
-                // Clone non-repo configs as-is (strip any private keys from non-repo configs too)
+                // Clone non-GitHub-App configs as-is (strip any private keys)
                 var clonedSettings = new Dictionary<string, string>(config.Settings);
                 clonedSettings.Remove(ProviderSettingKeys.PrivateKeyBase64);
+
+                // GitLab: copy AccessToken to standard token key for agent consumption.
+                // KNOWN LIMITATION: The GitLab access token is passed through in plaintext.
+                // Unlike GitHub App tokens (which are short-lived and scoped), GitLab PATs are
+                // long-lived. Recommend using short-lived project access tokens (max 1-day expiry)
+                // to minimize exposure if an agent is compromised.
+                if (clonedSettings.TryGetValue(ProviderSettingKeys.AccessToken, out var accessToken)
+                    && !string.IsNullOrWhiteSpace(accessToken))
+                {
+                    clonedSettings[ProviderSettingKeys.Token] = accessToken;
+                    clonedSettings.Remove(ProviderSettingKeys.AccessToken);
+                }
 
                 result.Add(new ProviderConfig
                 {

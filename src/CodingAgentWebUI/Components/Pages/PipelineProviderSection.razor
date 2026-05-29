@@ -2,6 +2,7 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Infrastructure.GitHub
+@using CodingAgentWebUI.Infrastructure.GitLab
 
 <section class="settings-section">
     <h2>Pipeline Providers</h2>
@@ -24,37 +25,67 @@
     </div>
     @if (_showForm)
     {
-        <GitHubAppProviderForm
-            SectionTitle="Pipeline Provider"
-            DisplayNamePlaceholder="My GitHub CI"
-            IsEditing="@(_editingProvider is not null)"
-            ProviderType="@_form.ProviderType" ProviderTypeChanged="v => _form.ProviderType = v"
-            DisplayName="@_form.DisplayName" DisplayNameChanged="v => _form.DisplayName = v"
-            ApiUrl="@_form.ApiUrl" ApiUrlChanged="v => _form.ApiUrl = v"
-            ClientId="@_form.ClientId" ClientIdChanged="v => _form.ClientId = v"
-            InstallationId="@_form.InstallationId" InstallationIdChanged="v => _form.InstallationId = v"
-            PrivateKeyBase64="@_form.PrivateKeyBase64" PrivateKeyBase64Changed="v => _form.PrivateKeyBase64 = v"
-            Owner="@_form.Owner" OwnerChanged="v => _form.Owner = v"
-            Repo="@_form.Repo" RepoChanged="v => _form.Repo = v"
-            AvailableRepos="_availableRepos"
-            SelectedRepo="@_selectedRepo" SelectedRepoChanged="v => _selectedRepo = v"
-            LoadingRepos="_loadingRepos"
-            ValidationMessage="@_validationMessage"
-            ValidationSuccess="_validationSuccess"
-            Saving="_saving"
-            OnSave="SaveProvider"
-            OnCancel="CancelForm"
-            OnFetchRepos="FetchRepos">
-            <HelpContent>
-                <h4>🔄 GitHub Actions CI</h4>
-                <p>Reads CI/CD pipeline status from GitHub Actions workflow runs. Used as an external quality gate.</p>
-                <p class="help-heading">Required permissions:</p>
-                <ul>
-                    <li><strong>Actions: Read</strong> — read workflow run status and job results</li>
-                </ul>
-                <p class="help-tip">💡 Use the same GitHub App as the Issue/Repository providers if it has Actions read permission.</p>
-            </HelpContent>
-        </GitHubAppProviderForm>
+        @if (_form.ProviderType == "GitLab")
+        {
+            <GitLabProviderForm
+                SectionTitle="Pipeline Provider"
+                DisplayNamePlaceholder="My GitLab CI"
+                IsEditing="@(_editingProvider is not null)"
+                ProviderType="@_form.ProviderType" ProviderTypeChanged="OnProviderTypeChanged"
+                DisplayName="@_form.DisplayName" DisplayNameChanged="v => _form.DisplayName = v"
+                ApiUrl="@_form.GitLabApiUrl" ApiUrlChanged="v => _form.GitLabApiUrl = v"
+                AccessToken="@_form.GitLabAccessToken" AccessTokenChanged="v => _form.GitLabAccessToken = v"
+                ProjectId="@_form.GitLabProjectId" ProjectIdChanged="v => _form.GitLabProjectId = v"
+                ValidationMessage="@_validationMessage"
+                ValidationSuccess="_validationSuccess"
+                Saving="_saving"
+                OnSave="SaveGitLabProvider"
+                OnCancel="CancelForm">
+                <HelpContent>
+                    <h4>🔄 GitLab CI/CD</h4>
+                    <p>Reads CI/CD pipeline status from GitLab CI. Used as an external quality gate.</p>
+                    <p class="help-heading">Token requirements:</p>
+                    <ul>
+                        <li><strong>read_api</strong> scope — read pipeline and job status</li>
+                    </ul>
+                    <p class="help-tip">💡 Use the same access token as the Issue/Repository providers if it has API access.</p>
+                </HelpContent>
+            </GitLabProviderForm>
+        }
+        else
+        {
+            <GitHubAppProviderForm
+                SectionTitle="Pipeline Provider"
+                DisplayNamePlaceholder="My GitHub CI"
+                IsEditing="@(_editingProvider is not null)"
+                ProviderType="@_form.ProviderType" ProviderTypeChanged="OnProviderTypeChanged"
+                DisplayName="@_form.DisplayName" DisplayNameChanged="v => _form.DisplayName = v"
+                ApiUrl="@_form.ApiUrl" ApiUrlChanged="v => _form.ApiUrl = v"
+                ClientId="@_form.ClientId" ClientIdChanged="v => _form.ClientId = v"
+                InstallationId="@_form.InstallationId" InstallationIdChanged="v => _form.InstallationId = v"
+                PrivateKeyBase64="@_form.PrivateKeyBase64" PrivateKeyBase64Changed="v => _form.PrivateKeyBase64 = v"
+                Owner="@_form.Owner" OwnerChanged="v => _form.Owner = v"
+                Repo="@_form.Repo" RepoChanged="v => _form.Repo = v"
+                AvailableRepos="_availableRepos"
+                SelectedRepo="@_selectedRepo" SelectedRepoChanged="v => _selectedRepo = v"
+                LoadingRepos="_loadingRepos"
+                ValidationMessage="@_validationMessage"
+                ValidationSuccess="_validationSuccess"
+                Saving="_saving"
+                OnSave="SaveProvider"
+                OnCancel="CancelForm"
+                OnFetchRepos="FetchRepos">
+                <HelpContent>
+                    <h4>🔄 GitHub Actions CI</h4>
+                    <p>Reads CI/CD pipeline status from GitHub Actions workflow runs. Used as an external quality gate.</p>
+                    <p class="help-heading">Required permissions:</p>
+                    <ul>
+                        <li><strong>Actions: Read</strong> — read workflow run status and job results</li>
+                    </ul>
+                    <p class="help-tip">💡 Use the same GitHub App as the Issue/Repository providers if it has Actions read permission.</p>
+                </HelpContent>
+            </GitHubAppProviderForm>
+        }
     }
     else
     {
@@ -66,6 +97,7 @@
     [Parameter, EditorRequired] public List<ProviderConfig> Providers { get; set; } = new();
     [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
     [Parameter, EditorRequired] public GitHubValidationService GitHubValidator { get; set; } = default!;
+    [Parameter] public GitLabValidationService? GitLabValidator { get; set; }
     [Parameter] public EventCallback<string> OnDelete { get; set; }
     [Parameter] public EventCallback<ProviderConfig> OnSaved { get; set; }
 
@@ -101,7 +133,10 @@
             InstallationId = p.Settings.GetValueOrDefault(ProviderSettingKeys.InstallationId, ""),
             PrivateKeyBase64 = p.Settings.GetValueOrDefault(ProviderSettingKeys.PrivateKeyBase64, ""),
             Owner = p.Settings.GetValueOrDefault(ProviderSettingKeys.Owner, ""),
-            Repo = p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, "")
+            Repo = p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, ""),
+            GitLabApiUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, ProviderSettingKeys.DefaultGitLabApiUrl),
+            GitLabAccessToken = p.Settings.GetValueOrDefault(ProviderSettingKeys.AccessToken, ""),
+            GitLabProjectId = p.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId, "")
         };
         _showForm = true;
     }
@@ -268,5 +303,98 @@
         public string PrivateKeyBase64 { get; set; } = "";
         public string Owner { get; set; } = "";
         public string Repo { get; set; } = "";
+        // GitLab-specific fields
+        public string GitLabApiUrl { get; set; } = ProviderSettingKeys.DefaultGitLabApiUrl;
+        public string GitLabAccessToken { get; set; } = "";
+        public string GitLabProjectId { get; set; } = "";
+    }
+
+    private void OnProviderTypeChanged(string newType)
+    {
+        _form.ProviderType = newType;
+        _validationMessage = null;
+        StateHasChanged();
+    }
+
+    private async Task SaveGitLabProvider()
+    {
+        if (string.IsNullOrWhiteSpace(_form.DisplayName))
+        {
+            _validationMessage = "Display Name is required.";
+            _validationSuccess = false;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_form.GitLabAccessToken))
+        {
+            _validationMessage = "Access Token is required.";
+            _validationSuccess = false;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_form.GitLabProjectId))
+        {
+            _validationMessage = "Project ID is required.";
+            _validationSuccess = false;
+            return;
+        }
+
+        _saving = true;
+        _validationMessage = "Validating GitLab credentials...";
+        _validationSuccess = true;
+        StateHasChanged();
+
+        try
+        {
+            var apiUrl = string.IsNullOrWhiteSpace(_form.GitLabApiUrl)
+                ? ProviderSettingKeys.DefaultGitLabApiUrl
+                : _form.GitLabApiUrl;
+
+            if (GitLabValidator is not null)
+            {
+                var result = await GitLabValidator.ValidateAsync(
+                    apiUrl, _form.GitLabAccessToken, _form.GitLabProjectId, CancellationToken.None);
+
+                if (!result.Success)
+                {
+                    _validationMessage = result.ErrorMessage;
+                    _validationSuccess = false;
+                    _saving = false;
+                    return;
+                }
+
+                _validationMessage = $"✅ Connected to {result.ProjectPath} (access: {result.AccessLevel})";
+                _validationSuccess = true;
+            }
+
+            var config = new ProviderConfig
+            {
+                Id = _editingProvider?.Id ?? Guid.NewGuid().ToString(),
+                Kind = ProviderKind.Pipeline,
+                ProviderType = "GitLab",
+                DisplayName = _form.DisplayName,
+                Settings = new Dictionary<string, string>
+                {
+                    [ProviderSettingKeys.ApiUrl] = apiUrl,
+                    [ProviderSettingKeys.AccessToken] = _form.GitLabAccessToken,
+                    [ProviderSettingKeys.ProjectId] = _form.GitLabProjectId
+                }
+            };
+
+            await ConfigStore.SaveProviderConfigAsync(config, CancellationToken.None);
+            _showForm = false;
+            _availableRepos.Clear();
+            _validationMessage = null;
+            await OnSaved.InvokeAsync(config);
+        }
+        catch (Exception ex)
+        {
+            _validationMessage = $"Failed to save: {ex.Message}";
+            _validationSuccess = false;
+        }
+        finally
+        {
+            _saving = false;
+        }
     }
 }

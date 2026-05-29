@@ -2,7 +2,7 @@ using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Interfaces;
 
-public enum IssueProviderType { GitHub }
+public enum IssueProviderType { GitHub, GitLab }
 
 /// <summary>
 /// Result of creating a new issue via <see cref="IIssueProvider.CreateIssueAsync"/>.

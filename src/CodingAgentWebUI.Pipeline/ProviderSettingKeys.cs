@@ -70,6 +70,20 @@ public static class ProviderSettingKeys
     /// <summary>Default base branch name.</summary>
     public const string DefaultBaseBranch = "main";
 
+    // ── GitLab provider settings ─────────────────────────────────────────
+
+    /// <summary>GitLab access token (personal, project, or group).</summary>
+    public const string AccessToken = "accessToken";
+
+    /// <summary>GitLab numeric project identifier.</summary>
+    public const string ProjectId = "projectId";
+
+    /// <summary>Default GitLab API URL.</summary>
+    public const string DefaultGitLabApiUrl = "https://gitlab.com";
+
+    /// <summary>Username for GitLab HTTPS clone URL credentials.</summary>
+    public const string GitLabTokenUsername = "oauth2";
+
     // ── Token vending (written by orchestrator) ──────────────────────────
 
     /// <summary>Token expiration timestamp (written to provider settings at runtime).</summary>

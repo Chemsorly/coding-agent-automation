@@ -2,6 +2,7 @@ using KiroCliLib.Core;
 using CodingAgentWebUI.Agent.KiroCli;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure.GitHub;
+using CodingAgentWebUI.Infrastructure.GitLab;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -52,10 +53,14 @@ public sealed class AgentProviderFactory : IProviderFactory
     {
         ArgumentNullException.ThrowIfNull(config);
 
-        return config.ProviderType.Equals("GitHub", StringComparison.OrdinalIgnoreCase)
-            ? CreateGitHubRepositoryProvider(config)
-            : throw new NotSupportedException(
-                $"Unsupported repository provider type: '{config.ProviderType}'");
+        if (config.ProviderType.Equals("GitHub", StringComparison.OrdinalIgnoreCase))
+            return CreateGitHubRepositoryProvider(config);
+
+        if (config.ProviderType.Equals("GitLab", StringComparison.OrdinalIgnoreCase))
+            return CreateGitLabRepositoryProvider(config);
+
+        throw new NotSupportedException(
+            $"Unsupported repository provider type: '{config.ProviderType}'");
     }
 
     public IAgentProvider CreateAgentProvider(ProviderConfig config)
@@ -76,10 +81,14 @@ public sealed class AgentProviderFactory : IProviderFactory
     {
         ArgumentNullException.ThrowIfNull(config);
 
-        return config.ProviderType.Equals("GitHub", StringComparison.OrdinalIgnoreCase)
-            ? CreateGitHubPipelineProvider(config)
-            : throw new NotSupportedException(
-                $"Unsupported pipeline provider type: '{config.ProviderType}'");
+        if (config.ProviderType.Equals("GitHub", StringComparison.OrdinalIgnoreCase))
+            return CreateGitHubPipelineProvider(config);
+
+        if (config.ProviderType.Equals("GitLab", StringComparison.OrdinalIgnoreCase))
+            return CreateGitLabPipelineProvider(config);
+
+        throw new NotSupportedException(
+            $"Unsupported pipeline provider type: '{config.ProviderType}'");
     }
 
     private GitHubRepositoryProvider CreateGitHubRepositoryProvider(ProviderConfig config)
@@ -152,6 +161,51 @@ public sealed class AgentProviderFactory : IProviderFactory
         var token = GetRequiredSetting(config, ProviderSettingKeys.Token);
         return new GitHubActionsPipelineProvider(
             connection, token, _pipelineConfig.ExternalCiPollInterval);
+    }
+
+    private GitLabRepositoryProvider CreateGitLabRepositoryProvider(ProviderConfig config)
+    {
+        var apiUrl = GetRequiredSetting(config, ProviderSettingKeys.ApiUrl);
+        var projectIdStr = GetRequiredSetting(config, ProviderSettingKeys.ProjectId);
+        if (!int.TryParse(projectIdStr, out var projectId))
+            throw new ArgumentException(
+                $"Provider '{config.DisplayName}' has invalid projectId: '{projectIdStr}'.",
+                nameof(config));
+        var baseBranch = config.Settings.TryGetValue(ProviderSettingKeys.BaseBranch, out var bb)
+            && !string.IsNullOrWhiteSpace(bb) ? bb : ProviderSettingKeys.DefaultBaseBranch;
+
+        if (_orchestratorProxy is not null)
+        {
+            var kind = config.RepositoryRole == RepositoryRole.Brain
+                ? ProviderKind.Brain
+                : ProviderKind.Repository;
+            Func<CancellationToken, Task<string>> tokenProvider =
+                ct => _orchestratorProxy.RequestTokenRefreshAsync(kind, ct);
+            return new GitLabRepositoryProvider(apiUrl, tokenProvider, projectId, baseBranch);
+        }
+
+        var token = GetRequiredSetting(config, ProviderSettingKeys.Token);
+        return new GitLabRepositoryProvider(apiUrl, token, projectId, baseBranch);
+    }
+
+    private GitLabCiPipelineProvider CreateGitLabPipelineProvider(ProviderConfig config)
+    {
+        var apiUrl = GetRequiredSetting(config, ProviderSettingKeys.ApiUrl);
+        var projectIdStr = GetRequiredSetting(config, ProviderSettingKeys.ProjectId);
+        if (!int.TryParse(projectIdStr, out var projectId))
+            throw new ArgumentException(
+                $"Provider '{config.DisplayName}' has invalid projectId: '{projectIdStr}'.",
+                nameof(config));
+
+        if (_orchestratorProxy is not null)
+        {
+            Func<CancellationToken, Task<string>> tokenProvider =
+                ct => _orchestratorProxy.RequestTokenRefreshAsync(ProviderKind.Pipeline, ct);
+            return new GitLabCiPipelineProvider(apiUrl, tokenProvider, projectId, _pipelineConfig.ExternalCiPollInterval);
+        }
+
+        var token = GetRequiredSetting(config, ProviderSettingKeys.Token);
+        return new GitLabCiPipelineProvider(apiUrl, token, projectId, _pipelineConfig.ExternalCiPollInterval);
     }
 
     private static string GetRequiredSetting(ProviderConfig config, string key)

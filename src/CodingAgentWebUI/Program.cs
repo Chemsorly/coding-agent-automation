@@ -3,6 +3,7 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.GitHub;
+using CodingAgentWebUI.Infrastructure.GitLab;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Models;
 using CodingAgentWebUI.Orchestration;
@@ -83,6 +84,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopServic
 builder.Services.AddTransient<IssueDescriptionParser>();
 builder.Services.AddTransient<GitHubValidationService>(sp =>
     new GitHubValidationService(sp.GetRequiredService<IProviderFactory>()));
+builder.Services.AddTransient<GitLabValidationService>();
 
 // Multi-agent orchestrator services (singletons)
 builder.Services.AddSingleton(sp => new AgentRegistryService(Serilog.Log.Logger));
