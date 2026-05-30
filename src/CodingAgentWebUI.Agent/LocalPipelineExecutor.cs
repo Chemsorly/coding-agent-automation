@@ -287,7 +287,6 @@ public sealed class LocalPipelineExecutor
                 run,
                 prOrchestrator,
                 repoProvider,
-                config,
                 report => ReportQualityGateResult(report),
                 (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, repoProvider, agentProvider,
                     brainProvider, brainSync, config, issueOps, connection, job, EmitOutputLine, token),
