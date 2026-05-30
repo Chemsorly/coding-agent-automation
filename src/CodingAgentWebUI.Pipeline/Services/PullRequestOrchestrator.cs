@@ -106,10 +106,11 @@ internal class PullRequestOrchestrator
             run.ModelName,
             codeReviewSummary);
 
-        if (isRework)
+        if (isRework || !string.IsNullOrEmpty(run.PullRequestNumber))
         {
-            // Rework: update existing PR body (run.PullRequestUrl and run.PullRequestNumber
-            // are already set by the caller from LinkedPullRequest)
+            // Rework or draft PR already exists: update existing PR body.
+            // run.PullRequestUrl and run.PullRequestNumber are already set
+            // (from LinkedPullRequest in rework, or from CreateDraftPrIfNotExistsAsync).
             run.IsDraftPr = isDraft;
             run.CompletedAt = DateTime.UtcNow;
 
@@ -256,7 +257,36 @@ internal class PullRequestOrchestrator
             IsDraft = true
         };
 
-        var prUrl = await repoProvider.CreatePullRequestAsync(prInfo, ct);
+        string prUrl;
+        try
+        {
+            prUrl = await repoProvider.CreatePullRequestAsync(prInfo, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException
+            && ex.Message.Contains("A pull request already exists", StringComparison.OrdinalIgnoreCase))
+        {
+            // PR already exists for this branch (e.g., from a previous run that wasn't detected as rework).
+            // Look up the existing PR via GetAgentPullRequestsAsync.
+            _logger.Information("Pipeline {RunId} draft PR already exists for branch {BranchName}, looking up existing PR",
+                run.RunId, run.BranchName);
+
+            var existingPrs = await repoProvider.GetAgentPullRequestsAsync(run.IssueIdentifier, ct);
+            var matchingPr = existingPrs.FirstOrDefault(pr => pr.BranchName == run.BranchName);
+            if (matchingPr != null)
+            {
+                run.PullRequestUrl = matchingPr.Url;
+                run.PullRequestNumber = matchingPr.Number.ToString();
+                run.IsDraftPr = matchingPr.IsDraft;
+                _logger.Information("Pipeline {RunId} found existing PR #{PrNumber}: {PrUrl}",
+                    run.RunId, run.PullRequestNumber, run.PullRequestUrl);
+                return run.PullRequestUrl;
+            }
+
+            // Couldn't find it — let the error propagate
+            _logger.Warning(ex, "Pipeline {RunId} PR already exists but couldn't find it via API", run.RunId);
+            throw;
+        }
+
         run.PullRequestUrl = prUrl;
         run.PullRequestNumber = ExtractPrNumber(prUrl);
         run.IsDraftPr = true;
