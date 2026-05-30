@@ -200,4 +200,11 @@ public interface IRepositoryProvider : IAsyncDisposable
     Task UpdateReviewCommentAsync(int prNumber, long commentId, string body, CancellationToken ct)
         => throw new NotSupportedException(
             $"{GetType().Name} does not support UpdateReviewCommentAsync.");
+
+    /// <summary>
+    /// Formats a "close" reference for an issue identifier, using the repository host's keyword syntax.
+    /// Default: <c>Closes #{issueIdentifier}</c> (GitHub/GitLab).
+    /// Returns null when cross-platform auto-close is not supported (e.g., GitHub repo + Jira issues).
+    /// </summary>
+    string? FormatCloseReference(string issueIdentifier) => $"Closes #{issueIdentifier}";
 }

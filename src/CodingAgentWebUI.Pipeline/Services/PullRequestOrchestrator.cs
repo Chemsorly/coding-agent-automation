@@ -33,17 +33,22 @@ internal class PullRequestOrchestrator
         PipelineConfiguration config,
         CancellationToken ct,
         Action<string>? onOutputLine = null,
-        bool isRework = false)
+        bool isRework = false,
+        string? issueReference = null)
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(repoProvider);
         ArgumentNullException.ThrowIfNull(config);
+
+        var effectiveIssueRef = issueReference ?? $"#{run.IssueIdentifier}";
+        var closeRef = repoProvider.FormatCloseReference(run.IssueIdentifier);
+
         // Commit any uncommitted changes
         try
         {
             var commitMessage = PipelineFormatting.GenerateCommitMessage(
-                run.IssueTitle, run.IssueIdentifier);
+                run.IssueTitle, effectiveIssueRef);
             var blacklisted = await repoProvider.CommitAllAsync(
                 run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct);
             if (blacklisted.Count > 0)
@@ -86,7 +91,7 @@ internal class PullRequestOrchestrator
 
         var issueTitle = issue?.Title ?? run.IssueTitle;
 
-        var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, run.IssueIdentifier);
+        var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, effectiveIssueRef);
 
         var codeReviewSummary = run.CodeReviewAgentsRun is { Count: > 0 }
             ? new CodeReviewSummary(
@@ -100,11 +105,12 @@ internal class PullRequestOrchestrator
             : null;
 
         var prBody = PipelineFormatting.GeneratePrBody(
-            run.IssueIdentifier, testsPassed, testsFailed, testsSkipped,
+            effectiveIssueRef, testsPassed, testsFailed, testsSkipped,
             coverage, fileChanges, issueTitle, isDraft, issueComments,
             run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
             run.ModelName,
-            codeReviewSummary);
+            codeReviewSummary,
+            closeRef);
 
         if (isRework || !string.IsNullOrEmpty(run.PullRequestNumber))
         {
@@ -217,7 +223,8 @@ internal class PullRequestOrchestrator
     public async Task<string?> CreateDraftPrIfNotExistsAsync(
         PipelineRun run,
         IRepositoryProvider repoProvider,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? issueReference = null)
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(repoProvider);
@@ -243,8 +250,9 @@ internal class PullRequestOrchestrator
             return null;
         }
 
-        var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, run.IssueIdentifier);
-        var prBody = $"🤖 Agent working on #{run.IssueIdentifier}\n\n" +
+        var effectiveIssueRef = issueReference ?? $"#{run.IssueIdentifier}";
+        var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, effectiveIssueRef);
+        var prBody = $"🤖 Agent working on {effectiveIssueRef}\n\n" +
                      "_This draft PR was created automatically. " +
                      "It will be updated with quality gate results and marked ready for review upon completion._";
 
@@ -310,12 +318,16 @@ internal class PullRequestOrchestrator
         IReadOnlyList<IssueComment>? issueComments,
         PipelineConfiguration config,
         CancellationToken ct,
-        Action<string>? onOutputLine = null)
+        Action<string>? onOutputLine = null,
+        string? issueReference = null)
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(repoProvider);
         ArgumentNullException.ThrowIfNull(config);
+
+        var effectiveIssueRef = issueReference ?? $"#{run.IssueIdentifier}";
+        var closeRef = repoProvider.FormatCloseReference(run.IssueIdentifier);
 
         if (string.IsNullOrEmpty(run.PullRequestNumber))
         {
@@ -326,7 +338,7 @@ internal class PullRequestOrchestrator
         // Commit any remaining uncommitted changes
         try
         {
-            var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, run.IssueIdentifier);
+            var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, effectiveIssueRef);
             var blacklisted = await repoProvider.CommitAllAsync(
                 run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct);
             if (blacklisted.Count > 0)
@@ -368,11 +380,12 @@ internal class PullRequestOrchestrator
             : null;
 
         var prBody = PipelineFormatting.GeneratePrBody(
-            run.IssueIdentifier, testsPassed, testsFailed, testsSkipped,
+            effectiveIssueRef, testsPassed, testsFailed, testsSkipped,
             coverage, fileChanges, issueTitle, isDraft, issueComments,
             run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
             run.ModelName,
-            codeReviewSummary);
+            codeReviewSummary,
+            closeRef);
 
         // Update PR body and mark ready (or leave as draft)
         run.IsDraftPr = isDraft;

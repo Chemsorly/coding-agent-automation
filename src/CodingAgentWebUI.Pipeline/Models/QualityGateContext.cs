@@ -31,4 +31,10 @@ public sealed record QualityGateContext : PipelineContextBase
     /// issue context in the feedback prompt. May be null if issue was not fetched.
     /// </summary>
     public IssueDetail? Issue { get; init; }
+
+    /// <summary>
+    /// Pre-formatted issue reference string (e.g., "#42", "PROJ-123").
+    /// Used in commit messages and PR bodies. Falls back to <c>#{IssueIdentifier}</c> when null.
+    /// </summary>
+    public string? IssueReference { get; init; }
 }

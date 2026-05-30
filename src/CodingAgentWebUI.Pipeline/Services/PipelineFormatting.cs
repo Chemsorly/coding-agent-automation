@@ -45,9 +45,9 @@ public static partial class PipelineFormatting
     /// <summary>
     /// Generates a PR title in conventional commit format.
     /// </summary>
-    public static string GeneratePrTitle(string issueTitle, string issueNumber)
+    public static string GeneratePrTitle(string issueTitle, string issueReference)
     {
-        return $"feat: {issueTitle} (#{issueNumber})";
+        return $"feat: {issueTitle} ({issueReference})";
     }
 
     /// <summary>Maximum character length for a comment body in the PR description before truncation.</summary>
@@ -57,7 +57,7 @@ public static partial class PipelineFormatting
     /// Generates a PR body with all required sections including file changes and issue context.
     /// </summary>
     public static string GeneratePrBody(
-        string issueNumber,
+        string issueReference,
         int testsPassed,
         int testsFailed,
         int testsSkipped,
@@ -68,7 +68,8 @@ public static partial class PipelineFormatting
         IReadOnlyList<IssueComment>? comments = null,
         IReadOnlyList<string>? blacklistedFilesDetected = null,
         string? modelName = null,
-        CodeReviewSummary? codeReviewSummary = null)
+        CodeReviewSummary? codeReviewSummary = null,
+        string? closeReference = null)
     {
         var sb = new StringBuilder();
 
@@ -80,7 +81,7 @@ public static partial class PipelineFormatting
 
         // Issue context — link to the issue instead of duplicating its body
         sb.AppendLine("## Issue Context");
-        sb.AppendLine($"**{issueTitle}** (#{issueNumber})");
+        sb.AppendLine($"**{issueTitle}** ({issueReference})");
         sb.AppendLine();
 
         // Input comments
@@ -117,9 +118,12 @@ public static partial class PipelineFormatting
             : "Not available");
         sb.AppendLine();
 
-        sb.AppendLine("## Issue Reference");
-        sb.AppendLine($"Closes #{issueNumber}");
-        sb.AppendLine();
+        if (closeReference is not null)
+        {
+            sb.AppendLine("## Issue Reference");
+            sb.AppendLine(closeReference);
+            sb.AppendLine();
+        }
 
         if (blacklistedFilesDetected is { Count: > 0 })
         {
@@ -144,9 +148,9 @@ public static partial class PipelineFormatting
     /// <summary>
     /// Generates a commit message in conventional format.
     /// </summary>
-    public static string GenerateCommitMessage(string title, string issueNumber)
+    public static string GenerateCommitMessage(string title, string issueReference)
     {
-        return $"feat: {title} (#{issueNumber})\n\n{PipelineConstants.AutomatedCommitSuffix}";
+        return $"feat: {title} ({issueReference})\n\n{PipelineConstants.AutomatedCommitSuffix}";
     }
 
     /// <summary>

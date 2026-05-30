@@ -100,7 +100,7 @@ public class PipelineFormattingTests
     [Fact]
     public void GeneratePrTitle_BasicInput_ReturnsConventionalCommitFormat()
     {
-        var result = PipelineFormatting.GeneratePrTitle("Add login page", "42");
+        var result = PipelineFormatting.GeneratePrTitle("Add login page", "#42");
 
         result.Should().Be("feat: Add login page (#42)");
     }
@@ -108,7 +108,7 @@ public class PipelineFormattingTests
     [Fact]
     public void GeneratePrTitle_IncludesIssueNumberInParentheses()
     {
-        var result = PipelineFormatting.GeneratePrTitle("Fix memory leak", "123");
+        var result = PipelineFormatting.GeneratePrTitle("Fix memory leak", "#123");
 
         result.Should().Contain("(#123)");
     }
@@ -118,7 +118,7 @@ public class PipelineFormattingTests
     [Fact]
     public void GenerateCommitMessage_BasicInput_ReturnsMultiLineMessage()
     {
-        var result = PipelineFormatting.GenerateCommitMessage("Add login page", "42");
+        var result = PipelineFormatting.GenerateCommitMessage("Add login page", "#42");
 
         result.Should().Be("feat: Add login page (#42)\n\nAutomated implementation via pipeline");
     }
@@ -126,7 +126,7 @@ public class PipelineFormattingTests
     [Fact]
     public void GenerateCommitMessage_ContainsAutomatedFooter()
     {
-        var result = PipelineFormatting.GenerateCommitMessage("Fix bug", "7");
+        var result = PipelineFormatting.GenerateCommitMessage("Fix bug", "#7");
 
         result.Should().Contain("Automated implementation via pipeline");
     }
@@ -202,13 +202,14 @@ public class PipelineFormattingTests
     public void GeneratePrBody_MinimalInput_ContainsRequiredSections()
     {
         var result = PipelineFormatting.GeneratePrBody(
-            issueNumber: "42",
+            issueReference: "#42",
             testsPassed: 10,
             testsFailed: 0,
             testsSkipped: 2,
             coveragePercent: 85.5,
             fileChanges: [],
-            issueTitle: "Add feature X");
+            issueTitle: "Add feature X",
+            closeReference: "Closes #42");
 
         result.Should().Contain("## Issue Context");
         result.Should().Contain("**Add feature X** (#42)");
@@ -233,7 +234,7 @@ public class PipelineFormattingTests
         };
 
         var result = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1",
+            issueReference: "#1",
             testsPassed: 5,
             testsFailed: 0,
             testsSkipped: 0,
@@ -254,7 +255,7 @@ public class PipelineFormattingTests
             .ToList();
 
         var result = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1",
+            issueReference: "#1",
             testsPassed: 0,
             testsFailed: 0,
             testsSkipped: 0,
@@ -269,7 +270,7 @@ public class PipelineFormattingTests
     public void GeneratePrBody_NullCoverage_ShowsNotAvailable()
     {
         var result = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1",
+            issueReference: "#1",
             testsPassed: 0,
             testsFailed: 0,
             testsSkipped: 0,
@@ -284,7 +285,7 @@ public class PipelineFormattingTests
     public void GeneratePrBody_IsDraft_ShowsDraftWarning()
     {
         var result = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1",
+            issueReference: "#1",
             testsPassed: 0,
             testsFailed: 0,
             testsSkipped: 0,
@@ -300,7 +301,7 @@ public class PipelineFormattingTests
     public void GeneratePrBody_WithModelName_IncludesModelInFooter()
     {
         var result = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1",
+            issueReference: "#1",
             testsPassed: 0,
             testsFailed: 0,
             testsSkipped: 0,
@@ -316,7 +317,7 @@ public class PipelineFormattingTests
     public void GeneratePrBody_WithoutModelName_ShowsGenericFooter()
     {
         var result = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1",
+            issueReference: "#1",
             testsPassed: 0,
             testsFailed: 0,
             testsSkipped: 0,
@@ -333,7 +334,7 @@ public class PipelineFormattingTests
         var blacklisted = new List<string> { ".github/workflows/ci.yml", "package-lock.json" };
 
         var result = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1",
+            issueReference: "#1",
             testsPassed: 0,
             testsFailed: 0,
             testsSkipped: 0,
@@ -358,7 +359,7 @@ public class PipelineFormattingTests
             AgentFindings: [new AgentFindings("security-agent", "Found SQL injection risk")]);
 
         var result = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1",
+            issueReference: "#1",
             testsPassed: 0,
             testsFailed: 0,
             testsSkipped: 0,
@@ -386,7 +387,7 @@ public class PipelineFormattingTests
             AgentFindings: []);
 
         var result = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1",
+            issueReference: "#1",
             testsPassed: 0,
             testsFailed: 0,
             testsSkipped: 0,
@@ -413,7 +414,7 @@ public class PipelineFormattingTests
         };
 
         var result = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1",
+            issueReference: "#1",
             testsPassed: 0,
             testsFailed: 0,
             testsSkipped: 0,
