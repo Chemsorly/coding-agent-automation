@@ -87,36 +87,36 @@ internal partial class QualityGateExecutor
 
                 if (report.AllPassed)
                 {
-                    await callbacks.CreatePullRequest(run, report, false, linkedCt);
+                    await callbacks.FinalizePullRequest(run, report, false, linkedCt);
                 }
                 else
                 {
-                    _logger.Warning("Pipeline {RunId} max retries ({MaxRetries}) exhausted after cleanup, creating draft PR",
+                    _logger.Warning("Pipeline {RunId} max retries ({MaxRetries}) exhausted after cleanup, finalizing as draft PR",
                         run.RunId, config.MaxRetries);
-                    callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.MaxRetries} retries, creating draft PR");
+                    callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.MaxRetries} retries, leaving PR as draft");
 
                     var finalErrorSummary = BuildQualityGateErrorSummary(report);
                     run.RetryErrors.Add(finalErrorSummary);
 
-                    // Collect failure feedback before creating draft PR
+                    // Collect failure feedback before finalizing draft PR
                     await CollectFailureFeedbackAsync(context, run, report, linkedCt);
 
-                    await callbacks.CreatePullRequest(run, report, true, linkedCt);
+                    await callbacks.FinalizePullRequest(run, report, true, linkedCt);
                 }
             }
             else
             {
-                _logger.Warning("Pipeline {RunId} max retries ({MaxRetries}) exhausted, creating draft PR",
+                _logger.Warning("Pipeline {RunId} max retries ({MaxRetries}) exhausted, finalizing as draft PR",
                     run.RunId, config.MaxRetries);
-                callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.MaxRetries} retries, creating draft PR");
+                callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.MaxRetries} retries, leaving PR as draft");
 
                 var errorSummary = BuildQualityGateErrorSummary(report);
                 run.RetryErrors.Add(errorSummary);
 
-                // Collect failure feedback before creating draft PR
+                // Collect failure feedback before finalizing draft PR
                 await CollectFailureFeedbackAsync(context, run, report, linkedCt);
 
-                await callbacks.CreatePullRequest(run, report, true, linkedCt);
+                await callbacks.FinalizePullRequest(run, report, true, linkedCt);
             }
         }
         catch (OperationCanceledException)

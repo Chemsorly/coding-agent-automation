@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches: [main]
+  pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -9,6 +11,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   build-and-test:
@@ -27,7 +30,27 @@ jobs:
         run: dotnet build --no-restore --configuration Release --verbosity quiet
 
       - name: Test
-        run: dotnet test --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category!=E2E"
+        run: dotnet test --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category!=E2E" --collect:"XPlat Code Coverage"
+
+      - name: Generate coverage report
+        uses: danielpalme/ReportGenerator-GitHub-Action@049f7ec958c672fd31d5cc1cb01622dc8d2e23ab # v5.5.10
+        with:
+          reports: TestResults/**/coverage.cobertura.xml
+          targetdir: CoverageReport
+          reporttypes: MarkdownAssembliesSummary
+        if: ${{ always() && hashFiles('TestResults/**/coverage.cobertura.xml') != '' }}
+
+      - name: Post coverage to PR
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
+        with:
+          header: coverage-ci
+          path: CoverageReport/AssembliesSummary.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ always() && github.event_name == 'pull_request' && hashFiles('CoverageReport/AssembliesSummary.md') != '' }}
+
+      - name: Write coverage to job summary
+        run: cat CoverageReport/AssembliesSummary.md >> $GITHUB_STEP_SUMMARY
+        if: ${{ always() && hashFiles('CoverageReport/AssembliesSummary.md') != '' }}
 
       - name: Upload test results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

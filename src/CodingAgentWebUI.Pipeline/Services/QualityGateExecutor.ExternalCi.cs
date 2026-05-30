@@ -100,13 +100,21 @@ internal partial class QualityGateExecutor
             callbacks.EmitOutputLine($"📦 Committed changes for CI validation");
             callbacks.EmitOutputLine($"🔀 Pushed to origin/{run.BranchName}");
 
+            // Create draft PR if not exists — ensures CI results (coverage comments) land on the PR
+            await callbacks.CreateDraftPrIfNotExists(run, ct);
+
             string? commitSha = null;
             try { commitSha = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
             catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA", run.RunId); }
 
+            // When a PR exists, skip SHA filtering — PR-triggered runs use a merge commit SHA
+            // that differs from the branch head. Branch filtering alone is sufficient since
+            // the pipeline owns these feature branches.
+            var pollSha = run.PullRequestNumber != null ? null : commitSha;
+
             callbacks.EmitOutputLine("⏳ Waiting for external CI...");
             var ciStatus = await context.PipelineProvider.WaitForCompletionAsync(
-                run.BranchName!, commitSha, config.ExternalCiTimeout, ct);
+                run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
 
             var ciPassed = ciStatus.State == PipelineRunState.Passed;
             IReadOnlyDictionary<long, string>? ciLogPaths = null;
