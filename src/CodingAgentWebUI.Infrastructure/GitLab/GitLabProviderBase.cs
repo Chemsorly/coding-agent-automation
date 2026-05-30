@@ -1,4 +1,3 @@
-using LibGit2Sharp;
 using NGitLab;
 using NGitLab.Models;
 using Polly;
@@ -44,13 +43,8 @@ public abstract class GitLabProviderBase : IAsyncDisposable
     /// </summary>
     protected string? PathWithNamespace => _pathWithNamespace;
 
-    static GitLabProviderBase()
-    {
-        // Disable libgit2's directory ownership validation. In Docker containers,
-        // cloned workspace directories often have ownership mismatches (CVE-2022-24765
-        // mitigation). Without this, Commands.Stage() silently fails.
-        GlobalSettings.SetOwnerValidation(false);
-    }
+    // Static initialization of libgit2 ownership validation is handled by
+    // RepositoryGitOperations static constructor (triggered on first git operation).
 
     /// <summary>
     /// Creates a provider with a static access token.
