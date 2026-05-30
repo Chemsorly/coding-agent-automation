@@ -33,18 +33,7 @@ public interface IJobDispatcher
     /// <c>true</c> if the review job was dispatched or enqueued successfully;
     /// <c>false</c> if the PR is already being processed or queued.
     /// </returns>
-    Task<bool> TryDispatchReviewAsync(
-        string prIdentifier,
-        string prBranchName,
-        string prTitle,
-        string? prDescription,
-        string prUrl,
-        string prTargetBranch,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
-        string initiatedBy,
-        CancellationToken ct);
+    Task<bool> TryDispatchReviewAsync(ReviewDispatchRequest request, CancellationToken ct);
 
     /// <summary>
     /// Attempts to dispatch a decomposition job to an available agent.

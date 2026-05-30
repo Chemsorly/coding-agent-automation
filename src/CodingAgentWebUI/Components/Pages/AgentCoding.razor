@@ -1452,16 +1452,19 @@
         try
         {
             var dispatched = await JobDispatcher.TryDispatchReviewAsync(
-                _selectedDrawerPr.Identifier,
-                _selectedDrawerPr.BranchName,
-                _selectedDrawerPr.Title,
-                _selectedDrawerPr.Description,
-                _selectedDrawerPr.Url,
-                _selectedDrawerPr.TargetBranch,
-                _prDrawerTemplate.IssueProviderId,
-                _prDrawerTemplate.RepoProviderId,
-                _prDrawerTemplate.BrainProviderId,
-                initiatedBy: "manual",
+                new ReviewDispatchRequest
+                {
+                    PrIdentifier = _selectedDrawerPr.Identifier,
+                    PrBranchName = _selectedDrawerPr.BranchName,
+                    PrTitle = _selectedDrawerPr.Title,
+                    PrDescription = _selectedDrawerPr.Description,
+                    PrUrl = _selectedDrawerPr.Url,
+                    PrTargetBranch = _selectedDrawerPr.TargetBranch,
+                    IssueProviderId = _prDrawerTemplate.IssueProviderId,
+                    RepoProviderId = _prDrawerTemplate.RepoProviderId,
+                    BrainProviderId = _prDrawerTemplate.BrainProviderId,
+                    InitiatedBy = "manual"
+                },
                 CancellationToken.None);
 
             if (dispatched)

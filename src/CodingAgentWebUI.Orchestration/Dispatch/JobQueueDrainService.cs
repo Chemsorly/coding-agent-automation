@@ -166,16 +166,19 @@ public sealed class JobQueueDrainService : BackgroundService
                 if (pendingJob.RunType == Pipeline.Models.PipelineRunType.Review)
                 {
                     dispatched = await _jobDispatcher.TryDispatchReviewAsync(
-                        pendingJob.IssueIdentifier,
-                        pendingJob.PrBranchName!,
-                        pendingJob.IssueTitle ?? $"PR #{pendingJob.IssueIdentifier}",
-                        pendingJob.PrDescription ?? string.Empty,
-                        pendingJob.PrUrl ?? string.Empty,
-                        pendingJob.PrTargetBranch ?? "main",
-                        pendingJob.IssueProviderId,
-                        pendingJob.RepoProviderId,
-                        pendingJob.BrainProviderId,
-                        pendingJob.InitiatedBy,
+                        new Pipeline.Models.ReviewDispatchRequest
+                        {
+                            PrIdentifier = pendingJob.IssueIdentifier,
+                            PrBranchName = pendingJob.PrBranchName!,
+                            PrTitle = pendingJob.IssueTitle ?? $"PR #{pendingJob.IssueIdentifier}",
+                            PrDescription = pendingJob.PrDescription ?? string.Empty,
+                            PrUrl = pendingJob.PrUrl ?? string.Empty,
+                            PrTargetBranch = pendingJob.PrTargetBranch ?? "main",
+                            IssueProviderId = pendingJob.IssueProviderId,
+                            RepoProviderId = pendingJob.RepoProviderId,
+                            BrainProviderId = pendingJob.BrainProviderId,
+                            InitiatedBy = pendingJob.InitiatedBy
+                        },
                         ct);
                 }
                 else if (pendingJob.RunType is Pipeline.Models.PipelineRunType.DecompositionAnalysis
