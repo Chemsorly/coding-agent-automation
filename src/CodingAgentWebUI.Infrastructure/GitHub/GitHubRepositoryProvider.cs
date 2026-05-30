@@ -1,4 +1,3 @@
-using LibGit2Sharp;
 using Octokit;
 using Polly;
 using System.Text.RegularExpressions;
@@ -8,8 +7,6 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
-using Repository = LibGit2Sharp.Repository;
-using MergeResult = CodingAgentWebUI.Pipeline.Models.MergeResult;
 
 namespace CodingAgentWebUI.Infrastructure.GitHub;
 

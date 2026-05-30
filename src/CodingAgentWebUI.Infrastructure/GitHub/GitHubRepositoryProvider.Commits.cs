@@ -1,10 +1,5 @@
-using LibGit2Sharp;
 using CodingAgentWebUI.Infrastructure.Git;
-using CodingAgentWebUI.Infrastructure.Resilience;
-using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
-using Serilog;
-using Repository = LibGit2Sharp.Repository;
 
 namespace CodingAgentWebUI.Infrastructure.GitHub;
 

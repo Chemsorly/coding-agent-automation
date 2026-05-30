@@ -3,11 +3,9 @@ using NGitLab;
 using Polly;
 using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Infrastructure.Resilience;
-using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
-using Repository = LibGit2Sharp.Repository;
 using MergeResult = CodingAgentWebUI.Pipeline.Models.MergeResult;
 
 namespace CodingAgentWebUI.Infrastructure.GitLab;
