@@ -243,7 +243,7 @@ internal class PullRequestOrchestrator
         }
 
         var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, run.IssueIdentifier);
-        var prBody = $"🤖 Agent working on {run.IssueIdentifier}\n\n" +
+        var prBody = $"🤖 Agent working on #{run.IssueIdentifier}\n\n" +
                      "_This draft PR was created automatically. " +
                      "It will be updated with quality gate results and marked ready for review upon completion._";
 
