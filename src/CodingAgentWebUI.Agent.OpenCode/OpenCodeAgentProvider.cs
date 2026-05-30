@@ -4,6 +4,7 @@ using System.Text.Json;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Agent.OpenCode;
@@ -170,8 +171,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             }
 
             // 2. Timeout enforcement
-            using var timeoutCts = new CancellationTokenSource(request.Timeout);
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
             var sseCts = new CancellationTokenSource();
 
             // 3. Start SSE reader (always — needed for permission auto-approval)
@@ -181,85 +180,87 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             AgentResult result;
             try
             {
-                using var client = CreateDirectoryClient();
-                var messageRequest = new SendMessageRequest
-                {
-                    Parts = [new MessagePart { Type = "text", Text = request.Prompt }],
-                    Model = null // Model is configured server-side via OPENCODE_CONFIG_CONTENT
-                };
-
-                _logger.Debug("POST /session/{SessionId}/message", sessionId);
-                var response = await client.PostAsJsonAsync(
-                    $"/session/{sessionId}/message", messageRequest, OpenCodeJson.JsonOptions, linkedCts.Token);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
-                    result = new AgentResult
+                result = await TimeoutHelper.ExecuteWithTimeoutAsync(
+                    request.Timeout, ct,
+                    async linkedCt =>
                     {
-                        ExitCode = ExitCodes.GeneralFailure,
-                        OutputLines = [$"HTTP {(int)response.StatusCode}: {body[..Math.Min(body.Length, 1000)]}"]
-                    };
-                }
-                else
-                {
-                    var json = await response.Content.ReadAsStringAsync(CancellationToken.None);
-                    SendMessageResponse? messageResponse;
-                    try
-                    {
-                        messageResponse = JsonSerializer.Deserialize<SendMessageResponse>(json, OpenCodeJson.JsonOptions);
-                    }
-                    catch (JsonException ex)
-                    {
-                        _logger.Debug(ex, "Malformed JSON response: {RawResponse}", json[..Math.Min(json.Length, 500)]);
-                        result = new AgentResult
+                        using var client = CreateDirectoryClient();
+                        var messageRequest = new SendMessageRequest
                         {
-                            ExitCode = ExitCodes.GeneralFailure,
-                            OutputLines = [$"JSON parse error ({ex.GetType().Name}): {json[..Math.Min(json.Length, 500)]}"]
+                            Parts = [new MessagePart { Type = "text", Text = request.Prompt }],
+                            Model = null // Model is configured server-side via OPENCODE_CONFIG_CONTENT
                         };
-                        goto CaptureTokens;
-                    }
 
-                    // Extract text parts, concatenate, split into lines
-                    var textParts = messageResponse?.Parts
-                        .Where(p => string.Equals(p.Type, "text", StringComparison.OrdinalIgnoreCase))
-                        .Select(p => p.Text ?? string.Empty)
-                        ?? [];
-                    var combinedText = string.Join("\n", textParts);
-                    var outputLines = combinedText.Split('\n')
-                        .Select(line => StripAnsiEscapes(line))
-                        .ToList();
+                        _logger.Debug("POST /session/{SessionId}/message", sessionId);
+                        var response = await client.PostAsJsonAsync(
+                            $"/session/{sessionId}/message", messageRequest, OpenCodeJson.JsonOptions, linkedCt);
 
-                    // Dedup: Only emit HTTP response lines to the output callback if
-                    // SSE did not already stream assistant content. When SSE is active,
-                    // message.part.updated events provide real-time [assistant] prefixed
-                    // lines — emitting the HTTP response too would duplicate the content.
-                    // The HTTP response fallback ensures output still appears when SSE
-                    // fails to connect or drops before streaming any assistant text.
-                    if (onOutputLine is not null && !_sseEmittedAssistantContent)
-                    {
-                        foreach (var line in outputLines)
+                        if (!response.IsSuccessStatusCode)
                         {
-                            if (!string.IsNullOrWhiteSpace(line))
-                                onOutputLine(line);
+                            var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
+                            return new AgentResult
+                            {
+                                ExitCode = ExitCodes.GeneralFailure,
+                                OutputLines = [$"HTTP {(int)response.StatusCode}: {body[..Math.Min(body.Length, 1000)]}"]
+                            };
                         }
-                    }
 
-                    result = new AgentResult
+                        var json = await response.Content.ReadAsStringAsync(CancellationToken.None);
+                        SendMessageResponse? messageResponse;
+                        try
+                        {
+                            messageResponse = JsonSerializer.Deserialize<SendMessageResponse>(json, OpenCodeJson.JsonOptions);
+                        }
+                        catch (JsonException ex)
+                        {
+                            _logger.Debug(ex, "Malformed JSON response: {RawResponse}", json[..Math.Min(json.Length, 500)]);
+                            return new AgentResult
+                            {
+                                ExitCode = ExitCodes.GeneralFailure,
+                                OutputLines = [$"JSON parse error ({ex.GetType().Name}): {json[..Math.Min(json.Length, 500)]}"]
+                            };
+                        }
+
+                        // Extract text parts, concatenate, split into lines
+                        var textParts = messageResponse?.Parts
+                            .Where(p => string.Equals(p.Type, "text", StringComparison.OrdinalIgnoreCase))
+                            .Select(p => p.Text ?? string.Empty)
+                            ?? [];
+                        var combinedText = string.Join("\n", textParts);
+                        var outputLines = combinedText.Split('\n')
+                            .Select(line => StripAnsiEscapes(line))
+                            .ToList();
+
+                        // Dedup: Only emit HTTP response lines to the output callback if
+                        // SSE did not already stream assistant content. When SSE is active,
+                        // message.part.updated events provide real-time [assistant] prefixed
+                        // lines — emitting the HTTP response too would duplicate the content.
+                        // The HTTP response fallback ensures output still appears when SSE
+                        // fails to connect or drops before streaming any assistant text.
+                        if (onOutputLine is not null && !_sseEmittedAssistantContent)
+                        {
+                            foreach (var line in outputLines)
+                            {
+                                if (!string.IsNullOrWhiteSpace(line))
+                                    onOutputLine(line);
+                            }
+                        }
+
+                        return new AgentResult
+                        {
+                            ExitCode = ExitCodes.Success,
+                            OutputLines = outputLines
+                        };
+                    },
+                    async () =>
                     {
-                        ExitCode = ExitCodes.Success,
-                        OutputLines = outputLines
-                    };
-                }
-            }
-            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
-            {
-                await AbortBestEffortAsync(sessionId);
-                result = new AgentResult
-                {
-                    ExitCode = ExitCodes.Timeout,
-                    OutputLines = ["Execution timed out"]
-                };
+                        await AbortBestEffortAsync(sessionId);
+                        return new AgentResult
+                        {
+                            ExitCode = ExitCodes.Timeout,
+                            OutputLines = ["Execution timed out"]
+                        };
+                    });
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -301,7 +302,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 sseCts.Dispose();
             }
 
-            CaptureTokens:
             // Capture token usage delta on all paths (success, timeout, error)
             var (usage, cost) = await CaptureSessionTokenDeltaAsync(sessionId);
             return new AgentResult

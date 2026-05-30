@@ -2,6 +2,7 @@ using CodingAgentWebUI.Agent;
 using KiroCliLib.Core;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -80,34 +81,33 @@ public partial class KiroCliAgentProvider : IAgentProvider
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        using var timeoutCts = new CancellationTokenSource(request.Timeout);
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
-
         var outputLines = new List<string>();
-        int exitCode;
-        try
-        {
-            exitCode = await _orchestrator.ExecutePromptAsync(
-                request.Prompt,
-                request.WorkspacePath,
-                useResume: request.UseResume,
-                linkedCts.Token,
-                onOutputLine: line =>
-                {
-                    var clean = AnsiStripper.Strip(line);
-                    outputLines.Add(clean);
-                    onOutputLine?.Invoke(clean);
-                    return Task.CompletedTask;
-                },
-                resumeSessionId: request.ResumeSessionId);
-        }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
-        {
-            _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
-            exitCode = ExitCodes.Timeout;
-        }
 
-        return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };
+        return await TimeoutHelper.ExecuteWithTimeoutAsync(
+            request.Timeout, ct,
+            async linkedCt =>
+            {
+                var exitCode = await _orchestrator.ExecutePromptAsync(
+                    request.Prompt,
+                    request.WorkspacePath,
+                    useResume: request.UseResume,
+                    linkedCt,
+                    onOutputLine: line =>
+                    {
+                        var clean = AnsiStripper.Strip(line);
+                        outputLines.Add(clean);
+                        onOutputLine?.Invoke(clean);
+                        return Task.CompletedTask;
+                    },
+                    resumeSessionId: request.ResumeSessionId);
+
+                return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };
+            },
+            () =>
+            {
+                _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
+                return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly() });
+            });
     }
 
     /// <inheritdoc />

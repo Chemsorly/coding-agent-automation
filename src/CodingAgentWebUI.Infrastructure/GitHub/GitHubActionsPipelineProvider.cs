@@ -3,6 +3,7 @@ using Polly;
 using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Infrastructure.GitHub;
 
@@ -135,52 +136,51 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         _logger.Information("Polling CI for branch {Branch} (commit: {CommitSha}, timeout: {Timeout})",
             branchName, commitSha ?? "any", timeout);
 
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(timeout);
-        var linkedCt = timeoutCts.Token;
         var pollCount = 0;
         PipelineRunStatus? lastStatus = null;
 
-        while (true)
-        {
-            try
+        return await TimeoutHelper.ExecuteWithTimeoutAsync(
+            timeout, ct,
+            async linkedCt =>
             {
-                linkedCt.ThrowIfCancellationRequested();
-                pollCount++;
-
-                var status = await GetRunStatusAsync(branchName, commitSha, linkedCt);
-                lastStatus = status;
-
-                _logger.Information("CI poll #{PollCount}: {State} — {RunCount} run(s), {JobCount} job(s)",
-                    pollCount, status.State, status.Jobs.Count > 0 ? status.Jobs.Count : 0,
-                    status.Jobs.Count);
-
-                if (status.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled)
+                while (true)
                 {
-                    _logger.Information("CI completed: {State} after {PollCount} poll(s)", status.State, pollCount);
+                    linkedCt.ThrowIfCancellationRequested();
+                    pollCount++;
 
-                    if (status.State == PipelineRunState.Failed)
+                    var status = await GetRunStatusAsync(branchName, commitSha, linkedCt);
+                    lastStatus = status;
+
+                    _logger.Information("CI poll #{PollCount}: {State} — {RunCount} run(s), {JobCount} job(s)",
+                        pollCount, status.State, status.Jobs.Count > 0 ? status.Jobs.Count : 0,
+                        status.Jobs.Count);
+
+                    if (status.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled)
                     {
-                        status = await EnrichFailedJobsWithLogsAsync(status, linkedCt);
+                        _logger.Information("CI completed: {State} after {PollCount} poll(s)", status.State, pollCount);
+
+                        if (status.State == PipelineRunState.Failed)
+                        {
+                            status = await EnrichFailedJobsWithLogsAsync(status, linkedCt);
+                        }
+
+                        return status;
                     }
 
-                    return status;
+                    await Task.Delay(_pollInterval, linkedCt);
                 }
-
-                await Task.Delay(_pollInterval, linkedCt);
-            }
-            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+            },
+            () =>
             {
                 _logger.Warning("CI polling timed out after {Timeout} ({PollCount} polls). Last state: {State}",
                     timeout, pollCount, lastStatus?.State);
-                return lastStatus ?? new PipelineRunStatus
+                return Task.FromResult(lastStatus ?? new PipelineRunStatus
                 {
                     State = PipelineRunState.Pending,
                     Jobs = Array.Empty<PipelineJobResult>(),
                     CommitSha = commitSha
-                };
-            }
-        }
+                });
+            });
     }
 
     /// <inheritdoc />

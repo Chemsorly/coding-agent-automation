@@ -3,6 +3,7 @@ using NGitLab.Models;
 using Serilog;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Infrastructure.GitLab;
 
@@ -125,53 +126,51 @@ public class GitLabCiPipelineProvider : GitLabProviderBase, IPipelineProvider
         _logger.Information("Polling GitLab CI for branch {Branch} (commit: {CommitSha}, timeout: {Timeout})",
             branchName, commitSha ?? "any", timeout);
 
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(timeout);
-        var linkedCt = timeoutCts.Token;
         var pollCount = 0;
         PipelineRunStatus? lastStatus = null;
 
-        while (true)
-        {
-            try
+        return await TimeoutHelper.ExecuteWithTimeoutAsync(
+            timeout, ct,
+            async linkedCt =>
             {
-                linkedCt.ThrowIfCancellationRequested();
-                pollCount++;
-
-                var status = await GetRunStatusAsync(branchName, commitSha, linkedCt);
-                lastStatus = status;
-
-                _logger.Information("GitLab CI poll #{PollCount}: {State} — {JobCount} job(s)",
-                    pollCount, status.State, status.Jobs.Count);
-
-                if (IsTerminalState(status.State))
+                while (true)
                 {
-                    _logger.Information("GitLab CI completed: {State} after {PollCount} poll(s)",
-                        status.State, pollCount);
+                    linkedCt.ThrowIfCancellationRequested();
+                    pollCount++;
 
-                    if (status.State == PipelineRunState.Failed)
+                    var status = await GetRunStatusAsync(branchName, commitSha, linkedCt);
+                    lastStatus = status;
+
+                    _logger.Information("GitLab CI poll #{PollCount}: {State} — {JobCount} job(s)",
+                        pollCount, status.State, status.Jobs.Count);
+
+                    if (IsTerminalState(status.State))
                     {
-                        status = await EnrichFailedJobsWithLogsAsync(status, linkedCt);
+                        _logger.Information("GitLab CI completed: {State} after {PollCount} poll(s)",
+                            status.State, pollCount);
+
+                        if (status.State == PipelineRunState.Failed)
+                        {
+                            status = await EnrichFailedJobsWithLogsAsync(status, linkedCt);
+                        }
+
+                        return status;
                     }
 
-                    return status;
+                    await Task.Delay(_pollInterval, linkedCt);
                 }
-
-                await Task.Delay(_pollInterval, linkedCt);
-            }
-            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+            },
+            () =>
             {
                 _logger.Warning("GitLab CI polling timed out after {Timeout} ({PollCount} polls). Last state: {State}",
                     timeout, pollCount, lastStatus?.State);
-
-                return lastStatus ?? new PipelineRunStatus
+                return Task.FromResult(lastStatus ?? new PipelineRunStatus
                 {
                     State = PipelineRunState.Pending,
                     Jobs = Array.Empty<PipelineJobResult>(),
                     CommitSha = commitSha
-                };
-            }
-        }
+                });
+            });
     }
 
     /// <inheritdoc />
