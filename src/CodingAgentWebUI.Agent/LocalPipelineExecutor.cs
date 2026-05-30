@@ -696,7 +696,6 @@ public sealed class LocalPipelineExecutor
         PipelineRun run,
         PullRequestOrchestrator prOrchestrator,
         IRepositoryProvider repoProvider,
-        PipelineConfiguration config,
         Action<QualityGateReport> reportQualityGateResult,
         Func<PipelineRun, QualityGateReport, bool, CancellationToken, Task> createPullRequest,
         Func<bool, int, Task> reportBrainSyncResult) : IPipelineCallbacks
@@ -743,10 +742,6 @@ public sealed class LocalPipelineExecutor
         public Task FinalizePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
             reportQualityGateResult(report);
-            // If a draft PR was already created, finalize it directly (update body + mark ready).
-            // Otherwise fall back to the original createPullRequest delegate (full create flow).
-            if (!string.IsNullOrEmpty(run.PullRequestNumber))
-                return prOrchestrator.FinalizePullRequestAsync(run, report, isDraft, repoProvider, null, null, config, ct, emitOutputLine);
             return createPullRequest(run, report, isDraft, ct);
         }
         public Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
