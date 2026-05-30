@@ -207,4 +207,160 @@ internal class PullRequestOrchestrator
         }
         return null;
     }
+
+    /// <summary>
+    /// Creates a draft pull request with a minimal body if one does not already exist for this run.
+    /// No-op when the run already has a linked PR (rework) or a PR URL (already created).
+    /// Returns the PR URL, or null if creation was skipped.
+    /// </summary>
+    public async Task<string?> CreateDraftPrIfNotExistsAsync(
+        PipelineRun run,
+        IRepositoryProvider repoProvider,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(repoProvider);
+
+        // Skip if PR already exists (rework flow or already created in a prior push)
+        if (run.LinkedPullRequest != null || !string.IsNullOrEmpty(run.PullRequestUrl))
+        {
+            _logger.Debug("Pipeline {RunId} draft PR creation skipped — PR already exists: {PrUrl}",
+                run.RunId, run.PullRequestUrl ?? run.LinkedPullRequest?.Url);
+            return run.PullRequestUrl ?? run.LinkedPullRequest?.Url;
+        }
+
+        if (string.IsNullOrEmpty(run.BranchName))
+        {
+            _logger.Warning("Pipeline {RunId} cannot create draft PR — branch name is null", run.RunId);
+            return null;
+        }
+
+        // Verify commits ahead before creating PR
+        if (!await repoProvider.HasCommitsAheadAsync(run.WorkspacePath!, ct))
+        {
+            _logger.Warning("Pipeline {RunId} cannot create draft PR — no commits ahead of base", run.RunId);
+            return null;
+        }
+
+        var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, run.IssueIdentifier);
+        var prBody = $"🤖 Agent working on #{run.IssueIdentifier}\n\n" +
+                     "_This draft PR was created automatically. " +
+                     "It will be updated with quality gate results and marked ready for review upon completion._";
+
+        var prInfo = new PullRequestInfo
+        {
+            Title = prTitle,
+            Body = prBody,
+            BranchName = run.BranchName,
+            BaseBranch = repoProvider.BaseBranch,
+            IsDraft = true
+        };
+
+        var prUrl = await repoProvider.CreatePullRequestAsync(prInfo, ct);
+        run.PullRequestUrl = prUrl;
+        run.PullRequestNumber = ExtractPrNumber(prUrl);
+        run.IsDraftPr = true;
+
+        _logger.Information("Pipeline {RunId} created draft PR #{PrNumber}: {PrUrl}",
+            run.RunId, run.PullRequestNumber, prUrl);
+
+        return prUrl;
+    }
+
+    /// <summary>
+    /// Finalizes an existing pull request: updates the body with quality gate results
+    /// and optionally marks it ready for review.
+    /// </summary>
+    public async Task<string?> FinalizePullRequestAsync(
+        PipelineRun run,
+        QualityGateReport report,
+        bool isDraft,
+        IRepositoryProvider repoProvider,
+        IssueDetail? issue,
+        IReadOnlyList<IssueComment>? issueComments,
+        PipelineConfiguration config,
+        CancellationToken ct,
+        Action<string>? onOutputLine = null)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(report);
+        ArgumentNullException.ThrowIfNull(repoProvider);
+        ArgumentNullException.ThrowIfNull(config);
+
+        if (string.IsNullOrEmpty(run.PullRequestNumber))
+        {
+            _logger.Warning("Pipeline {RunId} cannot finalize PR — no PR number available", run.RunId);
+            return null;
+        }
+
+        // Commit any remaining uncommitted changes
+        try
+        {
+            var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, run.IssueIdentifier);
+            var blacklisted = await repoProvider.CommitAllAsync(
+                run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct);
+            if (blacklisted.Count > 0)
+            {
+                RecordBlacklistedFiles(run, blacklisted, config);
+                if (config.BlacklistMode == BlacklistMode.Fail)
+                    return null;
+            }
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
+        {
+            _logger.Information("Pipeline {RunId} no uncommitted changes during finalization, skipping commit", run.RunId);
+        }
+
+        // Push final state
+        await repoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
+        onOutputLine?.Invoke($"🔀 Pushed final changes to origin/{run.BranchName}");
+
+        // Refresh file change stats
+        await UpdateFileChangeStatsAsync(run, repoProvider);
+
+        // Build the full PR body
+        var testsPassed = report.Tests.TestsPassed ?? 0;
+        var testsFailed = report.Tests.TestsFailed ?? 0;
+        var testsSkipped = report.Tests.TestsSkipped ?? 0;
+        var coverage = report.Coverage?.CoveragePercent;
+        var fileChanges = await repoProvider.GetFileChangesAsync(run.WorkspacePath!, ct);
+        var issueTitle = issue?.Title ?? run.IssueTitle;
+
+        var codeReviewSummary = run.CodeReviewAgentsRun is { Count: > 0 }
+            ? new CodeReviewSummary(
+                run.CodeReviewAgentsRun,
+                run.CodeReviewCriticalCount,
+                run.CodeReviewWarningCount,
+                run.CodeReviewSuggestionCount,
+                run.CodeReviewAgentFindings
+                    .Select(kv => new AgentFindings(kv.Key, kv.Value))
+                    .ToArray())
+            : null;
+
+        var prBody = PipelineFormatting.GeneratePrBody(
+            run.IssueIdentifier, testsPassed, testsFailed, testsSkipped,
+            coverage, fileChanges, issueTitle, isDraft, issueComments,
+            run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
+            run.ModelName,
+            codeReviewSummary);
+
+        // Update PR body and mark ready (or leave as draft)
+        run.IsDraftPr = isDraft;
+        run.CompletedAt = DateTime.UtcNow;
+
+        try
+        {
+            var prNumber = int.Parse(run.PullRequestNumber);
+            await repoProvider.UpdatePullRequestAsync(prNumber, prBody, !isDraft, ct);
+            onOutputLine?.Invoke($"📝 Updated PR #{run.PullRequestNumber} body");
+            if (!isDraft)
+                onOutputLine?.Invoke($"✅ PR #{run.PullRequestNumber} marked ready for review");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} failed to update/finalize PR, continuing", run.RunId);
+        }
+
+        return run.PullRequestUrl;
+    }
 }

@@ -506,6 +506,95 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     }
     private Task UpdateFileChangeStatsAsync(PipelineRun run)
         => _prOrchestrator.UpdateFileChangeStatsAsync(run, _providerManager.ActiveRepoProvider!);
+
+    private async Task CreateDraftPrIfNotExistsAsync(PipelineRun run, CancellationToken ct)
+    {
+        try
+        {
+            var prUrl = await _prOrchestrator.CreateDraftPrIfNotExistsAsync(
+                run, _providerManager.ActiveRepoProvider!, ct);
+            if (prUrl != null)
+                _lifecycle.EmitOutputLine($"📋 Draft PR #{run.PullRequestNumber} created");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Non-fatal: CI can still run without a PR existing
+            _logger.Warning(ex, "Pipeline {RunId} failed to create draft PR, continuing", run.RunId);
+        }
+    }
+
+    private async Task FinalizePullRequestAsync(
+        PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("FinalizePullRequest");
+        activity?.SetTag("pipeline.run_id", run.RunId);
+        activity?.SetTag("pipeline.issue", run.IssueIdentifier);
+        activity?.SetTag("pipeline.pr.is_draft", isDraft);
+
+        _lifecycle.TransitionTo(run, PipelineStep.CreatingPullRequest);
+        try
+        {
+            // If no draft PR was created (e.g., CreateDraftPrIfNotExists failed or was skipped),
+            // fall back to the original CreatePullRequest flow
+            if (string.IsNullOrEmpty(run.PullRequestNumber))
+            {
+                _logger.Information("Pipeline {RunId} no existing PR to finalize, falling back to CreatePullRequest", run.RunId);
+                await CreatePullRequestAsync(run, report, isDraft, ct);
+                return;
+            }
+
+            var prUrl = await _prOrchestrator.FinalizePullRequestAsync(
+                run, report, isDraft, _providerManager.ActiveRepoProvider!, _activeIssue,
+                _activeIssueComments, _activeConfig!, ct, line => _lifecycle.EmitOutputLine(line));
+
+            if (prUrl == null && _activeConfig?.BlacklistMode == BlacklistMode.Fail
+                && run.BlacklistedFilesDetected.Count > 0)
+            { await FailRunAsync(run, $"Blacklisted files detected: {string.Join(", ", run.BlacklistedFilesDetected)}. The agent modified protected paths."); return; }
+
+            if (prUrl == null)
+            { await FailRunAsync(run, "Agent did not produce any changes. No commits ahead of base branch.", ct); return; }
+
+            var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
+            if (isDraft)
+            {
+                run.FailureReason = "Quality gates failed after max retries; draft PR created.";
+                await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Error, ct);
+            }
+            else
+                await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Done, ct);
+
+            if (!isDraft && _providerManager.ActiveBrainProvider != null && !_activeConfig!.BrainReadOnly)
+            {
+                _lifecycle.TransitionTo(run, PipelineStep.ReflectingOnRun);
+                await _finalization.RunReflectionAsync(run, _providerManager.ActiveAgentProvider!, _activeConfig, line => _lifecycle.EmitOutputLine(line), ct);
+
+                _lifecycle.TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
+                await _finalization.SyncBrainPostRunAsync(run, _brainSync, _providerManager.ActiveBrainProvider, _activeConfig, line => _lifecycle.EmitOutputLine(line), ct);
+            }
+
+            if (!isDraft)
+            {
+                await _finalization.CollectFeedbackAsync(run, _providerManager.ActiveAgentProvider!, _feedbackService, _historyService, line => _lifecycle.EmitOutputLine(line), ct);
+            }
+
+            _lifecycle.TransitionTo(run, finalStep);
+            _lifecycle.AddRunToHistory(run);
+
+            var duration = run.CompletedAt!.Value - run.StartedAt;
+            if (finalStep == PipelineStep.Completed)
+                _lifecycle.EmitOutputLine($"✅ Pipeline completed in {(int)duration.TotalMinutes}m {duration.Seconds}s");
+            else
+                _lifecycle.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
+
+            if (finalStep == PipelineStep.Completed)
+                _historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig!.WorkspaceBaseDirectory);
+            _logger.Information("Pipeline {RunId} {Outcome} in {Duration}. Retries: {RetryCount}. PR: {PullRequestUrl}",
+                run.RunId, finalStep, run.CompletedAt!.Value - run.StartedAt, run.RetryCount, prUrl);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { _logger.Error(ex, "Pipeline {RunId} failed to finalize pull request", run.RunId); await FailRunAsync(run, $"PR finalization failed: {ex.Message}"); }
+    }
+
     private async Task PersistLastUsedProviderIdsAsync(
         string issueId, string repoId, string agentId,
         string? brainId, string? pipelineId, CancellationToken ct)
@@ -669,6 +758,16 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             svc._activeParsedIssue = ctx?.ParsedIssue;
             svc._activeIssueComments = ctx?.IssueComments;
             return svc.CreatePullRequestAsync(r, report, isDraft, ct);
+        }
+        public Task CreateDraftPrIfNotExists(PipelineRun r, CancellationToken ct)
+            => svc.CreateDraftPrIfNotExistsAsync(r, ct);
+        public Task FinalizePullRequest(PipelineRun r, QualityGateReport report, bool isDraft, CancellationToken ct)
+        {
+            var ctx = ctxAccessor();
+            svc._activeIssue = ctx?.Issue;
+            svc._activeParsedIssue = ctx?.ParsedIssue;
+            svc._activeIssueComments = ctx?.IssueComments;
+            return svc.FinalizePullRequestAsync(r, report, isDraft, ct);
         }
         public Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
         {

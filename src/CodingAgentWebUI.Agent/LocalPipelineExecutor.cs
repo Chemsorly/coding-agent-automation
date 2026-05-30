@@ -287,6 +287,7 @@ public sealed class LocalPipelineExecutor
                 run,
                 prOrchestrator,
                 repoProvider,
+                config,
                 report => ReportQualityGateResult(report),
                 (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, repoProvider, agentProvider,
                     brainProvider, brainSync, config, issueOps, connection, job, EmitOutputLine, token),
@@ -695,6 +696,7 @@ public sealed class LocalPipelineExecutor
         PipelineRun run,
         PullRequestOrchestrator prOrchestrator,
         IRepositoryProvider repoProvider,
+        PipelineConfiguration config,
         Action<QualityGateReport> reportQualityGateResult,
         Func<PipelineRun, QualityGateReport, bool, CancellationToken, Task> createPullRequest,
         Func<bool, int, Task> reportBrainSyncResult) : IPipelineCallbacks
@@ -722,6 +724,29 @@ public sealed class LocalPipelineExecutor
         public Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
             reportQualityGateResult(report);
+            return createPullRequest(run, report, isDraft, ct);
+        }
+        public async Task CreateDraftPrIfNotExists(PipelineRun run, CancellationToken ct)
+        {
+            try
+            {
+                await prOrchestrator.CreateDraftPrIfNotExistsAsync(run, repoProvider, ct);
+                if (!string.IsNullOrEmpty(run.PullRequestNumber))
+                    emitOutputLine($"📋 Draft PR #{run.PullRequestNumber} created");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Non-fatal on agent side as well
+                Serilog.Log.Warning(ex, "Agent {RunId} failed to create draft PR, continuing", run.RunId);
+            }
+        }
+        public Task FinalizePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
+        {
+            reportQualityGateResult(report);
+            // If a draft PR was already created, finalize it directly (update body + mark ready).
+            // Otherwise fall back to the original createPullRequest delegate (full create flow).
+            if (!string.IsNullOrEmpty(run.PullRequestNumber))
+                return prOrchestrator.FinalizePullRequestAsync(run, report, isDraft, repoProvider, null, null, config, ct, emitOutputLine);
             return createPullRequest(run, report, isDraft, ct);
         }
         public Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)

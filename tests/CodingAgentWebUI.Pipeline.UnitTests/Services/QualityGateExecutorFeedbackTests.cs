@@ -73,6 +73,10 @@ public class QualityGateExecutorFeedbackTests
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.CreatePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         // Default: issue ops complete successfully
         _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -184,8 +188,8 @@ public class QualityGateExecutorFeedbackTests
         // Act
         await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
 
-        // Assert: CreatePullRequest was called with isDraft = true
-        _mockCallbacks.Verify(c => c.CreatePullRequest(
+        // Assert: FinalizePullRequest was called with isDraft = true
+        _mockCallbacks.Verify(c => c.FinalizePullRequest(
             _run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -206,8 +210,8 @@ public class QualityGateExecutorFeedbackTests
         // Act
         await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
 
-        // Assert: CreatePullRequest was still called with isDraft = true
-        _mockCallbacks.Verify(c => c.CreatePullRequest(
+        // Assert: FinalizePullRequest was still called with isDraft = true
+        _mockCallbacks.Verify(c => c.FinalizePullRequest(
             _run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -228,8 +232,8 @@ public class QualityGateExecutorFeedbackTests
         // Act
         await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
 
-        // Assert: CreatePullRequest was still called with isDraft = true
-        _mockCallbacks.Verify(c => c.CreatePullRequest(
+        // Assert: FinalizePullRequest was still called with isDraft = true
+        _mockCallbacks.Verify(c => c.FinalizePullRequest(
             _run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()), Times.Once);
     }
 

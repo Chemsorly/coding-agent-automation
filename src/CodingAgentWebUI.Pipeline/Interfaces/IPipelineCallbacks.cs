@@ -49,6 +49,21 @@ public interface IPipelineCallbacks
     /// <summary>Creates a pull request for the completed pipeline run.</summary>
     Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct);
 
+    /// <summary>
+    /// Creates a draft pull request if one does not already exist for this run.
+    /// Called after the first push, before polling external CI, so that CI results
+    /// (e.g., coverage comments) can be associated with the PR.
+    /// No-op when <see cref="PipelineRun.LinkedPullRequest"/> is already set (rework flow)
+    /// or when <see cref="PipelineRun.PullRequestUrl"/> is already populated.
+    /// </summary>
+    Task CreateDraftPrIfNotExists(PipelineRun run, CancellationToken ct);
+
+    /// <summary>
+    /// Finalizes an existing draft pull request: updates the body with quality gate results
+    /// and marks it ready for review (or leaves it as draft if quality gates failed).
+    /// </summary>
+    Task FinalizePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct);
+
     /// <summary>Reports brain sync result immediately after the brain sync step completes.</summary>
     Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount);
 }
