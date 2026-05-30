@@ -84,7 +84,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             try
             {
                 var refactoringResult = await issueProvider.ListOpenIssuesAsync(
-                    1, 30, new[] { AgentLabels.Refactoring, AgentLabels.AgentGenerated }, ct);
+                    1, 30, new[] { AgentLabels.Generated }, ct);
                 var openRefactoringIssues = refactoringResult.Items;
 
                 var allOpenResult = await issueProvider.ListOpenIssuesAsync(1, 50, null, ct);
@@ -115,7 +115,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                 var since = DateTime.UtcNow - job.PipelineConfiguration.RefactoringOutcomeLookback;
                 var closedResult = await issueProvider.ListClosedIssuesAsync(
                     page: 1, pageSize: 20,
-                    labels: new[] { AgentLabels.Refactoring, AgentLabels.AgentGenerated },
+                    labels: new[] { AgentLabels.Generated },
                     since: since, ct);
                 closedRefactoringIssues = closedResult.Items;
             }
@@ -371,7 +371,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                 var result = await issueProvider.CreateIssueAsync(
                     sanitizedTitle,
                     body,
-                    new[] { AgentLabels.Refactoring, AgentLabels.AgentGenerated },
+                    new[] { AgentLabels.Generated },
                     ct);
 
                 createdIssues.Add(new CreatedIssueInfo

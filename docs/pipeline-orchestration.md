@@ -826,7 +826,7 @@ On re-run, the existing plan comment is updated (not duplicated), identified by 
 #### DecompositionStep
 
 1. Writes epic body + all comments (including plan comment) to `.agent/issue-context.md`
-2. Queries existing agent-generated sub-issues for deduplication context
+2. Queries existing `agent:generated` sub-issues for deduplication context
 3. Builds decomposition prompt with `MaxDecompositionSubIssues` cap
 4. Executes agent — expects `.agent/sub-issues/*.json` output
 5. Validates plan comment exists (marker detection)
@@ -837,7 +837,7 @@ On re-run, the existing plan comment is updated (not duplicated), identified by 
 2. Enforces `MaxDecompositionSubIssues` cap (takes first N alphabetically)
 3. Creates issues sequentially via `IAgentIssueOperations.CreateIssueAsync`
 4. For each issue: sanitizes title (`TextSanitizer.SanitizeTitle`), sanitizes body (`TextSanitizer.SanitizeMarkdown`), resolves dependencies via `DependencyResolver`
-5. Applies labels: `agent:next` + `agent-generated` + custom labels from JSON
+5. Applies labels: `agent:next` + `agent:generated` + custom labels from JSON
 6. Retries transient errors (3 attempts, exponential backoff: 0s, 1s, 3s)
 7. 5-minute creation phase timeout — remaining issues marked as failed on timeout
 8. Tracks results in `List<SubIssueCreationResult>` for the summary step
@@ -935,7 +935,7 @@ Examples: `01-add-user-authentication.json`, `02-create-database-schema.json`
 | `title` | `string` | Yes | Non-empty, max 256 characters |
 | `body` | `string` | Yes | Non-empty, markdown-formatted. Must contain at minimum: Summary, Affected Components, Requirements, Acceptance Criteria sections |
 | `dependencies` | `string[]` | Yes | Zero or more title strings referencing other sub-issues in this decomposition (resolved to `#N` format during creation) |
-| `labels` | `string[]` | Yes | Zero or more additional labels beyond the auto-applied `agent:next` and `agent-generated` |
+| `labels` | `string[]` | Yes | Zero or more additional labels beyond the auto-applied `agent:next` and `agent:generated` |
 
 #### Validation Rules
 

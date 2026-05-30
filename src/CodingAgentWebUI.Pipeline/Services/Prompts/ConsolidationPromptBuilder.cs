@@ -274,7 +274,7 @@ public static class ConsolidationPromptBuilder
 
         if (refactoringIssues.Count > 0)
         {
-            sb.AppendLine("### Open Refactoring Issues (agent-generated, still pending)");
+            sb.AppendLine("### Open Refactoring Issues (agent:generated, still pending)");
             foreach (var issue in refactoringIssues)
                 sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
             sb.AppendLine();

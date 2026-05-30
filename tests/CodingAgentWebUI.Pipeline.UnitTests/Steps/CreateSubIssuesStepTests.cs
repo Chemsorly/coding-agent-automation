@@ -232,7 +232,7 @@ public class CreateSubIssuesStepTests : IDisposable
 
         capturedLabels.Should().NotBeNull();
         capturedLabels.Should().Contain(AgentLabels.Next);
-        capturedLabels.Should().Contain(AgentLabels.AgentGenerated);
+        capturedLabels.Should().Contain(AgentLabels.Generated);
     }
 
     [Fact]

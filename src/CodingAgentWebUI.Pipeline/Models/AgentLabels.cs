@@ -19,9 +19,8 @@ public static class AgentLabels
     public const string EpicReview = "agent:epic-review";
     public const string EpicApproved = "agent:epic-approved";
 
-    // Consolidation labels (applied to auto-generated refactoring issues)
-    public const string Refactoring = "refactoring";
-    public const string AgentGenerated = "agent-generated";
+    // Consolidation label (applied to auto-generated issues)
+    public const string Generated = "agent:generated";
 
     /// <summary>All agent labels with their display colors (without '#' prefix).</summary>
     public static readonly IReadOnlyList<(string Name, string Color)> Definitions = new[]
@@ -33,8 +32,7 @@ public static class AgentLabels
         (WontDo, "cfd3d7"),
         (Cancelled, "c5def5"),
         (Done, "0075ca"),
-        (Refactoring, "5319e7"),
-        (AgentGenerated, "bfd4f2"),
+        (Generated, "bfd4f2"),
         (Epic, "7057ff"),
         (EpicReview, "fbca04"),
         (EpicApproved, "0e8a16")
