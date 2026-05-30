@@ -33,8 +33,10 @@ internal sealed class ConsolidationProviderResolver
     }
 
     public Task<ProviderResolutionResult<BrainConsolidationProviders>> ResolveBrainConsolidationProvidersAsync(
-        ConsolidationJobMessage job, CancellationToken ct) =>
-        ResolveAsync<BrainConsolidationProviders>(job, async (factory, disposables) =>
+        ConsolidationJobMessage job, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        return ResolveAsync<BrainConsolidationProviders>(job, async (factory, disposables) =>
         {
             var brainConfig = FindRequiredConfig(job, ProviderKind.Repository, RepositoryRole.Brain);
             if (brainConfig is null)
@@ -58,10 +60,13 @@ internal sealed class ConsolidationProviderResolver
             return ProviderResolutionResult<BrainConsolidationProviders>.Succeed(
                 new BrainConsolidationProviders(brainProvider, agentProvider));
         }, ct);
+    }
 
     public Task<ProviderResolutionResult<RefactoringProviders>> ResolveRefactoringProvidersAsync(
-        ConsolidationJobMessage job, CancellationToken ct) =>
-        ResolveAsync<RefactoringProviders>(job, async (factory, disposables) =>
+        ConsolidationJobMessage job, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        return ResolveAsync<RefactoringProviders>(job, async (factory, disposables) =>
         {
             var repoConfig = FindRequiredConfig(job, ProviderKind.Repository, RepositoryRole.Work);
             if (repoConfig is null)
@@ -117,10 +122,13 @@ internal sealed class ConsolidationProviderResolver
             return ProviderResolutionResult<RefactoringProviders>.Succeed(
                 new RefactoringProviders(repoProvider, agentProvider, issueProvider, brainProvider));
         }, ct);
+    }
 
     public Task<ProviderResolutionResult<HarnessProviders>> ResolveHarnessProvidersAsync(
-        ConsolidationJobMessage job, CancellationToken ct) =>
-        ResolveAsync<HarnessProviders>(job, async (factory, disposables) =>
+        ConsolidationJobMessage job, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        return ResolveAsync<HarnessProviders>(job, async (factory, disposables) =>
         {
             var agentConfig = FindRequiredConfig(job, ProviderKind.Agent);
             if (agentConfig is null)
@@ -134,6 +142,7 @@ internal sealed class ConsolidationProviderResolver
 
             return ProviderResolutionResult<HarnessProviders>.Succeed(new HarnessProviders(agentProvider));
         }, ct);
+    }
 
     /// <summary>
     /// Generic helper that encapsulates factory creation and dispose-on-failure cleanup.
