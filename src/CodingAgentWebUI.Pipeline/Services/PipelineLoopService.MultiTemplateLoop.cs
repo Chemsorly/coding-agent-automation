@@ -517,16 +517,19 @@ public sealed partial class PipelineLoopService
                             NotifyChange();
 
                             var dispatched = await _jobDispatcher!.TryDispatchReviewAsync(
-                                pr.Identifier,
-                                pr.BranchName,
-                                pr.Title,
-                                pr.Description,
-                                pr.Url,
-                                pr.TargetBranch,
-                                template.IssueProviderId,
-                                template.RepoProviderId,
-                                template.BrainProviderId,
-                                initiatedBy: "loop",
+                                new ReviewDispatchRequest
+                                {
+                                    PrIdentifier = pr.Identifier,
+                                    PrBranchName = pr.BranchName,
+                                    PrTitle = pr.Title,
+                                    PrDescription = pr.Description,
+                                    PrUrl = pr.Url,
+                                    PrTargetBranch = pr.TargetBranch,
+                                    IssueProviderId = template.IssueProviderId,
+                                    RepoProviderId = template.RepoProviderId,
+                                    BrainProviderId = template.BrainProviderId,
+                                    InitiatedBy = "loop"
+                                },
                                 stopToken);
 
                             if (dispatched)
