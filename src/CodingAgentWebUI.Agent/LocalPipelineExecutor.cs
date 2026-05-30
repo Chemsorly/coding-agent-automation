@@ -495,9 +495,7 @@ public sealed class LocalPipelineExecutor
         // NOTE: QualityGateExecutor already transitions to PreparingForPullRequest
         // during its cleanup phase, so we skip that transition here to avoid duplicates.
 
-        run.CurrentStep = PipelineStep.CreatingPullRequest;
-        try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.CreatingPullRequest, DateTimeOffset.UtcNow, (Dictionary<string, string>?)null, ct); }
-        catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", PipelineStep.CreatingPullRequest); }
+        await ReportStepTransitionAsync(connection, job.JobId, run, PipelineStep.CreatingPullRequest, ct);
 
         if (run.LinkedPullRequest is not null)
         {
@@ -535,15 +533,11 @@ public sealed class LocalPipelineExecutor
         // ── Reflection + brain post-run sync ──
         if (!isDraft && brainProvider is not null && brainSync is not null && !config.BrainReadOnly)
         {
-            run.CurrentStep = PipelineStep.ReflectingOnRun;
-            try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.ReflectingOnRun, DateTimeOffset.UtcNow, (Dictionary<string, string>?)null, ct); }
-            catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", PipelineStep.ReflectingOnRun); }
+            await ReportStepTransitionAsync(connection, job.JobId, run, PipelineStep.ReflectingOnRun, ct);
 
             await _finalization.RunReflectionAsync(run, agentProvider, config, emitOutputLine, ct);
 
-            run.CurrentStep = PipelineStep.SyncingBrainRepoPostRun;
-            try { await connection.InvokeAsync("ReportStepTransition", job.JobId, PipelineStep.SyncingBrainRepoPostRun, DateTimeOffset.UtcNow, (Dictionary<string, string>?)null, ct); }
-            catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", PipelineStep.SyncingBrainRepoPostRun); }
+            await ReportStepTransitionAsync(connection, job.JobId, run, PipelineStep.SyncingBrainRepoPostRun, ct);
 
             await _finalization.SyncBrainPostRunAsync(run, brainSync, brainProvider, config, emitOutputLine, ct);
         }
@@ -557,6 +551,24 @@ public sealed class LocalPipelineExecutor
         run.CompletedAt = DateTime.UtcNow;
         run.CurrentStep = finalStep;
         run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
+    }
+
+    /// <summary>
+    /// Reports a step transition to the orchestrator via SignalR, updating the run's current step.
+    /// Failures are logged as warnings and do not propagate — step transitions are best-effort.
+    /// </summary>
+    private async Task ReportStepTransitionAsync(
+        HubConnection connection, string jobId, PipelineRun run, PipelineStep step, CancellationToken ct)
+    {
+        run.CurrentStep = step;
+        try
+        {
+            await connection.InvokeAsync("ReportStepTransition", jobId, step, DateTimeOffset.UtcNow, (Dictionary<string, string>?)null, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to report step transition to {Step}", step);
+        }
     }
 
     /// <summary>
@@ -621,39 +633,29 @@ public sealed class LocalPipelineExecutor
         return metadata;
     }
 
-    internal static JobCompletionPayload BuildCompletionPayload(PipelineRun run) => new()
+    internal static JobCompletionPayload BuildCompletionPayload(PipelineRun run) => BuildPayloadBase(run) with
     {
         FinalStep = run.CurrentStep,
         FailureReason = run.FailureReason,
         PullRequestUrl = run.PullRequestUrl,
         PullRequestNumber = run.PullRequestNumber,
         IsDraftPr = run.IsDraftPr,
-        RetryCount = run.RetryCount,
         CompletedAt = run.CompletedAt.HasValue ? new DateTimeOffset(run.CompletedAt.Value, TimeSpan.Zero) : DateTimeOffset.UtcNow,
-        FilesChangedCount = run.FilesChangedCount,
-        LinesAdded = run.LinesAdded,
-        LinesRemoved = run.LinesRemoved,
         BrainUpdatesPushed = run.BrainUpdatesPushed,
-        AnalysisRecommendation = run.AnalysisRecommendation,
-        IsRework = run.LinkedPullRequest is not null,
-        AnalysisConcerns = run.AnalysisConcerns,
-        AnalysisBlockingIssues = run.AnalysisBlockingIssues,
-        BlacklistedFilesDetected = run.BlacklistedFilesDetected,
-        CodeReviewAgentsRun = run.CodeReviewAgentsRun,
-        CodeReviewCriticalCount = run.CodeReviewCriticalCount,
-        CodeReviewWarningCount = run.CodeReviewWarningCount,
-        CodeReviewSuggestionCount = run.CodeReviewSuggestionCount,
-        Feedback = run.Feedback,
-        TotalTokens = run.TotalTokens,
-        TotalCost = run.TotalCost,
-        FinalLabel = run.FinalLabel
+        AnalysisRecommendation = run.AnalysisRecommendation
     };
 
-    internal static JobCompletionPayload BuildFailurePayload(PipelineRun run, string reason) => new()
+    internal static JobCompletionPayload BuildFailurePayload(PipelineRun run, string reason) => BuildPayloadBase(run) with
     {
         FinalStep = PipelineStep.Failed,
         FailureReason = reason,
-        CompletedAt = DateTimeOffset.UtcNow,
+        CompletedAt = DateTimeOffset.UtcNow
+    };
+
+    private static JobCompletionPayload BuildPayloadBase(PipelineRun run) => new()
+    {
+        FinalStep = PipelineStep.Failed, // Placeholder — callers override via 'with'
+        CompletedAt = DateTimeOffset.UtcNow, // Placeholder — callers override via 'with'
         RetryCount = run.RetryCount,
         IsRework = run.LinkedPullRequest is not null,
         FilesChangedCount = run.FilesChangedCount,
