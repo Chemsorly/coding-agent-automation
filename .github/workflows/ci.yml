@@ -44,13 +44,13 @@ jobs:
         uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
         with:
           header: coverage-ci
-          path: CoverageReport/AssembliesSummary.md
+          path: CoverageReport/Summary.md
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        if: ${{ always() && github.event_name == 'pull_request' && hashFiles('CoverageReport/AssembliesSummary.md') != '' }}
+        if: ${{ always() && github.event_name == 'pull_request' && hashFiles('CoverageReport/Summary.md') != '' }}
 
       - name: Write coverage to job summary
-        run: cat CoverageReport/AssembliesSummary.md >> $GITHUB_STEP_SUMMARY
-        if: ${{ always() && hashFiles('CoverageReport/AssembliesSummary.md') != '' }}
+        run: cat CoverageReport/Summary.md >> $GITHUB_STEP_SUMMARY
+        if: ${{ always() && hashFiles('CoverageReport/Summary.md') != '' }}
 
       - name: Upload test results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
