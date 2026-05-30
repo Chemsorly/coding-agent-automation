@@ -140,7 +140,7 @@ KiroCliLib/
 |-----------|------|
 | **KiroCliOrchestrator** | Coordinates the full execution workflow: scan workspace → start process → parse output → detect changes → invoke callbacks |
 | **ProcessWrapper** | Starts and manages the Kiro CLI OS process. Handles WSL integration on Windows (auto-detects platform, converts paths). Supports cancellation and forceful termination. |
-| **OutputParser** | Processes stdout/stderr lines using regex patterns to detect execution phases (Research → Plan → Implement → Test → Completed), file operations, and test results. Emits `StateChanged`, `FileDetected`, and `TestResultDetected` events. |
+| **OutputParser** | Processes stdout/stderr lines using regex patterns to detect execution phases (Research → Plan → Implement → Test → Completed) and test results. Emits `StateChanged` events and exposes detected test results via the `TestResults` property. |
 | **FileSystemMonitor** | Takes recursive filesystem snapshots before and after execution, then compares them to produce a list of Created/Modified/Deleted file changes. |
 | **CallbackHandler** | Allows consumers to register callbacks per `KiroState`. Invokes callbacks with error isolation (one failing callback does not prevent others from running). |
 
