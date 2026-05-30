@@ -65,38 +65,20 @@ public sealed partial class AgentJobDispatcher
     }
 
     /// <inheritdoc />
-    public async Task<bool> TryDispatchReviewAsync(
-        string prIdentifier,
-        string prBranchName,
-        string prTitle,
-        string? prDescription,
-        string prUrl,
-        string prTargetBranch,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
-        string initiatedBy,
-        CancellationToken ct)
+    public async Task<bool> TryDispatchReviewAsync(ReviewDispatchRequest request, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(prIdentifier);
-        ArgumentNullException.ThrowIfNull(prBranchName);
-        ArgumentNullException.ThrowIfNull(prTitle);
-        ArgumentNullException.ThrowIfNull(prUrl);
-        ArgumentNullException.ThrowIfNull(prTargetBranch);
-        ArgumentNullException.ThrowIfNull(issueProviderId);
-        ArgumentNullException.ThrowIfNull(repoProviderId);
-        ArgumentNullException.ThrowIfNull(initiatedBy);
+        ArgumentNullException.ThrowIfNull(request);
 
         // Check if already being processed
-        if (IsIssueBeingProcessedOrQueued(prIdentifier))
+        if (IsIssueBeingProcessedOrQueued(request.PrIdentifier))
         {
-            _logger.Information("PR {PrIdentifier} already being processed or queued, skipping review dispatch", prIdentifier);
+            _logger.Information("PR {PrIdentifier} already being processed or queued, skipping review dispatch", request.PrIdentifier);
             return false;
         }
 
         // Resolve required labels for agent matching
         var config = await _configStore.LoadPipelineConfigAsync(ct);
-        var repoConfig = await _configStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
+        var repoConfig = await _configStore.GetProviderConfigByIdAsync(request.RepoProviderId, ProviderKind.Repository, ct);
         var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
 
         // Try to find an idle agent
@@ -106,31 +88,32 @@ public sealed partial class AgentJobDispatcher
         {
             // Agent available — dispatch immediately
             return await DispatchReviewToAgentAsync(
-                agent, prIdentifier, prBranchName, prTitle, prDescription, prUrl, prTargetBranch,
-                issueProviderId, repoProviderId, brainProviderId, initiatedBy, requiredLabels, ct);
+                agent, request.PrIdentifier, request.PrBranchName, request.PrTitle, request.PrDescription,
+                request.PrUrl, request.PrTargetBranch, request.IssueProviderId, request.RepoProviderId,
+                request.BrainProviderId, request.InitiatedBy, requiredLabels, ct);
         }
 
         // No idle agent — enqueue for later dispatch
         var enqueued = _dispatcher.EnqueueJob(new PendingJob
         {
-            IssueIdentifier = prIdentifier,
-            IssueTitle = prTitle,
-            IssueProviderId = issueProviderId,
-            RepoProviderId = repoProviderId,
-            BrainProviderId = brainProviderId,
+            IssueIdentifier = request.PrIdentifier,
+            IssueTitle = request.PrTitle,
+            IssueProviderId = request.IssueProviderId,
+            RepoProviderId = request.RepoProviderId,
+            BrainProviderId = request.BrainProviderId,
             PipelineProviderId = null,
             EnqueuedAt = DateTimeOffset.UtcNow,
-            InitiatedBy = initiatedBy,
+            InitiatedBy = request.InitiatedBy,
             RequiredLabels = requiredLabels,
             RunType = PipelineRunType.Review,
-            PrBranchName = prBranchName,
-            PrDescription = prDescription,
-            PrUrl = prUrl,
-            PrTargetBranch = prTargetBranch
+            PrBranchName = request.PrBranchName,
+            PrDescription = request.PrDescription,
+            PrUrl = request.PrUrl,
+            PrTargetBranch = request.PrTargetBranch
         });
 
         if (enqueued)
-            _logger.Information("PR review {PrIdentifier} enqueued for dispatch (no idle agents)", prIdentifier);
+            _logger.Information("PR review {PrIdentifier} enqueued for dispatch (no idle agents)", request.PrIdentifier);
 
         return enqueued;
     }

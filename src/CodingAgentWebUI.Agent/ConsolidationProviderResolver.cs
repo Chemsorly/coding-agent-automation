@@ -32,94 +32,81 @@ internal sealed class ConsolidationProviderResolver
         _logger = logger;
     }
 
-    public async Task<ProviderResolutionResult<BrainConsolidationProviders>> ResolveBrainConsolidationProvidersAsync(
-        ConsolidationJobMessage job, CancellationToken ct)
-    {
-        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, job.PipelineConfiguration);
-
-        var brainConfig = job.ProviderConfigs.FirstOrDefault(c =>
-            c.Kind == ProviderKind.Repository && c.RepositoryRole == RepositoryRole.Brain);
-
-        if (brainConfig is null)
-            return ProviderResolutionResult<BrainConsolidationProviders>.Fail(job.JobId,
-                "No brain repository provider configuration found in job");
-
-        var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Kind == ProviderKind.Agent);
-        if (agentConfig is null)
-            return ProviderResolutionResult<BrainConsolidationProviders>.Fail(job.JobId,
-                "No agent provider configuration found in job");
-
-        IRepositoryProvider? brainProvider = null;
-        IAgentProvider? agentProvider = null;
-
-        try
+    public Task<ProviderResolutionResult<BrainConsolidationProviders>> ResolveBrainConsolidationProvidersAsync(
+        ConsolidationJobMessage job, CancellationToken ct) =>
+        ResolveAsync<BrainConsolidationProviders>(job, async (factory, disposables) =>
         {
-            brainProvider = providerFactory.CreateRepositoryProvider(brainConfig);
-            agentProvider = providerFactory.CreateAgentProvider(agentConfig);
+            var brainConfig = FindRequiredConfig(job, ProviderKind.Repository, RepositoryRole.Brain);
+            if (brainConfig is null)
+                return ProviderResolutionResult<BrainConsolidationProviders>.Fail(job.JobId,
+                    "No brain repository provider configuration found in job");
+
+            var agentConfig = FindRequiredConfig(job, ProviderKind.Agent);
+            if (agentConfig is null)
+                return ProviderResolutionResult<BrainConsolidationProviders>.Fail(job.JobId,
+                    "No agent provider configuration found in job");
+
+            var brainProvider = factory.CreateRepositoryProvider(brainConfig);
+            if (brainProvider is IAsyncDisposable bd) disposables.Add(bd);
+
+            var agentProvider = factory.CreateAgentProvider(agentConfig);
+            if (agentProvider is IAsyncDisposable ad) disposables.Add(ad);
 
             await brainProvider.ValidateAsync(ct);
             await agentProvider.ValidateAsync(ct);
 
-            var result = new BrainConsolidationProviders(brainProvider, agentProvider);
-            // Ownership transferred — don't dispose here
-            brainProvider = null;
-            agentProvider = null;
-            return ProviderResolutionResult<BrainConsolidationProviders>.Succeed(result);
-        }
-        finally
+            return ProviderResolutionResult<BrainConsolidationProviders>.Succeed(
+                new BrainConsolidationProviders(brainProvider, agentProvider));
+        }, ct);
+
+    public Task<ProviderResolutionResult<RefactoringProviders>> ResolveRefactoringProvidersAsync(
+        ConsolidationJobMessage job, CancellationToken ct) =>
+        ResolveAsync<RefactoringProviders>(job, async (factory, disposables) =>
         {
-            if (brainProvider is IAsyncDisposable bd) await bd.DisposeAsync();
-            if (agentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
-        }
-    }
+            var repoConfig = FindRequiredConfig(job, ProviderKind.Repository, RepositoryRole.Work);
+            if (repoConfig is null)
+                return ProviderResolutionResult<RefactoringProviders>.Fail(job.JobId,
+                    "No code repository provider configuration found in job");
 
-    public async Task<ProviderResolutionResult<RefactoringProviders>> ResolveRefactoringProvidersAsync(
-        ConsolidationJobMessage job, CancellationToken ct)
-    {
-        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, job.PipelineConfiguration);
+            var agentConfig = FindRequiredConfig(job, ProviderKind.Agent);
+            if (agentConfig is null)
+                return ProviderResolutionResult<RefactoringProviders>.Fail(job.JobId,
+                    "No agent provider configuration found in job");
 
-        var repoConfig = job.ProviderConfigs.FirstOrDefault(c =>
-            c.Kind == ProviderKind.Repository && c.RepositoryRole == RepositoryRole.Work);
+            var issueConfig = FindRequiredConfig(job, ProviderKind.Issue);
+            if (issueConfig is null)
+                return ProviderResolutionResult<RefactoringProviders>.Fail(job.JobId,
+                    "No issue provider configuration found in job");
 
-        if (repoConfig is null)
-            return ProviderResolutionResult<RefactoringProviders>.Fail(job.JobId,
-                "No code repository provider configuration found in job");
+            var brainConfig = job.ProviderConfigs.FirstOrDefault(c =>
+                c.Kind == ProviderKind.Repository && c.RepositoryRole == RepositoryRole.Brain);
 
-        var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Kind == ProviderKind.Agent);
-        if (agentConfig is null)
-            return ProviderResolutionResult<RefactoringProviders>.Fail(job.JobId,
-                "No agent provider configuration found in job");
+            var repoProvider = factory.CreateRepositoryProvider(repoConfig);
+            if (repoProvider is IAsyncDisposable rd) disposables.Add(rd);
 
-        var issueConfig = job.ProviderConfigs.FirstOrDefault(c => c.Kind == ProviderKind.Issue);
-        if (issueConfig is null)
-            return ProviderResolutionResult<RefactoringProviders>.Fail(job.JobId,
-                "No issue provider configuration found in job");
+            var agentProvider = factory.CreateAgentProvider(agentConfig);
+            if (agentProvider is IAsyncDisposable ad) disposables.Add(ad);
 
-        var brainConfig = job.ProviderConfigs.FirstOrDefault(c =>
-            c.Kind == ProviderKind.Repository && c.RepositoryRole == RepositoryRole.Brain);
+            var issueProvider = CreateIssueProviderForConsolidation(issueConfig);
+            if (issueProvider is IAsyncDisposable id) disposables.Add(id);
 
-        IRepositoryProvider? repoProvider = null;
-        IAgentProvider? agentProvider = null;
-        IIssueProvider? issueProvider = null;
-        IRepositoryProvider? brainProvider = null;
-
-        try
-        {
-            repoProvider = providerFactory.CreateRepositoryProvider(repoConfig);
-            agentProvider = providerFactory.CreateAgentProvider(agentConfig);
-            issueProvider = CreateIssueProviderForConsolidation(issueConfig);
-
+            IRepositoryProvider? brainProvider = null;
             if (brainConfig is not null)
             {
                 try
                 {
-                    brainProvider = providerFactory.CreateRepositoryProvider(brainConfig);
+                    brainProvider = factory.CreateRepositoryProvider(brainConfig);
+                    if (brainProvider is IAsyncDisposable bd) disposables.Add(bd);
                     await brainProvider.ValidateAsync(ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _logger.Warning(ex, "Brain provider validation failed for consolidation job {JobId}, continuing without it", job.JobId);
-                    if (brainProvider is IAsyncDisposable bd2) await bd2.DisposeAsync();
+                    if (brainProvider is IAsyncDisposable bd2)
+                    {
+                        await bd2.DisposeAsync();
+                        disposables.Remove(bd2);
+                    }
                     brainProvider = null;
                 }
             }
@@ -127,49 +114,61 @@ internal sealed class ConsolidationProviderResolver
             await repoProvider.ValidateAsync(ct);
             await agentProvider.ValidateAsync(ct);
 
-            var result = new RefactoringProviders(repoProvider, agentProvider, issueProvider, brainProvider);
-            // Ownership transferred
-            repoProvider = null;
-            agentProvider = null;
-            issueProvider = null;
-            brainProvider = null;
-            return ProviderResolutionResult<RefactoringProviders>.Succeed(result);
-        }
-        finally
+            return ProviderResolutionResult<RefactoringProviders>.Succeed(
+                new RefactoringProviders(repoProvider, agentProvider, issueProvider, brainProvider));
+        }, ct);
+
+    public Task<ProviderResolutionResult<HarnessProviders>> ResolveHarnessProvidersAsync(
+        ConsolidationJobMessage job, CancellationToken ct) =>
+        ResolveAsync<HarnessProviders>(job, async (factory, disposables) =>
         {
-            if (repoProvider is IAsyncDisposable rd) await rd.DisposeAsync();
-            if (agentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
-            if (issueProvider is IAsyncDisposable id) await id.DisposeAsync();
-            if (brainProvider is IAsyncDisposable bd) await bd.DisposeAsync();
-        }
-    }
+            var agentConfig = FindRequiredConfig(job, ProviderKind.Agent);
+            if (agentConfig is null)
+                return ProviderResolutionResult<HarnessProviders>.Fail(job.JobId,
+                    "No agent provider configuration found in job");
 
-    public async Task<ProviderResolutionResult<HarnessProviders>> ResolveHarnessProvidersAsync(
-        ConsolidationJobMessage job, CancellationToken ct)
-    {
-        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, job.PipelineConfiguration);
+            var agentProvider = factory.CreateAgentProvider(agentConfig);
+            if (agentProvider is IAsyncDisposable ad) disposables.Add(ad);
 
-        var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Kind == ProviderKind.Agent);
-        if (agentConfig is null)
-            return ProviderResolutionResult<HarnessProviders>.Fail(job.JobId,
-                "No agent provider configuration found in job");
-
-        IAgentProvider? agentProvider = null;
-
-        try
-        {
-            agentProvider = providerFactory.CreateAgentProvider(agentConfig);
             await agentProvider.ValidateAsync(ct);
 
-            var result = new HarnessProviders(agentProvider);
-            agentProvider = null;
-            return ProviderResolutionResult<HarnessProviders>.Succeed(result);
+            return ProviderResolutionResult<HarnessProviders>.Succeed(new HarnessProviders(agentProvider));
+        }, ct);
+
+    /// <summary>
+    /// Generic helper that encapsulates factory creation and dispose-on-failure cleanup.
+    /// The resolver delegate registers created providers in the disposables list; on success
+    /// the list is cleared (ownership transferred to the holder), on failure all are disposed.
+    /// </summary>
+    private async Task<ProviderResolutionResult<T>> ResolveAsync<T>(
+        ConsolidationJobMessage job,
+        Func<AgentProviderFactory, List<IAsyncDisposable>, Task<ProviderResolutionResult<T>>> resolver,
+        CancellationToken ct) where T : IAsyncDisposable
+    {
+        var factory = new AgentProviderFactory(_orchestrator, _httpClientFactory, job.PipelineConfiguration);
+        var disposables = new List<IAsyncDisposable>();
+        try
+        {
+            var result = await resolver(factory, disposables);
+            if (result.IsSuccess)
+                disposables.Clear();
+            return result;
         }
         finally
         {
-            if (agentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
+            foreach (var d in disposables)
+                await d.DisposeAsync();
         }
     }
+
+    /// <summary>
+    /// Finds a required provider config by kind and optional repository role.
+    /// Returns null when not found — caller is responsible for returning a failure result.
+    /// </summary>
+    private static ProviderConfig? FindRequiredConfig(
+        ConsolidationJobMessage job, ProviderKind kind, RepositoryRole? role = null) =>
+        job.ProviderConfigs.FirstOrDefault(c =>
+            c.Kind == kind && (role is null || c.RepositoryRole == role));
 
     /// <summary>
     /// Creates an issue provider for consolidation runs. Unlike regular pipeline jobs where
