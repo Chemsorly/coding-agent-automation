@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services.Prompts;
 using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;

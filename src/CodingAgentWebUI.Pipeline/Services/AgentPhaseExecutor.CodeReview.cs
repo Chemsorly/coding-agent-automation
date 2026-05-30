@@ -1,5 +1,7 @@
+using CodingAgentWebUI.Pipeline.CodeReview;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services.Prompts;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -210,7 +212,7 @@ internal partial class AgentPhaseExecutor
                         findingsLines = Array.Empty<string>();
                     }
 
-                    var severityCounts = SeverityParser.Parse(findingsLines);
+                    var severityCounts = CodeReview.SeverityParser.Parse(findingsLines);
                     Interlocked.Add(ref run.CodeReviewCriticalCount, severityCounts.Critical);
                     Interlocked.Add(ref run.CodeReviewWarningCount, severityCounts.Warning);
                     Interlocked.Add(ref run.CodeReviewSuggestionCount, severityCounts.Suggestion);

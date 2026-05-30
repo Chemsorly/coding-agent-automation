@@ -1,4 +1,4 @@
-namespace CodingAgentWebUI.Pipeline.Models;
+namespace CodingAgentWebUI.Pipeline.CodeReview.Models;
 
 /// <summary>
 /// Which side of the diff an inline comment applies to.

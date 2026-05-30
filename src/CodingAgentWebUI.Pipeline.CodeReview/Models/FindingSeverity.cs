@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace CodingAgentWebUI.Pipeline.Models;
+namespace CodingAgentWebUI.Pipeline.CodeReview.Models;
 
 /// <summary>
 /// Severity level for structured code review findings.

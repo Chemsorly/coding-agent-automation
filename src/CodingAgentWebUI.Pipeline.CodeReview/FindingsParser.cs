@@ -1,7 +1,7 @@
 using System.Text.RegularExpressions;
-using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.CodeReview.Models;
 
-namespace CodingAgentWebUI.Pipeline.Services;
+namespace CodingAgentWebUI.Pipeline.CodeReview;
 
 /// <summary>
 /// Extracts structured findings with file:line metadata from review agent output.

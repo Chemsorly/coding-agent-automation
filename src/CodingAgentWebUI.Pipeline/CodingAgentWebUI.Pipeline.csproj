@@ -30,4 +30,8 @@
     <PackageReference Include="Serilog" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\CodingAgentWebUI.Pipeline.CodeReview\CodingAgentWebUI.Pipeline.CodeReview.csproj" />
+  </ItemGroup>
+
 </Project>

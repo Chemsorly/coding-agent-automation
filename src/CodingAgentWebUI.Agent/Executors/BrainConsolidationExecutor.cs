@@ -3,6 +3,7 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Services.Prompts;
 
 namespace CodingAgentWebUI.Agent.Executors;
 

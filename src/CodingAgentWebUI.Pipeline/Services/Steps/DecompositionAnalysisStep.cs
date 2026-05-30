@@ -1,6 +1,7 @@
 using System.Text;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services.Prompts;
 using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;

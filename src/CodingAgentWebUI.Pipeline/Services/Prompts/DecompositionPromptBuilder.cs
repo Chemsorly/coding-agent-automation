@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace CodingAgentWebUI.Pipeline.Services;
+namespace CodingAgentWebUI.Pipeline.Services.Prompts;
 
 /// <summary>
 /// Builds structured prompts for decomposition agent phases.

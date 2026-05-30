@@ -1,4 +1,4 @@
-namespace CodingAgentWebUI.Pipeline.Services;
+namespace CodingAgentWebUI.Pipeline.CodeReview;
 
 /// <summary>
 /// Parses code review output for severity markers ([CRITICAL], [WARNING], [SUGGESTION]).

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services.Prompts;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 

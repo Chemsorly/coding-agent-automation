@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.CodeReview.Models;
+
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline.CodeReview.Models;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Models;

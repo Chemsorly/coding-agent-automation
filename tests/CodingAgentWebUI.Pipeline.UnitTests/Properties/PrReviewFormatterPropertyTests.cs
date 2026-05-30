@@ -1,4 +1,6 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline.CodeReview;
+using CodingAgentWebUI.Pipeline.CodeReview.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;

@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Moq;
 using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.CodeReview;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure;

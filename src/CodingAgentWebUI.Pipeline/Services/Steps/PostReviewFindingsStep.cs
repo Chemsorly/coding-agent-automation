@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.CodeReview;
+using CodingAgentWebUI.Pipeline.CodeReview.Models;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 

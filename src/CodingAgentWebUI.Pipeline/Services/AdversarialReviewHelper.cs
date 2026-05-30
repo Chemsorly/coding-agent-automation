@@ -35,7 +35,7 @@ public sealed record AdversarialReviewResult
     public TokenUsage? RefinementTokenUsage { get; init; }
 
     /// <summary>Severity counts parsed from the review findings.</summary>
-    public SeverityCounts? Severities { get; init; }
+    public CodeReview.SeverityCounts? Severities { get; init; }
 
     public static AdversarialReviewResult Skipped { get; } = new() { ReviewExecuted = false };
 }
@@ -142,7 +142,7 @@ public static class AdversarialReviewHelper
 
             var findingsContent = await File.ReadAllTextAsync(absoluteReviewPath, ct);
             var findingsLines = findingsContent.Split('\n');
-            var severities = SeverityParser.Parse(findingsLines);
+            var severities = CodeReview.SeverityParser.Parse(findingsLines);
 
             onOutputLine?.Invoke($"📋 Review complete: {severities.Critical} CRITICAL, " +
                                 $"{severities.Warning} WARNING, {severities.Suggestion} SUGGESTION");

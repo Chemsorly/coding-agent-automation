@@ -2,7 +2,7 @@ using System.Text;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 
-namespace CodingAgentWebUI.Pipeline.Services;
+namespace CodingAgentWebUI.Pipeline.Services.Prompts;
 
 /// <summary>
 /// Builds prompts for the agent from issue details and parsed issue data.
