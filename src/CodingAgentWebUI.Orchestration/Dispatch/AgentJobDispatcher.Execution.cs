@@ -161,16 +161,7 @@ public sealed partial class AgentJobDispatcher
     /// </summary>
     internal async Task<bool> DispatchReviewToAgentAsync(
         AgentEntry agent,
-        string prIdentifier,
-        string prBranchName,
-        string prTitle,
-        string? prDescription,
-        string prUrl,
-        string prTargetBranch,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
-        string initiatedBy,
+        ReviewDispatchRequest request,
         IReadOnlyList<string> requiredLabels,
         CancellationToken ct)
     {
@@ -194,19 +185,19 @@ public sealed partial class AgentJobDispatcher
 
             // Create the dispatched run via PipelineOrchestrationService
             var run = await _orchestration.CreateDispatchedRunAsync(
-                issueProviderId, repoProviderId, prIdentifier,
+                request.IssueProviderId, request.RepoProviderId, request.PrIdentifier,
                 agentProviderId, agent.AgentId, ct,
-                brainProviderId, pipelineProviderId: null, initiatedBy);
+                request.BrainProviderId, pipelineProviderId: null, request.InitiatedBy);
 
             if (run == null)
             {
-                _logger.Warning("Failed to create dispatched run for PR review {PrIdentifier}", prIdentifier);
+                _logger.Warning("Failed to create dispatched run for PR review {PrIdentifier}", request.PrIdentifier);
                 return false;
             }
 
             // Pre-fetch linked issues before constructing the final run (non-fatal on failure)
             var linkedIssueContexts = await PreFetchLinkedIssuesAsync(
-                prIdentifier, issueProviderId, repoProviderId, ct);
+                request.PrIdentifier, request.IssueProviderId, request.RepoProviderId, ct);
 
             // Replace the initial run with a fully-populated review run atomically.
             // Using ReplaceRun instead of RemoveRun+AddRun eliminates the race window where
@@ -214,29 +205,29 @@ public sealed partial class AgentJobDispatcher
             run = new PipelineRun
             {
                 RunId = run.RunId,
-                IssueIdentifier = prIdentifier,
-                IssueTitle = prTitle,
-                IssueProviderConfigId = issueProviderId,
-                RepoProviderConfigId = repoProviderId,
+                IssueIdentifier = request.PrIdentifier,
+                IssueTitle = request.PrTitle,
+                IssueProviderConfigId = request.IssueProviderId,
+                RepoProviderConfigId = request.RepoProviderId,
                 StartedAt = run.StartedAt,
                 CurrentStep = PipelineStep.Created,
                 RepositoryName = run.RepositoryName,
                 ModelName = run.ModelName,
-                BrainProviderConfigId = brainProviderId,
+                BrainProviderConfigId = request.BrainProviderId,
                 PipelineProviderConfigId = null,
-                InitiatedBy = initiatedBy,
+                InitiatedBy = request.InitiatedBy,
                 AgentId = agent.AgentId,
                 AgentProviderConfigId = agentProviderId,
                 RunType = PipelineRunType.Review,
-                ReviewPrBranchName = prBranchName,
-                ReviewPrTargetBranch = prTargetBranch,
-                ReviewPrUrl = prUrl,
-                ReviewPrDescription = prDescription,
+                ReviewPrBranchName = request.PrBranchName,
+                ReviewPrTargetBranch = request.PrTargetBranch,
+                ReviewPrUrl = request.PrUrl,
+                ReviewPrDescription = request.PrDescription,
                 LinkedPullRequest = new LinkedPullRequest
                 {
-                    Number = int.TryParse(prIdentifier, out var prNum) ? prNum : 0,
-                    BranchName = prBranchName,
-                    Url = prUrl,
+                    Number = int.TryParse(request.PrIdentifier, out var prNum) ? prNum : 0,
+                    BranchName = request.PrBranchName,
+                    Url = request.PrUrl,
                     IsDraft = false
                 },
                 LinkedIssueContexts = linkedIssueContexts.Count > 0 ? linkedIssueContexts : null
@@ -250,60 +241,60 @@ public sealed partial class AgentJobDispatcher
 
             // Build and prepare provider configs for the agent
             var providerConfigs = await PrepareProviderConfigsAsync(
-                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, ct);
+                request.RepoProviderId, agentProviderId, request.BrainProviderId, pipelineProviderId: null, ct);
 
             var config = await _configStore.LoadPipelineConfigAsync(ct);
 
             // Override BrainReadOnly from the matching template (per-template setting)
             var matchingTemplate = config.PipelineJobTemplates.FirstOrDefault(t =>
-                t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
+                t.RepoProviderId == request.RepoProviderId && t.BrainProviderId == request.BrainProviderId);
             if (matchingTemplate is { BrainReadOnly: true })
                 config = config with { BrainReadOnly = true };
 
             // Override blacklist settings from repo provider config (per-repo takes precedence)
-            config = PipelineConfiguration.ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == repoProviderId));
+            config = PipelineConfiguration.ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == request.RepoProviderId));
 
             // Swap label to agent:in-progress before dispatch so the PR is immediately marked
             // in-progress, preventing the loop from re-dispatching it on the next cycle.
             // CloneRepositoryStep skips the swap for agent-dispatched runs (AgentId is set).
             await _labelSwapper.SwapLabelAsync(
-                repoProviderId, prIdentifier, AgentLabels.InProgress, LabelTargetKind.PullRequest, ct);
+                request.RepoProviderId, request.PrIdentifier, AgentLabels.InProgress, LabelTargetKind.PullRequest, ct);
 
             // Build a synthetic IssueDetail and ParsedIssue from PR metadata for the job assignment
             var syntheticIssueDetail = new IssueDetail
             {
-                Identifier = prIdentifier,
-                Title = prTitle,
-                Description = prDescription ?? string.Empty,
+                Identifier = request.PrIdentifier,
+                Title = request.PrTitle,
+                Description = request.PrDescription ?? string.Empty,
                 Labels = Array.Empty<string>()
             };
-            var syntheticParsedIssue = new IssueDescriptionParser().Parse(prDescription ?? string.Empty);
+            var syntheticParsedIssue = new IssueDescriptionParser().Parse(request.PrDescription ?? string.Empty);
 
             var message = new JobAssignmentMessage
             {
                 JobId = run.RunId,
-                IssueIdentifier = prIdentifier,
+                IssueIdentifier = request.PrIdentifier,
                 IssueDetail = syntheticIssueDetail,
                 ParsedIssue = syntheticParsedIssue,
                 IssueComments = Array.Empty<IssueComment>(),
                 ExistingAnalysis = null,
                 ForceRefreshAnalysis = false,
                 LinkedPullRequest = run.LinkedPullRequest,
-                RepoProviderConfigId = repoProviderId,
+                RepoProviderConfigId = request.RepoProviderId,
                 AgentProviderConfigId = agentProviderId,
-                BrainProviderConfigId = brainProviderId,
+                BrainProviderConfigId = request.BrainProviderId,
                 PipelineProviderConfigId = null,
                 ProviderConfigs = providerConfigs,
                 PipelineConfiguration = config,
-                InitiatedBy = initiatedBy,
+                InitiatedBy = request.InitiatedBy,
                 ResolvedProfileId = profile.Id,
                 QualityGateConfigs = Array.Empty<QualityGateConfiguration>(),
                 McpServers = profile.McpServers,
                 ReviewerConfigs = resolvedReviewerConfigs,
                 LinkedIssueContexts = linkedIssueContexts.Count > 0 ? linkedIssueContexts : null,
                 RunType = PipelineRunType.Review,
-                ReviewPrTargetBranch = prTargetBranch,
-                ReviewPrDescription = prDescription
+                ReviewPrTargetBranch = request.PrTargetBranch,
+                ReviewPrDescription = request.PrDescription
             };
 
             // Assign the job to the agent in the registry
@@ -315,14 +306,14 @@ public sealed partial class AgentJobDispatcher
 
             _logger.Information(
                 "Review job {JobId} dispatched to agent {AgentId} for PR {PrIdentifier} (profile={ProfileId}, reviewerConfigs={ReviewerConfigCount}, linkedIssues={LinkedIssueCount})",
-                run.RunId, agent.AgentId, prIdentifier, profile.Id, resolvedReviewerConfigs.Count, linkedIssueContexts.Count);
+                run.RunId, agent.AgentId, request.PrIdentifier, profile.Id, resolvedReviewerConfigs.Count, linkedIssueContexts.Count);
 
             return true;
         }
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to dispatch review job to agent {AgentId} for PR {PrIdentifier}",
-                agent.AgentId, prIdentifier);
+                agent.AgentId, request.PrIdentifier);
 
             // Reset agent status on failure
             agent.ActiveJobId = null;
@@ -330,7 +321,7 @@ public sealed partial class AgentJobDispatcher
 
             // Revert label on dispatch failure
             await _labelSwapper.SwapLabelAsync(
-                repoProviderId, prIdentifier, AgentLabels.Next, LabelTargetKind.PullRequest, CancellationToken.None);
+                request.RepoProviderId, request.PrIdentifier, AgentLabels.Next, LabelTargetKind.PullRequest, CancellationToken.None);
 
             return false;
         }

@@ -88,9 +88,7 @@ public sealed partial class AgentJobDispatcher
         {
             // Agent available — dispatch immediately
             return await DispatchReviewToAgentAsync(
-                agent, request.PrIdentifier, request.PrBranchName, request.PrTitle, request.PrDescription,
-                request.PrUrl, request.PrTargetBranch, request.IssueProviderId, request.RepoProviderId,
-                request.BrainProviderId, request.InitiatedBy, requiredLabels, ct);
+                agent, request, requiredLabels, ct);
         }
 
         // No idle agent — enqueue for later dispatch
