@@ -344,8 +344,8 @@ public class GitHubIssueProviderTests
         var result = await _provider.EnsureAgentLabelsAsync(CancellationToken.None);
 
         result.Should().BeTrue();
-        // All twelve should be attempted (7 agent labels + 2 consolidation labels + 3 epic decomposition labels)
-        mockLabels.Verify(l => l.Create("owner", "repo", It.IsAny<NewLabel>()), Times.Exactly(12));
+        // All eleven should be attempted (7 agent labels + 1 consolidation label + 3 epic decomposition labels)
+        mockLabels.Verify(l => l.Create("owner", "repo", It.IsAny<NewLabel>()), Times.Exactly(11));
     }
 
     [Fact]
@@ -538,8 +538,8 @@ public class GitHubIssueProviderTests
     {
         var issues = new List<Issue>
         {
-            CreateOctokitIssue(10, "Closed One", body: "b", labels: ["refactoring", "agent:done"]),
-            CreateOctokitIssue(11, "Closed Two", body: "b", labels: ["refactoring", "agent:wont-do"])
+            CreateOctokitIssue(10, "Closed One", body: "b", labels: ["agent:generated", "agent:done"]),
+            CreateOctokitIssue(11, "Closed Two", body: "b", labels: ["agent:generated", "agent:wont-do"])
         };
 
         _mockIssues
@@ -586,7 +586,7 @@ public class GitHubIssueProviderTests
             .Callback<string, string, RepositoryIssueRequest, ApiOptions>((_, _, req, _) => capturedRequest = req)
             .ReturnsAsync(new List<Issue>().AsReadOnly());
 
-        var labels = new List<string> { "refactoring", "agent-generated" }.AsReadOnly();
+        var labels = new List<string> { "agent:generated" }.AsReadOnly();
         await _provider.ListClosedIssuesAsync(1, 20, labels, null, CancellationToken.None);
 
         capturedRequest.Should().NotBeNull();
@@ -604,7 +604,7 @@ public class GitHubIssueProviderTests
             comments: 0, pullRequest: pr, closedAt: null, createdAt: DateTimeOffset.UtcNow,
             updatedAt: null, id: 1, nodeId: string.Empty, locked: false, repository: null,
             reactions: null, activeLockReason: null, stateReason: null);
-        var regularIssue = CreateOctokitIssue(2, "Real Issue", body: "b", labels: ["refactoring"]);
+        var regularIssue = CreateOctokitIssue(2, "Real Issue", body: "b", labels: ["agent:generated"]);
 
         _mockIssues
             .Setup(i => i.GetAllForRepository("owner", "repo", It.IsAny<RepositoryIssueRequest>(), It.IsAny<ApiOptions>()))

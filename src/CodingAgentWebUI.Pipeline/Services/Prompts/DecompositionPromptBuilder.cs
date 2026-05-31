@@ -141,7 +141,7 @@ public static class DecompositionPromptBuilder
         sb.AppendLine("- **title** — Non-empty string, maximum 256 characters");
         sb.AppendLine("- **body** — Non-empty markdown string following the issue template");
         sb.AppendLine("- **dependencies** — Array of title strings referencing other sub-issues in this decomposition (use exact titles, not issue numbers)");
-        sb.AppendLine("- **labels** — Array of additional label strings (the `agent:next` and `agent-generated` labels are applied automatically)");
+        sb.AppendLine("- **labels** — Array of additional label strings (the `agent:next` and `agent:generated` labels are applied automatically)");
         sb.AppendLine();
 
         // Issue template sections

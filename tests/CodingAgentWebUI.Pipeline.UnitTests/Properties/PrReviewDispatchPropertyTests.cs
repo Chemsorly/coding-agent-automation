@@ -29,7 +29,7 @@ public class PrReviewDispatchPropertyTests
     public void P1_LabelFiltering_ReturnsOnlyMatchingPrs(PositiveInt prCountRaw)
     {
         var prCount = Math.Min(prCountRaw.Get, 20);
-        var allLabels = new[] { "agent:next", "bug", "enhancement", "docs", "refactoring" };
+        var allLabels = new[] { "agent:next", "bug", "enhancement", "docs", "agent:generated" };
         var filterLabels = new[] { "agent:next" };
 
         var prs = Enumerable.Range(0, prCount).Select(i => new PullRequestSummary

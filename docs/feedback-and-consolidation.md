@@ -51,7 +51,7 @@ Dispatches an agent to analyze the codebase holistically for architectural drift
 - Summary of the problem
 - Affected files
 - Suggested approach
-- Labels: `refactoring`, `agent-generated`
+- Labels: `agent:generated`
 
 The agent looks for: TODO comments, duplicated logic, naming inconsistencies, structural drift from incremental changes, and overly complex areas.
 

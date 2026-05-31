@@ -204,7 +204,7 @@ internal sealed class DecompositionStep : IPipelineStep
 
         try
         {
-            var labels = new List<string> { AgentLabels.AgentGenerated };
+            var labels = new List<string> { AgentLabels.Generated };
             var page = 1;
             const int pageSize = 50;
             bool hasMore;

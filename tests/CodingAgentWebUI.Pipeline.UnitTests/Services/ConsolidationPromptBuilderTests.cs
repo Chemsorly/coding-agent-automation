@@ -168,7 +168,7 @@ public class ConsolidationPromptBuilderTests
     {
         var refactoring = new List<IssueSummary>
         {
-            new() { Identifier = "10", Title = "Extract shared retry logic", Labels = ["refactoring", "agent-generated"] }
+            new() { Identifier = "10", Title = "Extract shared retry logic", Labels = ["agent:generated"] }
         };
         var other = new List<IssueSummary>
         {
@@ -197,7 +197,7 @@ public class ConsolidationPromptBuilderTests
     {
         var refactoring = new List<IssueSummary>
         {
-            new() { Identifier = "5", Title = "Rename methods", Labels = ["refactoring"] }
+            new() { Identifier = "5", Title = "Rename methods", Labels = ["agent:generated"] }
         };
 
         var result = ConsolidationPromptBuilder.BuildOpenIssueContext(refactoring, []);
@@ -300,7 +300,7 @@ public class ConsolidationPromptBuilderTests
     {
         var issues = new[]
         {
-            new IssueSummary { Identifier = "1", Title = "Ambiguous", Labels = new[] { "refactoring" } }
+            new IssueSummary { Identifier = "1", Title = "Ambiguous", Labels = new[] { "agent:generated" } }
         };
 
         var result = ConsolidationPromptBuilder.BuildProposalOutcomeContext(issues);
@@ -313,7 +313,7 @@ public class ConsolidationPromptBuilderTests
     {
         var issues = new[]
         {
-            new IssueSummary { Identifier = "315", Title = "Extract shared retry logic", Labels = new[] { "refactoring", "agent:done" } }
+            new IssueSummary { Identifier = "315", Title = "Extract shared retry logic", Labels = new[] { "agent:generated", "agent:done" } }
         };
 
         var result = ConsolidationPromptBuilder.BuildProposalOutcomeContext(issues);
@@ -328,8 +328,8 @@ public class ConsolidationPromptBuilderTests
     {
         var issues = new[]
         {
-            new IssueSummary { Identifier = "320", Title = "Restructure interfaces", Labels = new[] { "refactoring", "agent:wont-do" } },
-            new IssueSummary { Identifier = "322", Title = "Replace serializer", Labels = new[] { "refactoring", "agent:cancelled" } }
+            new IssueSummary { Identifier = "320", Title = "Restructure interfaces", Labels = new[] { "agent:generated", "agent:wont-do" } },
+            new IssueSummary { Identifier = "322", Title = "Replace serializer", Labels = new[] { "agent:generated", "agent:cancelled" } }
         };
 
         var result = ConsolidationPromptBuilder.BuildProposalOutcomeContext(issues);
@@ -346,7 +346,7 @@ public class ConsolidationPromptBuilderTests
         var issues = new[]
         {
             new IssueSummary { Identifier = "1", Title = "Done", Labels = new[] { "agent:done" } },
-            new IssueSummary { Identifier = "2", Title = "Ambiguous", Labels = new[] { "refactoring" } },
+            new IssueSummary { Identifier = "2", Title = "Ambiguous", Labels = new[] { "agent:generated" } },
             new IssueSummary { Identifier = "3", Title = "Rejected", Labels = new[] { "agent:wont-do" } }
         };
 

@@ -129,8 +129,8 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
             sanitizedBody = $"{depSection}\n\n{sanitizedBody}";
         }
 
-        // 8. Apply labels: agent:next + agent-generated + custom labels from proposal
-        var labels = new List<string> { AgentLabels.Next, AgentLabels.AgentGenerated };
+        // 8. Apply labels: agent:next + agent:generated + custom labels from proposal
+        var labels = new List<string> { AgentLabels.Next, AgentLabels.Generated };
         foreach (var label in proposal.Labels)
         {
             if (!string.IsNullOrWhiteSpace(label) &&

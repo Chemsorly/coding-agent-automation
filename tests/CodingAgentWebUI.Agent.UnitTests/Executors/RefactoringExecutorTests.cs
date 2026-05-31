@@ -225,7 +225,7 @@ public class RefactoringExecutorTests : IDisposable
 
         var refactoringIssues = new PagedResult<IssueSummary>
         {
-            Items = [new IssueSummary { Identifier = "100", Title = "Extract retry logic", Labels = ["refactoring", "agent-generated"], CreatedAt = DateTime.UtcNow.AddDays(-5) }],
+            Items = [new IssueSummary { Identifier = "100", Title = "Extract retry logic", Labels = ["agent:generated"], CreatedAt = DateTime.UtcNow.AddDays(-5) }],
             Page = 1, PageSize = 30, HasMore = false
         };
         var allIssues = new PagedResult<IssueSummary>
@@ -366,8 +366,8 @@ public class RefactoringExecutorTests : IDisposable
         {
             Items = new[]
             {
-                new IssueSummary { Identifier = "100", Title = "Implemented refactoring", Labels = new[] { "refactoring", "agent-generated", "agent:done" } },
-                new IssueSummary { Identifier = "101", Title = "Rejected refactoring", Labels = new[] { "refactoring", "agent-generated", "agent:wont-do" } }
+                new IssueSummary { Identifier = "100", Title = "Implemented refactoring", Labels = new[] { "agent:generated", "agent:done" } },
+                new IssueSummary { Identifier = "101", Title = "Rejected refactoring", Labels = new[] { "agent:generated", "agent:wont-do" } }
             },
             Page = 1,
             PageSize = 20,
@@ -376,7 +376,7 @@ public class RefactoringExecutorTests : IDisposable
 
         _mockIssueProvider
             .Setup(x => x.ListClosedIssuesAsync(1, 20,
-                It.Is<IReadOnlyList<string>>(l => l.Contains("refactoring") && l.Contains("agent-generated")),
+                It.Is<IReadOnlyList<string>>(l => l.Contains("agent:generated")),
                 It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(closedIssues);
 
