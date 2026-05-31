@@ -67,7 +67,7 @@ public sealed class JobDispatcherService
 
         var compatible = idleAgents
             .Where(agent => !agent.Disabled)
-            .Where(agent => IsLabelMatch(agent.Labels, requiredLabels))
+            .Where(agent => LabelMatchHelper.IsLabelMatch(agent.Labels, requiredLabels))
             .OrderBy(agent => agent.LastJobCompletedAt ?? agent.RegisteredAt)
             .ToList();
 
@@ -115,7 +115,7 @@ public sealed class JobDispatcherService
                 if (!_jobQueue.TryDequeue(out var job))
                     break;
 
-                if (IsLabelMatch(agent.Labels, job.RequiredLabels))
+                if (LabelMatchHelper.IsLabelMatch(agent.Labels, job.RequiredLabels))
                 {
                     _logger.Information(
                         "Dequeued job for issue {IssueIdentifier} → agent {AgentId}",
@@ -206,18 +206,7 @@ public sealed class JobDispatcherService
         return Pipeline.Services.LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
     }
 
-    /// <summary>
-    /// Checks whether the agent's labels are a superset of the required labels.
-    /// An empty required labels list matches any agent.
-    /// </summary>
-    private static bool IsLabelMatch(IReadOnlyList<string> agentLabels, IReadOnlyList<string> requiredLabels)
-    {
-        if (requiredLabels.Count == 0)
-            return true;
 
-        var agentLabelSet = new HashSet<string>(agentLabels, StringComparer.OrdinalIgnoreCase);
-        return requiredLabels.All(label => agentLabelSet.Contains(label));
-    }
 
     /// <summary>
     /// Clears the job queue and processing tracker. Used by E2E tests for state isolation.
