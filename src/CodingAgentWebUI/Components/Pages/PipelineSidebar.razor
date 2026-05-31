@@ -521,11 +521,11 @@
         else if (step == PipelineStep.AnalyzingCode)
         {
             <div class="step-detail">@(Run.AnalysisSkipped ? "Skipped (existing)" : "Agent analysis")</div>
-            if (Run.AnalysisRecommendation == "not_ready")
+            if (Run.AnalysisRecommendation == AnalysisGateResult.NotReady)
             {
                 <div class="step-detail">⚠️ Needs refinement</div>
             }
-            else if (Run.AnalysisRecommendation == "wont_do")
+            else if (Run.AnalysisRecommendation == AnalysisGateResult.WontDo)
             {
                 <div class="step-detail">🚫 Won't do</div>
             }

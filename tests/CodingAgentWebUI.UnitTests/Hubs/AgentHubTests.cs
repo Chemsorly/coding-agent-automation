@@ -67,7 +67,7 @@ public class AgentHubTests
             LinesAdded = 200,
             LinesRemoved = 50,
             BrainUpdatesPushed = true,
-            AnalysisRecommendation = "ready",
+            AnalysisRecommendation = AnalysisGateResult.Ready,
             AnalysisConcerns = new[] { "concern1" },
             AnalysisBlockingIssues = Array.Empty<string>(),
             BlacklistedFilesDetected = Array.Empty<string>(),
@@ -88,7 +88,7 @@ public class AgentHubTests
         payload.LinesAdded.Should().Be(200);
         payload.LinesRemoved.Should().Be(50);
         payload.BrainUpdatesPushed.Should().BeTrue();
-        payload.AnalysisRecommendation.Should().Be("ready");
+        payload.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
         payload.CodeReviewAgentsRun.Should().HaveCount(2);
         payload.CodeReviewCriticalCount.Should().Be(0);
         payload.CodeReviewWarningCount.Should().Be(1);

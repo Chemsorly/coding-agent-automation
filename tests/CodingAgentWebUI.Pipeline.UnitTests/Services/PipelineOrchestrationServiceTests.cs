@@ -1637,7 +1637,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
-        run.AnalysisRecommendation.Should().Be("ready");
+        run.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
         run.PullRequestUrl.Should().NotBeNullOrEmpty();
     }
 
@@ -1651,7 +1651,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("needs refinement");
-        run.AnalysisRecommendation.Should().Be("not_ready");
+        run.AnalysisRecommendation.Should().Be(AnalysisGateResult.NotReady);
         run.AnalysisBlockingIssues.Should().Contain("No acceptance criteria");
         _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:needs-refinement", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
         _mockIssueProvider.Verify(p => p.PostCommentAsync("42", It.Is<string>(s => s.Contains("<!-- agent:gate-rejection -->")), It.IsAny<CancellationToken>()), Times.Once);
@@ -1666,7 +1666,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.FailureReason.Should().Contain("won't do");
-        run.AnalysisRecommendation.Should().Be("wont_do");
+        run.AnalysisRecommendation.Should().Be(AnalysisGateResult.WontDo);
         _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:wont-do", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
         _mockIssueProvider.Verify(p => p.PostCommentAsync("42", It.Is<string>(s => s.Contains("<!-- agent:gate-wont-do -->")), It.IsAny<CancellationToken>()), Times.Once);
         // Should NOT proceed to code generation
@@ -1766,7 +1766,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
-        run.AnalysisRecommendation.Should().Be("maybe");
+        run.AnalysisRecommendation.Should().BeNull();
         run.PullRequestUrl.Should().NotBeNullOrEmpty();
     }
 
@@ -1780,7 +1780,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var history = _service.GetRunHistory();
         history.Should().HaveCount(1);
         history[0].FinalStep.Should().Be(PipelineStep.Completed);
-        history[0].AnalysisRecommendation.Should().Be("wont_do");
+        history[0].AnalysisRecommendation.Should().Be(AnalysisGateResult.WontDo);
     }
 
     [Fact]
@@ -1800,7 +1800,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         // Should have run fresh analysis (not skipped)
         run.AnalysisSkipped.Should().BeFalse();
-        run.AnalysisRecommendation.Should().Be("ready");
+        run.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
         _mockAgentProvider.Verify(p => p.ExecuteAsync(
             It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),
             It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
@@ -2030,7 +2030,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
-        run.AnalysisRecommendation.Should().Be("ready");
+        run.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
     }
 
     [Fact]
@@ -2053,7 +2053,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
-        run.AnalysisRecommendation.Should().Be("ready");
+        run.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
     }
 
     [Fact]

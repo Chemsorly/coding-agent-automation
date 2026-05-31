@@ -72,8 +72,8 @@ public sealed class PipelineRun
     /// <summary>Whether existing analysis was reused (skipped agent analysis).</summary>
     public bool AnalysisSkipped { get; set; }
 
-    /// <summary>Analysis gate recommendation: "ready", "not_ready", "wont_do", or null (no assessment).</summary>
-    public string? AnalysisRecommendation { get; set; }
+    /// <summary>Analysis gate recommendation, or null if no assessment was produced.</summary>
+    public AnalysisGateResult? AnalysisRecommendation { get; set; }
 
     /// <summary>The authoritative label the agent applied for this run's terminal state (e.g. "agent:needs-refinement", "agent:wont-do"). Null if not explicitly set.</summary>
     public string? FinalLabel { get; set; }

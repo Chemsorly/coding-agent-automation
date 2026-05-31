@@ -145,7 +145,7 @@ public sealed class FakeAgentClient : IAsyncDisposable
             LinesAdded = 50,
             LinesRemoved = 10,
             BrainUpdatesPushed = false,
-            AnalysisRecommendation = "ready",
+            AnalysisRecommendation = AnalysisGateResult.Ready,
             AnalysisConcerns = Array.Empty<string>(),
             AnalysisBlockingIssues = Array.Empty<string>(),
             BlacklistedFilesDetected = Array.Empty<string>(),

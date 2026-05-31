@@ -96,7 +96,7 @@ public sealed class ConfidenceGateTests : E2ETestBase, IClassFixture<E2EFixture>
             LinesAdded = 0,
             LinesRemoved = 0,
             BrainUpdatesPushed = false,
-            AnalysisRecommendation = "not_ready",
+            AnalysisRecommendation = AnalysisGateResult.NotReady,
             AnalysisConcerns = Array.Empty<string>(),
             AnalysisBlockingIssues = Array.Empty<string>(),
             BlacklistedFilesDetected = Array.Empty<string>(),
@@ -117,7 +117,7 @@ public sealed class ConfidenceGateTests : E2ETestBase, IClassFixture<E2EFixture>
         var failedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "42");
         Assert.NotNull(failedRun);
         Assert.Equal(PipelineStep.Failed, failedRun.FinalStep);
-        Assert.Equal("not_ready", failedRun.AnalysisRecommendation);
+        Assert.Equal(AnalysisGateResult.NotReady, failedRun.AnalysisRecommendation);
         Assert.Equal(0, failedRun.RetryCount);
         Assert.Null(failedRun.PullRequestUrl);
     }
@@ -202,7 +202,7 @@ public sealed class ConfidenceGateTests : E2ETestBase, IClassFixture<E2EFixture>
             LinesAdded = 0,
             LinesRemoved = 0,
             BrainUpdatesPushed = false,
-            AnalysisRecommendation = "wont_do",
+            AnalysisRecommendation = AnalysisGateResult.WontDo,
             AnalysisConcerns = Array.Empty<string>(),
             AnalysisBlockingIssues = Array.Empty<string>(),
             BlacklistedFilesDetected = Array.Empty<string>(),
@@ -223,7 +223,7 @@ public sealed class ConfidenceGateTests : E2ETestBase, IClassFixture<E2EFixture>
         var failedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "42");
         Assert.NotNull(failedRun);
         Assert.Equal(PipelineStep.Failed, failedRun.FinalStep);
-        Assert.Equal("wont_do", failedRun.AnalysisRecommendation);
+        Assert.Equal(AnalysisGateResult.WontDo, failedRun.AnalysisRecommendation);
         Assert.Equal(0, failedRun.RetryCount);
         Assert.Null(failedRun.PullRequestUrl);
     }

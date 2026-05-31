@@ -34,7 +34,7 @@ public sealed class JobCompletionMapperTests
             LinesAdded = 300,
             LinesRemoved = 45,
             BrainUpdatesPushed = true,
-            AnalysisRecommendation = "ready",
+            AnalysisRecommendation = AnalysisGateResult.Ready,
             TotalTokens = 50000,
             TotalCost = 1.23m
         };
@@ -52,7 +52,7 @@ public sealed class JobCompletionMapperTests
         run.LinesAdded.Should().Be(300);
         run.LinesRemoved.Should().Be(45);
         run.BrainUpdatesPushed.Should().BeTrue();
-        run.AnalysisRecommendation.Should().Be("ready");
+        run.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
         run.TotalTokens.Should().Be(50000);
         run.TotalCost.Should().Be(1.23m);
     }
