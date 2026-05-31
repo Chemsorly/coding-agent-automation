@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Agent.Executors;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
 
@@ -60,37 +61,34 @@ public sealed class LocalConsolidationExecutor
         _logger.Information("Starting consolidation job {JobId} of type {Type}",
             job.JobId, job.Type);
 
-        // Link timeout from PipelineConfiguration.AgentTimeout
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(job.PipelineConfiguration.AgentTimeout);
-        var linkedCt = timeoutCts.Token;
-
         ConsolidationJobResult result;
         try
         {
-            result = job.Type switch
-            {
-                ConsolidationRunType.BrainConsolidation => await ExecuteBrainConsolidationAsync(job, linkedCt),
-                ConsolidationRunType.RefactoringDetection => await ExecuteRefactoringDetectionAsync(job, linkedCt),
-                ConsolidationRunType.HarnessSuggestions => await ExecuteHarnessSuggestionsAsync(job, linkedCt),
-                _ => new ConsolidationJobResult
+            result = await TimeoutHelper.ExecuteWithTimeoutAsync(
+                job.PipelineConfiguration.AgentTimeout, ct,
+                async linkedCt => job.Type switch
                 {
-                    JobId = job.JobId,
-                    Success = false,
-                    ErrorMessage = $"Unknown consolidation run type: {job.Type}"
-                }
-            };
-        }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
-        {
-            _logger.Warning("Consolidation job {JobId} timed out after {Timeout}",
-                job.JobId, job.PipelineConfiguration.AgentTimeout);
-            result = new ConsolidationJobResult
-            {
-                JobId = job.JobId,
-                Success = false,
-                ErrorMessage = $"Consolidation run timed out after {job.PipelineConfiguration.AgentTimeout}"
-            };
+                    ConsolidationRunType.BrainConsolidation => await ExecuteBrainConsolidationAsync(job, linkedCt),
+                    ConsolidationRunType.RefactoringDetection => await ExecuteRefactoringDetectionAsync(job, linkedCt),
+                    ConsolidationRunType.HarnessSuggestions => await ExecuteHarnessSuggestionsAsync(job, linkedCt),
+                    _ => new ConsolidationJobResult
+                    {
+                        JobId = job.JobId,
+                        Success = false,
+                        ErrorMessage = $"Unknown consolidation run type: {job.Type}"
+                    }
+                },
+                () =>
+                {
+                    _logger.Warning("Consolidation job {JobId} timed out after {Timeout}",
+                        job.JobId, job.PipelineConfiguration.AgentTimeout);
+                    return Task.FromResult(new ConsolidationJobResult
+                    {
+                        JobId = job.JobId,
+                        Success = false,
+                        ErrorMessage = $"Consolidation run timed out after {job.PipelineConfiguration.AgentTimeout}"
+                    });
+                });
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
