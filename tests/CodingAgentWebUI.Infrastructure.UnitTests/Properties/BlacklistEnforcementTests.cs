@@ -113,7 +113,7 @@ public class BlacklistEnforcementTests
         var blacklisted = new[] { ".agent/steering/rule.md", ".github/workflows/ci.yml" };
 
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "42", testsPassed: 5, testsFailed: 0, testsSkipped: 0,
+            issueReference: "#42", testsPassed: 5, testsFailed: 0, testsSkipped: 0,
             coveragePercent: 90.0, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Feature",
             blacklistedFilesDetected: blacklisted);
@@ -127,7 +127,7 @@ public class BlacklistEnforcementTests
     public void GeneratePrBody_WithNoBlacklistedFiles_OmitsWarningSection()
     {
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
+            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Bug");
 
@@ -138,7 +138,7 @@ public class BlacklistEnforcementTests
     public void GeneratePrBody_WithNullBlacklistedFiles_OmitsWarningSection()
     {
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
+            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Bug",
             blacklistedFilesDetected: null);

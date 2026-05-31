@@ -453,7 +453,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             var prUrl = await _prOrchestrator.CreatePullRequestAsync(
                 run, report, isDraft, _providerManager.ActiveRepoProvider!, _activeIssue,
                 _activeIssueComments, _activeConfig!, ct, line => _lifecycle.EmitOutputLine(line),
-                isRework: run.LinkedPullRequest != null);
+                isRework: run.LinkedPullRequest != null,
+                issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
 
             if (prUrl == null && _activeConfig?.BlacklistMode == BlacklistMode.Fail
                 && run.BlacklistedFilesDetected.Count > 0)
@@ -512,7 +513,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         try
         {
             var prUrl = await _prOrchestrator.CreateDraftPrIfNotExistsAsync(
-                run, _providerManager.ActiveRepoProvider!, ct);
+                run, _providerManager.ActiveRepoProvider!, ct,
+                issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
             if (prUrl != null)
                 _lifecycle.EmitOutputLine($"📋 Draft PR #{run.PullRequestNumber} created");
         }
@@ -545,7 +547,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 
             var prUrl = await _prOrchestrator.FinalizePullRequestAsync(
                 run, report, isDraft, _providerManager.ActiveRepoProvider!, _activeIssue,
-                _activeIssueComments, _activeConfig!, ct, line => _lifecycle.EmitOutputLine(line));
+                _activeIssueComments, _activeConfig!, ct, line => _lifecycle.EmitOutputLine(line),
+                issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
 
             if (prUrl == null && _activeConfig?.BlacklistMode == BlacklistMode.Fail
                 && run.BlacklistedFilesDetected.Count > 0)

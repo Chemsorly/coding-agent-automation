@@ -72,13 +72,14 @@ public class GitHubRepositoryProviderTests
         };
 
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "42",
+            issueReference: "#42",
             testsPassed: 10,
             testsFailed: 2,
             testsSkipped: 1,
             coveragePercent: 87.3,
             fileChanges: fileChanges,
-            issueTitle: "Add new feature");
+            issueTitle: "Add new feature",
+            closeReference: "Closes #42");
 
         body.Should().Contain("## Issue Context");
         body.Should().Contain("Add new feature");
@@ -101,7 +102,7 @@ public class GitHubRepositoryProviderTests
     public void GeneratePrBody_WithNullCoverage_ShowsNotAvailable()
     {
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1",
+            issueReference: "#1",
             testsPassed: 5,
             testsFailed: 0,
             testsSkipped: 0,
@@ -116,14 +117,15 @@ public class GitHubRepositoryProviderTests
     public void GeneratePrBody_DraftPr_IncludesWarning()
     {
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "10",
+            issueReference: "#10",
             testsPassed: 3,
             testsFailed: 5,
             testsSkipped: 0,
             coveragePercent: 40.0,
             fileChanges: new[] { new FileChangeSummary("Modified", "src/Foo.cs") },
             issueTitle: "Partial feature",
-            isDraft: true);
+            isDraft: true,
+            closeReference: "Closes #10");
 
         body.Should().Contain("draft PR");
         body.Should().Contain("incomplete");
@@ -140,7 +142,7 @@ public class GitHubRepositoryProviderTests
         };
 
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "42", testsPassed: 5, testsFailed: 0, testsSkipped: 0,
+            issueReference: "#42", testsPassed: 5, testsFailed: 0, testsSkipped: 0,
             coveragePercent: 90.0, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Feature", isDraft: false, comments: comments);
 
@@ -156,7 +158,7 @@ public class GitHubRepositoryProviderTests
     public void GeneratePrBody_WithNoComments_OmitsInputCommentsSection()
     {
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
+            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Bug");
 
@@ -173,7 +175,7 @@ public class GitHubRepositoryProviderTests
         };
 
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "5", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
+            issueReference: "5", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Test", isDraft: false, comments: comments);
 
@@ -193,7 +195,7 @@ public class GitHubRepositoryProviderTests
         };
 
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1", testsPassed: 0, testsFailed: 0, testsSkipped: 0,
+            issueReference: "#1", testsPassed: 0, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "T", isDraft: false, comments: comments);
 
@@ -204,7 +206,7 @@ public class GitHubRepositoryProviderTests
     [Fact]
     public void GenerateCommitMessage_FollowsConventionalFormat()
     {
-        var msg = PipelineFormatting.GenerateCommitMessage("Add login page", "15");
+        var msg = PipelineFormatting.GenerateCommitMessage("Add login page", "#15");
         msg.Should().Be("feat: Add login page (#15)\n\nAutomated implementation via pipeline");
     }
 
@@ -240,7 +242,7 @@ public class GitHubRepositoryProviderTests
     public void GeneratePrBody_WithModelName_IncludesModelInFooter()
     {
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "42",
+            issueReference: "#42",
             testsPassed: 5,
             testsFailed: 0,
             testsSkipped: 0,
@@ -256,7 +258,7 @@ public class GitHubRepositoryProviderTests
     public void GeneratePrBody_WithoutModelName_UsesDefaultFooter()
     {
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "42",
+            issueReference: "#42",
             testsPassed: 5,
             testsFailed: 0,
             testsSkipped: 0,
@@ -274,7 +276,7 @@ public class GitHubRepositoryProviderTests
     public void GeneratePrBody_CodeReviewDisabled_OmitsSection()
     {
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
+            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Bug",
             codeReviewSummary: null);
@@ -291,7 +293,7 @@ public class GitHubRepositoryProviderTests
             AgentFindings: Array.Empty<AgentFindings>());
 
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
+            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Bug",
             codeReviewSummary: summary);
@@ -309,7 +311,7 @@ public class GitHubRepositoryProviderTests
             AgentFindings: new[] { new AgentFindings("Correctness", "[1] [CRITICAL] Null ref") });
 
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
+            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Bug",
             codeReviewSummary: summary);
@@ -326,7 +328,7 @@ public class GitHubRepositoryProviderTests
             AgentFindings: new[] { new AgentFindings("Correctness", "[1] [CRITICAL] Issue") });
 
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
+            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Bug",
             codeReviewSummary: summary);
@@ -350,7 +352,7 @@ public class GitHubRepositoryProviderTests
             });
 
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
+            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Bug",
             codeReviewSummary: summary);
@@ -373,7 +375,7 @@ public class GitHubRepositoryProviderTests
             AgentFindings: new[] { new AgentFindings("Correctness", longFindings) });
 
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
+            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Bug",
             codeReviewSummary: summary);
@@ -391,7 +393,7 @@ public class GitHubRepositoryProviderTests
             AgentFindings: new[] { new AgentFindings("Correctness", "[1] [WARNING] Issue") });
 
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
+            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Bug",
             codeReviewSummary: summary);
@@ -410,7 +412,7 @@ public class GitHubRepositoryProviderTests
             AgentFindings: new[] { new AgentFindings("Review", "[1] [CRITICAL] Issue") });
 
         var body = PipelineFormatting.GeneratePrBody(
-            issueNumber: "1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
+            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
             coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
             issueTitle: "Bug",
             codeReviewSummary: summary);

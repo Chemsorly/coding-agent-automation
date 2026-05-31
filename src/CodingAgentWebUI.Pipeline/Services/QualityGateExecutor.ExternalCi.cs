@@ -61,7 +61,8 @@ internal partial class QualityGateExecutor
         {
             try
             {
-                var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, run.IssueIdentifier);
+                var issueRef = context.IssueReference ?? $"#{run.IssueIdentifier}";
+                var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, issueRef);
                 var blacklisted = await context.RepoProvider.CommitAllAsync(
                     run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct);
                 if (await RecordBlacklistedFiles(run, blacklisted, config, callbacks, context.IssueOps, ct))

@@ -118,4 +118,11 @@ public interface IIssueProvider : IAsyncDisposable
     /// </summary>
     Task<CreatedIssueResult> CreateIssueAsync(
         string title, string body, IReadOnlyList<string>? labels, CancellationToken ct);
+
+    /// <summary>
+    /// Formats an issue identifier as a platform-specific reference string.
+    /// Default: <c>#{identifier}</c> (GitHub/GitLab same-project autolink).
+    /// Override for external trackers (e.g., Jira returns the identifier as-is since it already contains the project prefix).
+    /// </summary>
+    string FormatIssueReference(string identifier) => $"#{identifier}";
 }

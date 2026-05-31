@@ -84,10 +84,10 @@ public class GitHubRepositoryProviderPropertyTests
     [Property]
     public void PrTitle_FollowsConventionalCommitFormat(NonEmptyString title, PositiveInt issueNum)
     {
-        var number = issueNum.Get.ToString();
-        var prTitle = PipelineFormatting.GeneratePrTitle(title.Get, number);
+        var issueRef = $"#{issueNum.Get}";
+        var prTitle = PipelineFormatting.GeneratePrTitle(title.Get, issueRef);
 
-        prTitle.Should().Be($"feat: {title.Get} (#{number})");
+        prTitle.Should().Be($"feat: {title.Get} ({issueRef})");
     }
 
     /// <summary>
@@ -102,7 +102,7 @@ public class GitHubRepositoryProviderPropertyTests
         NonNegativeInt skipped,
         NonEmptyString title)
     {
-        var number = issueNum.Get.ToString();
+        var issueRef = $"#{issueNum.Get}";
         var fileChanges = new List<FileChangeSummary>
         {
             new("Added", "src/Test.cs"),
@@ -110,17 +110,18 @@ public class GitHubRepositoryProviderPropertyTests
         };
 
         var body = PipelineFormatting.GeneratePrBody(
-            number,
+            issueRef,
             passed.Get,
             failed.Get,
             skipped.Get,
             coveragePercent: 85.5,
             fileChanges: fileChanges,
-            issueTitle: title.Get);
+            issueTitle: title.Get,
+            closeReference: $"Closes {issueRef}");
 
         body.Should().Contain("## Issue Context");
         body.Should().Contain(title.Get);
-        body.Should().Contain($"(#{number})");
+        body.Should().Contain($"({issueRef})");
         body.Should().Contain("## Files Changed");
         body.Should().Contain("src/Test.cs");
         body.Should().Contain("## Test Results");
@@ -129,6 +130,6 @@ public class GitHubRepositoryProviderPropertyTests
         body.Should().Contain($"Skipped: {skipped.Get}");
         body.Should().Contain("## Coverage");
         body.Should().Contain("85.5%");
-        body.Should().Contain($"Closes #{number}");
+        body.Should().Contain($"Closes {issueRef}");
     }
 }
