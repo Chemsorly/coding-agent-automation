@@ -18,6 +18,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
     private readonly ILogger _logger;
     private readonly string? _model;
     private readonly string _executablePath;
+    private readonly IProcessStarter _processStarter;
     private readonly HashSet<string> _establishedSessions = new(StringComparer.OrdinalIgnoreCase);
 
     internal const string WarmUpPrompt =
@@ -29,12 +30,18 @@ public partial class KiroCliAgentProvider : IAgentProvider
     public string? Model => _model;
 
     public KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger = null, string? model = null, string executablePath = AgentDefaults.KiroCliPath)
+        : this(orchestrator, logger, model, executablePath, null)
+    {
+    }
+
+    internal KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger, string? model, string executablePath, IProcessStarter? processStarter)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         _orchestrator = orchestrator;
         _logger = logger ?? Log.Logger;
         _model = model;
         _executablePath = executablePath;
+        _processStarter = processStarter ?? new DefaultProcessStarter();
     }
 
     /// <inheritdoc />
@@ -123,7 +130,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
             CreateNoWindow = true
         };
 
-        using var process = System.Diagnostics.Process.Start(psi)
+        using var process = _processStarter.Start(psi)
             ?? throw new InvalidOperationException("Failed to start kiro-cli doctor process");
 
         var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
@@ -157,7 +164,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
                 CreateNoWindow = true
             };
 
-            using var process = System.Diagnostics.Process.Start(psi);
+            using var process = _processStarter.Start(psi);
             if (process == null) return null;
 
             var stdout = await process.StandardOutput.ReadToEndAsync(ct);
@@ -222,7 +229,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
             CreateNoWindow = true
         };
 
-        using var process = System.Diagnostics.Process.Start(psi);
+        using var process = _processStarter.Start(psi);
         if (process == null)
         {
             _logger.Warning("Failed to start kiro-cli settings process");
