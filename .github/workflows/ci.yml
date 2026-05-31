@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   build-and-test:
-    runs-on: Default
+    runs-on: arc-runner-set-arm
     timeout-minutes: 120
     container:
       image: mcr.microsoft.com/dotnet/sdk:10.0
@@ -61,7 +61,7 @@ jobs:
 
   docker:
     needs: [build-and-test]
-    runs-on: arc-runner-set-arm-oracle
+    runs-on: arc-runner-set-arm
     timeout-minutes: 120
     container:
       image: quay.io/buildah/stable

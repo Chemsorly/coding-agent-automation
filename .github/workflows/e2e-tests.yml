@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   e2e:
-    runs-on: Default
+    runs-on: arc-runner-set-arm
     timeout-minutes: 15
     container:
       image: mcr.microsoft.com/playwright/dotnet:v1.60.0-noble
