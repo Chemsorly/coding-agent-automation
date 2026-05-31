@@ -10,7 +10,7 @@ namespace KiroCliLib.UnitTests.Core;
 /// <summary>
 /// Property-based tests for OutputParser.
 /// Migrated from CodingAgentWebUI.IntegrationTests as part of KiroCliLib test separation.
-/// Validates: State detection, file operation extraction, test result parsing.
+/// Validates: State detection, test result parsing.
 /// </summary>
 public class OutputParserTests
 {
@@ -34,24 +34,6 @@ public class OutputParserTests
     }
 
     /// <summary>
-    /// Property: For any Kiro CLI output containing file paths,
-    /// the OutputParser should correctly extract the file path and change type.
-    /// </summary>
-    [Property(Arbitrary = new[] { typeof(Generators) })]
-    public bool FileDetection_ShouldExtractFilePath(FileOperationTestCase testCase)
-    {
-        var parser = new OutputParser();
-        FileChange? detectedFile = null;
-        parser.FileDetected += (_, file) => detectedFile = file;
-
-        parser.ProcessLine(testCase.Line);
-
-        return detectedFile != null
-            && detectedFile.Path == testCase.ExpectedPath
-            && detectedFile.Type == testCase.ExpectedType;
-    }
-
-    /// <summary>
     /// Property: For any Kiro CLI output containing test results,
     /// the OutputParser should correctly extract passed/failed/total counts.
     /// </summary>
@@ -59,11 +41,10 @@ public class OutputParserTests
     public bool TestResultDetection_ShouldExtractCounts(TestResultTestCase testCase)
     {
         var parser = new OutputParser();
-        TestResult? detectedResult = null;
-        parser.TestResultDetected += (_, result) => detectedResult = result;
 
         parser.ProcessLine(testCase.Line);
 
+        var detectedResult = parser.TestResults;
         return detectedResult != null
             && detectedResult.PassedTests == testCase.ExpectedPassed
             && detectedResult.FailedTests == testCase.ExpectedFailed
@@ -83,8 +64,6 @@ public class OutputParserTests
         var parser = new OutputParser();
         var eventFired = false;
         parser.StateChanged += (_, _) => eventFired = true;
-        parser.FileDetected += (_, _) => eventFired = true;
-        parser.TestResultDetected += (_, _) => eventFired = true;
 
         parser.ProcessLine("");
         parser.ProcessLine("   ");
@@ -99,12 +78,11 @@ public class OutputParserTests
         var parser = new OutputParser();
         var eventFired = false;
         parser.StateChanged += (_, _) => eventFired = true;
-        parser.FileDetected += (_, _) => eventFired = true;
-        parser.TestResultDetected += (_, _) => eventFired = true;
 
         parser.ProcessLine("Just a regular log line with no markers");
 
         Assert.False(eventFired);
+        Assert.Null(parser.TestResults);
     }
 
     [Fact]
@@ -141,13 +119,6 @@ public class OutputParserTests
     {
         public required string Line { get; init; }
         public required KiroState ExpectedState { get; init; }
-    }
-
-    public class FileOperationTestCase
-    {
-        public required string Line { get; init; }
-        public required string ExpectedPath { get; init; }
-        public required FileChangeType ExpectedType { get; init; }
     }
 
     public class TestResultTestCase
@@ -192,24 +163,6 @@ public class OutputParserTests
             return Gen.Elements(allMarkers)
                 .Select(m => new StateMarkerTestCase { Line = m.Item1, ExpectedState = m.Item2 })
                 .ToArbitrary();
-        }
-
-        public static Arbitrary<FileOperationTestCase> FileOperationTestCase()
-        {
-            var paths = new[]
-            {
-                "src/Program.cs", "tests/UnitTest.cs", "config/appsettings.json",
-                "docs/README.md", "/home/user/project/file.txt", "C:\\Projects\\MyApp\\file.cs"
-            };
-
-            var createdGen = Gen.Elements(paths)
-                .Select(p => new FileOperationTestCase { Line = $"Created: {p}", ExpectedPath = p, ExpectedType = FileChangeType.Created });
-            var modifiedGen = Gen.Elements(paths)
-                .Select(p => new FileOperationTestCase { Line = $"Modified: {p}", ExpectedPath = p, ExpectedType = FileChangeType.Modified });
-            var writingGen = Gen.Elements(paths)
-                .Select(p => new FileOperationTestCase { Line = $"Writing to {p}", ExpectedPath = p, ExpectedType = FileChangeType.Modified });
-
-            return Gen.OneOf(createdGen, modifiedGen, writingGen).ToArbitrary();
         }
 
         public static Arbitrary<TestResultTestCase> TestResultTestCase()

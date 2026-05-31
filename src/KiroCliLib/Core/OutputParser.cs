@@ -4,7 +4,7 @@ using KiroCliLib.Models;
 namespace KiroCliLib.Core;
 
 /// <summary>
-/// Parses Kiro CLI output to detect states, extract information, and trigger events.
+/// Parses Kiro CLI output to detect states and extract test results.
 /// </summary>
 public class OutputParser : IOutputParser
 {
@@ -12,8 +12,6 @@ public class OutputParser : IOutputParser
     private TestResult? _testResults;
 
     public event EventHandler<KiroState>? StateChanged;
-    public event EventHandler<FileChange>? FileDetected;
-    public event EventHandler<TestResult>? TestResultDetected;
 
     public TestResult? TestResults => _testResults;
 
@@ -29,17 +27,10 @@ public class OutputParser : IOutputParser
             StateChanged?.Invoke(this, _currentState);
         }
 
-        var fileChange = DetectFileOperation(line);
-        if (fileChange != null)
-        {
-            FileDetected?.Invoke(this, fileChange);
-        }
-
         var testResult = DetectTestResults(line);
         if (testResult != null)
         {
             _testResults = testResult;
-            TestResultDetected?.Invoke(this, testResult);
         }
     }
 
@@ -62,23 +53,6 @@ public class OutputParser : IOutputParser
             return KiroState.ImplementPhase;
         if (Regex.IsMatch(line, @"\btest(?:ing)?\s+phase\b|\brunning\s+tests\b", RegexOptions.IgnoreCase))
             return KiroState.TestPhase;
-
-        return null;
-    }
-
-    private FileChange? DetectFileOperation(string line)
-    {
-        var createdMatch = Regex.Match(line, @"Created:\s+(.+)", RegexOptions.IgnoreCase);
-        if (createdMatch.Success)
-            return new FileChange { Path = createdMatch.Groups[1].Value.Trim(), Type = FileChangeType.Created };
-
-        var modifiedMatch = Regex.Match(line, @"Modified:\s+(.+)", RegexOptions.IgnoreCase);
-        if (modifiedMatch.Success)
-            return new FileChange { Path = modifiedMatch.Groups[1].Value.Trim(), Type = FileChangeType.Modified };
-
-        var writingMatch = Regex.Match(line, @"Writing to\s+(.+)", RegexOptions.IgnoreCase);
-        if (writingMatch.Success)
-            return new FileChange { Path = writingMatch.Groups[1].Value.Trim(), Type = FileChangeType.Modified };
 
         return null;
     }

@@ -13,14 +13,8 @@ public interface IOutputParser
     /// <summary>Occurs when the detected execution state changes.</summary>
     event EventHandler<KiroState>? StateChanged;
 
-    /// <summary>Occurs when a file operation is detected in the output.</summary>
-    event EventHandler<FileChange>? FileDetected;
-
-    /// <summary>Occurs when test results are detected in the output.</summary>
-    event EventHandler<TestResult>? TestResultDetected;
-
     /// <summary>
-    /// Processes a single line of CLI output, detecting state changes, file operations, and test results.
+    /// Processes a single line of CLI output, detecting state changes and test results.
     /// </summary>
     /// <param name="line">The output line to process.</param>
     void ProcessLine(string line);
