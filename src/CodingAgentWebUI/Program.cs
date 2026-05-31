@@ -261,6 +261,19 @@ app.MapGet("/readyz", () => Results.Ok(new { status = "ready", timestamp = DateT
 app.MapGet("/", () => Results.Redirect("/agent-coding"))
     .AllowAnonymous();
 
+// Export run history as JSON download
+app.MapGet("/api/export/runs.json", (IPipelineRunHistoryService history, bool? feedbackOnly) =>
+{
+    var runs = (IEnumerable<PipelineRunSummary>)history.GetRunHistory();
+    if (feedbackOnly == true)
+        runs = runs.Where(r => r.Feedback is not null);
+
+    var json = System.Text.Json.JsonSerializer.Serialize(runs.ToList(), PipelineJsonOptions.Default);
+    var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+    var fileName = $"pipeline-runs-{DateTime.UtcNow:yyyy-MM-dd}.json";
+    return Results.File(bytes, "application/json", fileName);
+}).AllowAnonymous();
+
 app.UseStaticFiles();
 app.MapStaticAssets();
 

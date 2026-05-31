@@ -420,6 +420,14 @@
             <h2>📜 Recent Runs (@_runHistory.Count)</h2>
             <span class="monitoring-toggle-icon">@(_historyExpanded ? "▾" : "▸")</span>
         </div>
+        <div style="margin: 8px 0;">
+            <a href="/api/export/runs.json" download class="btn-cancel" style="text-decoration: none; display: inline-block; font-size: 0.8rem; padding: 4px 12px;">
+                📥 Export All (JSON)
+            </a>
+            <a href="/api/export/runs.json?feedbackOnly=true" download class="btn-cancel" style="text-decoration: none; display: inline-block; font-size: 0.8rem; padding: 4px 12px; margin-left: 8px;">
+                📥 Feedback Only (JSON)
+            </a>
+        </div>
         @if (_historyExpanded)
         {
             @if (_runHistory.Count == 0)
