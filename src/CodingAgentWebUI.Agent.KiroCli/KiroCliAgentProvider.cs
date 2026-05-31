@@ -38,6 +38,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
     internal KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger, string? model, string executablePath, IProcessStarter? processStarter)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
+        ArgumentNullException.ThrowIfNull(executablePath);
         _orchestrator = orchestrator;
         _logger = logger ?? Log.Logger;
         _model = model;
