@@ -59,6 +59,7 @@ public sealed class AgentWorkerService : BackgroundService
     private readonly object _busyLock = new();
 
     private CancellationTokenSource? _chatCts;
+    private Task? _activeChatTask;
     private string? _activeChatSessionId;
 
     public AgentWorkerService(
@@ -173,17 +174,33 @@ public sealed class AgentWorkerService : BackgroundService
 
     private async Task HandleAssignJobAsync(JobAssignmentMessage message)
     {
+        string? rejectJobId = null;
         lock (_busyLock)
         {
             if (_activeJobId is not null || _activeChatSessionId is not null)
             {
-                _logger.Warning("Rejecting job {JobId} — agent is busy with {ActiveJobId}",
-                    message.JobId, _activeJobId ?? $"chat:{_activeChatSessionId}");
-                _ = _hubManager.Connection.InvokeAsync("JobRejected", message.JobId, "Agent is busy");
-                return;
+                rejectJobId = message.JobId;
             }
+            else
+            {
+                _activeJobId = message.JobId;
+                _jobCts = new CancellationTokenSource();
+            }
+        }
 
-            _activeJobId = message.JobId;
+        if (rejectJobId is not null)
+        {
+            _logger.Warning("Rejecting job {JobId} — agent is busy with {ActiveJobId}",
+                rejectJobId, _activeJobId ?? $"chat:{_activeChatSessionId}");
+            try
+            {
+                await _hubManager.Connection.InvokeAsync("JobRejected", rejectJobId, "Agent is busy");
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to notify orchestrator of job rejection {JobId}", rejectJobId);
+            }
+            return;
         }
 
         _logger.Information("Accepted job {JobId} for issue {IssueIdentifier}",
@@ -197,12 +214,16 @@ public sealed class AgentWorkerService : BackgroundService
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to send JobAccepted for {JobId}", message.JobId);
-            lock (_busyLock) { _activeJobId = null; }
+            lock (_busyLock)
+            {
+                _activeJobId = null;
+            }
+            _jobCts?.Dispose();
+            _jobCts = null;
             return;
         }
 
-        _jobCts = new CancellationTokenSource();
-
+        var jobCts = _jobCts!;
         _activeJobTask = Task.Run(async () =>
         {
             await using var outputBatcher = new OutputBatcher();
@@ -224,7 +245,7 @@ public sealed class AgentWorkerService : BackgroundService
                 completion = await _executor.ExecuteAsync(
                     message, _hubManager.Connection, outputBatcher,
                     step => _currentStep = step,
-                    _jobCts.Token);
+                    jobCts.Token);
             }
             catch (OperationCanceledException)
             {
@@ -311,12 +332,12 @@ public sealed class AgentWorkerService : BackgroundService
             }
 
             _activeChatSessionId = message.SessionId;
+            _chatCts = new CancellationTokenSource();
         }
 
         _logger.Information("Accepted chat prompt for session {SessionId}", message.SessionId);
-        _chatCts = new CancellationTokenSource();
 
-        _ = Task.Run(async () =>
+        _activeChatTask = Task.Run(async () =>
         {
             var outputBatcher = new OutputBatcher();
             outputBatcher.OnFlush += async lines =>
@@ -457,6 +478,7 @@ public sealed class AgentWorkerService : BackgroundService
 
     private async Task HandleCancelChatAsync(string sessionId)
     {
+        Task? chatTask;
         lock (_busyLock)
         {
             if (_activeChatSessionId != sessionId)
@@ -465,10 +487,19 @@ public sealed class AgentWorkerService : BackgroundService
                     sessionId, _activeChatSessionId);
                 return;
             }
+            chatTask = _activeChatTask;
         }
 
         _logger.Information("Cancelling chat session {SessionId}", sessionId);
-        _chatCts?.Cancel();
+        var cts = _chatCts;
+        cts?.Cancel();
+
+        if (chatTask is not null)
+        {
+            var completed = await Task.WhenAny(chatTask, Task.Delay(TimeSpan.FromSeconds(10)));
+            if (completed != chatTask)
+                _logger.Warning("Chat task did not complete within timeout after cancellation for session {SessionId}", sessionId);
+        }
 
         // Signal ready — the chat session is over, agent can accept jobs again
         try
@@ -596,6 +627,7 @@ public sealed class AgentWorkerService : BackgroundService
             {
                 _logger.Warning("Rejecting consolidation job {JobId} — agent is busy with {ActiveJobId}",
                     message.JobId, _activeJobId ?? $"chat:{_activeChatSessionId}");
+                // TODO: Send rejection notification to orchestrator (requires verifying orchestrator handles consolidation job rejections)
                 return;
             }
 
