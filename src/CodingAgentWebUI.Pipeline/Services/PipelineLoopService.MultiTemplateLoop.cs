@@ -8,85 +8,71 @@ namespace CodingAgentWebUI.Pipeline.Services;
 public sealed partial class PipelineLoopService
 {
     /// <summary>
-    /// Reconciles the provider cache with the needed set of IssueProviderIds.
-    /// Evicts stale entries (disposes before removing), creates missing entries.
+    /// Generic cache reconciliation: evicts stale entries (disposes before removing),
+    /// creates missing entries via the factory delegate.
     /// </summary>
-    private async Task ReconcileProviderCacheAsync(
-        HashSet<string> neededIssueProviderIds,
-        IReadOnlyList<ProviderConfig> issueProviderConfigs,
-        CancellationToken ct)
+    private async Task ReconcileCacheAsync<TProvider>(
+        Dictionary<string, TProvider> cache,
+        HashSet<string> neededIds,
+        IReadOnlyList<ProviderConfig> providerConfigs,
+        Func<ProviderConfig, TProvider> factory,
+        string providerKindLabel,
+        CancellationToken ct) where TProvider : IAsyncDisposable
     {
         // Evict stale entries
-        var staleKeys = _providerCache.Keys.Where(k => !neededIssueProviderIds.Contains(k)).ToList();
+        var staleKeys = cache.Keys.Where(k => !neededIds.Contains(k)).ToList();
         foreach (var key in staleKeys)
         {
-            if (_providerCache.TryGetValue(key, out var provider))
+            if (cache.TryGetValue(key, out var provider))
             {
                 try { await provider.DisposeAsync(); }
-                catch (Exception ex) { _logger.Warning(ex, "Failed to dispose cached provider {ProviderId}", key); }
-                _providerCache.Remove(key);
+                catch (Exception ex) { _logger.Warning(ex, "Failed to dispose cached {Kind} provider {ProviderId}", providerKindLabel, key); }
+                cache.Remove(key);
             }
         }
 
         // Create missing entries
-        foreach (var neededId in neededIssueProviderIds)
+        foreach (var neededId in neededIds)
         {
-            if (!_providerCache.ContainsKey(neededId))
+            ct.ThrowIfCancellationRequested();
+
+            if (!cache.ContainsKey(neededId))
             {
-                var config = issueProviderConfigs.FirstOrDefault(c => c.Id == neededId);
+                var config = providerConfigs.FirstOrDefault(c => c.Id == neededId);
                 if (config is not null)
                 {
-                    _providerCache[neededId] = _providerFactory.CreateIssueProvider(config);
+                    try
+                    {
+                        cache[neededId] = factory(config);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex, "Failed to create {Kind} provider for {ProviderId}", providerKindLabel, neededId);
+                    }
                 }
             }
         }
     }
 
     /// <summary>
-    /// Reconciles the repository provider cache with the needed set of RepoProviderIds.
-    /// Evicts stale entries (disposes before removing), creates missing entries.
+    /// Reconciles the provider cache with the needed set of IssueProviderIds.
     /// </summary>
-    private async Task ReconcileRepoProviderCacheAsync(
+    private Task ReconcileProviderCacheAsync(
+        HashSet<string> neededIssueProviderIds,
+        IReadOnlyList<ProviderConfig> issueProviderConfigs,
+        CancellationToken ct)
+        => ReconcileCacheAsync(_providerCache, neededIssueProviderIds, issueProviderConfigs,
+            _providerFactory.CreateIssueProvider, "issue", ct);
+
+    /// <summary>
+    /// Reconciles the repository provider cache with the needed set of RepoProviderIds.
+    /// </summary>
+    private Task ReconcileRepoProviderCacheAsync(
         HashSet<string> neededRepoProviderIds,
         IReadOnlyList<ProviderConfig> repoProviderConfigs,
         CancellationToken ct)
-    {
-        // Evict stale entries
-        var staleKeys = _repoProviderCache.Keys.Where(k => !neededRepoProviderIds.Contains(k)).ToList();
-        foreach (var key in staleKeys)
-        {
-            if (_repoProviderCache.TryGetValue(key, out var provider))
-            {
-                try { await provider.DisposeAsync(); }
-                catch (Exception ex) { _logger.Warning(ex, "Failed to dispose cached repo provider {ProviderId}", key); }
-                _repoProviderCache.Remove(key);
-            }
-        }
-
-        // Create missing entries
-        foreach (var neededId in neededRepoProviderIds)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            if (!_repoProviderCache.ContainsKey(neededId))
-            {
-                var config = repoProviderConfigs.FirstOrDefault(c => c.Id == neededId);
-                if (config is not null)
-                {
-                    try
-                    {
-                        var provider = _providerFactory.CreateRepositoryProvider(config);
-                        if (provider is not null)
-                            _repoProviderCache[neededId] = provider;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Warning(ex, "Failed to create repo provider for {ProviderId}", neededId);
-                    }
-                }
-            }
-        }
-    }
+        => ReconcileCacheAsync(_repoProviderCache, neededRepoProviderIds, repoProviderConfigs,
+            _providerFactory.CreateRepositoryProvider, "repo", ct);
 
     /// <summary>
     /// Evicts a provider from the cache due to an auth error. Disposes and removes it
@@ -759,32 +745,38 @@ public sealed partial class PipelineLoopService
         return msg.Contains("unauthorized") || msg.Contains("forbidden") || msg.Contains("credential");
     }
 
-    /// <summary>Fetches agent:next issues from a specific provider (used in multi-template mode).</summary>
-    private async Task<List<IssueSummary>> FetchAgentNextIssuesForProviderAsync(
-        IIssueProvider provider, int maxPages, CancellationToken ct)
+    /// <summary>Fetches all pages from a paginated API up to maxPages.</summary>
+    private static async Task<List<T>> FetchAllPagesAsync<T>(
+        Func<int, int, CancellationToken, Task<PagedResult<T>>> fetchPage,
+        int maxPages,
+        CancellationToken ct)
     {
-        var result = new List<IssueSummary>();
+        var result = new List<T>();
         int page = 1;
         const int pageSize = PipelineConstants.DefaultPageSize;
 
         while (true)
         {
-            var pagedResult = await provider.ListOpenIssuesAsync(page, pageSize,
-                new[] { AgentLabels.Next }, ct);
+            var pagedResult = await fetchPage(page, pageSize, ct);
             result.AddRange(pagedResult.Items);
             if (!pagedResult.HasMore) break;
             if (page >= maxPages) break;
             page++;
         }
 
-        // FIFO: oldest first
-        result.Sort((a, b) =>
-        {
-            var aDate = a.CreatedAt ?? DateTime.MaxValue;
-            var bDate = b.CreatedAt ?? DateTime.MaxValue;
-            return aDate.CompareTo(bDate);
-        });
+        return result;
+    }
 
+    /// <summary>Fetches agent:next issues from a specific provider (used in multi-template mode).</summary>
+    private async Task<List<IssueSummary>> FetchAgentNextIssuesForProviderAsync(
+        IIssueProvider provider, int maxPages, CancellationToken ct)
+    {
+        var result = await FetchAllPagesAsync<IssueSummary>(
+            (page, pageSize, token) => provider.ListOpenIssuesAsync(page, pageSize, new[] { AgentLabels.Next }, token),
+            maxPages, ct);
+
+        // FIFO: oldest first
+        result.Sort((a, b) => (a.CreatedAt ?? DateTime.MaxValue).CompareTo(b.CreatedAt ?? DateTime.MaxValue));
         return result;
     }
 
@@ -795,19 +787,9 @@ public sealed partial class PipelineLoopService
     private async Task<List<PullRequestSummary>> FetchAgentNextPullRequestsAsync(
         IRepositoryProvider repoProvider, int maxPages, CancellationToken ct)
     {
-        var result = new List<PullRequestSummary>();
-        int page = 1;
-        const int pageSize = PipelineConstants.DefaultPageSize;
-
-        while (true)
-        {
-            var pagedResult = await repoProvider.ListOpenPullRequestsAsync(page, pageSize,
-                new[] { AgentLabels.Next }, ct);
-            result.AddRange(pagedResult.Items);
-            if (!pagedResult.HasMore) break;
-            if (page >= maxPages) break;
-            page++;
-        }
+        var result = await FetchAllPagesAsync<PullRequestSummary>(
+            (page, pageSize, token) => repoProvider.ListOpenPullRequestsAsync(page, pageSize, new[] { AgentLabels.Next }, token),
+            maxPages, ct);
 
         // Filter: skip PRs with terminal/in-progress status labels
         result.RemoveAll(pr =>
@@ -817,13 +799,7 @@ public sealed partial class PipelineLoopService
             pr.Labels.Contains(AgentLabels.Cancelled));
 
         // FIFO: oldest first, PRs without CreatedAt go last
-        result.Sort((a, b) =>
-        {
-            var aDate = a.CreatedAt ?? DateTime.MaxValue;
-            var bDate = b.CreatedAt ?? DateTime.MaxValue;
-            return aDate.CompareTo(bDate);
-        });
-
+        result.Sort((a, b) => (a.CreatedAt ?? DateTime.MaxValue).CompareTo(b.CreatedAt ?? DateTime.MaxValue));
         return result;
     }
 
@@ -838,19 +814,9 @@ public sealed partial class PipelineLoopService
     private async Task<List<IssueSummary>> FetchEpicIssuesAsync(
         IIssueProvider provider, string label, int maxPages, CancellationToken ct)
     {
-        var result = new List<IssueSummary>();
-        int page = 1;
-        const int pageSize = PipelineConstants.DefaultPageSize;
-
-        while (true)
-        {
-            var pagedResult = await provider.ListOpenIssuesAsync(page, pageSize,
-                new[] { label }, ct);
-            result.AddRange(pagedResult.Items);
-            if (!pagedResult.HasMore) break;
-            if (page >= maxPages) break;
-            page++;
-        }
+        var result = await FetchAllPagesAsync<IssueSummary>(
+            (page, pageSize, token) => provider.ListOpenIssuesAsync(page, pageSize, new[] { label }, token),
+            maxPages, ct);
 
         // Apply eligibility filters based on the label type:
         if (label == AgentLabels.Epic)
@@ -872,13 +838,7 @@ public sealed partial class PipelineLoopService
         }
 
         // FIFO: oldest first
-        result.Sort((a, b) =>
-        {
-            var aDate = a.CreatedAt ?? DateTime.MaxValue;
-            var bDate = b.CreatedAt ?? DateTime.MaxValue;
-            return aDate.CompareTo(bDate);
-        });
-
+        result.Sort((a, b) => (a.CreatedAt ?? DateTime.MaxValue).CompareTo(b.CreatedAt ?? DateTime.MaxValue));
         return result;
     }
 
