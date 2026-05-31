@@ -3,6 +3,7 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -318,6 +319,438 @@ public class AgentJobDispatcherTests : IDisposable
         // After removal, issue should no longer be processed
         _runService.IsIssueBeingProcessed("issue-complete").Should().BeFalse();
     }
+
+    #region TryDispatchReviewAsync
+
+    [Fact]
+    public async Task TryDispatchReviewAsync_AlreadyQueued_ReturnsFalse()
+    {
+        _dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = "pr-1",
+            IssueProviderId = "ip",
+            RepoProviderId = "rp",
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            InitiatedBy = "test"
+        });
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.TryDispatchReviewAsync(new ReviewDispatchRequest
+        {
+            PrIdentifier = "pr-1",
+            PrBranchName = "feature/x",
+            PrTitle = "PR Title",
+            PrUrl = "https://github.com/org/repo/pull/1",
+            PrTargetBranch = "main",
+            IssueProviderId = "ip",
+            RepoProviderId = "rp",
+            InitiatedBy = "test"
+        }, CancellationToken.None);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task TryDispatchReviewAsync_NoIdleAgent_EnqueuesJob()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.TryDispatchReviewAsync(new ReviewDispatchRequest
+        {
+            PrIdentifier = "pr-2",
+            PrBranchName = "feature/y",
+            PrTitle = "PR Title",
+            PrUrl = "https://github.com/org/repo/pull/2",
+            PrTargetBranch = "main",
+            IssueProviderId = "ip",
+            RepoProviderId = "rp",
+            InitiatedBy = "user"
+        }, CancellationToken.None);
+
+        result.Should().BeTrue();
+        _dispatcher.IsIssueQueued("pr-2").Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task TryDispatchReviewAsync_WithAvailableAgent_DispatchesReview()
+    {
+        _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-review",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-review");
+
+        SetupHappyPathMocks("agent-provider-1");
+
+        // Mock ExtractLinkedIssuesAsync for PreFetchLinkedIssuesAsync
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(r => r.RepositoryFullName).Returns("org/repo");
+        mockRepoProvider.Setup(r => r.ExtractLinkedIssuesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
+        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.TryDispatchReviewAsync(new ReviewDispatchRequest
+        {
+            PrIdentifier = "3",
+            PrBranchName = "feature/z",
+            PrTitle = "PR Title",
+            PrUrl = "https://github.com/org/repo/pull/3",
+            PrTargetBranch = "main",
+            IssueProviderId = "ip",
+            RepoProviderId = "rp",
+            InitiatedBy = "user"
+        }, CancellationToken.None);
+
+        result.Should().BeTrue();
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "rp", "3", AgentLabels.InProgress, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()), Times.Once);
+        _mockAgentComm.Verify(c => c.AssignJobAsync("conn-review", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    #endregion
+
+    #region TryDispatchDecompositionAsync
+
+    [Fact]
+    public async Task TryDispatchDecompositionAsync_InvalidPhaseType_ThrowsArgumentOutOfRange()
+    {
+        var dispatcher = CreateDispatcher();
+        var act = () => dispatcher.TryDispatchDecompositionAsync(
+            "epic-1", "Epic Title", PipelineRunType.Implementation,
+            "ip", "rp", null, "user", CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public async Task TryDispatchDecompositionAsync_AlreadyQueued_ReturnsFalse()
+    {
+        _dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = "epic-1",
+            IssueProviderId = "ip",
+            RepoProviderId = "rp",
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            InitiatedBy = "test"
+        });
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.TryDispatchDecompositionAsync(
+            "epic-1", "Epic Title", PipelineRunType.DecompositionAnalysis,
+            "ip", "rp", null, "user", CancellationToken.None);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task TryDispatchDecompositionAsync_NoIdleAgent_EnqueuesJob()
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.TryDispatchDecompositionAsync(
+            "epic-2", "Epic Title", PipelineRunType.DecompositionAnalysis,
+            "ip", "rp", null, "user", CancellationToken.None);
+
+        result.Should().BeTrue();
+        _dispatcher.IsIssueQueued("epic-2").Should().BeTrue();
+    }
+
+    #endregion
+
+    #region DispatchToAgentAsync
+
+    [Fact]
+    public async Task DispatchToAgentAsync_HappyPath_TransitionsAgentToBusy()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-happy",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-happy");
+
+        SetupHappyPathMocks("agent-provider-1");
+        SetupIssueProviderMock(new List<IssueComment>());
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.DispatchToAgentAsync(
+            agent, "issue-hp", "ip", "rp", null, null, "user",
+            Array.Empty<string>(), CancellationToken.None);
+
+        result.Should().BeTrue();
+        agent.Status.Should().Be(AgentStatus.Busy);
+        _mockAgentComm.Verify(c => c.AssignJobAsync("conn-happy", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchToAgentAsync_NoProfile_ReturnsFalse()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-noprof",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-noprof");
+
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.DispatchToAgentAsync(
+            agent, "issue-np", "ip", "rp", null, null, "user",
+            Array.Empty<string>(), CancellationToken.None);
+
+        result.Should().BeFalse();
+        agent.Status.Should().Be(AgentStatus.Idle);
+    }
+
+    [Fact]
+    public async Task DispatchToAgentAsync_ExceptionDuringDispatch_ResetsAgentAndRevertsLabel()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-exc",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-exc");
+
+        SetupHappyPathMocks("agent-provider-1");
+        SetupIssueProviderMock(new List<IssueComment>());
+
+        // Make AssignJobAsync throw to trigger the catch block
+        _mockAgentComm.Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Connection lost"));
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.DispatchToAgentAsync(
+            agent, "issue-exc", "ip", "rp", null, null, "user",
+            Array.Empty<string>(), CancellationToken.None);
+
+        result.Should().BeFalse();
+        agent.Status.Should().Be(AgentStatus.Idle);
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "ip", "issue-exc", AgentLabels.Next, CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchToAgentAsync_IssueProviderNotFound_ReturnsFalse()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-noip",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-noip");
+
+        SetupHappyPathMocks("agent-provider-1");
+        // Don't set up issue provider config — GetProviderConfigByIdAsync for Issue kind returns null
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.DispatchToAgentAsync(
+            agent, "issue-noip", "ip", "rp", null, null, "user",
+            Array.Empty<string>(), CancellationToken.None);
+
+        result.Should().BeFalse();
+    }
+
+    #endregion
+
+    #region PrepareIssueContextAsync (indirect)
+
+    [Fact]
+    public async Task PrepareIssueContextAsync_MoreThan50Comments_CapsAt50()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-cap",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-cap");
+
+        SetupHappyPathMocks("agent-provider-1");
+
+        // Create 60 comments
+        var comments = Enumerable.Range(1, 60).Select(i => new IssueComment
+        {
+            Id = $"c-{i}",
+            Body = $"Comment {i}",
+            Author = "user",
+            CreatedAt = DateTime.UtcNow.AddMinutes(i)
+        }).ToList();
+        SetupIssueProviderMock(comments);
+
+        JobAssignmentMessage? capturedMessage = null;
+        _mockAgentComm.Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<string, JobAssignmentMessage, CancellationToken>((_, msg, _) => capturedMessage = msg)
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = CreateDispatcher();
+        await dispatcher.DispatchToAgentAsync(
+            agent, "issue-cap", "ip", "rp", null, null, "user",
+            Array.Empty<string>(), CancellationToken.None);
+
+        capturedMessage.Should().NotBeNull();
+        capturedMessage!.IssueComments.Count.Should().Be(50);
+    }
+
+    [Fact]
+    public async Task PrepareIssueContextAsync_GateRejectionNewerThanAnalysis_SetsForceRefresh()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-fr",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-fr");
+
+        SetupHappyPathMocks("agent-provider-1");
+
+        var comments = new List<IssueComment>
+        {
+            new()
+            {
+                Id = "c-analysis",
+                Body = $"{Pipeline.CommentMarkers.AnalysisHeader}\nSome analysis content",
+                Author = "bot",
+                CreatedAt = DateTime.UtcNow.AddMinutes(-10)
+            },
+            new()
+            {
+                Id = "c-rejection",
+                Body = $"{Pipeline.CommentMarkers.GateRejection}\nRejection reason",
+                Author = "bot",
+                CreatedAt = DateTime.UtcNow.AddMinutes(-5) // Newer than analysis
+            }
+        };
+        SetupIssueProviderMock(comments);
+
+        JobAssignmentMessage? capturedMessage = null;
+        _mockAgentComm.Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<string, JobAssignmentMessage, CancellationToken>((_, msg, _) => capturedMessage = msg)
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = CreateDispatcher();
+        await dispatcher.DispatchToAgentAsync(
+            agent, "issue-fr", "ip", "rp", null, null, "user",
+            Array.Empty<string>(), CancellationToken.None);
+
+        capturedMessage.Should().NotBeNull();
+        capturedMessage!.ForceRefreshAnalysis.Should().BeTrue();
+    }
+
+    #endregion
+
+    #region Helpers
+
+    /// <summary>
+    /// Sets up the full mock chain needed for DispatchToAgentAsync happy path:
+    /// profile, QGC, reviewer configs, provider configs, and repository provider.
+    /// </summary>
+    private void SetupHappyPathMocks(string agentProviderId)
+    {
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                new AgentProfile
+                {
+                    Id = "profile-1",
+                    DisplayName = "Test Profile",
+                    AgentProviderConfigId = agentProviderId,
+                    MatchLabels = Array.Empty<string>() // Matches any agent
+                }
+            });
+        _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
+
+        var repoConfig = new ProviderConfig
+        {
+            Id = "rp",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test Repo"
+        };
+        var agentConfig = new ProviderConfig
+        {
+            Id = agentProviderId,
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Test Agent",
+            Settings = new Dictionary<string, string> { ["model"] = "auto" }
+        };
+
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { repoConfig });
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { agentConfig });
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(r => r.RepositoryFullName).Returns("org/repo");
+        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+    }
+
+    /// <summary>
+    /// Sets up the issue provider mock for PrepareIssueContextAsync.
+    /// </summary>
+    private void SetupIssueProviderMock(IReadOnlyList<IssueComment> comments)
+    {
+        var issueConfig = new ProviderConfig
+        {
+            Id = "ip",
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "Test Issue Provider"
+        };
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { issueConfig });
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "issue-1",
+                Title = "Test Issue",
+                Description = "Test description",
+                Labels = Array.Empty<string>()
+            });
+        mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(comments);
+        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+    }
+
+    #endregion
 
     public void Dispose()
     {
