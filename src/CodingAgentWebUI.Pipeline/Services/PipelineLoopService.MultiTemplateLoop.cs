@@ -1,7 +1,5 @@
-using System.Collections.Concurrent;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using Microsoft.Extensions.Hosting;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
