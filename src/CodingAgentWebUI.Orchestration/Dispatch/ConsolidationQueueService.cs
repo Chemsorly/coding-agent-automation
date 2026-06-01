@@ -86,7 +86,7 @@ public sealed class ConsolidationQueueService
                 if (!_queue.TryDequeue(out var job))
                     break;
 
-                if (IsLabelMatch(agent.Labels, job.RequiredLabels))
+                if (LabelMatchHelper.IsLabelMatch(agent.Labels, job.RequiredLabels))
                 {
                     _queuedRunIds.TryRemove(job.RunId, out _);
                     return job;
@@ -146,14 +146,5 @@ public sealed class ConsolidationQueueService
                     _queue.Enqueue(job);
             }
         }
-    }
-
-    private static bool IsLabelMatch(IReadOnlyList<string> agentLabels, IReadOnlyList<string> requiredLabels)
-    {
-        if (requiredLabels.Count == 0)
-            return true;
-
-        var agentLabelSet = new HashSet<string>(agentLabels, StringComparer.OrdinalIgnoreCase);
-        return requiredLabels.All(label => agentLabelSet.Contains(label));
     }
 }

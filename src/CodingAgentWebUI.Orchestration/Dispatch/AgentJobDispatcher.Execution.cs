@@ -27,14 +27,9 @@ public sealed partial class AgentJobDispatcher
         try
         {
             // Resolve profile for this agent
-            var profiles = await _configStore.LoadAgentProfilesAsync(ct);
-            var profile = _profileResolver.Resolve(profiles, agent.Labels);
+            var profile = await ResolveProfileAsync(agent, ct);
             if (profile is null)
-            {
-                var labelsStr = string.Join(", ", agent.Labels);
-                _logger.Warning("No profile matches agent {AgentId} labels [{Labels}]", agent.AgentId, labelsStr);
                 return false;
-            }
 
             var agentProviderId = profile.AgentProviderConfigId;
 
@@ -80,22 +75,7 @@ public sealed partial class AgentJobDispatcher
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct);
 
             var config = await _configStore.LoadPipelineConfigAsync(ct);
-
-            // Override BrainReadOnly from the matching template (per-template setting)
-            // TODO: Template matching uses RepoProviderId + BrainProviderId which may be ambiguous
-            // if multiple templates share the same combination. Consider passing template ID through
-            // the dispatch chain. See review finding #4.
-            var matchingTemplate = config.PipelineJobTemplates.FirstOrDefault(t =>
-                t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
-            // TODO: This override is one-directional (can only enable BrainReadOnly, never disable).
-            // If global config has BrainReadOnly=true, a template with BrainReadOnly=false cannot
-            // override it. Consider: if (matchingTemplate is not null) config = config with { BrainReadOnly = matchingTemplate.BrainReadOnly };
-            // See review finding #3.
-            if (matchingTemplate is { BrainReadOnly: true })
-                config = config with { BrainReadOnly = true };
-
-            // Override blacklist settings from repo provider config (per-repo takes precedence)
-            config = PipelineConfiguration.ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == repoProviderId));
+            config = ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs);
 
             var message = new JobAssignmentMessage
             {
@@ -141,16 +121,9 @@ public sealed partial class AgentJobDispatcher
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Failed to dispatch job to agent {AgentId} for issue {IssueIdentifier}",
-                agent.AgentId, issueIdentifier);
-
-            // Reset agent status on failure
-            agent.ActiveJobId = null;
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-
-            // Revert label on dispatch failure (REQ-7.7)
-            await _labelSwapper.SwapLabelAsync(issueProviderId, issueIdentifier, AgentLabels.Next, CancellationToken.None);
-
+            await RevertDispatchFailureAsync(agent, ex,
+                "Failed to dispatch job to agent {AgentId} for issue {IssueIdentifier}",
+                issueProviderId, issueIdentifier, AgentLabels.Next);
             return false;
         }
     }
@@ -168,14 +141,9 @@ public sealed partial class AgentJobDispatcher
         try
         {
             // Resolve profile for this agent
-            var profiles = await _configStore.LoadAgentProfilesAsync(ct);
-            var profile = _profileResolver.Resolve(profiles, agent.Labels);
+            var profile = await ResolveProfileAsync(agent, ct);
             if (profile is null)
-            {
-                var labelsStr = string.Join(", ", agent.Labels);
-                _logger.Warning("No profile matches agent {AgentId} labels [{Labels}] for review dispatch", agent.AgentId, labelsStr);
                 return false;
-            }
 
             var agentProviderId = profile.AgentProviderConfigId;
 
@@ -244,15 +212,7 @@ public sealed partial class AgentJobDispatcher
                 request.RepoProviderId, agentProviderId, request.BrainProviderId, pipelineProviderId: null, ct);
 
             var config = await _configStore.LoadPipelineConfigAsync(ct);
-
-            // Override BrainReadOnly from the matching template (per-template setting)
-            var matchingTemplate = config.PipelineJobTemplates.FirstOrDefault(t =>
-                t.RepoProviderId == request.RepoProviderId && t.BrainProviderId == request.BrainProviderId);
-            if (matchingTemplate is { BrainReadOnly: true })
-                config = config with { BrainReadOnly = true };
-
-            // Override blacklist settings from repo provider config (per-repo takes precedence)
-            config = PipelineConfiguration.ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == request.RepoProviderId));
+            config = ApplyTemplateOverrides(config, request.RepoProviderId, request.BrainProviderId, providerConfigs);
 
             // Swap label to agent:in-progress before dispatch so the PR is immediately marked
             // in-progress, preventing the loop from re-dispatching it on the next cycle.
@@ -312,17 +272,9 @@ public sealed partial class AgentJobDispatcher
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Failed to dispatch review job to agent {AgentId} for PR {PrIdentifier}",
-                agent.AgentId, request.PrIdentifier);
-
-            // Reset agent status on failure
-            agent.ActiveJobId = null;
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-
-            // Revert label on dispatch failure
-            await _labelSwapper.SwapLabelAsync(
-                request.RepoProviderId, request.PrIdentifier, AgentLabels.Next, LabelTargetKind.PullRequest, CancellationToken.None);
-
+            await RevertDispatchFailureAsync(agent, ex,
+                "Failed to dispatch review job to agent {AgentId} for PR {PrIdentifier}",
+                request.RepoProviderId, request.PrIdentifier, AgentLabels.Next, LabelTargetKind.PullRequest);
             return false;
         }
     }
@@ -347,14 +299,9 @@ public sealed partial class AgentJobDispatcher
         try
         {
             // Resolve profile for this agent
-            var profiles = await _configStore.LoadAgentProfilesAsync(ct);
-            var profile = _profileResolver.Resolve(profiles, agent.Labels);
+            var profile = await ResolveProfileAsync(agent, ct);
             if (profile is null)
-            {
-                var labelsStr = string.Join(", ", agent.Labels);
-                _logger.Warning("No profile matches agent {AgentId} labels [{Labels}] for decomposition dispatch", agent.AgentId, labelsStr);
                 return false;
-            }
 
             var agentProviderId = profile.AgentProviderConfigId;
 
@@ -404,14 +351,7 @@ public sealed partial class AgentJobDispatcher
             var providerConfigs = await PrepareProviderConfigsAsync(
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, ct);
 
-            // Override BrainReadOnly from the matching template (per-template setting)
-            var matchingTemplate = config.PipelineJobTemplates.FirstOrDefault(t =>
-                t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
-            if (matchingTemplate is { BrainReadOnly: true })
-                config = config with { BrainReadOnly = true };
-
-            // Override blacklist settings from repo provider config (per-repo takes precedence)
-            config = PipelineConfiguration.ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == repoProviderId));
+            config = ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs);
 
             // Build a synthetic IssueDetail from epic metadata for the job assignment
             var syntheticIssueDetail = new IssueDetail
@@ -465,21 +405,73 @@ public sealed partial class AgentJobDispatcher
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Failed to dispatch decomposition job to agent {AgentId} for epic {EpicIdentifier}",
-                agent.AgentId, epicIdentifier);
-
-            // Reset agent status on failure
-            agent.ActiveJobId = null;
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-
             // Revert label on dispatch failure — Phase 1 reverts to agent:epic, Phase 2 reverts to agent:epic-approved
             var revertLabel = phaseType == PipelineRunType.DecompositionAnalysis
                 ? AgentLabels.Epic
                 : AgentLabels.EpicApproved;
-            await _labelSwapper.SwapLabelAsync(issueProviderId, epicIdentifier, revertLabel, CancellationToken.None);
-
+            await RevertDispatchFailureAsync(agent, ex,
+                "Failed to dispatch decomposition job to agent {AgentId} for epic {EpicIdentifier}",
+                issueProviderId, epicIdentifier, revertLabel);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Resolves the agent profile by loading all profiles and matching against the agent's labels.
+    /// Returns <c>null</c> (with a warning log) if no profile matches.
+    /// </summary>
+    private async Task<AgentProfile?> ResolveProfileAsync(AgentEntry agent, CancellationToken ct)
+    {
+        var profiles = await _configStore.LoadAgentProfilesAsync(ct);
+        var profile = _profileResolver.Resolve(profiles, agent.Labels);
+        if (profile is null)
+        {
+            var labelsStr = string.Join(", ", agent.Labels);
+            _logger.Warning("No profile matches agent {AgentId} labels [{Labels}]", agent.AgentId, labelsStr);
+        }
+
+        return profile;
+    }
+
+    /// <summary>
+    /// Applies template-level overrides to the pipeline configuration: BrainReadOnly from the
+    /// matching template and blacklist settings from the repo provider config.
+    /// </summary>
+    private static PipelineConfiguration ApplyTemplateOverrides(
+        PipelineConfiguration config,
+        string repoProviderId,
+        string? brainProviderId,
+        IReadOnlyList<ProviderConfig> providerConfigs)
+    {
+        var matchingTemplate = config.PipelineJobTemplates.FirstOrDefault(t =>
+            t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
+        if (matchingTemplate is { BrainReadOnly: true })
+            config = config with { BrainReadOnly = true };
+
+        return PipelineConfiguration.ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == repoProviderId));
+    }
+
+    /// <summary>
+    /// Handles dispatch failure by resetting agent status, logging the error, and reverting the label.
+    /// </summary>
+    private async Task RevertDispatchFailureAsync(
+        AgentEntry agent,
+        Exception ex,
+        string messageTemplate,
+        string providerConfigId,
+        string identifier,
+        string revertLabel,
+        LabelTargetKind? targetKind = null)
+    {
+        _logger.Error(ex, messageTemplate, agent.AgentId, identifier);
+
+        agent.ActiveJobId = null;
+        _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+
+        if (targetKind.HasValue)
+            await _labelSwapper.SwapLabelAsync(providerConfigId, identifier, revertLabel, targetKind.Value, CancellationToken.None);
+        else
+            await _labelSwapper.SwapLabelAsync(providerConfigId, identifier, revertLabel, CancellationToken.None);
     }
 
     /// <summary>
