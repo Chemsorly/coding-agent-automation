@@ -1,3 +1,5 @@
+using MessagePack;
+
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
@@ -78,4 +80,36 @@ public sealed record CommitConfiguration
 {
     public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".agent", ".github", ".brain" };
     public BlacklistMode BlacklistMode { get; init; } = BlacklistMode.WarnAndExclude;
+}
+
+/// <summary>
+/// Configuration for quarantining known-flaky tests to prevent them from consuming retry budget.
+/// </summary>
+[MessagePackObject]
+public sealed record TestQuarantineConfiguration
+{
+    [Key(0)]
+    public bool Enabled { get; init; } = false;
+    [Key(1)]
+    public IReadOnlyList<QuarantinedTest> QuarantinedTests { get; init; } = [];
+    [Key(2)]
+    public int MaxQuarantinedFailuresPerRun { get; init; } = 5;
+}
+
+/// <summary>
+/// A single quarantined test entry.
+/// </summary>
+[MessagePackObject]
+public sealed record QuarantinedTest
+{
+    [Key(0)]
+    public required string TestName { get; init; }
+    [Key(1)]
+    public required string Reason { get; init; }
+    [Key(2)]
+    public required DateTime QuarantinedAt { get; init; }
+    [Key(3)]
+    public DateTime? ExpiresAt { get; init; }
+    [Key(4)]
+    public IReadOnlyList<string>? AssociatedSourceFiles { get; init; }
 }

@@ -8,5 +8,7 @@ public sealed class GateResult
     public int? TestsPassed { get; init; }
     public int? TestsFailed { get; init; }
     public int? TestsSkipped { get; init; }
+    public int? TestsQuarantined { get; init; }
+    public IReadOnlyList<string>? QuarantinedTestNames { get; init; }
     public double? CoveragePercent { get; init; }
 }
