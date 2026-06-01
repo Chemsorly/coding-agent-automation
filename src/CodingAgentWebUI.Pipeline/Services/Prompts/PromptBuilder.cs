@@ -181,7 +181,7 @@ public static class PromptBuilder
             sb.AppendLine();
             sb.AppendLine("You may also run read-only git commands for additional context:");
             sb.AppendLine("- `git log origin/main..HEAD --oneline` — shows commits on the branch");
-            sb.AppendLine("- `git status` — shows uncommitted/unstaged files");
+            sb.AppendLine("- `git status` — shows working tree state (NOTE: untracked files are expected — the pipeline automatically stages and commits ALL new/modified files before creating the PR)");
             sb.AppendLine();
         }
 

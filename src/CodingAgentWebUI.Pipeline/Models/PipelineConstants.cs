@@ -54,7 +54,8 @@ public static class PipelineConstants
     /// </summary>
     public const string GitRestrictionFull =
         "Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). " +
-        "The pipeline handles all version control operations. Read-only git commands (git log, git diff, git status, git show) are fine.";
+        "The pipeline handles all version control operations — it automatically stages and commits ALL new and modified files (including untracked files). " +
+        "Read-only git commands (git log, git diff, git status, git show) are fine.";
 
     /// <summary>
     /// Git restriction instruction appended to prompts (short version for cleanup/retry).

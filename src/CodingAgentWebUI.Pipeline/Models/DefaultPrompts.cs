@@ -25,7 +25,8 @@ public static class DefaultPrompts
         "- \"Consider using library X\" suggestions\n" +
         "- Performance micro-optimizations\n" +
         "- Missing nullable annotations on internal code\n" +
-        "- Test code conventions\n\n" +
+        "- Test code conventions\n" +
+        "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +
         "Do NOT fix anything. Only report findings.";
 
     public const string Fix =
@@ -47,7 +48,8 @@ public static class DefaultPrompts
         "- Theoretical risks requiring unlikely preconditions\n" +
         "- Issues in unchanged code outside the diff\n" +
         "- \"Consider using library X\" suggestions\n" +
-        "- Performance micro-optimizations\n\n" +
+        "- Performance micro-optimizations\n" +
+        "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +
         "Do NOT fix anything. Only report findings.";
 
     public const string DotNetSpecialistReview =
@@ -66,7 +68,8 @@ public static class DefaultPrompts
         "- Style or formatting preferences\n" +
         "- Missing nullable annotations on internal code\n" +
         "- Test code conventions\n" +
-        "- Suggestions to add more abstractions or interfaces\n\n" +
+        "- Suggestions to add more abstractions or interfaces\n" +
+        "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +
         "Do NOT fix anything. Only report findings.";
 
     public const string SecurityReview =
@@ -90,7 +93,8 @@ public static class DefaultPrompts
         "- Missing HTTPS enforcement (infrastructure concern, not code)\n" +
         "- Test code, sample data, or placeholder values in test fixtures\n" +
         "- Dependency vulnerabilities (covered by external CI)\n" +
-        "- General code quality or style issues\n\n" +
+        "- General code quality or style issues\n" +
+        "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +
         "Do NOT fix anything. Only report findings.";
 
     public const string AcceptanceCriteriaReview =
@@ -117,7 +121,8 @@ public static class DefaultPrompts
         "- .NET-specific patterns (already covered by previous reviews)\n" +
         "- Security issues (already covered by previous reviews)\n" +
         "- Style or formatting preferences\n" +
-        "- Suggestions to add features beyond what the issue requests\n\n" +
+        "- Suggestions to add features beyond what the issue requests\n" +
+        "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +
         "Do NOT fix anything. Only report findings.";
 
     public const string Analysis =
