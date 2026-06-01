@@ -125,13 +125,7 @@ public sealed class AgentWorkerService : BackgroundService
             await _hubManager.StartAsync(stoppingToken);
 
             // Register with orchestrator
-            var registration = new AgentRegistrationMessage
-            {
-                AgentId = _agentId,
-                Hostname = Environment.MachineName,
-                AgentType = _agentType,
-                Labels = _labels
-            };
+            var registration = BuildRegistrationMessage();
 
             await _signalRPipeline.ExecuteAsync(async token =>
                 await _hubManager.Connection.InvokeAsync("RegisterAgent", registration, token), stoppingToken);
@@ -174,31 +168,17 @@ public sealed class AgentWorkerService : BackgroundService
 
     private async Task HandleAssignJobAsync(JobAssignmentMessage message)
     {
-        string? rejectJobId = null;
-        lock (_busyLock)
-        {
-            if (_activeJobId is not null || _activeChatSessionId is not null)
-            {
-                rejectJobId = message.JobId;
-            }
-            else
-            {
-                _activeJobId = message.JobId;
-                _jobCts = new CancellationTokenSource();
-            }
-        }
-
-        if (rejectJobId is not null)
+        if (!TryAcquireJobSlot(message.JobId, out var busyWith))
         {
             _logger.Warning("Rejecting job {JobId} — agent is busy with {ActiveJobId}",
-                rejectJobId, _activeJobId ?? $"chat:{_activeChatSessionId}");
+                message.JobId, busyWith);
             try
             {
-                await _hubManager.Connection.InvokeAsync("JobRejected", rejectJobId, "Agent is busy");
+                await _hubManager.Connection.InvokeAsync("JobRejected", message.JobId, "Agent is busy");
             }
             catch (Exception ex)
             {
-                _logger.Warning(ex, "Failed to notify orchestrator of job rejection {JobId}", rejectJobId);
+                _logger.Warning(ex, "Failed to notify orchestrator of job rejection {JobId}", message.JobId);
             }
             return;
         }
@@ -291,14 +271,7 @@ public sealed class AgentWorkerService : BackgroundService
                 _jobCts = null;
 
                 // Signal ready for next job
-                try
-                {
-                    await _hubManager.Connection.InvokeAsync("AgentReady", _agentId);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Failed to send AgentReady signal");
-                }
+                await SignalAgentReadyAsync();
             }
         });
     }
@@ -322,131 +295,127 @@ public sealed class AgentWorkerService : BackgroundService
 
     private async Task HandleChatPromptAsync(ChatPromptMessage message)
     {
-        lock (_busyLock)
+        if (!TryAcquireChatSlot(message.SessionId, out var busyWith))
         {
-            if (_activeJobId is not null || _activeChatSessionId is not null)
-            {
-                _logger.Warning("Rejecting chat prompt for session {SessionId} — agent is busy",
-                    message.SessionId);
-                return;
-            }
-
-            _activeChatSessionId = message.SessionId;
-            _chatCts = new CancellationTokenSource();
+            _logger.Warning("Rejecting chat prompt for session {SessionId} — agent is busy",
+                message.SessionId);
+            return;
         }
 
         _logger.Information("Accepted chat prompt for session {SessionId}", message.SessionId);
 
+        var chatCts = _chatCts!;
         _activeChatTask = Task.Run(async () =>
         {
-            var outputBatcher = new OutputBatcher();
-            outputBatcher.OnFlush += async lines =>
+            int exitCode = ExitCodes.GeneralFailure;
+            string? error = null;
+
+            // Scoped so the batcher is disposed (flushing remaining lines)
+            // BEFORE reporting completion to the orchestrator.
             {
+                await using var outputBatcher = new OutputBatcher();
+                outputBatcher.OnFlush += async lines =>
+                {
+                    try
+                    {
+                        var response = new ChatResponseMessage
+                        {
+                            SessionId = message.SessionId,
+                            Lines = lines.ToList()
+                        };
+                        await _hubManager.Connection.InvokeAsync("ReportChatResponse", response);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex, "Failed to send chat response lines");
+                    }
+                };
+
                 try
                 {
-                    var response = new ChatResponseMessage
+                    // Write MCP config to the CLI's global settings location
+                    var chatWorkspace = "/app/workspaces/chat";
+                    Directory.CreateDirectory(chatWorkspace);
+
+                    if (!message.UseResume && message.McpServers is { Count: > 0 })
                     {
-                        SessionId = message.SessionId,
-                        Lines = lines.ToList()
-                    };
-                    await _hubManager.Connection.InvokeAsync("ReportChatResponse", response);
+                        WriteMcpConfig(message.McpConfigPath, message.McpServers);
+                        await outputBatcher.AddLineAsync(
+                            $"🔌 Wrote MCP config with {message.McpServers.Count} server(s) to {message.McpConfigPath}");
+                    }
+
+                    if (_isOpenCodeProvider)
+                    {
+                        // OpenCode path: use HTTP API via OpenCodeAgentProvider
+                        await using var provider = new OpenCodeAgentProvider(_httpClientFactory, _logger);
+                        await provider.EnsureSessionAsync(chatWorkspace, chatCts.Token);
+
+                        var result = await provider.ExecuteAsync(
+                            new AgentRequest
+                            {
+                                Prompt = message.Prompt,
+                                WorkspacePath = chatWorkspace,
+                                UseResume = message.UseResume,
+                                Timeout = PipelineConstants.DefaultAgentTimeout
+                            },
+                            chatCts.Token,
+                            onOutputLine: async line => await outputBatcher.AddLineAsync(line));
+
+                        exitCode = result.ExitCode;
+
+                        // Send the response text to the UI (HTTP response body contains the final answer)
+                        foreach (var line in result.OutputLines)
+                        {
+                            if (!string.IsNullOrWhiteSpace(line))
+                                await outputBatcher.AddLineAsync(line);
+                        }
+
+                        if (exitCode != ExitCodes.Success)
+                            error = string.Join("\n", result.OutputLines.TakeLast(3));
+                    }
+                    else
+                    {
+                        // KiroCli path: use process-based orchestrator
+                        // On the first prompt (no --resume), Kiro CLI suppresses response text because
+                        // tool trust isn't established yet. Send a lightweight warm-up prompt first to
+                        // establish the session, then send the real prompt with --resume.
+                        if (!message.UseResume)
+                        {
+                            _logger.Information("Sending warm-up prompt to establish chat session");
+                            await _orchestrator.ExecutePromptAsync(
+                                "hello, how are you?",
+                                chatWorkspace,
+                                useResume: false,
+                                chatCts.Token);
+                        }
+
+                        // Execute the actual user prompt (always with --resume after warm-up)
+                        var exitCode2 = await _orchestrator.ExecutePromptAsync(
+                            message.Prompt,
+                            chatWorkspace,
+                            useResume: true,
+                            chatCts.Token,
+                            onOutputLine: async line =>
+                            {
+                                var clean = KiroCliLib.Core.AnsiStripper.Strip(line);
+                                await outputBatcher.AddLineAsync(clean);
+                            });
+
+                        exitCode = exitCode2;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    exitCode = ExitCodes.Cancelled;
+                    error = "Chat cancelled";
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warning(ex, "Failed to send chat response lines");
-                }
-            };
-
-            int exitCode = ExitCodes.GeneralFailure;
-            string? error = null;
-            try
-            {
-                // Write MCP config to the CLI's global settings location
-                var chatWorkspace = "/app/workspaces/chat";
-                Directory.CreateDirectory(chatWorkspace);
-
-                if (!message.UseResume && message.McpServers is { Count: > 0 })
-                {
-                    WriteMcpConfig(message.McpConfigPath, message.McpServers);
-                    await outputBatcher.AddLineAsync(
-                        $"🔌 Wrote MCP config with {message.McpServers.Count} server(s) to {message.McpConfigPath}");
-                }
-
-                if (_isOpenCodeProvider)
-                {
-                    // OpenCode path: use HTTP API via OpenCodeAgentProvider
-                    await using var provider = new OpenCodeAgentProvider(_httpClientFactory, _logger);
-                    await provider.EnsureSessionAsync(chatWorkspace, _chatCts.Token);
-
-                    var result = await provider.ExecuteAsync(
-                        new AgentRequest
-                        {
-                            Prompt = message.Prompt,
-                            WorkspacePath = chatWorkspace,
-                            UseResume = message.UseResume,
-                            Timeout = PipelineConstants.DefaultAgentTimeout
-                        },
-                        _chatCts.Token,
-                        onOutputLine: async line => await outputBatcher.AddLineAsync(line));
-
-                    exitCode = result.ExitCode;
-
-                    // Send the response text to the UI (HTTP response body contains the final answer)
-                    foreach (var line in result.OutputLines)
-                    {
-                        if (!string.IsNullOrWhiteSpace(line))
-                            await outputBatcher.AddLineAsync(line);
-                    }
-
-                    if (exitCode != ExitCodes.Success)
-                        error = string.Join("\n", result.OutputLines.TakeLast(3));
-                }
-                else
-                {
-                    // KiroCli path: use process-based orchestrator
-                    // On the first prompt (no --resume), Kiro CLI suppresses response text because
-                    // tool trust isn't established yet. Send a lightweight warm-up prompt first to
-                    // establish the session, then send the real prompt with --resume.
-                    if (!message.UseResume)
-                    {
-                        _logger.Information("Sending warm-up prompt to establish chat session");
-                        await _orchestrator.ExecutePromptAsync(
-                            "hello, how are you?",
-                            chatWorkspace,
-                            useResume: false,
-                            _chatCts.Token);
-                    }
-
-                    // Execute the actual user prompt (always with --resume after warm-up)
-                    var exitCode2 = await _orchestrator.ExecutePromptAsync(
-                        message.Prompt,
-                        chatWorkspace,
-                        useResume: true,
-                        _chatCts.Token,
-                        onOutputLine: async line =>
-                        {
-                            var clean = KiroCliLib.Core.AnsiStripper.Strip(line);
-                            await outputBatcher.AddLineAsync(clean);
-                        });
-
-                    exitCode = exitCode2;
+                    _logger.Error(ex, "Chat execution failed for session {SessionId}", message.SessionId);
+                    exitCode = ExitCodes.GeneralFailure;
+                    error = ex.Message;
                 }
             }
-            catch (OperationCanceledException)
-            {
-                exitCode = ExitCodes.Cancelled;
-                error = "Chat cancelled";
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "Chat execution failed for session {SessionId}", message.SessionId);
-                exitCode = ExitCodes.GeneralFailure;
-                error = ex.Message;
-            }
-
-            // Dispose the batcher BEFORE reporting completion to ensure all buffered
-            // output lines are flushed to the orchestrator first.
-            await outputBatcher.DisposeAsync();
 
             try
             {
@@ -502,14 +471,7 @@ public sealed class AgentWorkerService : BackgroundService
         }
 
         // Signal ready — the chat session is over, agent can accept jobs again
-        try
-        {
-            await _hubManager.Connection.InvokeAsync("AgentReady", _agentId);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to send AgentReady signal after chat cancellation");
-        }
+        await SignalAgentReadyAsync();
     }
 
     /// <summary>
@@ -522,13 +484,7 @@ public sealed class AgentWorkerService : BackgroundService
         _logger.Information("Re-registering agent {AgentId} after reconnection (connectionId={ConnectionId})",
             _agentId, connectionId);
 
-        var registration = new AgentRegistrationMessage
-        {
-            AgentId = _agentId,
-            Hostname = Environment.MachineName,
-            AgentType = _agentType,
-            Labels = _labels
-        };
+        var registration = BuildRegistrationMessage();
 
         try
         {
@@ -621,29 +577,24 @@ public sealed class AgentWorkerService : BackgroundService
 
     private async Task HandleAssignConsolidationJobAsync(ConsolidationJobMessage message)
     {
-        lock (_busyLock)
+        if (!TryAcquireJobSlot(message.JobId, out var busyWith))
         {
-            if (_activeJobId is not null || _activeChatSessionId is not null)
-            {
-                _logger.Warning("Rejecting consolidation job {JobId} — agent is busy with {ActiveJobId}",
-                    message.JobId, _activeJobId ?? $"chat:{_activeChatSessionId}");
-                // TODO: Send rejection notification to orchestrator (requires verifying orchestrator handles consolidation job rejections)
-                return;
-            }
-
-            _activeJobId = message.JobId;
-            _jobCts = new CancellationTokenSource();
+            _logger.Warning("Rejecting consolidation job {JobId} — agent is busy with {ActiveJobId}",
+                message.JobId, busyWith);
+            // TODO: Send rejection notification to orchestrator (requires verifying orchestrator handles consolidation job rejections)
+            return;
         }
 
         _logger.Information("Accepted consolidation job {JobId} of type {Type}",
             message.JobId, message.Type);
 
+        var jobCts = _jobCts!;
         _activeJobTask = Task.Run(async () =>
         {
             try
             {
                 await _consolidationExecutor.ExecuteAsync(
-                    message, _hubManager.Connection, _jobCts.Token);
+                    message, _hubManager.Connection, jobCts.Token);
             }
             catch (Exception ex)
             {
@@ -677,14 +628,7 @@ public sealed class AgentWorkerService : BackgroundService
                 _jobCts = null;
 
                 // Signal ready for next job
-                try
-                {
-                    await _hubManager.Connection.InvokeAsync("AgentReady", _agentId);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Failed to send AgentReady signal after consolidation job");
-                }
+                await SignalAgentReadyAsync();
             }
         });
     }
@@ -695,6 +639,60 @@ public sealed class AgentWorkerService : BackgroundService
     /// </summary>
     private static void WriteMcpConfig(string fullPath, IReadOnlyList<McpServerConfig> mcpServers)
         => McpConfigWriter.WriteConfig(fullPath, mcpServers);
+
+    private bool TryAcquireJobSlot(string jobId, out string? busyWith)
+    {
+        lock (_busyLock)
+        {
+            if (_activeJobId is not null || _activeChatSessionId is not null)
+            {
+                busyWith = _activeJobId ?? $"chat:{_activeChatSessionId}";
+                return false;
+            }
+
+            _activeJobId = jobId;
+            _jobCts = new CancellationTokenSource();
+            busyWith = null;
+            return true;
+        }
+    }
+
+    private bool TryAcquireChatSlot(string sessionId, out string? busyWith)
+    {
+        lock (_busyLock)
+        {
+            if (_activeJobId is not null || _activeChatSessionId is not null)
+            {
+                busyWith = _activeJobId ?? $"chat:{_activeChatSessionId}";
+                return false;
+            }
+
+            _activeChatSessionId = sessionId;
+            _chatCts = new CancellationTokenSource();
+            busyWith = null;
+            return true;
+        }
+    }
+
+    private async Task SignalAgentReadyAsync()
+    {
+        try
+        {
+            await _hubManager.Connection.InvokeAsync("AgentReady", _agentId);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to send AgentReady signal");
+        }
+    }
+
+    private AgentRegistrationMessage BuildRegistrationMessage() => new()
+    {
+        AgentId = _agentId,
+        Hostname = Environment.MachineName,
+        AgentType = _agentType,
+        Labels = _labels
+    };
 
     private async Task SendHeartbeatAsync(CancellationToken ct)
     {
