@@ -11,6 +11,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence;
 public class PipelineRunHistoryService : IPipelineRunHistoryService
 {
     private readonly List<PipelineRunSummary> _runHistory = new();
+    private readonly object _lock = new();
     private readonly string _runsDirectory;
     private readonly Serilog.ILogger _logger;
 
@@ -25,17 +26,23 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     }
 
     /// <summary>Returns the in-memory run history.</summary>
-    public IReadOnlyList<PipelineRunSummary> GetRunHistory() => _runHistory.AsReadOnly();
+    public IReadOnlyList<PipelineRunSummary> GetRunHistory()
+    {
+        lock (_lock) { return _runHistory.ToList().AsReadOnly(); }
+    }
 
     /// <summary>Returns the most recent runs for a specific agent, limited to <paramref name="limit"/>.</summary>
     public IReadOnlyList<PipelineRunSummary> GetRunsByAgentId(string agentId, int limit = 10)
     {
         ArgumentNullException.ThrowIfNull(agentId);
-        return _runHistory
-            .Where(r => string.Equals(r.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
-            .Take(limit)
-            .ToList()
-            .AsReadOnly();
+        lock (_lock)
+        {
+            return _runHistory
+                .Where(r => string.Equals(r.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
+                .Take(limit)
+                .ToList()
+                .AsReadOnly();
+        }
     }
 
     /// <summary>Adds a completed run to history and persists the summary to disk.</summary>
@@ -43,7 +50,7 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     {
         ArgumentNullException.ThrowIfNull(run);
         var summary = run.ToSummary();
-        _runHistory.Insert(0, summary);
+        lock (_lock) { _runHistory.Insert(0, summary); }
         PersistRunSummary(summary);
     }
 
@@ -145,7 +152,10 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
 
         var cutoff = DateTime.UtcNow.AddDays(-config.FailedWorkspaceRetentionDays);
 
-        foreach (var summary in _runHistory)
+        List<PipelineRunSummary> snapshot;
+        lock (_lock) { snapshot = _runHistory.ToList(); }
+
+        foreach (var summary in snapshot)
         {
             if (summary.FinalStep == PipelineStep.Completed)
                 continue;

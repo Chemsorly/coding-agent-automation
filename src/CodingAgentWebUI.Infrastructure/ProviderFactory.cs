@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.GitLab;
 using CodingAgentWebUI.Pipeline;
@@ -17,7 +18,7 @@ public class ProviderFactory : IProviderFactory
     private readonly Dictionary<string, Func<ProviderConfig, IRepositoryProvider>> _repoFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Func<ProviderConfig, IAgentProvider>> _agentFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Func<ProviderConfig, IPipelineProvider>> _pipelineFactories = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, GitHubAppAuthService> _authServiceCache = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, GitHubAppAuthService> _authServiceCache = new(StringComparer.Ordinal);
     private readonly PipelineConfiguration _pipelineConfig;
 
     public ProviderFactory(PipelineConfiguration pipelineConfig)
@@ -194,17 +195,11 @@ public class ProviderFactory : IProviderFactory
 
         var cacheKey = $"{config.Settings[ProviderSettingKeys.ClientId]}:{installationId}";
 
-        if (_authServiceCache.TryGetValue(cacheKey, out var cached))
-            return cached;
-
-        var authService = new GitHubAppAuthService(
+        return _authServiceCache.GetOrAdd(cacheKey, _ => new GitHubAppAuthService(
             config.Settings[ProviderSettingKeys.ClientId],
             installationId,
             config.Settings[ProviderSettingKeys.PrivateKeyBase64],
             config.Settings[ProviderSettingKeys.ApiUrl],
-            Serilog.Log.Logger);
-
-        _authServiceCache[cacheKey] = authService;
-        return authService;
+            Serilog.Log.Logger));
     }
 }
