@@ -122,6 +122,44 @@ internal partial class QualityGateExecutor
             if (!ciPassed && run.WorkspacePath != null)
                 ciLogPaths = _ciLogWriter.WriteJobLogs(ciStatus, run.WorkspacePath, run.RunId);
 
+            // Classify CI failure and auto-retry infrastructure failures
+            if (!ciPassed)
+            {
+                var classification = CiFailureClassifier.Classify(ciStatus);
+                while (!ciPassed
+                       && classification == CiFailureClassifier.CiFailureCategory.Infrastructure
+                       && run.InfrastructureRetryCount < config.MaxInfrastructureRetries)
+                {
+                    // TODO: Add ct.ThrowIfCancellationRequested() here to avoid expensive I/O if cancellation was requested between iterations
+                    run.InfrastructureRetryCount++;
+                    _logger.Warning("Pipeline {RunId} CI infrastructure failure detected, auto-retrying ({Attempt}/{Max})",
+                        run.RunId, run.InfrastructureRetryCount, config.MaxInfrastructureRetries);
+                    callbacks.EmitOutputLine($"⚠️ CI infrastructure failure — auto-retrying ({run.InfrastructureRetryCount}/{config.MaxInfrastructureRetries})...");
+
+                    await context.RepoProvider.CommitAllAsync(run.WorkspacePath!,
+                        $"chore: re-trigger CI after infrastructure failure ({run.InfrastructureRetryCount})",
+                        config.BlacklistedPaths, allowEmpty: true, ct);
+                    await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
+
+                    string? retrySha = null;
+                    try { retrySha = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
+                    catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA for infra retry", run.RunId); }
+                    var retryPollSha = run.PullRequestNumber != null ? null : retrySha;
+
+                    callbacks.EmitOutputLine("⏳ Waiting for external CI (infrastructure retry)...");
+                    ciStatus = await context.PipelineProvider.WaitForCompletionAsync(
+                        run.BranchName!, retryPollSha, config.ExternalCiTimeout, ct);
+                    ciPassed = ciStatus.State == PipelineRunState.Passed;
+
+                    ciLogPaths = (!ciPassed && run.WorkspacePath != null)
+                        ? _ciLogWriter.WriteJobLogs(ciStatus, run.WorkspacePath, run.RunId)
+                        : null;
+
+                    if (!ciPassed)
+                        classification = CiFailureClassifier.Classify(ciStatus);
+                }
+            }
+
             ciGate = new GateResult
             {
                 GateName = "External CI",

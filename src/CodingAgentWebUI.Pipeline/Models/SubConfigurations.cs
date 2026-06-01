@@ -28,6 +28,7 @@ public sealed record ExternalCiConfiguration
 {
     public TimeSpan ExternalCiTimeout { get; init; } = PipelineConstants.DefaultExternalCiTimeout;
     public TimeSpan ExternalCiPollInterval { get; init; } = PipelineConstants.DefaultExternalCiPollInterval;
+    public int MaxInfrastructureRetries { get; init; } = 2; // TODO: Add range validation (e.g., 0–10) consistent with other config properties
 }
 
 /// <summary>
