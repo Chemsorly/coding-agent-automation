@@ -206,8 +206,6 @@ public sealed class JobDispatcherService
         return Pipeline.Services.LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
     }
 
-
-
     /// <summary>
     /// Clears the job queue and processing tracker. Used by E2E tests for state isolation.
     /// </summary>
