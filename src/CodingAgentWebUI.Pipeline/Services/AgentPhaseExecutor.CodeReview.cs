@@ -312,7 +312,7 @@ internal partial class AgentPhaseExecutor
     /// This reduces context window usage and eliminates initial tool-call rounds.
     /// For review runs, diffs against the PR's target branch instead of origin/main.
     /// </summary>
-    private static async Task PreComputeDiffArtifactsAsync(PipelineRun run, Serilog.ILogger logger, CancellationToken ct)
+    internal static async Task PreComputeDiffArtifactsAsync(PipelineRun run, Serilog.ILogger logger, CancellationToken ct)
     {
         if (run.WorkspacePath is null) return;
 
@@ -343,6 +343,10 @@ internal partial class AgentPhaseExecutor
 
         try
         {
+            // Mark untracked files as intent-to-add so they appear in git diff.
+            // Respects .gitignore by default. No-op if no untracked files exist.
+            await RunGitCommandAsync(run.WorkspacePath, "add -N .", ct);
+
             // Generate diff stat (compact file list with line counts)
             var diffStatResult = await RunGitCommandAsync(run.WorkspacePath, $"diff --stat {diffBase}", ct);
             var diffStatPath = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.DiffStatFilePath);
@@ -360,6 +364,20 @@ internal partial class AgentPhaseExecutor
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.Warning(ex, "Pipeline {RunId} failed to pre-compute diff artifacts, review agents will fall back to running git diff", run.RunId);
+        }
+        finally
+        {
+            // Reset intent-to-add entries to restore clean index state.
+            // RunGitCommandAsync doesn't throw on non-zero exit codes — this catch
+            // handles TimeoutException (30s timeout) only.
+            try
+            {
+                await RunGitCommandAsync(run.WorkspacePath, "reset", ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.Warning(ex, "Pipeline {RunId} git reset after diff pre-computation failed (non-fatal, index may have stale ITA entries)", run.RunId);
+            }
         }
     }
 
