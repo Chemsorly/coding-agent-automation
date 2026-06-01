@@ -144,6 +144,12 @@ public sealed record PipelineConfiguration
         init => ExternalCi = ExternalCi with { ExternalCiPollInterval = value };
     }
 
+    public int MaxInfrastructureRetries
+    {
+        get => ExternalCi.MaxInfrastructureRetries;
+        init => ExternalCi = ExternalCi with { MaxInfrastructureRetries = value };
+    }
+
     /// <summary>
     /// How long the agent can be silent (no output) before the stall monitor logs a warning.
     /// The warning resets after each occurrence so it fires again after another interval of silence.

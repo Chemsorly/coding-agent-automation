@@ -21,6 +21,9 @@ public sealed class PipelineRun
     public string? PullRequestUrl { get; set; }
     public int RetryCount { get; set; }
 
+    /// <summary>Number of infrastructure CI retries (does not consume agent retry budget).</summary>
+    public int InfrastructureRetryCount { get; set; }
+
     /// <summary>Agent-generated analysis content, populated during AnalyzingCode step.</summary>
     public string? AnalysisContent { get; set; }
 
