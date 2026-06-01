@@ -280,47 +280,10 @@ public sealed class LocalPipelineExecutor
             var linkedCt = localCts.Token;
 
             // Build step context
-            var callbacks = new AgentCallbacks(
-                step => TransitionTo(step),
-                EmitOutputLine,
-                issueOps,
-                run,
-                prOrchestrator,
-                repoProvider,
-                report => ReportQualityGateResult(report),
-                (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, repoProvider, agentProvider,
-                    brainProvider, brainSync, config, issueOps, connection, job, EmitOutputLine, token),
-                async (contextLoaded, fileCount) =>
-                {
-                    try { await connection.InvokeAsync("ReportBrainSyncResult", job.JobId, contextLoaded, fileCount, ct); }
-                    catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
-                });
-
-            var context = new PipelineStepContext
-            {
-                Run = run,
-                Config = config,
-                RepoProvider = repoProvider,
-                AgentProvider = agentProvider,
-                BrainProvider = brainProvider,
-                PipelineProvider = pipelineProvider,
-                Cts = localCts,
-                ConfigStore = new NullConfigurationStore(),
-                Callbacks = callbacks,
-                IssueOps = issueOps,
-                AgentExecution = agentExecution,
-                QualityGates = qualityGates,
-                BrainSync = brainSync,
-                PrOrchestrator = prOrchestrator,
-                PreResolvedReviewerConfigs = job.ReviewerConfigs,
-                PreResolvedQualityGateConfigs = job.QualityGateConfigs,
-                Logger = _logger,
-                QualityGateValidator = _qualityGateValidator,
-                // Pre-populate issue data from job (no IssueProvider on agent side)
-                Issue = job.IssueDetail,
-                ParsedIssue = job.ParsedIssue,
-                IssueComments = job.IssueComments
-            };
+            var context = CreateStepContext(
+                job, run, config, repoProvider, agentProvider, brainProvider, brainSync,
+                pipelineProvider, issueOps, connection, prOrchestrator, agentExecution,
+                qualityGates, localCts, TransitionTo, EmitOutputLine, ReportQualityGateResult, ct);
 
             // Build step pipeline based on run type
             var steps = run.RunType switch
@@ -333,22 +296,10 @@ public sealed class LocalPipelineExecutor
 
             await PipelineStepRunner.ExecuteAsync(steps, context, linkedCt);
 
-            // For review runs, the step pipeline ends at PostingFindings.
+            // For review/decomposition runs, the step pipeline ends at PostingFindings/PostPlan/PostSummary.
             // Transition to Completed here (implementation runs do this in CreatePullRequestAsync).
-            if (run.RunType == PipelineRunType.Review
-                && run.CurrentStep != PipelineStep.Failed
-                && run.CurrentStep != PipelineStep.Cancelled)
-            {
-                run.CompletedAt = DateTime.UtcNow;
-                run.CurrentStep = PipelineStep.Completed;
-                run.FinalLabel ??= AgentLabels.Done;
-            }
-
-            // For decomposition runs, the step pipeline ends at PostPlan/PostSummary.
-            // Transition to Completed here (similar to review runs).
-            if (run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition
-                && run.CurrentStep != PipelineStep.Failed
-                && run.CurrentStep != PipelineStep.Cancelled)
+            if (run.RunType is PipelineRunType.Review or PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition
+                && run.CurrentStep is not PipelineStep.Failed and not PipelineStep.Cancelled)
             {
                 run.CompletedAt = DateTime.UtcNow;
                 run.CurrentStep = PipelineStep.Completed;
@@ -477,20 +428,82 @@ public sealed class LocalPipelineExecutor
         };
     }
 
+    private PipelineStepContext CreateStepContext(
+        JobAssignmentMessage job,
+        PipelineRun run,
+        PipelineConfiguration config,
+        IRepositoryProvider repoProvider,
+        IAgentProvider agentProvider,
+        IRepositoryProvider? brainProvider,
+        BrainSyncService? brainSync,
+        IPipelineProvider? pipelineProvider,
+        OrchestratorProxy issueOps,
+        HubConnection connection,
+        PullRequestOrchestrator prOrchestrator,
+        AgentPhaseExecutor agentExecution,
+        QualityGateExecutor qualityGates,
+        CancellationTokenSource localCts,
+        Action<PipelineStep> transitionTo,
+        Action<string> emitOutputLine,
+        Action<QualityGateReport> reportQualityGateResult,
+        CancellationToken ct)
+    {
+        var callbacks = new AgentCallbacks(
+            transitionTo,
+            emitOutputLine,
+            issueOps,
+            run,
+            prOrchestrator,
+            repoProvider,
+            reportQualityGateResult,
+            (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, repoProvider, agentProvider,
+                brainProvider, brainSync, config, issueOps, connection, job, prOrchestrator, emitOutputLine, token),
+            async (contextLoaded, fileCount) =>
+            {
+                try { await connection.InvokeAsync("ReportBrainSyncResult", job.JobId, contextLoaded, fileCount, ct); }
+                catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
+            });
+
+        return new PipelineStepContext
+        {
+            Run = run,
+            Config = config,
+            RepoProvider = repoProvider,
+            AgentProvider = agentProvider,
+            BrainProvider = brainProvider,
+            PipelineProvider = pipelineProvider,
+            Cts = localCts,
+            ConfigStore = new NullConfigurationStore(),
+            Callbacks = callbacks,
+            IssueOps = issueOps,
+            AgentExecution = agentExecution,
+            QualityGates = qualityGates,
+            BrainSync = brainSync,
+            PrOrchestrator = prOrchestrator,
+            PreResolvedReviewerConfigs = job.ReviewerConfigs,
+            PreResolvedQualityGateConfigs = job.QualityGateConfigs,
+            Logger = _logger,
+            QualityGateValidator = _qualityGateValidator,
+            // Pre-populate issue data from job (no IssueProvider on agent side)
+            Issue = job.IssueDetail,
+            ParsedIssue = job.ParsedIssue,
+            IssueComments = job.IssueComments
+        };
+    }
+
     private async Task CreatePullRequestAsync(
         PipelineRun run, QualityGateReport report, bool isDraft,
         IRepositoryProvider repoProvider, IAgentProvider agentProvider,
         IRepositoryProvider? brainProvider, BrainSyncService? brainSync,
         PipelineConfiguration config, OrchestratorProxy issueOps,
         HubConnection connection, JobAssignmentMessage job,
+        PullRequestOrchestrator prOrchestrator,
         Action<string> emitOutputLine, CancellationToken ct)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("CreatePullRequest");
         activity?.SetTag("pipeline.run_id", run.RunId);
         activity?.SetTag("pipeline.issue", run.IssueIdentifier);
         activity?.SetTag("pipeline.pr.is_draft", isDraft);
-
-        var prOrchestrator = new PullRequestOrchestrator(_logger);
 
         // NOTE: QualityGateExecutor already transitions to PreparingForPullRequest
         // during its cleanup phase, so we skip that transition here to avoid duplicates.
