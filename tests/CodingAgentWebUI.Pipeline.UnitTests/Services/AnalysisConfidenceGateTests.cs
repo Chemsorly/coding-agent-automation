@@ -243,10 +243,10 @@ public class AnalysisConfidenceGateTests
             IssueProviderConfigId = "ip",
             RepoProviderConfigId = "rp",
             StartedAt = DateTime.UtcNow,
-            AnalysisRecommendation = "wont_do"
+            AnalysisRecommendation = AnalysisGateResult.WontDo
         };
 
         var summary = run.ToSummary();
-        summary.AnalysisRecommendation.Should().Be("wont_do");
+        summary.AnalysisRecommendation.Should().Be(AnalysisGateResult.WontDo);
     }
 }

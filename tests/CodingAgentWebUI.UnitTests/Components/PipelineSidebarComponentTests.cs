@@ -202,7 +202,7 @@ public class PipelineSidebarComponentTests : BunitContext
     public void AnalyzingCode_NotReady_ShowsNeedsRefinementBadge()
     {
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
-        run.AnalysisRecommendation = "not_ready";
+        run.AnalysisRecommendation = AnalysisGateResult.NotReady;
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
@@ -213,7 +213,7 @@ public class PipelineSidebarComponentTests : BunitContext
     public void AnalyzingCode_WontDo_ShowsWontDoBadge()
     {
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
-        run.AnalysisRecommendation = "wont_do";
+        run.AnalysisRecommendation = AnalysisGateResult.WontDo;
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
@@ -224,7 +224,7 @@ public class PipelineSidebarComponentTests : BunitContext
     public void AnalyzingCode_Ready_ShowsNoBadge()
     {
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
-        run.AnalysisRecommendation = "ready";
+        run.AnalysisRecommendation = AnalysisGateResult.Ready;
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 

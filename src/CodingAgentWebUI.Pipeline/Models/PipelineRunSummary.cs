@@ -44,8 +44,8 @@ public sealed class PipelineRunSummary
     /// <summary>How this run was initiated: "manual" or "loop".</summary>
     public string InitiatedBy { get; init; } = "manual";
 
-    /// <summary>Analysis gate recommendation: "ready", "not_ready", "wont_do", or null.</summary>
-    public string? AnalysisRecommendation { get; init; }
+    /// <summary>Analysis gate recommendation, or null if no assessment was produced.</summary>
+    public AnalysisGateResult? AnalysisRecommendation { get; init; }
 
     /// <summary>Whether this run was a rework of an existing PR.</summary>
     public bool IsRework { get; init; }

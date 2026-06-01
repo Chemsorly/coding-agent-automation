@@ -168,7 +168,7 @@ public sealed record JobCompletionPayload
     public bool BrainUpdatesPushed { get; init; }
 
     [Key(11)]
-    public string? AnalysisRecommendation { get; init; }
+    public AnalysisGateResult? AnalysisRecommendation { get; init; }
 
     [Key(12)]
     public bool IsRework { get; init; }

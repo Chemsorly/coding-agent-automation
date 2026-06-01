@@ -362,7 +362,7 @@ public class LocalPipelineExecutorTests : IDisposable
             LinesAdded = 100,
             LinesRemoved = 20,
             BrainUpdatesPushed = true,
-            AnalysisRecommendation = "ready",
+            AnalysisRecommendation = AnalysisGateResult.Ready,
             FinalLabel = AgentLabels.Done,
             LinkedPullRequest = new LinkedPullRequest { Url = "https://github.com/owner/repo/pull/41", Number = 41, BranchName = "agent/issue-41", IsDraft = false }
         };
@@ -382,7 +382,7 @@ public class LocalPipelineExecutorTests : IDisposable
         payload.LinesAdded.Should().Be(100);
         payload.LinesRemoved.Should().Be(20);
         payload.BrainUpdatesPushed.Should().BeTrue();
-        payload.AnalysisRecommendation.Should().Be("ready");
+        payload.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
         payload.IsRework.Should().BeTrue();
         payload.AnalysisConcerns.Should().ContainSingle().Which.Should().Be("concern-1");
         payload.AnalysisBlockingIssues.Should().ContainSingle().Which.Should().Be("blocker-1");

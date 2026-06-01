@@ -255,17 +255,16 @@ internal partial class AgentPhaseExecutor
             }
 
             // Read and evaluate the confidence gate assessment
-            run.AnalysisRecommendation = assessment?.Recommendation?.ToLowerInvariant();
+            run.AnalysisRecommendation = ParseRecommendation(assessment?.Recommendation);
             run.AnalysisConcerns = assessment?.Concerns ?? Array.Empty<string>();
             run.AnalysisBlockingIssues = assessment?.BlockingIssues ?? Array.Empty<string>();
 
-            var isWontDo = assessment != null
-                && string.Equals(assessment.Recommendation, "wont_do", StringComparison.OrdinalIgnoreCase);
-
             // isNotReady is checked first: non-empty blockingIssues forces not_ready regardless of recommendation
             var isNotReady = assessment != null && (
-                string.Equals(assessment.Recommendation, "not_ready", StringComparison.OrdinalIgnoreCase)
+                run.AnalysisRecommendation == AnalysisGateResult.NotReady
                 || (assessment.BlockingIssues.Count > 0));
+
+            var isWontDo = run.AnalysisRecommendation == AnalysisGateResult.WontDo;
 
             if (isNotReady)
             {
@@ -403,5 +402,20 @@ internal partial class AgentPhaseExecutor
         sb.AppendLine();
         sb.AppendLine(CommentMarkers.GateWontDo);
         return sb.ToString().TrimEnd();
+    }
+
+    private static AnalysisGateResult? ParseRecommendation(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        if (string.Equals(value, "ready", StringComparison.OrdinalIgnoreCase))
+            return AnalysisGateResult.Ready;
+        if (string.Equals(value, "not_ready", StringComparison.OrdinalIgnoreCase))
+            return AnalysisGateResult.NotReady;
+        if (string.Equals(value, "wont_do", StringComparison.OrdinalIgnoreCase))
+            return AnalysisGateResult.WontDo;
+
+        return null;
     }
 }

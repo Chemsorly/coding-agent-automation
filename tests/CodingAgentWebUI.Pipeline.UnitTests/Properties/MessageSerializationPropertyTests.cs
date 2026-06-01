@@ -96,7 +96,7 @@ public class MessageSerializationPropertyTests
             LinesAdded = 100,
             LinesRemoved = 50,
             BrainUpdatesPushed = brainUpdatesPushed,
-            AnalysisRecommendation = "ready",
+            AnalysisRecommendation = AnalysisGateResult.Ready,
             IsRework = isRework,
             AnalysisConcerns = new[] { "concern1" },
             AnalysisBlockingIssues = new List<string>(),
