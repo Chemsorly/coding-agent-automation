@@ -58,4 +58,11 @@ public sealed record QualityGateConfiguration
     /// </summary>
     [Key(12)]
     public IReadOnlyList<string>? CoverageReportPaths { get; init; }
+
+    /// <summary>
+    /// Quarantine configuration for known-flaky tests.
+    /// When enabled, quarantined test failures are suppressed from the pass/fail decision.
+    /// </summary>
+    [Key(13)]
+    public TestQuarantineConfiguration? TestQuarantine { get; init; }
 }
