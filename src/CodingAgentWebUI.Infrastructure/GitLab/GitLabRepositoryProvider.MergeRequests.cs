@@ -16,7 +16,6 @@ namespace CodingAgentWebUI.Infrastructure.GitLab;
 /// </summary>
 public partial class GitLabRepositoryProvider
 {
-
     // ─── Merge Request CRUD ──────────────────────────────────────────────────────
 
     /// <inheritdoc />
