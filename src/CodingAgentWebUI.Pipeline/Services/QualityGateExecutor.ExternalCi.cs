@@ -130,7 +130,7 @@ internal partial class QualityGateExecutor
                        && classification == CiFailureClassifier.CiFailureCategory.Infrastructure
                        && run.InfrastructureRetryCount < config.MaxInfrastructureRetries)
                 {
-                    // TODO: Add ct.ThrowIfCancellationRequested() here to avoid expensive I/O if cancellation was requested between iterations
+                    ct.ThrowIfCancellationRequested();
                     run.InfrastructureRetryCount++;
                     _logger.Warning("Pipeline {RunId} CI infrastructure failure detected, auto-retrying ({Attempt}/{Max})",
                         run.RunId, run.InfrastructureRetryCount, config.MaxInfrastructureRetries);
