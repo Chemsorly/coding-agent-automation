@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using NGitLab;
 using NGitLab.Models;
 using Serilog;
@@ -6,6 +5,7 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.CodeReview.Models;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Infrastructure.GitLab;
 
@@ -16,13 +16,6 @@ namespace CodingAgentWebUI.Infrastructure.GitLab;
 /// </summary>
 public partial class GitLabRepositoryProvider
 {
-    /// <summary>
-    /// Regex for extracting closing keyword references from MR title/description.
-    /// Matches: Closes #N, Fixes #N, Resolves #N (case-insensitive).
-    /// </summary>
-    private static readonly Regex ClosingKeywordPattern = new(
-        @"(?:Closes|Fixes|Resolves)\s+#(\d+)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // ─── Merge Request CRUD ──────────────────────────────────────────────────────
 
@@ -518,13 +511,7 @@ public partial class GitLabRepositoryProvider
     /// </summary>
     private static void ParseClosingKeywords(string? text, HashSet<string> issueNumbers)
     {
-        if (string.IsNullOrWhiteSpace(text))
-            return;
-
-        foreach (Match match in ClosingKeywordPattern.Matches(text))
-        {
-            issueNumbers.Add(match.Groups[1].Value);
-        }
+        IssueReferenceParser.ParseClosingKeywords(text, issueNumbers);
     }
 
     /// <summary>

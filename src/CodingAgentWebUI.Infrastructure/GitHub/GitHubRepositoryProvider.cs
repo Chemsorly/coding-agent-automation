@@ -1,11 +1,11 @@
 using Octokit;
 using Polly;
-using System.Text.RegularExpressions;
 using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using Serilog;
 
 namespace CodingAgentWebUI.Infrastructure.GitHub;
@@ -19,23 +19,6 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
 {
     private readonly string _baseBranch;
     private readonly ResiliencePipeline _gitPipeline;
-
-    // Static compiled regex patterns for ParseIssueReferences (avoid per-call allocation)
-    private static readonly Regex ClosingKeywordPattern = new(
-        @"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:#|GH-)(\d+)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static readonly Regex CrossRepoPattern = new(
-        @"[\w\-\.]+/[\w\-\.]+#(\d+)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static readonly Regex GhPattern = new(
-        @"\bGH-(\d+)\b",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static readonly Regex SimpleHashPattern = new(
-        @"(?<![&\w/])#(\d+)\b",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public RepositoryProviderType ProviderType => RepositoryProviderType.GitHub;
 
@@ -132,31 +115,6 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
     /// </summary>
     internal static void ParseIssueReferences(string? text, HashSet<string> issueNumbers)
     {
-        if (string.IsNullOrWhiteSpace(text))
-            return;
-
-        // Extract from closing keywords first
-        foreach (Match match in ClosingKeywordPattern.Matches(text))
-        {
-            issueNumbers.Add(match.Groups[1].Value);
-        }
-
-        // Extract from cross-repo references
-        foreach (Match match in CrossRepoPattern.Matches(text))
-        {
-            issueNumbers.Add(match.Groups[1].Value);
-        }
-
-        // Extract from GH-N references
-        foreach (Match match in GhPattern.Matches(text))
-        {
-            issueNumbers.Add(match.Groups[1].Value);
-        }
-
-        // Extract from simple #N references
-        foreach (Match match in SimpleHashPattern.Matches(text))
-        {
-            issueNumbers.Add(match.Groups[1].Value);
-        }
+        IssueReferenceParser.ParseIssueReferences(text, issueNumbers);
     }
 }
