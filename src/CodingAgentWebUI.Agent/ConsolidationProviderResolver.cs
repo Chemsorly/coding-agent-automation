@@ -118,6 +118,7 @@ internal sealed class ConsolidationProviderResolver
 
             await repoProvider.ValidateAsync(ct);
             await agentProvider.ValidateAsync(ct);
+            await issueProvider.ValidateAsync(ct);
 
             return ProviderResolutionResult<RefactoringProviders>.Succeed(
                 new RefactoringProviders(repoProvider, agentProvider, issueProvider, brainProvider));

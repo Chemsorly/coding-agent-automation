@@ -307,9 +307,9 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            // TODO: outputTask and errorTask are not awaited in this path, becoming fire-and-forget.
-            // Mirrors pre-existing pattern in AgentPhaseExecutor.CodeReview.cs.
             try { process.Kill(entireProcessTree: true); } catch { }
+            try { await outputTask; } catch { }
+            try { await errorTask; } catch { }
             throw new TimeoutException($"git {arguments} timed out after 30 seconds");
         }
 
