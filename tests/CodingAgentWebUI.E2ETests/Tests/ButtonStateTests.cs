@@ -196,9 +196,8 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
 
         // Double-click the dispatch button rapidly
         var dispatchBtn = Page.Locator("[data-testid='dispatch-issue-btn']");
-        // Wait for the button to be visible before clicking
-        await dispatchBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10_000 });
-        await dispatchBtn.ClickAsync(new() { Force = true });
+        // Use Playwright's built-in auto-wait (retries until element is visible and stable)
+        await dispatchBtn.ClickAsync(new() { Timeout = 10_000 });
         // Attempt a second click. If the button was detached/disabled by Blazor after the first
         // dispatch (correct behavior), the click will throw TimeoutException — which is fine,
         // it means the UI prevented the double-dispatch at the DOM level.
