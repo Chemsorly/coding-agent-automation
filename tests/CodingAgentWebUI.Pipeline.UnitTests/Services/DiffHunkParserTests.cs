@@ -7,6 +7,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// <summary>
 /// Unit tests for DiffHunkParser — validates parsing of unified diff output
 /// to extract valid line ranges per file for inline review comment validation.
+/// Only lines with '+' prefix (added/modified) are valid targets; context lines are excluded.
 /// </summary>
 [Trait("Feature", "026-inline-review-comments")]
 public class DiffHunkParserTests
@@ -32,7 +33,7 @@ public class DiffHunkParserTests
     // ─── 2. Single file with single hunk ────────────────────────────────────────
 
     [Fact]
-    public void ParseValidLines_SingleFileWithSingleHunk_ExtractsCorrectLineRange()
+    public void ParseValidLines_SingleFileWithSingleHunk_OnlyAddedLinesAreValid()
     {
         var diff = """
             diff --git a/src/Foo.cs b/src/Foo.cs
@@ -50,18 +51,20 @@ public class DiffHunkParserTests
 
         result.Should().ContainKey("src/Foo.cs");
         var validLines = result["src/Foo.cs"];
-        // Hunk: +10,7 → lines 10 through 16
-        validLines.Should().Contain(10);
-        validLines.Should().Contain(16);
-        validLines.Should().NotContain(9);
-        validLines.Should().NotContain(17);
-        validLines.Count.Should().Be(7);
+        // Only the two '+' lines should be valid (lines 11 and 12 in new file)
+        // Line 10 = context (' unchanged line'), line 11 = '+added line 1',
+        // line 12 = '+added line 2', line 13 = context (' unchanged line')
+        validLines.Should().Contain(11);
+        validLines.Should().Contain(12);
+        validLines.Should().NotContain(10); // context line
+        validLines.Should().NotContain(13); // context line
+        validLines.Count.Should().Be(2);
     }
 
     // ─── 3. Single file with multiple hunks ─────────────────────────────────────
 
     [Fact]
-    public void ParseValidLines_SingleFileWithMultipleHunks_UnionsAllRanges()
+    public void ParseValidLines_SingleFileWithMultipleHunks_OnlyAddedLinesFromBothHunks()
     {
         var diff = """
             diff --git a/src/Bar.cs b/src/Bar.cs
@@ -85,23 +88,23 @@ public class DiffHunkParserTests
         result.Should().ContainKey("src/Bar.cs");
         var validLines = result["src/Bar.cs"];
 
-        // First hunk: +1,4 → lines 1-4
-        validLines.Should().Contain(1);
-        validLines.Should().Contain(4);
+        // First hunk: line 1=context, line 2='+inserted', line 3=context, line 4=context
+        validLines.Should().Contain(2); // '+inserted'
+        validLines.Should().NotContain(1); // context
 
-        // Second hunk: +21,5 → lines 21-25
-        validLines.Should().Contain(21);
-        validLines.Should().Contain(25);
+        // Second hunk: line 21=context, line 22='+new line 1', line 23='+new line 2', line 24=context, line 25=context
+        validLines.Should().Contain(22); // '+new line 1'
+        validLines.Should().Contain(23); // '+new line 2'
+        validLines.Should().NotContain(21); // context
 
-        // Gap between hunks should not be valid
-        validLines.Should().NotContain(5);
-        validLines.Should().NotContain(20);
+        // Total: 3 added lines
+        validLines.Count.Should().Be(3);
     }
 
     // ─── 4. Multiple files ──────────────────────────────────────────────────────
 
     [Fact]
-    public void ParseValidLines_MultipleFiles_EachFileHasOwnValidLines()
+    public void ParseValidLines_MultipleFiles_EachFileHasOnlyAddedLines()
     {
         var diff = """
             diff --git a/src/A.cs b/src/A.cs
@@ -130,15 +133,16 @@ public class DiffHunkParserTests
         result.Should().ContainKey("src/A.cs");
         result.Should().ContainKey("src/B.cs");
 
-        // A.cs: +1,3 → lines 1-3
-        result["src/A.cs"].Should().Contain(1);
-        result["src/A.cs"].Should().Contain(3);
-        result["src/A.cs"].Count.Should().Be(3);
+        // A.cs: line 1=context, line 2='+new' (replaces '-old'), line 3=context
+        result["src/A.cs"].Should().Contain(2);
+        result["src/A.cs"].Should().NotContain(1);
+        result["src/A.cs"].Should().NotContain(3);
+        result["src/A.cs"].Count.Should().Be(1);
 
-        // B.cs: +5,4 → lines 5-8
-        result["src/B.cs"].Should().Contain(5);
-        result["src/B.cs"].Should().Contain(8);
-        result["src/B.cs"].Count.Should().Be(4);
+        // B.cs: line 5=context, line 6='+added', line 7=context, line 8=context
+        result["src/B.cs"].Should().Contain(6);
+        result["src/B.cs"].Should().NotContain(5);
+        result["src/B.cs"].Count.Should().Be(1);
     }
 
     // ─── 5. New file (all added) ────────────────────────────────────────────────
@@ -164,7 +168,7 @@ public class DiffHunkParserTests
 
         result.Should().ContainKey("src/New.cs");
         var validLines = result["src/New.cs"];
-        // +1,5 → lines 1-5
+        // All lines are '+' prefixed — all valid
         validLines.Should().BeEquivalentTo(new[] { 1, 2, 3, 4, 5 });
     }
 
@@ -196,7 +200,7 @@ public class DiffHunkParserTests
     // ─── 7. Hunk header without size (defaults to 1) ────────────────────────────
 
     [Fact]
-    public void ParseValidLines_HunkHeaderWithoutSize_DefaultsToOne()
+    public void ParseValidLines_HunkHeaderWithoutSize_SingleAddedLine()
     {
         var diff = """
             diff --git a/src/Single.cs b/src/Single.cs
@@ -212,7 +216,7 @@ public class DiffHunkParserTests
 
         result.Should().ContainKey("src/Single.cs");
         var validLines = result["src/Single.cs"];
-        // +1 (no size) → size defaults to 1 → only line 1
+        // '+new line' is at line 1
         validLines.Should().BeEquivalentTo(new[] { 1 });
     }
 
@@ -241,9 +245,10 @@ public class DiffHunkParserTests
         // Should use the new path from +++ b/src/NewName.cs
         result.Should().ContainKey("src/NewName.cs");
         result.Should().NotContainKey("src/OldName.cs");
-        result["src/NewName.cs"].Should().Contain(1);
-        result["src/NewName.cs"].Should().Contain(4);
-        result["src/NewName.cs"].Count.Should().Be(4);
+        // line 1=context, line 2='+added line', line 3=context, line 4=context
+        result["src/NewName.cs"].Should().Contain(2);
+        result["src/NewName.cs"].Should().NotContain(1);
+        result["src/NewName.cs"].Count.Should().Be(1);
     }
 
     // ─── 9. Binary file ─────────────────────────────────────────────────────────
@@ -267,7 +272,7 @@ public class DiffHunkParserTests
     // ─── 10. Real-world diff snippet ────────────────────────────────────────────
 
     [Fact]
-    public void ParseValidLines_RealWorldDiff_ValidatesCorrectly()
+    public void ParseValidLines_RealWorldDiff_OnlyAddedLinesAreValid()
     {
         var diff = """
             diff --git a/src/CodingAgentWebUI.Pipeline/Services/Steps/PostReviewFindingsStep.cs b/src/CodingAgentWebUI.Pipeline/Services/Steps/PostReviewFindingsStep.cs
@@ -316,17 +321,90 @@ public class DiffHunkParserTests
 
         var validLines = result[filePath];
 
-        // First hunk: +95,25 → lines 95-119
-        validLines.Should().Contain(95);
-        validLines.Should().Contain(119);
-        validLines.Should().NotContain(94);
-        validLines.Should().NotContain(120);
+        // First hunk (+95,25): 3 context lines (95-97), then 19 added lines (98-116), then 0 trailing context
+        // Context: ' ' (line 95), '        var (comments...' (line 96), ' ' (line 97)
+        // Added: lines 98-116 (the 19 '+' lines)
+        validLines.Should().NotContain(95); // context (empty line)
+        validLines.Should().NotContain(96); // context
+        validLines.Should().NotContain(97); // context (empty line)
+        validLines.Should().Contain(98);    // first '+' line
+        validLines.Should().Contain(116);   // last '+' line
 
-        // Second hunk: +169,7 → lines 169-175
-        validLines.Should().Contain(169);
-        validLines.Should().Contain(175);
-        validLines.Should().NotContain(168);
-        validLines.Should().NotContain(176);
+        // Second hunk (+169,7): 2 context lines, 1 added, 4 context
+        // Line 169=context, 170=context, 171='+if(...)' , 172-175=context
+        validLines.Should().NotContain(169); // context
+        validLines.Should().Contain(171);    // the '+' replacement line
+        validLines.Should().NotContain(172); // context
+
+        // Only added lines should be present (19 from first hunk + 1 from second)
+        validLines.Count.Should().Be(20);
+    }
+
+    // ─── 11. Context lines are excluded ─────────────────────────────────────────
+
+    [Fact]
+    public void ParseValidLines_ContextLinesExcluded_OnlyPlusLinesValid()
+    {
+        // A hunk with 3 context lines and 2 added lines
+        var diff = """
+            diff --git a/src/Mix.cs b/src/Mix.cs
+            index abc1234..def5678 100644
+            --- a/src/Mix.cs
+            +++ b/src/Mix.cs
+            @@ -1,4 +1,6 @@ namespace Mix
+             context 1
+             context 2
+            +added 1
+            +added 2
+             context 3
+             context 4
+            """;
+
+        var result = DiffHunkParser.ParseValidLines(diff);
+
+        result.Should().ContainKey("src/Mix.cs");
+        var validLines = result["src/Mix.cs"];
+
+        // Lines: 1=context, 2=context, 3='+added 1', 4='+added 2', 5=context, 6=context
+        validLines.Should().NotContain(1);
+        validLines.Should().NotContain(2);
+        validLines.Should().Contain(3);
+        validLines.Should().Contain(4);
+        validLines.Should().NotContain(5);
+        validLines.Should().NotContain(6);
+        validLines.Count.Should().Be(2);
+    }
+
+    // ─── 12. Deleted lines don't advance counter ────────────────────────────────
+
+    [Fact]
+    public void ParseValidLines_DeletedLinesDontAdvanceCounter()
+    {
+        // A replacement: 2 deleted lines followed by 1 added line
+        var diff = """
+            diff --git a/src/Replace.cs b/src/Replace.cs
+            index abc1234..def5678 100644
+            --- a/src/Replace.cs
+            +++ b/src/Replace.cs
+            @@ -5,4 +5,3 @@ namespace Replace
+             context before
+            -old line 1
+            -old line 2
+            +replacement line
+             context after
+            """;
+
+        var result = DiffHunkParser.ParseValidLines(diff);
+
+        result.Should().ContainKey("src/Replace.cs");
+        var validLines = result["src/Replace.cs"];
+
+        // Line 5=context, '-old line 1' (no new line advance), '-old line 2' (no advance),
+        // line 6='+replacement line', line 7=context
+        validLines.Should().NotContain(5); // context
+        validLines.Should().Contain(6);    // the '+' replacement
+        validLines.Should().NotContain(7); // context
+        validLines.Count.Should().Be(1);
     }
 
     // ─── Edge case: path normalization ──────────────────────────────────────────
@@ -347,5 +425,10 @@ public class DiffHunkParserTests
 
         // Backslashes in the path should be normalized to forward slashes
         result.Should().ContainKey("src/path/File.cs");
+        // Only the '+new' line (line 2) should be valid
+        result["src/path/File.cs"].Should().Contain(2);
+        result["src/path/File.cs"].Should().NotContain(1);
+        result["src/path/File.cs"].Should().NotContain(3);
+        result["src/path/File.cs"].Count.Should().Be(1);
     }
 }

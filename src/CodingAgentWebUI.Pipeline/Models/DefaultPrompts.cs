@@ -64,6 +64,7 @@ public static class DefaultPrompts
         "- ArgumentNullException.ThrowIfNull missing on public method parameters\n" +
         "- Collections exposed as mutable (List<T> instead of IReadOnlyList<T>)\n\n" +
         "DO NOT FLAG:\n" +
+        "- Issues in unchanged code outside the diff\n" +
         "- Business logic correctness (already covered by previous review)\n" +
         "- Style or formatting preferences\n" +
         "- Missing nullable annotations on internal code\n" +
@@ -88,6 +89,7 @@ public static class DefaultPrompts
         "- Missing input validation or sanitization on external input boundaries\n" +
         "- Secrets or credentials in committed files\n\n" +
         "DO NOT FLAG:\n" +
+        "- Issues in unchanged code outside the diff\n" +
         "- Issues already covered by previous reviews\n" +
         "- Theoretical attacks requiring physical access or pre-existing compromise\n" +
         "- Missing HTTPS enforcement (infrastructure concern, not code)\n" +
