@@ -463,44 +463,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             if (prUrl == null)
             { await FailRunAsync(run, "Agent did not produce any changes. No commits ahead of base branch.", ct); return; }
 
-            var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
-            if (isDraft)
-            {
-                run.FailureReason = "Quality gates failed after max retries; draft PR created.";
-                await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Error, ct);
-            }
-            else
-                await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Done, ct);
-
-            if (!isDraft && _providerManager.ActiveBrainProvider != null && !_activeConfig!.BrainReadOnly)
-            {
-                // Reflection step: ask the agent to review the entire run and enrich .brain/ knowledge
-                _lifecycle.TransitionTo(run, PipelineStep.ReflectingOnRun);
-                await _finalization.RunReflectionAsync(run, _providerManager.ActiveAgentProvider!, _activeConfig, line => _lifecycle.EmitOutputLine(line), ct);
-
-                _lifecycle.TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
-                await _finalization.SyncBrainPostRunAsync(run, _brainSync, _providerManager.ActiveBrainProvider, _activeConfig, line => _lifecycle.EmitOutputLine(line), ct);
-            }
-
-            // Feedback collection: separate agent call, runs regardless of brain provider
-            if (!isDraft)
-            {
-                await _finalization.CollectFeedbackAsync(run, _providerManager.ActiveAgentProvider!, _feedbackService, _historyService, line => _lifecycle.EmitOutputLine(line), ct);
-            }
-
-            _lifecycle.TransitionTo(run, finalStep);
-            _lifecycle.AddRunToHistory(run);
-
-            var duration = run.CompletedAt!.Value - run.StartedAt;
-            if (finalStep == PipelineStep.Completed)
-                _lifecycle.EmitOutputLine($"✅ Pipeline completed in {(int)duration.TotalMinutes}m {duration.Seconds}s");
-            else
-                _lifecycle.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
-
-            if (finalStep == PipelineStep.Completed)
-                _historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig!.WorkspaceBaseDirectory);
-            _logger.Information("Pipeline {RunId} {Outcome} in {Duration}. Retries: {RetryCount}. PR: {PullRequestUrl}",
-                run.RunId, finalStep, run.CompletedAt!.Value - run.StartedAt, run.RetryCount, prUrl);
+            await PostPullRequestCompletionAsync(run, isDraft, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         { _logger.Error(ex, "Pipeline {RunId} failed to create pull request", run.RunId); await FailRunAsync(run, $"PR creation failed: {ex.Message}"); }
@@ -557,45 +520,50 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             if (prUrl == null)
             { await FailRunAsync(run, "Agent did not produce any changes. No commits ahead of base branch.", ct); return; }
 
-            var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
-            if (isDraft)
-            {
-                run.FailureReason = "Quality gates failed after max retries; draft PR created.";
-                await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Error, ct);
-            }
-            else
-                await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Done, ct);
-
-            if (!isDraft && _providerManager.ActiveBrainProvider != null && !_activeConfig!.BrainReadOnly)
-            {
-                _lifecycle.TransitionTo(run, PipelineStep.ReflectingOnRun);
-                await _finalization.RunReflectionAsync(run, _providerManager.ActiveAgentProvider!, _activeConfig, line => _lifecycle.EmitOutputLine(line), ct);
-
-                _lifecycle.TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
-                await _finalization.SyncBrainPostRunAsync(run, _brainSync, _providerManager.ActiveBrainProvider, _activeConfig, line => _lifecycle.EmitOutputLine(line), ct);
-            }
-
-            if (!isDraft)
-            {
-                await _finalization.CollectFeedbackAsync(run, _providerManager.ActiveAgentProvider!, _feedbackService, _historyService, line => _lifecycle.EmitOutputLine(line), ct);
-            }
-
-            _lifecycle.TransitionTo(run, finalStep);
-            _lifecycle.AddRunToHistory(run);
-
-            var duration = run.CompletedAt!.Value - run.StartedAt;
-            if (finalStep == PipelineStep.Completed)
-                _lifecycle.EmitOutputLine($"✅ Pipeline completed in {(int)duration.TotalMinutes}m {duration.Seconds}s");
-            else
-                _lifecycle.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
-
-            if (finalStep == PipelineStep.Completed)
-                _historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig!.WorkspaceBaseDirectory);
-            _logger.Information("Pipeline {RunId} {Outcome} in {Duration}. Retries: {RetryCount}. PR: {PullRequestUrl}",
-                run.RunId, finalStep, run.CompletedAt!.Value - run.StartedAt, run.RetryCount, prUrl);
+            await PostPullRequestCompletionAsync(run, isDraft, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         { _logger.Error(ex, "Pipeline {RunId} failed to finalize pull request", run.RunId); await FailRunAsync(run, $"PR finalization failed: {ex.Message}"); }
+    }
+
+    private async Task PostPullRequestCompletionAsync(PipelineRun run, bool isDraft, CancellationToken ct)
+    {
+        var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
+        if (isDraft)
+        {
+            run.FailureReason = "Quality gates failed after max retries; draft PR created.";
+            await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Error, ct);
+        }
+        else
+            await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Done, ct);
+
+        if (!isDraft && _providerManager.ActiveBrainProvider != null && !_activeConfig!.BrainReadOnly)
+        {
+            _lifecycle.TransitionTo(run, PipelineStep.ReflectingOnRun);
+            await _finalization.RunReflectionAsync(run, _providerManager.ActiveAgentProvider!, _activeConfig, line => _lifecycle.EmitOutputLine(line), ct);
+
+            _lifecycle.TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
+            await _finalization.SyncBrainPostRunAsync(run, _brainSync, _providerManager.ActiveBrainProvider, _activeConfig, line => _lifecycle.EmitOutputLine(line), ct);
+        }
+
+        if (!isDraft)
+        {
+            await _finalization.CollectFeedbackAsync(run, _providerManager.ActiveAgentProvider!, _feedbackService, _historyService, line => _lifecycle.EmitOutputLine(line), ct);
+        }
+
+        _lifecycle.TransitionTo(run, finalStep);
+        _lifecycle.AddRunToHistory(run);
+
+        var duration = run.CompletedAt!.Value - run.StartedAt;
+        if (finalStep == PipelineStep.Completed)
+            _lifecycle.EmitOutputLine($"✅ Pipeline completed in {(int)duration.TotalMinutes}m {duration.Seconds}s");
+        else
+            _lifecycle.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
+
+        if (finalStep == PipelineStep.Completed)
+            _historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig!.WorkspaceBaseDirectory);
+        _logger.Information("Pipeline {RunId} {Outcome} in {Duration}. Retries: {RetryCount}. PR: {PullRequestUrl}",
+            run.RunId, finalStep, run.CompletedAt!.Value - run.StartedAt, run.RetryCount, run.PullRequestUrl);
     }
 
     private async Task PersistLastUsedProviderIdsAsync(
@@ -639,22 +607,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on {Identifier}", newLabel, issueId); }
     }
 
-    /// <summary>
-    /// Backward-compatible overload for callers that don't have a run reference.
-    /// Routes to issue provider (existing behavior for implementation runs).
-    /// </summary>
-    private async Task SwapAgentLabelAsync(string issueId, string newLabel, CancellationToken ct)
-    {
-        try
-        {
-            await AgentLabelOperations.SwapAsync(
-                (label, c) => _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, c),
-                (label, c) => _providerManager.ActiveIssueProvider!.AddLabelAsync(issueId, label, c),
-                newLabel,
-                ct);
-        }
-        catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on issue {Issue}", newLabel, issueId); }
-    }
     internal async Task RemoveAllAgentLabelsAsync(PipelineRun run, string issueId, CancellationToken ct)
     {
         try
@@ -675,20 +627,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from {Identifier}", issueId); }
     }
 
-    /// <summary>
-    /// Backward-compatible overload for tests and callers without a run reference.
-    /// Routes to issue provider (existing behavior for implementation runs).
-    /// </summary>
-    internal async Task RemoveAllAgentLabelsAsync(string issueId, CancellationToken ct)
-    {
-        try
-        {
-            await AgentLabelOperations.RemoveAllAsync(
-                (label, c) => _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, c),
-                ct);
-        }
-        catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from issue {Issue}", issueId); }
-    }
     private async Task HandlePipelineErrorAsync(PipelineRun run, Exception ex)
     {
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
