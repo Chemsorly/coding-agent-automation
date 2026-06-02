@@ -108,10 +108,7 @@ internal partial class QualityGateExecutor
             try { commitSha = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
             catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA", run.RunId); }
 
-            // When a PR exists, skip SHA filtering — PR-triggered runs use a merge commit SHA
-            // that differs from the branch head. Branch filtering alone is sufficient since
-            // the pipeline owns these feature branches.
-            var pollSha = run.PullRequestNumber != null ? null : commitSha;
+            var pollSha = commitSha;
 
             callbacks.EmitOutputLine("⏳ Waiting for external CI...");
             var ciStatus = await context.PipelineProvider.WaitForCompletionAsync(
@@ -144,7 +141,7 @@ internal partial class QualityGateExecutor
                     string? retrySha = null;
                     try { retrySha = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
                     catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA for infra retry", run.RunId); }
-                    var retryPollSha = run.PullRequestNumber != null ? null : retrySha;
+                    var retryPollSha = retrySha;
 
                     callbacks.EmitOutputLine("⏳ Waiting for external CI (infrastructure retry)...");
                     ciStatus = await context.PipelineProvider.WaitForCompletionAsync(
