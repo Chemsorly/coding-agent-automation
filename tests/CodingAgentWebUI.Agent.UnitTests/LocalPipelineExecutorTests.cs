@@ -4,6 +4,7 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Services.Steps;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -1276,4 +1277,136 @@ public class LocalPipelineExecutorTests : IDisposable
         StartedAt = DateTime.UtcNow,
         CurrentStep = PipelineStep.Created
     };
+
+    // ── TransitionToInternalAsync ───────────────────────────────────────
+
+    [Fact]
+    public async Task TransitionToInternalAsync_UpdatesCurrentStepAndHighWaterMark()
+    {
+        var executor = CreateExecutor();
+        var run = CreateMinimalRun();
+        var connection = CreateDisconnectedHubConnection();
+
+        await executor.TransitionToInternalAsync(run, connection, "job-1", null, PipelineStep.AnalyzingCode, CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.AnalyzingCode);
+        run.HighWaterMark.Should().Be(PipelineStep.AnalyzingCode);
+        await connection.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task TransitionToInternalAsync_FailedStep_DoesNotUpdateHighWaterMark()
+    {
+        var executor = CreateExecutor();
+        var run = CreateMinimalRun();
+        run.HighWaterMark = PipelineStep.AnalyzingCode;
+        var connection = CreateDisconnectedHubConnection();
+
+        await executor.TransitionToInternalAsync(run, connection, "job-1", null, PipelineStep.Failed, CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.HighWaterMark.Should().Be(PipelineStep.AnalyzingCode);
+        await connection.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task TransitionToInternalAsync_InvokesOnStepChanged()
+    {
+        var executor = CreateExecutor();
+        var run = CreateMinimalRun();
+        var connection = CreateDisconnectedHubConnection();
+        PipelineStep? received = null;
+
+        await executor.TransitionToInternalAsync(run, connection, "job-1", s => received = s, PipelineStep.GeneratingCode, CancellationToken.None);
+
+        received.Should().Be(PipelineStep.GeneratingCode);
+        await connection.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task TransitionToInternalAsync_SignalRFailure_DoesNotThrow()
+    {
+        // Disconnected connection will fail InvokeAsync — should be swallowed
+        var executor = CreateExecutor();
+        var run = CreateMinimalRun();
+        var connection = CreateDisconnectedHubConnection();
+
+        var act = () => executor.TransitionToInternalAsync(run, connection, "job-1", null, PipelineStep.AnalyzingCode, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        await connection.DisposeAsync();
+    }
+
+    // ── EmitOutputLineInternalAsync ─────────────────────────────────────
+
+    [Fact]
+    public async Task EmitOutputLineInternalAsync_EnqueuesLineToRun()
+    {
+        var executor = CreateExecutor();
+        var run = CreateMinimalRun();
+        await using var batcher = new OutputBatcher();
+
+        await executor.EmitOutputLineInternalAsync(run, batcher, "hello", CancellationToken.None);
+
+        run.OutputLines.Should().Contain("hello");
+    }
+
+    [Fact]
+    public async Task EmitOutputLineInternalAsync_CancelledToken_DoesNotThrow()
+    {
+        var executor = CreateExecutor();
+        var run = CreateMinimalRun();
+        await using var batcher = new OutputBatcher();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => executor.EmitOutputLineInternalAsync(run, batcher, "line", cts.Token);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    // ── ReportQualityGateResultInternalAsync ─────────────────────────────
+
+    [Fact]
+    public async Task ReportQualityGateResultInternalAsync_SignalRFailure_DoesNotThrow()
+    {
+        var executor = CreateExecutor();
+        var connection = CreateDisconnectedHubConnection();
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "build", Passed = true },
+            Tests = new GateResult { GateName = "test", Passed = true }
+        };
+
+        var act = () => executor.ReportQualityGateResultInternalAsync(connection, "job-1", report, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        await connection.DisposeAsync();
+    }
+
+    // ── PullRequestCreationContext ──────────────────────────────────────
+
+    [Fact]
+    public void PullRequestCreationContext_CanBeConstructed()
+    {
+        var context = new LocalPipelineExecutor.PullRequestCreationContext
+        {
+            RepoProvider = Mock.Of<IRepositoryProvider>(),
+            AgentProvider = Mock.Of<IAgentProvider>(),
+            Config = new PipelineConfiguration(),
+            IssueOps = new OrchestratorProxy(CreateDisconnectedHubConnection(), "job-1"),
+            Connection = CreateDisconnectedHubConnection(),
+            Job = CreateMinimalJobAssignment(),
+            PrOrchestrator = new PullRequestOrchestrator(Mock.Of<Serilog.ILogger>()),
+            EmitOutputLine = _ => { }
+        };
+
+        context.RepoProvider.Should().NotBeNull();
+        context.BrainProvider.Should().BeNull();
+        context.BrainSync.Should().BeNull();
+    }
+
+    private LocalPipelineExecutor CreateExecutor() => new(
+        _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
+        _mockQualityGateValidator.Object, _mockLogger.Object);
 }

@@ -233,44 +233,10 @@ public sealed class LocalPipelineExecutor
             ? new BrainSyncService(_brainUpdateService, _logger)
             : null;
 
-        // Local helpers for reporting — use async Task with fire-and-forget discard
-        // to avoid async void crash risk while maintaining non-blocking behavior.
-        async Task TransitionToAsync(PipelineStep step)
-        {
-            try
-            {
-                run.CurrentStep = step;
-                if (step is not (PipelineStep.Failed or PipelineStep.Cancelled)
-                    && (int)step > (int)run.HighWaterMark)
-                    run.HighWaterMark = step;
-
-                onStepChanged?.Invoke(step);
-
-                var metadata = BuildStepMetadata(run, step);
-                await connection.InvokeAsync("ReportStepTransition", job.JobId, step, DateTimeOffset.UtcNow, metadata, ct);
-            }
-            catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", step); }
-        }
-
-        async Task EmitOutputLineAsync(string line)
-        {
-            try
-            {
-                run.OutputLines.Enqueue(line);
-                await outputBatcher.AddLineAsync(line, ct);
-            }
-            catch (Exception ex) { _logger.Warning(ex, "Failed to batch output line"); }
-        }
-
-        async Task ReportQualityGateResultAsync(QualityGateReport report)
-        {
-            try { await connection.InvokeAsync("ReportQualityGateResult", job.JobId, report, ct); }
-            catch (Exception ex) { _logger.Warning(ex, "Failed to report quality gate result"); }
-        }
-
-        void TransitionTo(PipelineStep step) => _ = TransitionToAsync(step);
-        void EmitOutputLine(string line) => _ = EmitOutputLineAsync(line);
-        void ReportQualityGateResult(QualityGateReport report) => _ = ReportQualityGateResultAsync(report);
+        // Fire-and-forget wrappers — delegate to class-level async methods for testability.
+        void TransitionTo(PipelineStep step) => _ = TransitionToInternalAsync(run, connection, job.JobId, onStepChanged, step, ct);
+        void EmitOutputLine(string line) => _ = EmitOutputLineInternalAsync(run, outputBatcher, line, ct);
+        void ReportQualityGateResult(QualityGateReport report) => _ = ReportQualityGateResultInternalAsync(connection, job.JobId, report, ct);
 
         CancellationTokenSource? localCts = null;
 
@@ -279,11 +245,25 @@ public sealed class LocalPipelineExecutor
             localCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             var linkedCt = localCts.Token;
 
+            var prContext = new PullRequestCreationContext
+            {
+                RepoProvider = repoProvider,
+                AgentProvider = agentProvider,
+                BrainProvider = brainProvider,
+                BrainSync = brainSync,
+                Config = config,
+                IssueOps = issueOps,
+                Connection = connection,
+                Job = job,
+                PrOrchestrator = prOrchestrator,
+                EmitOutputLine = EmitOutputLine
+            };
+
             // Build step context
             var context = CreateStepContext(
                 job, run, config, repoProvider, agentProvider, brainProvider, brainSync,
                 pipelineProvider, issueOps, connection, prOrchestrator, agentExecution,
-                qualityGates, localCts, TransitionTo, EmitOutputLine, ReportQualityGateResult, ct);
+                qualityGates, localCts, prContext, TransitionTo, EmitOutputLine, ReportQualityGateResult, ct);
 
             // Build step pipeline based on run type
             var steps = run.RunType switch
@@ -350,6 +330,55 @@ public sealed class LocalPipelineExecutor
                 _logger.Warning(ex, "Failed to clean up workspace {WorkspacePath}", run.WorkspacePath);
             }
         }
+    }
+
+    /// <summary>
+    /// Reports a pipeline step transition with metadata. Updates run state, notifies the callback,
+    /// and sends the transition to the orchestrator via SignalR. Failures are logged as warnings.
+    /// </summary>
+    internal async Task TransitionToInternalAsync(
+        PipelineRun run, HubConnection connection, string jobId,
+        Action<PipelineStep?>? onStepChanged, PipelineStep step, CancellationToken ct)
+    {
+        try
+        {
+            run.CurrentStep = step;
+            if (step is not (PipelineStep.Failed or PipelineStep.Cancelled)
+                && (int)step > (int)run.HighWaterMark)
+                run.HighWaterMark = step;
+
+            onStepChanged?.Invoke(step);
+
+            var metadata = BuildStepMetadata(run, step);
+            await connection.InvokeAsync("ReportStepTransition", jobId, step, DateTimeOffset.UtcNow, metadata, ct);
+        }
+        catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", step); }
+    }
+
+    /// <summary>
+    /// Enqueues an output line to the run and batches it for delivery.
+    /// Failures are logged as warnings.
+    /// </summary>
+    internal async Task EmitOutputLineInternalAsync(
+        PipelineRun run, OutputBatcher outputBatcher, string line, CancellationToken ct)
+    {
+        try
+        {
+            run.OutputLines.Enqueue(line);
+            await outputBatcher.AddLineAsync(line, ct);
+        }
+        catch (Exception ex) { _logger.Warning(ex, "Failed to batch output line"); }
+    }
+
+    /// <summary>
+    /// Reports a quality gate result to the orchestrator via SignalR.
+    /// Failures are logged as warnings.
+    /// </summary>
+    internal async Task ReportQualityGateResultInternalAsync(
+        HubConnection connection, string jobId, QualityGateReport report, CancellationToken ct)
+    {
+        try { await connection.InvokeAsync("ReportQualityGateResult", jobId, report, ct); }
+        catch (Exception ex) { _logger.Warning(ex, "Failed to report quality gate result"); }
     }
 
     /// <summary>
@@ -443,6 +472,7 @@ public sealed class LocalPipelineExecutor
         AgentPhaseExecutor agentExecution,
         QualityGateExecutor qualityGates,
         CancellationTokenSource localCts,
+        PullRequestCreationContext prContext,
         Action<PipelineStep> transitionTo,
         Action<string> emitOutputLine,
         Action<QualityGateReport> reportQualityGateResult,
@@ -456,8 +486,7 @@ public sealed class LocalPipelineExecutor
             prOrchestrator,
             repoProvider,
             reportQualityGateResult,
-            (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, repoProvider, agentProvider,
-                brainProvider, brainSync, config, issueOps, connection, job, prOrchestrator, emitOutputLine, token),
+            (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, prContext, token),
             async (contextLoaded, fileCount) =>
             {
                 try { await connection.InvokeAsync("ReportBrainSyncResult", job.JobId, contextLoaded, fileCount, ct); }
@@ -493,12 +522,7 @@ public sealed class LocalPipelineExecutor
 
     private async Task CreatePullRequestAsync(
         PipelineRun run, QualityGateReport report, bool isDraft,
-        IRepositoryProvider repoProvider, IAgentProvider agentProvider,
-        IRepositoryProvider? brainProvider, BrainSyncService? brainSync,
-        PipelineConfiguration config, OrchestratorProxy issueOps,
-        HubConnection connection, JobAssignmentMessage job,
-        PullRequestOrchestrator prOrchestrator,
-        Action<string> emitOutputLine, CancellationToken ct)
+        PullRequestCreationContext context, CancellationToken ct)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("CreatePullRequest");
         activity?.SetTag("pipeline.run_id", run.RunId);
@@ -508,7 +532,7 @@ public sealed class LocalPipelineExecutor
         // NOTE: QualityGateExecutor already transitions to PreparingForPullRequest
         // during its cleanup phase, so we skip that transition here to avoid duplicates.
 
-        await ReportStepTransitionAsync(connection, job.JobId, run, PipelineStep.CreatingPullRequest, ct);
+        await ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, PipelineStep.CreatingPullRequest, ct);
 
         if (run.LinkedPullRequest is not null)
         {
@@ -516,11 +540,11 @@ public sealed class LocalPipelineExecutor
             run.PullRequestNumber = run.LinkedPullRequest.Number.ToString();
         }
 
-        var prUrl = await prOrchestrator.CreatePullRequestAsync(
-            run, report, isDraft, repoProvider, job.IssueDetail, job.IssueComments, config, ct,
-            emitOutputLine, isRework: run.LinkedPullRequest is not null);
+        var prUrl = await context.PrOrchestrator.CreatePullRequestAsync(
+            run, report, isDraft, context.RepoProvider, context.Job.IssueDetail, context.Job.IssueComments, context.Config, ct,
+            context.EmitOutputLine, isRework: run.LinkedPullRequest is not null);
 
-        if (prUrl is null && config.BlacklistMode == BlacklistMode.Fail && run.BlacklistedFilesDetected.Count > 0)
+        if (prUrl is null && context.Config.BlacklistMode == BlacklistMode.Fail && run.BlacklistedFilesDetected.Count > 0)
         {
             run.FailureReason = $"Blacklisted files detected: {string.Join(", ", run.BlacklistedFilesDetected)}";
             run.CompletedAt = DateTime.UtcNow;
@@ -544,21 +568,21 @@ public sealed class LocalPipelineExecutor
         // Label swap (agent:done / agent:error) is handled by the orchestrator in ReportJobCompleted.
 
         // ── Reflection + brain post-run sync ──
-        if (!isDraft && brainProvider is not null && brainSync is not null && !config.BrainReadOnly)
+        if (!isDraft && context.BrainProvider is not null && context.BrainSync is not null && !context.Config.BrainReadOnly)
         {
-            await ReportStepTransitionAsync(connection, job.JobId, run, PipelineStep.ReflectingOnRun, ct);
+            await ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, PipelineStep.ReflectingOnRun, ct);
 
-            await _finalization.RunReflectionAsync(run, agentProvider, config, emitOutputLine, ct);
+            await _finalization.RunReflectionAsync(run, context.AgentProvider, context.Config, context.EmitOutputLine, ct);
 
-            await ReportStepTransitionAsync(connection, job.JobId, run, PipelineStep.SyncingBrainRepoPostRun, ct);
+            await ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, PipelineStep.SyncingBrainRepoPostRun, ct);
 
-            await _finalization.SyncBrainPostRunAsync(run, brainSync, brainProvider, config, emitOutputLine, ct);
+            await _finalization.SyncBrainPostRunAsync(run, context.BrainSync, context.BrainProvider, context.Config, context.EmitOutputLine, ct);
         }
 
         // ── Feedback collection: separate agent call, runs regardless of brain provider ──
         if (!isDraft)
         {
-            await _finalization.CollectFeedbackAsync(run, agentProvider, _feedbackService, _historyService, emitOutputLine, ct);
+            await _finalization.CollectFeedbackAsync(run, context.AgentProvider, _feedbackService, _historyService, context.EmitOutputLine, ct);
         }
 
         run.CompletedAt = DateTime.UtcNow;
@@ -696,6 +720,24 @@ public sealed class LocalPipelineExecutor
     {
         var fullPath = Path.Combine(workspacePath, mcpConfigRelativePath);
         McpConfigWriter.WriteConfig(fullPath, mcpServers);
+    }
+
+    /// <summary>
+    /// Bundles the parameters needed by <see cref="CreatePullRequestAsync"/> into a single object,
+    /// reducing the method's parameter count from 14 to 5.
+    /// </summary>
+    internal sealed record PullRequestCreationContext
+    {
+        public required IRepositoryProvider RepoProvider { get; init; }
+        public required IAgentProvider AgentProvider { get; init; }
+        public IRepositoryProvider? BrainProvider { get; init; }
+        public BrainSyncService? BrainSync { get; init; }
+        public required PipelineConfiguration Config { get; init; }
+        public required OrchestratorProxy IssueOps { get; init; }
+        public required HubConnection Connection { get; init; }
+        public required JobAssignmentMessage Job { get; init; }
+        public required PullRequestOrchestrator PrOrchestrator { get; init; }
+        public required Action<string> EmitOutputLine { get; init; }
     }
 
     /// <summary>
