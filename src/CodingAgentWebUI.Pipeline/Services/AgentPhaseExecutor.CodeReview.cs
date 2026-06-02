@@ -347,19 +347,39 @@ internal partial class AgentPhaseExecutor
             // Respects .gitignore by default. No-op if no untracked files exist.
             await RunGitCommandAsync(run.WorkspacePath, "add -N .", ct);
 
+            // Compute merge-base to align local diff with GitLab's MR diff view.
+            // GitLab uses a merge-base (three-dot) diff for MR changes, while a plain
+            // `git diff origin/target` is a two-dot diff that may include commits merged
+            // into the target branch after this branch was created. Using merge-base
+            // ensures we only see changes introduced by this branch.
+            string effectiveDiffBase;
+            try
+            {
+                var mergeBase = await RunGitCommandAsync(run.WorkspacePath, $"merge-base {diffBase} HEAD", ct);
+                effectiveDiffBase = mergeBase.Trim();
+                if (string.IsNullOrEmpty(effectiveDiffBase))
+                    effectiveDiffBase = diffBase;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not TimeoutException)
+            {
+                // If merge-base fails (e.g., unrelated histories), fall back to direct diff
+                logger.Debug("Pipeline {RunId} merge-base computation failed, falling back to direct diff against {DiffBase}: {Error}", run.RunId, diffBase, ex.Message);
+                effectiveDiffBase = diffBase;
+            }
+
             // Generate diff stat (compact file list with line counts)
-            var diffStatResult = await RunGitCommandAsync(run.WorkspacePath, $"diff --stat {diffBase}", ct);
+            var diffStatResult = await RunGitCommandAsync(run.WorkspacePath, $"diff --stat {effectiveDiffBase}", ct);
             var diffStatPath = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.DiffStatFilePath);
             await File.WriteAllTextAsync(diffStatPath, diffStatResult, ct);
             logger.Debug("Pipeline {RunId} wrote diff stat to {FilePath} ({Length} chars, base: {DiffBase})",
-                run.RunId, AgentWorkspacePaths.DiffStatFilePath, diffStatResult.Length, diffBase);
+                run.RunId, AgentWorkspacePaths.DiffStatFilePath, diffStatResult.Length, effectiveDiffBase);
 
             // Generate full diff
-            var fullDiffResult = await RunGitCommandAsync(run.WorkspacePath, $"diff {diffBase}", ct);
+            var fullDiffResult = await RunGitCommandAsync(run.WorkspacePath, $"diff {effectiveDiffBase}", ct);
             var fullDiffPath = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.FullDiffFilePath);
             await File.WriteAllTextAsync(fullDiffPath, fullDiffResult, ct);
             logger.Debug("Pipeline {RunId} wrote full diff to {FilePath} ({Length} chars, base: {DiffBase})",
-                run.RunId, AgentWorkspacePaths.FullDiffFilePath, fullDiffResult.Length, diffBase);
+                run.RunId, AgentWorkspacePaths.FullDiffFilePath, fullDiffResult.Length, effectiveDiffBase);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

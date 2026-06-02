@@ -12,7 +12,9 @@ internal static partial class DiffHunkParser
     /// <summary>
     /// Parses a unified diff string and returns a dictionary mapping file paths
     /// to their valid line number sets (RIGHT side — new file state).
-    /// A line is valid if it falls within any @@ hunk range for that file.
+    /// Only lines that were actually added or modified ('+' prefix in the diff) are
+    /// considered valid. Context lines (' ' prefix) are NOT valid targets for inline
+    /// comments because GitLab's API rejects position-based discussions on context lines.
     /// </summary>
     public static IReadOnlyDictionary<string, HashSet<int>> ParseValidLines(string? diffText)
     {
@@ -23,9 +25,13 @@ internal static partial class DiffHunkParser
         var lines = diffText.Split('\n');
 
         string? currentFile = null;
+        var inHunk = false;
+        var currentNewLine = 0;
 
-        foreach (var line in lines)
+        foreach (var rawLine in lines)
         {
+            // Normalize Windows line endings — prevents \r from breaking prefix detection
+            var line = rawLine.TrimEnd('\r');
             // Detect file boundary: +++ b/path/to/file
             if (line.StartsWith("+++ ", StringComparison.Ordinal))
             {
@@ -34,6 +40,7 @@ internal static partial class DiffHunkParser
                 {
                     // Deleted file (+++ /dev/null) — no valid RIGHT-side lines
                     currentFile = null;
+                    inHunk = false;
                     continue;
                 }
 
@@ -42,6 +49,14 @@ internal static partial class DiffHunkParser
                 if (!result.ContainsKey(currentFile))
                     result[currentFile] = new HashSet<int>();
 
+                inHunk = false;
+                continue;
+            }
+
+            // Detect new diff entry — resets hunk state
+            if (line.StartsWith("diff ", StringComparison.Ordinal))
+            {
+                inHunk = false;
                 continue;
             }
 
@@ -52,14 +67,31 @@ internal static partial class DiffHunkParser
                 if (!match.Success)
                     continue;
 
-                var newStart = int.Parse(match.Groups[3].Value);
-                var newSize = match.Groups[4].Success ? int.Parse(match.Groups[4].Value) : 1;
+                currentNewLine = int.Parse(match.Groups[3].Value);
+                inHunk = true;
+                continue;
+            }
 
-                var validLines = result[currentFile];
-                for (var i = newStart; i < newStart + newSize; i++)
+            // Walk hunk content lines to identify actually-changed lines
+            if (inHunk && currentFile is not null)
+            {
+                if (line.StartsWith('+'))
                 {
-                    validLines.Add(i);
+                    // Added/modified line — valid target for inline comments
+                    result[currentFile].Add(currentNewLine);
+                    currentNewLine++;
                 }
+                else if (line.StartsWith('-'))
+                {
+                    // Deleted line — does NOT advance new-line counter
+                    // Not a valid target on the RIGHT side
+                }
+                else if (line.StartsWith(' ') || (line.Length == 0 && currentNewLine > 0))
+                {
+                    // Context line — advances counter but NOT a valid comment target
+                    currentNewLine++;
+                }
+                // else: unknown line (e.g., "\ No newline at end of file") — skip without advancing
             }
         }
 
