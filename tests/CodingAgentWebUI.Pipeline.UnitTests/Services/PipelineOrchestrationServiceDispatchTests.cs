@@ -215,7 +215,7 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
         _mockIssueProvider.Invocations.Clear();
 
         // Act: call RemoveAllAgentLabelsAsync directly
-        await service.RemoveAllAgentLabelsAsync("42", CancellationToken.None);
+        await service.RemoveAllAgentLabelsAsync(run, "42", CancellationToken.None);
 
         // Assert: RemoveLabelAsync was called for each label in AgentLabels.All
         foreach (var label in AgentLabels.All)
@@ -298,10 +298,10 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
             runService: _mockRunService.Object);
 
         // Run pipeline — it will fail during label swap but that's handled gracefully
-        await service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Act: call RemoveAllAgentLabelsAsync directly — should not throw
-        var act = () => service.RemoveAllAgentLabelsAsync("99", CancellationToken.None);
+        var act = () => service.RemoveAllAgentLabelsAsync(run, "99", CancellationToken.None);
         await act.Should().NotThrowAsync();
     }
 
