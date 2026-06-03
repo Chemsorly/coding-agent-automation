@@ -187,11 +187,7 @@ internal partial class QualityGateExecutor
                     UseResume = true
                 },
                 timeoutCts.Token,
-                line =>
-                {
-                    run.OutputLines.Enqueue(line);
-                    context.Callbacks.EmitOutputLine(line);
-                });
+                line => context.Callbacks.EmitOutputLine(line));
 
             // Parse the response
             var responseText = string.Join("\n", agentResult.OutputLines);

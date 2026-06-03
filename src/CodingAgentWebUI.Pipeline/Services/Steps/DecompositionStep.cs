@@ -98,11 +98,7 @@ internal sealed class DecompositionStep : IPipelineStep
                     UseResume = true
                 },
                 run, config, "Decomposition agent", context.Callbacks.NotifyChange, logger, ct,
-                line =>
-                {
-                    run.OutputLines.Enqueue(line);
-                    context.Callbacks.EmitOutputLine(line);
-                });
+                line => context.Callbacks.EmitOutputLine(line));
         }
         catch (OperationCanceledException) when (context.Cts?.IsCancellationRequested == true)
         {

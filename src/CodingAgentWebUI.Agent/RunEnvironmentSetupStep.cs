@@ -24,7 +24,7 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
         var repoConfig = _job.ProviderConfigs.FirstOrDefault(c => c.Id == _job.RepoProviderConfigId);
 
         // Merge secrets: project-level as base, repo-level overlays (repo wins on key collision)
-        var effectiveSecrets = MergeSecrets(_job.ProjectSecrets, repoConfig?.Secrets);
+        var (effectiveSecrets, supersededKeys) = MergeSecrets(_job.ProjectSecrets, repoConfig?.Secrets);
 
         var hasSecrets = effectiveSecrets.Count > 0;
         var hasSetupSteps = repoConfig?.SetupSteps is { Count: > 0 };
@@ -51,6 +51,13 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
             var keyList = string.Join(", ", injectedKeys);
             context.Callbacks.EmitOutputLine(
                 MaskSecrets($"🔐 Injected {injectedKeys.Count} environment secrets (keys: {keyList})", effectiveSecrets));
+
+            if (supersededKeys.Count > 0)
+            {
+                var supersededList = string.Join(", ", supersededKeys);
+                context.Callbacks.EmitOutputLine(
+                    $"⚠️ Repo-level secrets superseded project-level for keys: {supersededList}");
+            }
         }
 
         var steps = repoConfig?.SetupSteps ?? [];
@@ -137,14 +144,15 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
     /// <summary>
     /// Merges project-level and repo-level secrets. Repo secrets take precedence on key collision.
     /// </summary>
-    private static Dictionary<string, string> MergeSecrets(
+    private static (Dictionary<string, string> Merged, List<string> SupersededKeys) MergeSecrets(
         Dictionary<string, string>? projectSecrets,
         Dictionary<string, string>? repoSecrets)
     {
         if (projectSecrets is null or { Count: 0 } && repoSecrets is null or { Count: 0 })
-            return new Dictionary<string, string>();
+            return (new Dictionary<string, string>(), []);
 
         var merged = new Dictionary<string, string>(StringComparer.Ordinal);
+        var supersededKeys = new List<string>();
 
         // Start with project secrets as base
         if (projectSecrets is { Count: > 0 })
@@ -157,10 +165,14 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
         if (repoSecrets is { Count: > 0 })
         {
             foreach (var (key, value) in repoSecrets)
+            {
+                if (merged.ContainsKey(key))
+                    supersededKeys.Add(key);
                 merged[key] = value;
+            }
         }
 
-        return merged;
+        return (merged, supersededKeys);
     }
 
     /// <summary>

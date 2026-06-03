@@ -9,6 +9,7 @@
     <div class="project-tabs">
         <button class="tab-btn @(IsTab(TabOverview))" @onclick="() => SetTab(TabOverview)">Overview</button>
         <button class="tab-btn @(IsTab(TabTemplates))" @onclick="() => SetTab(TabTemplates)">Templates</button>
+        <button class="tab-btn @(IsTab(TabSecrets))" @onclick="() => SetTab(TabSecrets)">Secrets</button>
         <button class="tab-btn @(IsTab(TabSettings))" @onclick="() => SetTab(TabSettings)">Settings</button>
     </div>
 
@@ -20,6 +21,10 @@
     {
         @RenderTemplatesTab()
     }
+    else if (_activeTab == TabSecrets)
+    {
+        @RenderSecretsTab()
+    }
     else if (_activeTab == TabSettings)
     {
         @RenderSettingsTab()
@@ -29,6 +34,7 @@
 @code {
     private const string TabOverview = "overview";
     private const string TabTemplates = "templates";
+    private const string TabSecrets = "secrets";
     private const string TabSettings = "settings";
 
     [Parameter, EditorRequired] public string ProjectId { get; set; } = default!;
@@ -226,11 +232,9 @@
         </div>
     };
 
-    private RenderFragment RenderSettingsTab() => __builder =>
+    private RenderFragment RenderSecretsTab() => __builder =>
     {
         <div class="provider-form">
-            <p class="form-hint">Override global defaults for this project. Fields set to "Using global default" inherit from the global pipeline configuration.</p>
-
             <h3>🔐 Project Secrets</h3>
             <p class="form-hint">Environment variables injected into every run for this project. Merged with repo-level secrets (repo wins on key collision).</p>
             <div class="secrets-section-body">
@@ -260,6 +264,16 @@
                 }
                 <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
             </div>
+            <div class="pipeline-form-actions">
+                <button class="btn-save" @onclick="SaveSecretsAsync">Save Secrets</button>
+            </div>
+        </div>
+    };
+
+    private RenderFragment RenderSettingsTab() => __builder =>
+    {
+        <div class="provider-form">
+            <p class="form-hint">Override global defaults for this project. Fields set to "Using global default" inherit from the global pipeline configuration.</p>
 
             <h3>Retries &amp; Timeouts</h3>
             @RenderIntOverride("Max Retries", () => _maxRetries, v => _maxRetries = v, _globalConfig.MaxRetries, 0, 10)
@@ -450,6 +464,23 @@
         }
     }
 
+    private async Task SaveSecretsAsync()
+    {
+        if (!ValidateSecrets()) return;
+
+        try
+        {
+            _project = _project with { Secrets = BuildSecretsDictionary() };
+            await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
+            await OnProjectSaved.InvokeAsync();
+            await OnShowStatus.InvokeAsync(("Project secrets saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+
     private async Task SaveSettingsAsync()
     {
         try
@@ -480,8 +511,7 @@
                 RefactoringReviewEnabled = _refactoringReviewEnabled,
                 BrainConsolidationReviewEnabled = _brainConsolidationReviewEnabled,
                 HarnessSuggestionsReviewEnabled = _harnessSuggestionsReviewEnabled,
-                BrainReadOnly = _brainReadOnly,
-                Secrets = BuildSecretsDictionary()
+                BrainReadOnly = _brainReadOnly
             };
 
             await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);

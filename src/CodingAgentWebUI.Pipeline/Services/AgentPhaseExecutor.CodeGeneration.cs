@@ -41,11 +41,7 @@ internal partial class AgentPhaseExecutor
                     UseResume = true
                 },
                 run, config, "Code generation agent", context.Callbacks.NotifyChange, _logger, ct,
-                line =>
-                {
-                    run.OutputLines.Enqueue(line);
-                    context.Callbacks.EmitOutputLine(line);
-                });
+                line => context.Callbacks.EmitOutputLine(line));
 
             run.AccumulateTokenUsage(agentResult);
 
