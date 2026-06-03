@@ -31,8 +31,17 @@ public class JsonConfigurationStore : IConfigurationStore
     public async Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(config);
-        var path = Path.Combine(_baseDirectory, "pipeline-config.json");
-        await SaveJsonAsync(path, config, ct);
+
+        await _pipelineConfigLock.WaitAsync(ct);
+        try
+        {
+            var path = Path.Combine(_baseDirectory, "pipeline-config.json");
+            await SaveJsonAsync(path, config, ct);
+        }
+        finally
+        {
+            _pipelineConfigLock.Release();
+        }
     }
 
     public async Task UpdatePipelineConfigAsync(Func<PipelineConfiguration, PipelineConfiguration> transform, CancellationToken ct)
@@ -250,7 +259,18 @@ public class JsonConfigurationStore : IConfigurationStore
         ArgumentNullException.ThrowIfNull(id);
         var path = Path.Combine(_baseDirectory, subfolder, $"{id}.json");
         if (File.Exists(path))
-            File.Delete(path);
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.Warning("Failed to delete configuration file '{FilePath}': {ErrorMessage}", path, ex.Message);
+                throw new InvalidOperationException(
+                    $"Unable to delete configuration file '{path}': {ex.Message}", ex);
+            }
+        }
 
         return Task.CompletedTask;
     }

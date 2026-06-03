@@ -424,6 +424,45 @@ public sealed partial class AgentJobDispatcher
             };
             var syntheticParsedIssue = new IssueDescriptionParser().Parse(string.Empty);
 
+            // Build DecompositionProjectContext for cross-repo decomposition (project-level epics only).
+            // Per-template decomposition (EpicIssueProviderId is null) should NOT get project context.
+            DecompositionProjectContext? projectContext = null;
+            if (!string.IsNullOrEmpty(project.EpicIssueProviderId))
+            {
+                var repoProviderConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+                var repoConfigLookup = repoProviderConfigs.ToDictionary(c => c.Id);
+                var templateLookup = config.PipelineJobTemplates.ToDictionary(t => t.Id);
+
+                var repositories = new List<RepositoryTarget>();
+                foreach (var templateId in project.TemplateIds)
+                {
+                    if (!templateLookup.TryGetValue(templateId, out var tmpl))
+                        continue;
+
+                    var description = repoConfigLookup.TryGetValue(tmpl.RepoProviderId, out var repoCfg)
+                        ? repoCfg.DisplayName
+                        : tmpl.Name;
+
+                    repositories.Add(new RepositoryTarget
+                    {
+                        TemplateName = tmpl.Name,
+                        Description = description,
+                        DecompositionEnabled = tmpl.DecompositionEnabled,
+                        Available = tmpl.Enabled,
+                        IssueProviderId = tmpl.IssueProviderId,
+                        Labels = repoConfigLookup.TryGetValue(tmpl.RepoProviderId, out var rc)
+                            ? (rc.RequiredLabels ?? [])
+                            : []
+                    });
+                }
+
+                projectContext = new DecompositionProjectContext
+                {
+                    ProjectName = project.Name,
+                    Repositories = repositories.AsReadOnly()
+                };
+            }
+
             var message = new JobAssignmentMessage
             {
                 JobId = run.RunId,
@@ -446,7 +485,8 @@ public sealed partial class AgentJobDispatcher
                 ReviewerConfigs = Array.Empty<ReviewerConfiguration>(),
                 RunType = phaseType,
                 ProjectId = project.Id,
-                ProjectName = project.Name
+                ProjectName = project.Name,
+                ProjectContext = projectContext
             };
 
             // Swap label to agent:in-progress before dispatch so the epic is immediately marked

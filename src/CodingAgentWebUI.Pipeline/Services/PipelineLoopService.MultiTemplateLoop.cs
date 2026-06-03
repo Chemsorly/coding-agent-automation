@@ -109,6 +109,9 @@ public sealed partial class PipelineLoopService
             var flattenedTemplates = FlattenTemplates(projects, config);
             var enabledTemplates = flattenedTemplates.Select(ft => ft.Template).ToList();
 
+            // Pre-built lookup shared by FlattenTemplates logic and SelectDecompositionTemplate
+            var templateLookup = config.PipelineJobTemplates.ToDictionary(t => t.Id);
+
             // Filter out rate-limited templates
             var now = DateTimeOffset.UtcNow;
             var pollableEntries = flattenedTemplates.Where(ft =>
@@ -351,7 +354,7 @@ public sealed partial class PipelineLoopService
                 }
 
                 // Select the first decomposition-enabled template in the project
-                var decompositionTemplate = SelectDecompositionTemplate(project, config);
+                var decompositionTemplate = SelectDecompositionTemplate(project, templateLookup);
                 if (decompositionTemplate is null)
                 {
                     _logger.Warning("Project '{ProjectName}': no decomposition-enabled template found, skipping project-level epic polling",
@@ -518,7 +521,8 @@ public sealed partial class PipelineLoopService
                                 template.BrainProviderId, template.PipelineProviderId,
                                 initiatedBy: "loop",
                                 stopToken,
-                                issueTitle: issue.Title);
+                                issueTitle: issue.Title,
+                                project: templateProjectLookup[template.Id]);
 
                             if (dispatched)
                                 _logger.Information("Dispatched issue #{Issue} from template '{Template}'",
@@ -581,7 +585,8 @@ public sealed partial class PipelineLoopService
                                     BrainProviderId = template.BrainProviderId,
                                     InitiatedBy = "loop"
                                 },
-                                stopToken);
+                                stopToken,
+                                project: templateProjectLookup[template.Id]);
 
                             if (dispatched)
                                 _logger.Information("Dispatched PR #{PrIdentifier} review from template '{Template}'",
@@ -644,7 +649,8 @@ public sealed partial class PipelineLoopService
                                 template.RepoProviderId,
                                 template.BrainProviderId,
                                 initiatedBy: "loop",
-                                stopToken);
+                                stopToken,
+                                project: templateProjectLookup[template.Id]);
 
                             if (dispatched)
                             {
@@ -702,7 +708,8 @@ public sealed partial class PipelineLoopService
                                         candidate.Template.BrainProviderId,
                                         initiatedBy: "loop",
                                         stoppingToken,
-                                        decompositionSource: "project-level");
+                                        decompositionSource: "project-level",
+                                        project: templateProjectLookup.GetValueOrDefault(candidate.Template.Id));
 
                                     if (dispatched)
                                     {
@@ -1083,12 +1090,10 @@ public sealed partial class PipelineLoopService
     /// Returns the first decomposition-enabled template in the project (by TemplateIds position).
     /// Returns null if no decomposition-enabled template exists (skip this project's epic polling).
     /// </summary>
-    private PipelineJobTemplate? SelectDecompositionTemplate(
+    private static PipelineJobTemplate? SelectDecompositionTemplate(
         PipelineProject project,
-        PipelineConfiguration globalConfig)
+        Dictionary<string, PipelineJobTemplate> templateLookup)
     {
-        var templateLookup = globalConfig.PipelineJobTemplates.ToDictionary(t => t.Id);
-
         foreach (var templateId in project.TemplateIds)
         {
             if (templateLookup.TryGetValue(templateId, out var template)
