@@ -38,6 +38,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         _agentProfiles.Clear();
         _qualityGateConfigs.Clear();
         _reviewerConfigs.Clear();
+        _projects.Clear();
         SeedDefaults();
     }
 
