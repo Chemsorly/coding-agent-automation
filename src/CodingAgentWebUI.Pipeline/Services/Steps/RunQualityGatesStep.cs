@@ -14,6 +14,7 @@ internal sealed class RunQualityGatesStep : IPipelineStep
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("RunQualityGates");
         activity?.SetTag("pipeline.run_id", context.Run.RunId);
         activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
 
         IReadOnlyList<QualityGateConfiguration> allQgcs;
         bool qgcsConfiguredAtDispatch;

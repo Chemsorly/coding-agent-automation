@@ -126,6 +126,27 @@ public sealed record JobAssignmentMessage
     /// <summary>PR body/description for review runs.</summary>
     [Key(22)]
     public string? ReviewPrDescription { get; init; }
+
+    /// <summary>
+    /// Project context for cross-repo decomposition. Populated at dispatch time when
+    /// the epic originates from a project-level EpicIssueProviderId.
+    /// Null for non-decomposition runs or per-template decomposition.
+    /// </summary>
+    [Key(23)]
+    public DecompositionProjectContext? ProjectContext { get; init; }
+
+    /// <summary>
+    /// Project ID that owned the dispatching template at dispatch time.
+    /// Used for telemetry tagging on the agent side.
+    /// </summary>
+    [Key(24)]
+    public string? ProjectId { get; init; }
+
+    /// <summary>
+    /// Project display name for telemetry tagging on the agent side.
+    /// </summary>
+    [Key(25)]
+    public string? ProjectName { get; init; }
 }
 
 /// <summary>

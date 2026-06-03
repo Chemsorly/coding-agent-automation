@@ -74,7 +74,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
     private PipelineLoopService CreateService(IJobDispatcher? jobDispatcher = null)
     {
-        _loopService = new PipelineLoopService(_orchestration, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockLogger.Object, jobDispatcher);
+        _loopService = new PipelineLoopService(_orchestration, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, _mockLogger.Object, jobDispatcher);
         return _loopService;
     }
 
@@ -585,7 +585,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         mockDispatcher.Setup(d => d.TryDispatchAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>(),
+                It.IsAny<PipelineProject?>()))
             .ReturnsAsync(true);
         mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>()))
             .Returns(false);

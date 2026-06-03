@@ -685,6 +685,12 @@ Each retry invokes an additional LLM API call per agent. With `MaxRetries = 1` (
 
 The epic decomposition pipeline is a two-phase workflow that transforms high-level epics (GitHub issues labeled `agent:epic`) into implementation-ready sub-issues. It reuses the same dispatch mechanism as implementation and PR review pipelines — `PipelineLoopService` → `IJobDispatcher` → `JobAssignmentMessage` → `LocalPipelineExecutor` — adding two `PipelineRunType` values (`DecompositionAnalysis` and `Decomposition`) that route to dedicated step pipelines.
 
+### Project Context in Decomposition
+
+When a project has an `EpicIssueProviderId` configured, epics from that provider are decomposed with **cross-repository routing**. The decomposition agent receives a project context file (`.agent/project-context.md`) listing all templates in the project with their names, descriptions, and decomposition eligibility. Sub-issues can specify a `targetRepository` to route creation to a different template's issue provider.
+
+See [Projects — Cross-Repo Decomposition](projects.md#cross-repository-decomposition) for the full workflow and configuration details.
+
 ### Overview
 
 ```mermaid
@@ -706,16 +712,17 @@ flowchart TD
     subgraph "Phase 1: DecompositionAnalysis"
         L --> P1S1[1. CloneRepositoryStep]
         P1S1 --> P1S2[2. SyncBrainPreRunStep]
-        P1S2 --> P1S3[3. WriteOpenIssueContextStep]
-        P1S3 --> P1S4[4. DecompositionAnalysisStep]
-        P1S4 --> P1S5[5. PostDecompositionPlanStep]
+        P1S2 --> P1S2b[3. WriteProjectContextStep<br/>if project context present]
+        P1S2b --> P1S3[4. WriteOpenIssueContextStep]
+        P1S3 --> P1S4[5. DecompositionAnalysisStep]
+        P1S4 --> P1S5[6. PostDecompositionPlanStep]
     end
 
     subgraph "Phase 2: Decomposition"
         M --> P2S1[1. CloneRepositoryStep]
         P2S1 --> P2S2[2. SyncBrainPreRunStep]
         P2S2 --> P2S3[3. DecompositionStep]
-        P2S3 --> P2S4[4. CreateSubIssuesStep]
+        P2S3 --> P2S4[4. CreateIssuesStep<br/>with target routing]
         P2S4 --> P2S5[5. PostDecompositionSummaryStep]
     end
 ```

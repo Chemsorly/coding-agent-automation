@@ -34,6 +34,16 @@ public interface IAgentIssueOperations
         => throw new NotSupportedException("CreateIssueAsync is not implemented by this provider.");
 
     /// <summary>
+    /// Creates a new issue via a specific issue provider (identified by config ID) for cross-repo routing.
+    /// Used by <c>CreateSubIssuesStep</c> when a decomposed issue's <c>targetRepository</c> resolves
+    /// to a different template's issue provider.
+    /// Falls back to the default <see cref="CreateIssueAsync"/> behavior when not overridden.
+    /// </summary>
+    Task<CreatedIssueResult> CreateIssueForProviderAsync(
+        string issueProviderConfigId, string title, string body, IReadOnlyList<string> labels, CancellationToken ct)
+        => CreateIssueAsync(title, body, labels, ct);
+
+    /// <summary>
     /// Lists open issues with optional label filtering. Returns paginated results.
     /// </summary>
     Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)

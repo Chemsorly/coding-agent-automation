@@ -19,6 +19,7 @@ internal sealed class DecompositionStep : IPipelineStep
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("Decomposition");
         activity?.SetTag("pipeline.run_id", context.Run.RunId);
         activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
         activity?.SetTag("pipeline.run_type", context.Run.RunType.ToString());
 
         ArgumentNullException.ThrowIfNull(context);
@@ -79,7 +80,7 @@ internal sealed class DecompositionStep : IPipelineStep
         }
 
         // 4. Build prompt via DecompositionPromptBuilder.BuildDecompositionPrompt(maxSubIssues)
-        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(config.MaxDecompositionSubIssues);
+        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(config.MaxDecompositionSubIssues, context.ProjectContext);
 
         // 5. Execute agent expecting .agent/sub-issues/*.json output
         context.Callbacks.EmitOutputLine("🤖 Executing decomposition agent...");

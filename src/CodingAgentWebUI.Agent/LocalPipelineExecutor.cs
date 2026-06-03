@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using CodingAgentWebUI.Agent.KiroCli;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -96,8 +98,9 @@ public sealed class LocalPipelineExecutor
         activity?.SetTag("pipeline.agent_id", Environment.MachineName);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var runTypeTag = PipelineTelemetry.RunTypeTag(job.RunType);
-        PipelineTelemetry.JobsDispatched.Add(1, runTypeTag);
+        var tags = PipelineTelemetry.BuildTags(job.RunType, job.ProjectId, job.ProjectName);
+        PipelineTelemetry.SetProjectTags(activity, job.ProjectId, job.ProjectName);
+        PipelineTelemetry.JobsDispatched.Add(1, tags);
 
         var config = job.PipelineConfiguration;
         var issueOps = new OrchestratorProxy(connection, job.JobId);
@@ -168,17 +171,19 @@ public sealed class LocalPipelineExecutor
         finally
         {
             sw.Stop();
-            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, runTypeTag);
+            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, tags);
             if (job.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
             {
                 var phase = job.RunType == PipelineRunType.DecompositionAnalysis ? "analysis" : "creation";
                 PipelineTelemetry.DecompositionDuration.Record(sw.Elapsed.TotalSeconds,
+                    PipelineTelemetry.ProjectIdTag(job.ProjectId),
+                    PipelineTelemetry.ProjectNameTag(job.ProjectName),
                     new KeyValuePair<string, object?>("phase", phase));
             }
             if (result is null || result.FinalStep != PipelineStep.Completed)
-                PipelineTelemetry.JobsFailed.Add(1, runTypeTag);
+                PipelineTelemetry.JobsFailed.Add(1, tags);
             else
-                PipelineTelemetry.JobsCompleted.Add(1, runTypeTag);
+                PipelineTelemetry.JobsCompleted.Add(1, tags);
 
             if (repoProvider is IAsyncDisposable rd) await rd.DisposeAsync();
             if (agentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
@@ -439,6 +444,7 @@ public sealed class LocalPipelineExecutor
             new CloneRepositoryStep(),
             new RunEnvironmentSetupStep(job),
             new SyncBrainPreRunStep(),
+            new WriteProjectContextStep(),
             new WriteOpenIssueContextStep(openIssueContextWriter),
             new DecompositionAnalysisStep(),
             new PostDecompositionPlanStep()
@@ -518,6 +524,7 @@ public sealed class LocalPipelineExecutor
             PreResolvedQualityGateConfigs = job.QualityGateConfigs,
             Logger = _logger,
             QualityGateValidator = _qualityGateValidator,
+            ProjectContext = job.ProjectContext,
             // Pre-populate issue data from job (no IssueProvider on agent side)
             Issue = job.IssueDetail,
             ParsedIssue = job.ParsedIssue,
@@ -533,6 +540,7 @@ public sealed class LocalPipelineExecutor
         activity?.SetTag("pipeline.run_id", run.RunId);
         activity?.SetTag("pipeline.issue", run.IssueIdentifier);
         activity?.SetTag("pipeline.pr.is_draft", isDraft);
+        PipelineTelemetry.SetProjectTags(activity, run.ProjectId, run.ProjectName);
 
         // NOTE: QualityGateExecutor already transitions to PreparingForPullRequest
         // during its cleanup phase, so we skip that transition here to avoid duplicates.

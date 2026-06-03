@@ -67,4 +67,14 @@ public sealed class PipelineRunSummary
 
     /// <summary>Total number of sub-issues attempted during the Decomposition phase.</summary>
     public int DecompositionSubIssuesAttempted { get; init; }
+
+    /// <summary>Project display name for run history table column.</summary>
+    public string? ProjectName { get; init; }
+
+    /// <summary>
+    /// For decomposition runs: whether the epic was polled from the project-level
+    /// EpicIssueProviderId ("project-level") or the template's own IssueProviderId ("template-level").
+    /// Null for non-decomposition runs.
+    /// </summary>
+    public string? DecompositionSource { get; init; }
 }

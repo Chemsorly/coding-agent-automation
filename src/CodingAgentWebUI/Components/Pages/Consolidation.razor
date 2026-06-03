@@ -9,6 +9,7 @@
 @inject IConsolidationService ConsolidationService
 @inject ConsolidationBadgeService BadgeService
 @inject IConfigurationStore ConfigStore
+@inject IProjectStore ProjectStore
 
 <div class="consolidation-page">
     <header class="consolidation-header">
@@ -217,12 +218,31 @@
     {
         try
         {
+            // Load templates from projects (project-based ownership) instead of PipelineConfiguration.PipelineJobTemplates
             var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-            _templates = config.PipelineJobTemplates.Where(t => t.Enabled).ToList();
+            var projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
+            var templateLookup = config.PipelineJobTemplates.ToDictionary(t => t.Id);
+
+            if (projects.Count > 0)
+            {
+                _templates = projects
+                    .Where(p => p.Enabled)
+                    .OrderBy(p => p.Name, StringComparer.Ordinal)
+                    .SelectMany(p => p.TemplateIds)
+                    .Where(tid => templateLookup.ContainsKey(tid))
+                    .Select(tid => templateLookup[tid])
+                    .Where(t => t.Enabled)
+                    .ToList();
+            }
+            else
+            {
+                // Pre-migration fallback: use global config directly
+                _templates = config.PipelineJobTemplates.Where(t => t.Enabled).ToList();
+            }
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to load pipeline config for consolidation page");
+            Log.Warning(ex, "Failed to load templates for consolidation page");
             _templates = [];
         }
 

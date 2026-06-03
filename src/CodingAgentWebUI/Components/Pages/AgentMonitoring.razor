@@ -442,6 +442,7 @@
                             <tr>
                                 <th>Run ID</th>
                                 <th>Type</th>
+                                <th>Project</th>
                                 <th>Issue</th>
                                 <th>Agent</th>
                                 <th>Final Step</th>
@@ -472,6 +473,7 @@
                                             <span class="run-type-badge run-type-impl" title="Implementation">🔨</span>
                                         }
                                     </td>
+                                    <td>@(string.IsNullOrEmpty(run.ProjectName) ? "—" : run.ProjectName)</td>
                                     <td title="#@run.IssueIdentifier @run.IssueTitle">
                                         @if (run.RunType == PipelineRunType.Review)
                                         {

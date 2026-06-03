@@ -20,4 +20,6 @@ public static class SettingsNodes
     public const string AgentProfiles = "agent-profiles";
     public const string QualityGateConfigs = "quality-gate-configs";
     public const string ReviewerConfigs = "reviewer-configs";
+    public const string Projects = "projects";
+    public const string ProjectDetail = "project-detail";
 }

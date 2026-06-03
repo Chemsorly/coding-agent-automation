@@ -93,6 +93,16 @@ If the user wants a fresh run instead of rework, they close the existing PR firs
 
 If either phase fails, the label is swapped to `agent:error`. The user can retry by removing `agent:error` and adding `agent:epic` (re-runs Phase 1) or `agent:epic-approved` (re-runs Phase 2 only).
 
+### Cross-Repository Epic Decomposition
+
+When a **project** has an `EpicIssueProviderId` configured, the decomposition pipeline supports routing sub-issues to different repositories. The epic is polled from the project-level provider (e.g., a centralized tracker like Polarion or Jira), and each decomposed sub-issue can include a `targetRepository` field specifying which template's issue provider should receive it.
+
+- If `targetRepository` resolves to a known template in the project → the issue is created in that template's issue provider
+- If `targetRepository` is unresolvable or empty → the issue falls back to the dispatching template's issue provider
+- Issues are created as regular issues (via `CreateIssueAsync`), not platform-specific sub-issues, ensuring compatibility across all issue providers
+
+See [Projects — Cross-Repo Decomposition](projects.md#cross-repository-decomposition) for configuration details.
+
 ## Closed-Loop Mode
 
 When the pipeline loop is active, it polls for `agent:next` issues automatically:
@@ -102,3 +112,4 @@ When the pipeline loop is active, it polls for `agent:next` issues automatically
 - One issue is processed at a time; the loop waits for the current run to finish before starting the next
 - Configurable poll interval, max runs per cycle, and backoff on failures
 - When `DecompositionEnabled` is true on a template, the loop also polls for `agent:epic` and `agent:epic-approved` issues and dispatches them for decomposition
+- When a project has an `EpicIssueProviderId` configured, the loop polls that provider for epics independently (see [Projects](projects.md))

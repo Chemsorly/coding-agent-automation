@@ -64,6 +64,7 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
             ReplaceService<IAgentProfileStore>(services, ConfigStore);
             ReplaceService<IQualityGateConfigStore>(services, ConfigStore);
             ReplaceService<IReviewerConfigStore>(services, ConfigStore);
+            ReplaceService<IProjectStore>(services, ConfigStore);
             ReplaceService<IProviderFactory>(services, FakeProviders);
             ReplaceService<IQualityGateValidator>(services, QualityGateValidator);
             ReplaceService<IPipelineRunHistoryService>(services, HistoryService);

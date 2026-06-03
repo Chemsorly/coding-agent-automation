@@ -26,9 +26,10 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
         await Page.WaitForSelectorAsync("div.provider-form", new() { Timeout = 5_000 });
 
         // Leave name empty, select providers
-        var issueSelect = Page.Locator("div.provider-form select").Nth(0);
+        // Note: Nth(0) is Project dropdown, Nth(1) is Issue Provider, Nth(2) is Repo Provider
+        var issueSelect = Page.Locator("div.provider-form select").Nth(1);
         await issueSelect.SelectOptionAsync(new SelectOptionValue { Label = "E2E Issue Provider" });
-        var repoSelect = Page.Locator("div.provider-form select").Nth(1);
+        var repoSelect = Page.Locator("div.provider-form select").Nth(2);
         await repoSelect.SelectOptionAsync(new SelectOptionValue { Label = "E2E Repo Provider" });
 
         // Click Save without filling name
@@ -57,7 +58,8 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
         await nameInput.FillAsync("Test Template");
 
         // Select repo provider but not issue provider
-        var repoSelect = Page.Locator("div.provider-form select").Nth(1);
+        // Note: Nth(0) is Project dropdown, Nth(1) is Issue Provider, Nth(2) is Repo Provider
+        var repoSelect = Page.Locator("div.provider-form select").Nth(2);
         await repoSelect.SelectOptionAsync(new SelectOptionValue { Label = "E2E Repo Provider" });
 
         // Click Save
@@ -101,9 +103,10 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
         var nameInput = Page.Locator("div.provider-form input[type='text']").First;
         await nameInput.FillAsync("Duplicate Template");
 
-        var issueSelect = Page.Locator("div.provider-form select").Nth(0);
+        // Note: Nth(0) is Project dropdown, Nth(1) is Issue Provider, Nth(2) is Repo Provider
+        var issueSelect = Page.Locator("div.provider-form select").Nth(1);
         await issueSelect.SelectOptionAsync(new SelectOptionValue { Label = "E2E Issue Provider" });
-        var repoSelect = Page.Locator("div.provider-form select").Nth(1);
+        var repoSelect = Page.Locator("div.provider-form select").Nth(2);
         await repoSelect.SelectOptionAsync(new SelectOptionValue { Label = "E2E Repo Provider" });
 
         // Click Save
@@ -136,9 +139,10 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
         var nameInput = Page.Locator("div.provider-form input[type='text']").First;
         await nameInput.FillAsync("New Valid Template");
 
-        var issueSelect = Page.Locator("div.provider-form select").Nth(0);
+        // Note: Nth(0) is Project dropdown, Nth(1) is Issue Provider, Nth(2) is Repo Provider
+        var issueSelect = Page.Locator("div.provider-form select").Nth(1);
         await issueSelect.SelectOptionAsync(new SelectOptionValue { Label = "E2E Issue Provider" });
-        var repoSelect = Page.Locator("div.provider-form select").Nth(1);
+        var repoSelect = Page.Locator("div.provider-form select").Nth(2);
         await repoSelect.SelectOptionAsync(new SelectOptionValue { Label = "E2E Repo Provider" });
 
         await Page.ClickAsync("div.form-buttons button.btn-save");

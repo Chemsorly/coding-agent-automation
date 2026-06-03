@@ -236,7 +236,7 @@ public class JobQueueDrainServiceTests
             .Setup(d => d.TryDispatchDecompositionAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .ReturnsAsync(true);
 
         await _service.DrainAsync(CancellationToken.None);
@@ -244,7 +244,7 @@ public class JobQueueDrainServiceTests
         _mockJobDispatcher.Verify(
             d => d.TryDispatchDecompositionAsync(
                 "epic-5", "Epic #5", PipelineRunType.DecompositionAnalysis,
-                "ip", "rp", null, "loop", It.IsAny<CancellationToken>()),
+                "ip", "rp", null, "loop", It.IsAny<CancellationToken>(), It.IsAny<string?>()),
             Times.Once);
     }
 

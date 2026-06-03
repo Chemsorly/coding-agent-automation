@@ -93,9 +93,10 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         var mockDispatcher = new Mock<IJobDispatcher>();
         var dispatchedIssues = new List<string>();
         mockDispatcher.Setup(d => d.TryDispatchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
-            .Callback<string, string, string, string?, string?, string, CancellationToken, string?>(
-                (issueId, _, _, _, _, _, _, _) => dispatchedIssues.Add(issueId))
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>(),
+                It.IsAny<PipelineProject?>()))
+            .Callback<string, string, string, string?, string?, string, CancellationToken, string?, PipelineProject?>(
+                (issueId, _, _, _, _, _, _, _, _) => dispatchedIssues.Add(issueId))
             .ReturnsAsync(true);
 
         var orchestration = new PipelineOrchestrationService(
@@ -107,7 +108,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
         var loopService = new PipelineLoopService(
-            orchestration, MockFactory.Object, ConfigStore, ConfigStore, MockLogger.Object, mockDispatcher.Object);
+            orchestration, MockFactory.Object, ConfigStore, ConfigStore, ConfigStore, MockLogger.Object, mockDispatcher.Object);
 
         using var cts = new CancellationTokenSource();
         await loopService.StartAsync(cts.Token);
@@ -237,7 +238,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
         var loopService = new PipelineLoopService(
-            orchestration, MockFactory.Object, ConfigStore, ConfigStore, MockLogger.Object);
+            orchestration, MockFactory.Object, ConfigStore, ConfigStore, ConfigStore, MockLogger.Object);
 
         // Act
         var started = await loopService.StartLoopAsync();

@@ -14,6 +14,7 @@ internal sealed class AnalyzeCodeStep : IPipelineStep
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("AnalyzeIssue");
         activity?.SetTag("pipeline.run_id", context.Run.RunId);
         activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
 
         context.Callbacks.EmitOutputLine("🔍 Starting analysis...");
 

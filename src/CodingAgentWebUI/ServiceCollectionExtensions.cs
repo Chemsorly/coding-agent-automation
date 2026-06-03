@@ -36,6 +36,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAgentProfileStore>(configStore);
         services.AddSingleton<IQualityGateConfigStore>(configStore);
         services.AddSingleton<IReviewerConfigStore>(configStore);
+        services.AddSingleton<IProjectStore>(configStore);
 
         services.AddSingleton<IProviderFactory>(sp => new ProviderFactory(pipelineConfig));
 
@@ -79,6 +80,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<IPipelineConfigStore>(),
             sp.GetRequiredService<IProviderConfigStore>(),
+            sp.GetRequiredService<IProjectStore>(),
             Log.Logger,
             sp.GetRequiredService<IJobDispatcher>(),
             sp.GetRequiredService<IDependencyChecker>()));
@@ -187,6 +189,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<JobDispatcherService>(),
             sp.GetRequiredService<IAgentCommunication>(),
             sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<ITokenVendingService>(),
             pipelineConfig,
             sp.GetRequiredService<ConsolidationQueueService>(),
@@ -196,6 +199,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             Log.Logger,
             pipelineConfig,
+            sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<IConsolidationDispatcher>()));
 

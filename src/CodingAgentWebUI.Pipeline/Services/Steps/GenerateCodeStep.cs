@@ -15,6 +15,7 @@ internal sealed class GenerateCodeStep : IPipelineStep
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("GenerateCode");
         activity?.SetTag("pipeline.run_id", context.Run.RunId);
         activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
         activity?.SetTag("pipeline.is_rework", context.Run.LinkedPullRequest is not null);
 
         string? reworkPromptOverride = null;

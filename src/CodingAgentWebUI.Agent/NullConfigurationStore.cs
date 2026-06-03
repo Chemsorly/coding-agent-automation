@@ -57,4 +57,16 @@ internal sealed class NullConfigurationStore : IConfigurationStore
 
     public Task DeleteReviewerConfigAsync(string id, CancellationToken ct) =>
         Task.CompletedTask;
+
+    public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<PipelineProject>>([]);
+
+    public Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct) =>
+        Task.FromResult<PipelineProject?>(null);
+
+    public Task SaveProjectAsync(PipelineProject project, CancellationToken ct) =>
+        Task.CompletedTask;
+
+    public Task DeleteProjectAsync(string id, CancellationToken ct) =>
+        Task.CompletedTask;
 }

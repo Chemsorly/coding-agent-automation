@@ -7,7 +7,8 @@ namespace CodingAgentWebUI.TestUtilities;
 /// explicitly set. This prevents tests from silently breaking when production defaults change.
 /// 
 /// Use <see cref="Default"/> for most tests. Use <see cref="WithCodeReview"/> for tests
-/// that need code review enabled.
+/// that need code review enabled. Use <see cref="DefaultProject"/> for tests that need
+/// a project with well-known Default ID.
 /// </summary>
 public static class TestPipelineConfig
 {
@@ -93,5 +94,33 @@ public static class TestPipelineConfig
         DecompositionTimeout = TimeSpan.FromMinutes(15),
         MaxOpenIssuesForContext = 50,
         RefactoringOutcomeLookback = TimeSpan.FromDays(90),
+    };
+
+    /// <summary>
+    /// Creates a <see cref="PipelineProject"/> with the well-known Default project ID.
+    /// All overrides are null (inherit from global). Includes no templates by default.
+    /// Use <c>with { TemplateIds = [...] }</c> to add template ownership.
+    /// </summary>
+    public static PipelineProject DefaultProject(params string[] templateIds) => new()
+    {
+        Id = WellKnownIds.DefaultProjectId,
+        Name = "Default",
+        Enabled = true,
+        TemplateIds = templateIds,
+    };
+
+    /// <summary>
+    /// Creates a <see cref="PipelineProject"/> with a generated ID and the given name.
+    /// All overrides are null (inherit from global). Use <c>with { ... }</c> to set
+    /// behavioral overrides for project-level settings tests.
+    /// </summary>
+    public static PipelineProject WithProject(
+        string name = "TestProject",
+        params string[] templateIds) => new()
+    {
+        Id = Guid.NewGuid().ToString(),
+        Name = name,
+        Enabled = true,
+        TemplateIds = templateIds,
     };
 }

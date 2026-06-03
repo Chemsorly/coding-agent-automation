@@ -28,6 +28,7 @@ public class SettingsPageComponentTests : BunitContext
         _mockProviderFactory = new Mock<IProviderFactory>();
         SetupDefaults();
         Services.AddSingleton(_mockStore.Object);
+        Services.AddSingleton<IProjectStore>(_mockStore.Object);
         Services.AddSingleton(new CodingAgentWebUI.Infrastructure.GitHub.GitHubValidationService());
         Services.AddSingleton(new CodingAgentWebUI.Infrastructure.GitLab.GitLabValidationService());
         Services.AddSingleton(_mockProviderFactory.Object);
@@ -51,6 +52,8 @@ public class SettingsPageComponentTests : BunitContext
             .ReturnsAsync(new PipelineConfiguration());
         _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
     }
 
     [Fact]

@@ -24,7 +24,8 @@ public interface IJobDispatcher
         string? pipelineProviderId,
         string initiatedBy,
         CancellationToken ct,
-        string? issueTitle = null);
+        string? issueTitle = null,
+        PipelineProject? project = null);
 
     /// <summary>
     /// Attempts to dispatch a PR review job to an available agent.
@@ -33,7 +34,7 @@ public interface IJobDispatcher
     /// <c>true</c> if the review job was dispatched or enqueued successfully;
     /// <c>false</c> if the PR is already being processed or queued.
     /// </returns>
-    Task<bool> TryDispatchReviewAsync(ReviewDispatchRequest request, CancellationToken ct);
+    Task<bool> TryDispatchReviewAsync(ReviewDispatchRequest request, CancellationToken ct, PipelineProject? project = null);
 
     /// <summary>
     /// Attempts to dispatch a decomposition job to an available agent.
@@ -46,6 +47,8 @@ public interface IJobDispatcher
     /// <param name="brainProviderId">Optional brain provider config ID.</param>
     /// <param name="initiatedBy">Who initiated the dispatch (e.g., "loop").</param>
     /// <param name="ct">Cancellation token.</param>
+    /// <param name="decompositionSource">Optional source indicator for the decomposition (e.g., "project-level" or "template-level").</param>
+    /// <param name="project">Optional project that owns the dispatching template. Used for settings resolution.</param>
     /// <returns>true if dispatched or enqueued; false if already processing.</returns>
     Task<bool> TryDispatchDecompositionAsync(
         string epicIdentifier,
@@ -55,7 +58,9 @@ public interface IJobDispatcher
         string repoProviderId,
         string? brainProviderId,
         string initiatedBy,
-        CancellationToken ct);
+        CancellationToken ct,
+        string? decompositionSource = null,
+        PipelineProject? project = null);
 
     /// <summary>
     /// Whether any agents are registered and available for dispatch.
