@@ -75,6 +75,19 @@ internal sealed class PipelineStepContext
     /// </summary>
     public IReadOnlyList<QualityGateConfiguration>? PreResolvedQualityGateConfigs { get; set; }
 
+    /// <summary>
+    /// Keys of environment variables injected by <see cref="RunEnvironmentSetupStep"/> as process-wide
+    /// secrets. Tracked so that the executor's finally block can unset them after the run completes.
+    /// </summary>
+    public List<string>? InjectedSecretKeys { get; set; }
+
+    /// <summary>
+    /// Key→value pairs of secrets injected by <see cref="RunEnvironmentSetupStep"/>.
+    /// Used by the executor to mask secret values in ALL pipeline output (not just the setup step).
+    /// Values shorter than 4 characters are not masked to avoid excessive false-positive redaction.
+    /// </summary>
+    public Dictionary<string, string>? InjectedSecrets { get; set; }
+
     // Mutable state set by earlier steps, read by later steps
 
     /// <summary>

@@ -7,7 +7,8 @@ namespace CodingAgentWebUI.Agent;
 /// <summary>
 /// Pipeline step that executes per-repository environment setup commands (e.g., configuring
 /// private NuGet feeds, installing tools) after clone but before the coding agent starts.
-/// Secrets from the repo config are injected as environment variables into each setup step process.
+/// Merges project-level and repo-level secrets (repo wins on key collision) and injects them
+/// as process-wide environment variables for the entire run. Also injects into each setup step process.
 /// </summary>
 internal sealed class RunEnvironmentSetupStep : IPipelineStep
 {
@@ -22,7 +23,10 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
     {
         var repoConfig = _job.ProviderConfigs.FirstOrDefault(c => c.Id == _job.RepoProviderConfigId);
 
-        var hasSecrets = repoConfig?.Secrets is { Count: > 0 };
+        // Merge secrets: project-level as base, repo-level overlays (repo wins on key collision)
+        var effectiveSecrets = MergeSecrets(_job.ProjectSecrets, repoConfig?.Secrets);
+
+        var hasSecrets = effectiveSecrets.Count > 0;
         var hasSetupSteps = repoConfig?.SetupSteps is { Count: > 0 };
 
         // Skip if both secrets and setup steps are empty/null
@@ -31,12 +35,29 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
 
         context.Callbacks.TransitionTo(PipelineStep.RunningEnvironmentSetup);
 
-        var secrets = repoConfig!.Secrets ?? new Dictionary<string, string>();
-        var steps = repoConfig.SetupSteps ?? [];
+        // Inject merged secrets as process-wide environment variables
+        if (hasSecrets)
+        {
+            var injectedKeys = new List<string>(effectiveSecrets.Count);
+            foreach (var (key, value) in effectiveSecrets)
+            {
+                Environment.SetEnvironmentVariable(key, value);
+                injectedKeys.Add(key);
+            }
+
+            context.InjectedSecretKeys = injectedKeys;
+            context.InjectedSecrets = effectiveSecrets;
+
+            var keyList = string.Join(", ", injectedKeys);
+            context.Callbacks.EmitOutputLine(
+                MaskSecrets($"🔐 Injected {injectedKeys.Count} environment secrets (keys: {keyList})", effectiveSecrets));
+        }
+
+        var steps = repoConfig?.SetupSteps ?? [];
 
         foreach (var step in steps)
         {
-            context.Callbacks.EmitOutputLine(MaskSecrets($"🔧 Running setup: {step.Name}", secrets));
+            context.Callbacks.EmitOutputLine(MaskSecrets($"🔧 Running setup: {step.Name}", effectiveSecrets));
 
             try
             {
@@ -52,8 +73,8 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
                 psi.ArgumentList.Add("-c");
                 psi.ArgumentList.Add(step.Command);
 
-                // Inject secrets as environment variables
-                foreach (var (key, value) in secrets)
+                // Inject secrets as environment variables into the child process
+                foreach (var (key, value) in effectiveSecrets)
                     psi.Environment[key] = value;
 
                 using var process = new Process { StartInfo = psi };
@@ -76,7 +97,7 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
                     // Timeout — kill the process tree
                     try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
                     var timeoutMessage = $"Setup step '{step.Name}' timed out after 120 seconds";
-                    await context.FailRunAsync(MaskSecrets(timeoutMessage, secrets), ct);
+                    await context.FailRunAsync(MaskSecrets(timeoutMessage, effectiveSecrets), ct);
                     return StepResult.Stop;
                 }
 
@@ -85,15 +106,15 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
 
                 // Emit masked output
                 if (!string.IsNullOrWhiteSpace(stdout))
-                    context.Callbacks.EmitOutputLine(MaskSecrets(stdout.TrimEnd(), secrets));
+                    context.Callbacks.EmitOutputLine(MaskSecrets(stdout.TrimEnd(), effectiveSecrets));
                 if (!string.IsNullOrWhiteSpace(stderr))
-                    context.Callbacks.EmitOutputLine(MaskSecrets(stderr.TrimEnd(), secrets));
+                    context.Callbacks.EmitOutputLine(MaskSecrets(stderr.TrimEnd(), effectiveSecrets));
 
                 if (process.ExitCode != 0)
                 {
                     var truncatedStderr = stderr.Length > 500 ? stderr[..500] : stderr;
                     var failureMessage = $"Setup step '{step.Name}' failed with exit code {process.ExitCode}: {truncatedStderr}";
-                    await context.FailRunAsync(MaskSecrets(failureMessage, secrets), ct);
+                    await context.FailRunAsync(MaskSecrets(failureMessage, effectiveSecrets), ct);
                     return StepResult.Stop;
                 }
             }
@@ -104,13 +125,42 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
             catch (Exception ex)
             {
                 var failureMessage = $"Setup step '{step.Name}' threw an exception: {ex.Message}";
-                await context.FailRunAsync(MaskSecrets(failureMessage, secrets), ct);
+                await context.FailRunAsync(MaskSecrets(failureMessage, effectiveSecrets), ct);
                 return StepResult.Stop;
             }
         }
 
         context.Callbacks.EmitOutputLine($"✅ Environment setup complete ({steps.Count} steps)");
         return StepResult.Continue;
+    }
+
+    /// <summary>
+    /// Merges project-level and repo-level secrets. Repo secrets take precedence on key collision.
+    /// </summary>
+    private static Dictionary<string, string> MergeSecrets(
+        Dictionary<string, string>? projectSecrets,
+        Dictionary<string, string>? repoSecrets)
+    {
+        if (projectSecrets is null or { Count: 0 } && repoSecrets is null or { Count: 0 })
+            return new Dictionary<string, string>();
+
+        var merged = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        // Start with project secrets as base
+        if (projectSecrets is { Count: > 0 })
+        {
+            foreach (var (key, value) in projectSecrets)
+                merged[key] = value;
+        }
+
+        // Overlay repo secrets (repo wins on key collision)
+        if (repoSecrets is { Count: > 0 })
+        {
+            foreach (var (key, value) in repoSecrets)
+                merged[key] = value;
+        }
+
+        return merged;
     }
 
     /// <summary>

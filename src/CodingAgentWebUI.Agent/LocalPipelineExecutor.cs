@@ -240,10 +240,19 @@ public sealed class LocalPipelineExecutor
 
         // Fire-and-forget wrappers — delegate to class-level async methods for testability.
         void TransitionTo(PipelineStep step) => _ = TransitionToInternalAsync(run, connection, job.JobId, onStepChanged, step, ct);
-        void EmitOutputLine(string line) => _ = EmitOutputLineInternalAsync(run, outputBatcher, line, ct);
         void ReportQualityGateResult(QualityGateReport report) => _ = ReportQualityGateResultInternalAsync(connection, job.JobId, report, ct);
 
         CancellationTokenSource? localCts = null;
+        PipelineStepContext? context = null;
+
+        // Wrap EmitOutputLine so ALL output is masked once secrets are populated.
+        // context.InjectedSecrets is null until RunEnvironmentSetupStep populates it,
+        // so output before that step passes through unmasked (no secrets exist yet).
+        void EmitOutputLine(string line)
+        {
+            var masked = MaskSecretsInOutput(line, context);
+            _ = EmitOutputLineInternalAsync(run, outputBatcher, masked, ct);
+        }
 
         try
         {
@@ -265,7 +274,7 @@ public sealed class LocalPipelineExecutor
             };
 
             // Build step context
-            var context = CreateStepContext(
+            context = CreateStepContext(
                 job, run, config, repoProvider, agentProvider, brainProvider, brainSync,
                 pipelineProvider, issueOps, connection, prOrchestrator, agentExecution,
                 qualityGates, localCts, prContext, TransitionTo, EmitOutputLine, ReportQualityGateResult, ct);
@@ -320,6 +329,14 @@ public sealed class LocalPipelineExecutor
         {
             localCts?.Dispose();
 
+            // Clean up injected environment secrets
+            if (context?.InjectedSecretKeys is { Count: > 0 })
+            {
+                foreach (var key in context.InjectedSecretKeys)
+                    Environment.SetEnvironmentVariable(key, null);
+                _logger.Debug("Cleaned up {Count} injected secret keys", context.InjectedSecretKeys.Count);
+            }
+
             // Workspace cleanup
             try
             {
@@ -335,6 +352,24 @@ public sealed class LocalPipelineExecutor
                 _logger.Warning(ex, "Failed to clean up workspace {WorkspacePath}", run.WorkspacePath);
             }
         }
+    }
+
+    /// <summary>
+    /// Masks known secret values in pipeline output. If no secrets are populated on the context
+    /// (i.e., before <see cref="RunEnvironmentSetupStep"/> runs), the output passes through unchanged.
+    /// Values shorter than 4 characters are not masked to avoid excessive false-positive redaction.
+    /// </summary>
+    private static string MaskSecretsInOutput(string output, PipelineStepContext? context)
+    {
+        if (context?.InjectedSecrets is not { Count: > 0 })
+            return output;
+
+        foreach (var (_, value) in context.InjectedSecrets)
+        {
+            if (value.Length >= 4)
+                output = output.Replace(value, "***");
+        }
+        return output;
     }
 
     /// <summary>

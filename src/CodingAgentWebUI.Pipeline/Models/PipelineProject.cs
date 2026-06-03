@@ -55,4 +55,11 @@ public sealed record PipelineProject
     public IReadOnlyList<string>? BlacklistedPaths { get; init; }
     public BlacklistMode? BlacklistMode { get; init; }
     public bool? BrainReadOnly { get; init; }
+
+    /// <summary>
+    /// Project-level secrets injected as process-wide environment variables for every run
+    /// in this project. Merged with repo-level secrets at dispatch time (repo wins on key collision).
+    /// Keys must match POSIX env var pattern: [A-Za-z_][A-Za-z0-9_]*
+    /// </summary>
+    public Dictionary<string, string>? Secrets { get; init; }
 }

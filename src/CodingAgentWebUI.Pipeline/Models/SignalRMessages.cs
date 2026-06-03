@@ -147,6 +147,13 @@ public sealed record JobAssignmentMessage
     /// </summary>
     [Key(25)]
     public string? ProjectName { get; init; }
+
+    /// <summary>
+    /// Project-level secrets resolved at dispatch time. Merged with repo-level secrets on the agent
+    /// (repo wins on key collision) and injected as process-wide environment variables for the run.
+    /// </summary>
+    [Key(26)]
+    public Dictionary<string, string>? ProjectSecrets { get; init; }
 }
 
 /// <summary>
