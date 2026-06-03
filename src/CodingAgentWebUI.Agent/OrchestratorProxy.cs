@@ -127,6 +127,23 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     }
 
     /// <summary>
+    /// Creates a new issue via a specific issue provider (for cross-repo routing).
+    /// Routes through the orchestrator which resolves the provider from the config ID.
+    /// </summary>
+    public async Task<CreatedIssueResult> CreateIssueForProviderAsync(
+        string issueProviderConfigId, string title, string body, IReadOnlyList<string> labels, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+        ArgumentNullException.ThrowIfNull(title);
+        ArgumentNullException.ThrowIfNull(body);
+        ArgumentNullException.ThrowIfNull(labels);
+
+        return await _signalRPipeline.ExecuteAsync(async token =>
+            await _connection.InvokeAsync<CreatedIssueResult>(
+                "RequestCreateIssueForProvider", _jobId, issueProviderConfigId, title, body, labels, token), ct);
+    }
+
+    /// <summary>
     /// Lists open issues with optional label filtering via the orchestrator.
     /// </summary>
     public async Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)

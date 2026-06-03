@@ -32,7 +32,15 @@
                          OnNodeSelected="SelectNode" />
 
         <div class="settings-content">
-            @switch (_selectedNode)
+            @if (_selectedNode.StartsWith($"{SettingsNodes.ProjectDetail}:", StringComparison.Ordinal))
+            {
+                var projectId = _selectedNode[$"{SettingsNodes.ProjectDetail}:".Length..];
+                <ProjectDetailSection
+                    ProjectId="@projectId"
+                    ConfigStore="ConfigStore"
+                    OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+            }
+            else switch (_selectedNode)
             {
                 case SettingsNodes.ProvidersIssue:
                     <IssueProviderSection

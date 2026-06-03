@@ -179,7 +179,8 @@ public sealed class JobQueueDrainService : BackgroundService
                             BrainProviderId = pendingJob.BrainProviderId,
                             InitiatedBy = pendingJob.InitiatedBy
                         },
-                        ct);
+                        ct,
+                        project: pendingJob.Project);
                 }
                 else if (pendingJob.RunType is Pipeline.Models.PipelineRunType.DecompositionAnalysis
                          or Pipeline.Models.PipelineRunType.Decomposition)
@@ -192,7 +193,9 @@ public sealed class JobQueueDrainService : BackgroundService
                         pendingJob.RepoProviderId,
                         pendingJob.BrainProviderId,
                         pendingJob.InitiatedBy,
-                        ct);
+                        ct,
+                        decompositionSource: pendingJob.DecompositionSource,
+                        project: pendingJob.Project);
                 }
                 else
                 {
@@ -204,7 +207,8 @@ public sealed class JobQueueDrainService : BackgroundService
                         pendingJob.PipelineProviderId,
                         pendingJob.InitiatedBy,
                         ct,
-                        issueTitle: pendingJob.IssueTitle);
+                        issueTitle: pendingJob.IssueTitle,
+                        project: pendingJob.Project);
                 }
 
                 if (!dispatched)

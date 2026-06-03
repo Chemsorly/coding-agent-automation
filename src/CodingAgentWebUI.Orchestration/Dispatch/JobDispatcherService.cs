@@ -25,6 +25,16 @@ public sealed record PendingJob
     public string? PrDescription { get; init; }
     public string? PrUrl { get; init; }
     public string? PrTargetBranch { get; init; }
+
+    /// <summary>The project that owns this template. Set at poll time, used at dispatch time for settings resolution.</summary>
+    public PipelineProject? Project { get; init; }
+
+    /// <summary>
+    /// For decomposition runs: whether the epic was polled from the project-level
+    /// EpicIssueProviderId ("project-level") or the template's own IssueProviderId ("template-level").
+    /// Null for non-decomposition runs.
+    /// </summary>
+    public string? DecompositionSource { get; init; }
 }
 
 /// <summary>

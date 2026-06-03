@@ -26,6 +26,7 @@ internal sealed class DecompositionAnalysisStep : IPipelineStep
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("DecompositionAnalysis");
         activity?.SetTag("pipeline.run_id", context.Run.RunId);
         activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
         activity?.SetTag("pipeline.run_type", context.Run.RunType.ToString());
 
         var run = context.Run;
@@ -49,7 +50,7 @@ internal sealed class DecompositionAnalysisStep : IPipelineStep
 
         // 3. Build analysis prompt
         var maxSubIssues = config.MaxDecompositionSubIssues;
-        var analysisPrompt = DecompositionPromptBuilder.BuildAnalysisPrompt(maxSubIssues);
+        var analysisPrompt = DecompositionPromptBuilder.BuildAnalysisPrompt(maxSubIssues, context.ProjectContext);
 
         // 4. Transition to GeneratingPlan
         context.Callbacks.TransitionTo(PipelineStep.GeneratingPlan);
@@ -118,7 +119,7 @@ internal sealed class DecompositionAnalysisStep : IPipelineStep
         var reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
             context.AgentProvider,
             run.WorkspacePath!,
-            DecompositionPromptBuilder.BuildReviewPrompt(),
+            DecompositionPromptBuilder.BuildReviewPrompt(context.ProjectContext),
             DecompositionPromptBuilder.BuildRefinementPrompt(),
             AgentWorkspacePaths.DecompositionReviewFilePath,
             new AdversarialReviewConfig

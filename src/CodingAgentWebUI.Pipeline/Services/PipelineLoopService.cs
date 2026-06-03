@@ -17,6 +17,7 @@ public sealed partial class PipelineLoopService : BackgroundService
     private readonly IProviderFactory _providerFactory;
     private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly IProviderConfigStore _providerConfigStore;
+    private readonly IProjectStore _projectStore;
     private readonly IJobDispatcher? _jobDispatcher;
     private readonly IDependencyChecker? _dependencyChecker;
     private readonly Serilog.ILogger _logger;
@@ -92,6 +93,7 @@ public sealed partial class PipelineLoopService : BackgroundService
         IProviderFactory providerFactory,
         IPipelineConfigStore pipelineConfigStore,
         IProviderConfigStore providerConfigStore,
+        IProjectStore projectStore,
         Serilog.ILogger logger,
         IJobDispatcher? jobDispatcher = null,
         IDependencyChecker? dependencyChecker = null)
@@ -100,12 +102,14 @@ public sealed partial class PipelineLoopService : BackgroundService
         ArgumentNullException.ThrowIfNull(providerFactory);
         ArgumentNullException.ThrowIfNull(pipelineConfigStore);
         ArgumentNullException.ThrowIfNull(providerConfigStore);
+        ArgumentNullException.ThrowIfNull(projectStore);
         ArgumentNullException.ThrowIfNull(logger);
 
         _orchestration = orchestration;
         _providerFactory = providerFactory;
         _pipelineConfigStore = pipelineConfigStore;
         _providerConfigStore = providerConfigStore;
+        _projectStore = projectStore;
         _logger = logger;
         _jobDispatcher = jobDispatcher;
         _dependencyChecker = dependencyChecker;

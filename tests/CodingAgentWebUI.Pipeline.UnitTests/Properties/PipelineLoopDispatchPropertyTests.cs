@@ -61,8 +61,9 @@ public class PipelineLoopDispatchPropertyTests
         mockDispatcher.Setup(d => d.TryDispatchAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
-            .Returns<string, string, string, string?, string?, string, CancellationToken, string?>((issue, ip, rp, bp, pp, _, _, _) =>
+                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>(),
+                It.IsAny<PipelineProject?>()))
+            .Returns<string, string, string, string?, string?, string, CancellationToken, string?, PipelineProject?>((issue, ip, rp, bp, pp, _, _, _, _) =>
             {
                 lock (dispatchCalls) { dispatchCalls.Add((issue, ip, rp, bp, pp)); }
                 return Task.FromResult(true);
@@ -147,8 +148,9 @@ public class PipelineLoopDispatchPropertyTests
         mockDispatcher.Setup(d => d.TryDispatchAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
-            .Returns<string, string, string, string?, string?, string, CancellationToken, string?>((_, ip, _, _, _, _, _, _) =>
+                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>(),
+                It.IsAny<PipelineProject?>()))
+            .Returns<string, string, string, string?, string?, string, CancellationToken, string?, PipelineProject?>((_, ip, _, _, _, _, _, _, _) =>
             {
                 lock (dispatchCountPerTemplate)
                 {
@@ -547,6 +549,6 @@ public class PipelineLoopDispatchPropertyTests
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
-        return new PipelineLoopService(orchestration, mockFactory.Object, mockStore.Object, mockStore.Object, mockLogger.Object, dispatcher);
+        return new PipelineLoopService(orchestration, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object, dispatcher);
     }
 }

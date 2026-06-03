@@ -1,4 +1,6 @@
+@using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
+@inject IProjectStore ProjectStore
 
 <div class="settings-tree">
     <div class="tree-group">
@@ -30,9 +32,29 @@
     </div>
 
     <div class="tree-group">
+        <div class="tree-group-header" @onclick="ToggleProjects">
+            <span class="tree-chevron">@(_projectsExpanded ? "▼" : "▶")</span>
+            Projects
+        </div>
+        @if (_projectsExpanded)
+        {
+            <div class="tree-group-children">
+                @foreach (var project in _projects)
+                {
+                    var nodeId = $"{SettingsNodes.ProjectDetail}:{project.Id}";
+                    <div class="tree-node @(SelectedNode == nodeId ? "active" : "")"
+                         @onclick="() => SelectNode(nodeId)">
+                        @project.Name
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="tree-group">
         <div class="tree-group-header" @onclick="TogglePipeline">
             <span class="tree-chevron">@(_pipelineExpanded ? "▼" : "▶")</span>
-            Pipeline
+            Global Defaults
         </div>
         @if (_pipelineExpanded)
         {
@@ -102,12 +124,25 @@
     public EventCallback<string> OnNodeSelected { get; set; }
 
     private bool _providersExpanded = true;
+    private bool _projectsExpanded = true;
     private bool _pipelineExpanded = true;
     private bool _labelRoutingExpanded = true;
+
+    private IReadOnlyList<PipelineProject> _projects = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
+    }
 
     private void ToggleProviders()
     {
         _providersExpanded = !_providersExpanded;
+    }
+
+    private void ToggleProjects()
+    {
+        _projectsExpanded = !_projectsExpanded;
     }
 
     private void TogglePipeline()

@@ -22,10 +22,24 @@ public sealed partial class AgentJobDispatcher
         string? pipelineProviderId,
         string initiatedBy,
         IReadOnlyList<string> requiredLabels,
-        CancellationToken ct)
+        CancellationToken ct,
+        PipelineProject? project = null)
     {
         try
         {
+            // Handle corruption case: template has no parent project — assign to Default and log warning
+            if (project is null)
+            {
+                _logger.Warning(
+                    "Template for issue {IssueIdentifier} has no parent project (data corruption). Assigning to Default project for settings resolution",
+                    issueIdentifier);
+                project = new PipelineProject
+                {
+                    Id = WellKnownIds.DefaultProjectId,
+                    Name = "Default"
+                };
+            }
+
             // Resolve profile for this agent
             var profile = await ResolveProfileAsync(agent, ct);
             if (profile is null)
@@ -53,6 +67,10 @@ public sealed partial class AgentJobDispatcher
                 return false;
             }
 
+            // Set project context on the run (captured at dispatch time)
+            run.ProjectId = project.Id;
+            run.ProjectName = project.Name;
+
             // Populate resolved profile and QGC IDs on the run
             run.ResolvedProfileId = profile.Id;
             run.ResolvedQualityGateConfigIds = resolvedQgcs.Select(q => q.Id).ToList().AsReadOnly();
@@ -74,7 +92,9 @@ public sealed partial class AgentJobDispatcher
             var providerConfigs = await PrepareProviderConfigsAsync(
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct);
 
+            // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
             var config = await _configStore.LoadPipelineConfigAsync(ct);
+            config = PipelineConfiguration.ApplyProjectOverrides(config, project);
             config = ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs);
 
             var message = new JobAssignmentMessage
@@ -96,7 +116,9 @@ public sealed partial class AgentJobDispatcher
                 ResolvedProfileId = profile.Id,
                 QualityGateConfigs = resolvedQgcs,
                 McpServers = profile.McpServers,
-                ReviewerConfigs = resolvedReviewerConfigs
+                ReviewerConfigs = resolvedReviewerConfigs,
+                ProjectId = project.Id,
+                ProjectName = project.Name
             };
 
             // Assign the job to the agent in the registry
@@ -107,8 +129,8 @@ public sealed partial class AgentJobDispatcher
             await _agentComm.AssignJobAsync(agent.ConnectionId, message, ct);
 
             _logger.Information(
-                "Job {JobId} dispatched to agent {AgentId} for issue {IssueIdentifier} (profile={ProfileId}, qgcs={QgcCount}, reviewerConfigs={ReviewerConfigCount})",
-                run.RunId, agent.AgentId, issueIdentifier, profile.Id, resolvedQgcs.Count, resolvedReviewerConfigs.Count);
+                "Job {JobId} dispatched to agent {AgentId} for issue {IssueIdentifier} (profile={ProfileId}, qgcs={QgcCount}, reviewerConfigs={ReviewerConfigCount}, project={ProjectName})",
+                run.RunId, agent.AgentId, issueIdentifier, profile.Id, resolvedQgcs.Count, resolvedReviewerConfigs.Count, project.Name);
 
             if (resolvedReviewerConfigs.Count > 0)
             {
@@ -136,10 +158,23 @@ public sealed partial class AgentJobDispatcher
         AgentEntry agent,
         ReviewDispatchRequest request,
         IReadOnlyList<string> requiredLabels,
-        CancellationToken ct)
+        CancellationToken ct,
+        PipelineProject? project = null)
     {
         try
         {
+            // Handle corruption case: template has no parent project — assign to Default and log warning
+            if (project is null)
+            {
+                _logger.Warning(
+                    "Template for PR {PrIdentifier} has no parent project (data corruption). Assigning to Default project for settings resolution",
+                    request.PrIdentifier);
+                project = new PipelineProject
+                {
+                    Id = WellKnownIds.DefaultProjectId,
+                    Name = "Default"
+                };
+            }
             // Resolve profile for this agent
             var profile = await ResolveProfileAsync(agent, ct);
             if (profile is null)
@@ -191,6 +226,8 @@ public sealed partial class AgentJobDispatcher
                 ReviewPrTargetBranch = request.PrTargetBranch,
                 ReviewPrUrl = request.PrUrl,
                 ReviewPrDescription = request.PrDescription,
+                ProjectId = project.Id,
+                ProjectName = project.Name,
                 LinkedPullRequest = new LinkedPullRequest
                 {
                     Number = int.TryParse(request.PrIdentifier, out var prNum) ? prNum : 0,
@@ -211,7 +248,9 @@ public sealed partial class AgentJobDispatcher
             var providerConfigs = await PrepareProviderConfigsAsync(
                 request.RepoProviderId, agentProviderId, request.BrainProviderId, pipelineProviderId: null, ct);
 
+            // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
             var config = await _configStore.LoadPipelineConfigAsync(ct);
+            config = PipelineConfiguration.ApplyProjectOverrides(config, project);
             config = ApplyTemplateOverrides(config, request.RepoProviderId, request.BrainProviderId, providerConfigs);
 
             // Swap label to agent:in-progress before dispatch so the PR is immediately marked
@@ -254,7 +293,9 @@ public sealed partial class AgentJobDispatcher
                 LinkedIssueContexts = linkedIssueContexts.Count > 0 ? linkedIssueContexts : null,
                 RunType = PipelineRunType.Review,
                 ReviewPrTargetBranch = request.PrTargetBranch,
-                ReviewPrDescription = request.PrDescription
+                ReviewPrDescription = request.PrDescription,
+                ProjectId = project.Id,
+                ProjectName = project.Name
             };
 
             // Assign the job to the agent in the registry
@@ -294,10 +335,25 @@ public sealed partial class AgentJobDispatcher
         string? brainProviderId,
         string initiatedBy,
         IReadOnlyList<string> requiredLabels,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? decompositionSource = null,
+        PipelineProject? project = null)
     {
         try
         {
+            // Handle corruption case: template has no parent project — assign to Default and log warning
+            if (project is null)
+            {
+                _logger.Warning(
+                    "Template for epic {EpicIdentifier} has no parent project (data corruption). Assigning to Default project for settings resolution",
+                    epicIdentifier);
+                project = new PipelineProject
+                {
+                    Id = WellKnownIds.DefaultProjectId,
+                    Name = "Default"
+                };
+            }
+
             // Resolve profile for this agent
             var profile = await ResolveProfileAsync(agent, ct);
             if (profile is null)
@@ -339,7 +395,10 @@ public sealed partial class AgentJobDispatcher
                 AgentId = agent.AgentId,
                 AgentProviderConfigId = agentProviderId,
                 RunType = phaseType,
-                WorkspacePath = workspacePath
+                WorkspacePath = workspacePath,
+                DecompositionSource = decompositionSource,
+                ProjectId = project.Id,
+                ProjectName = project.Name
             };
 
             _runService.ReplaceRun(run);
@@ -351,6 +410,8 @@ public sealed partial class AgentJobDispatcher
             var providerConfigs = await PrepareProviderConfigsAsync(
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, ct);
 
+            // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
+            config = PipelineConfiguration.ApplyProjectOverrides(config, project);
             config = ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs);
 
             // Build a synthetic IssueDetail from epic metadata for the job assignment
@@ -383,7 +444,9 @@ public sealed partial class AgentJobDispatcher
                 QualityGateConfigs = Array.Empty<QualityGateConfiguration>(),
                 McpServers = profile.McpServers,
                 ReviewerConfigs = Array.Empty<ReviewerConfiguration>(),
-                RunType = phaseType
+                RunType = phaseType,
+                ProjectId = project.Id,
+                ProjectName = project.Name
             };
 
             // Swap label to agent:in-progress before dispatch so the epic is immediately marked
@@ -398,8 +461,8 @@ public sealed partial class AgentJobDispatcher
             await _agentComm.AssignJobAsync(agent.ConnectionId, message, ct);
 
             _logger.Information(
-                "Decomposition {Phase} job {JobId} dispatched to agent {AgentId} for epic {EpicIdentifier} (profile={ProfileId})",
-                phaseType, run.RunId, agent.AgentId, epicIdentifier, profile.Id);
+                "Decomposition {Phase} job {JobId} dispatched to agent {AgentId} for epic {EpicIdentifier} (profile={ProfileId}, project={ProjectName})",
+                phaseType, run.RunId, agent.AgentId, epicIdentifier, profile.Id, project.Name);
 
             return true;
         }

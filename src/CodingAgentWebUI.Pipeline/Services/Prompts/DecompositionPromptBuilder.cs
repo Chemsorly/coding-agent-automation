@@ -1,4 +1,5 @@
 using System.Text;
+using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Services.Prompts;
 
@@ -84,6 +85,23 @@ public static class DecompositionPromptBuilder
         sb.AppendLine("Do NOT create any source code files. Only produce the decomposition plan.");
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds the Phase 1 analysis prompt with optional cross-repo project context.
+    /// When project context is present, appends routing instructions for cross-repo decomposition.
+    /// When project context is null, returns the standard analysis prompt (backward compatible).
+    /// </summary>
+    /// <param name="maxSubIssues">Maximum number of sub-issues the agent may propose.</param>
+    /// <param name="projectContext">Project context for cross-repo decomposition, or null for single-repo decomposition.</param>
+    public static string BuildAnalysisPrompt(int maxSubIssues, DecompositionProjectContext? projectContext)
+    {
+        var prompt = BuildAnalysisPrompt(maxSubIssues);
+
+        if (projectContext is null)
+            return prompt;
+
+        return prompt + BuildCrossRepoRoutingInstructions();
     }
 
     /// <summary>
@@ -184,6 +202,23 @@ public static class DecompositionPromptBuilder
     }
 
     /// <summary>
+    /// Builds the Phase 2 sub-issue generation prompt with optional cross-repo project context.
+    /// When project context is present, appends routing instructions including targetRepository field guidance.
+    /// When project context is null, returns the standard prompt (backward compatible).
+    /// </summary>
+    /// <param name="maxSubIssues">Maximum number of sub-issues the agent may produce.</param>
+    /// <param name="projectContext">Project context for cross-repo decomposition, or null for single-repo decomposition.</param>
+    public static string BuildDecompositionPrompt(int maxSubIssues, DecompositionProjectContext? projectContext)
+    {
+        var prompt = BuildDecompositionPrompt(maxSubIssues);
+
+        if (projectContext is null)
+            return prompt;
+
+        return prompt + BuildCrossRepoRoutingInstructions();
+    }
+
+    /// <summary>
     /// Builds the adversarial review prompt for plan validation.
     /// Instructs the reviewer to validate the decomposition plan against quality criteria.
     /// </summary>
@@ -264,6 +299,22 @@ public static class DecompositionPromptBuilder
     }
 
     /// <summary>
+    /// Builds the adversarial review prompt for plan validation with optional cross-repo routing validation.
+    /// When project context is present, appends validation rules for targetRepository values.
+    /// When project context is null, returns the standard review prompt (backward compatible).
+    /// </summary>
+    /// <param name="projectContext">Project context for cross-repo decomposition, or null for single-repo decomposition.</param>
+    public static string BuildReviewPrompt(DecompositionProjectContext? projectContext)
+    {
+        var prompt = BuildReviewPrompt();
+
+        if (projectContext is null)
+            return prompt;
+
+        return prompt + BuildCrossRepoReviewAdditions();
+    }
+
+    /// <summary>
     /// Builds the refinement prompt sent back to the generator after review findings.
     /// Instructs the generator to address CRITICAL and WARNING findings.
     /// </summary>
@@ -307,6 +358,47 @@ public static class DecompositionPromptBuilder
         sb.AppendLine("- All sub-issue titles are unique");
         sb.AppendLine();
         sb.AppendLine("Do NOT create any source code files. Only update the decomposition plan.");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds the cross-repo routing instructions appended to analysis and decomposition prompts
+    /// when a project-level EpicIssueProviderId is set (cross-repo decomposition).
+    /// </summary>
+    private static string BuildCrossRepoRoutingInstructions()
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine();
+        sb.AppendLine("## Cross-Repository Routing");
+        sb.AppendLine();
+        sb.AppendLine("Read `.agent/project-context.md` to understand all repositories in this project.");
+        sb.AppendLine();
+        sb.AppendLine("ROUTING RULES:");
+        sb.AppendLine("- For each sub-issue JSON file, include a `targetRepository` field matching EXACTLY one of the template names from the project context (case-sensitive).");
+        sb.AppendLine("- If a sub-issue requires changes in multiple repositories, assign it to the PRIMARY repository and note cross-cutting dependencies in the issue body.");
+        sb.AppendLine("- If you cannot determine the appropriate repository, omit the `targetRepository` field (the issue will be created in the default repository).");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds additional adversarial review criteria for cross-repo targetRepository validation.
+    /// Appended to the review prompt when project context is present.
+    /// </summary>
+    private static string BuildCrossRepoReviewAdditions()
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine();
+        sb.AppendLine();
+        sb.AppendLine("## Cross-Repo Routing Validation");
+        sb.AppendLine();
+        sb.AppendLine("CROSS-REPO ROUTING VALIDATION:");
+        sb.AppendLine("- Verify all `targetRepository` values in the decomposition plan match valid template names from `.agent/project-context.md`.");
+        sb.AppendLine("- Flag any unresolvable `targetRepository` value as [CRITICAL] — the issue would fall back to the default repository, which may be incorrect.");
+        sb.AppendLine("- Flag any sub-issue that clearly belongs in a specific repository but lacks a `targetRepository` field as [WARNING].");
 
         return sb.ToString();
     }

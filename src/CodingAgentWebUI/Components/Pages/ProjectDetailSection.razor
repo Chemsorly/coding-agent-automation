@@ -1,0 +1,451 @@
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+
+<section class="settings-section">
+    <h2>@_project.Name</h2>
+    <p class="section-description">Project configuration — overview, template membership, and behavioral settings that override global defaults.</p>
+
+    <div class="project-tabs">
+        <button class="tab-btn @(IsTab(TabOverview))" @onclick="() => SetTab(TabOverview)">Overview</button>
+        <button class="tab-btn @(IsTab(TabTemplates))" @onclick="() => SetTab(TabTemplates)">Templates</button>
+        <button class="tab-btn @(IsTab(TabSettings))" @onclick="() => SetTab(TabSettings)">Settings</button>
+    </div>
+
+    @if (_activeTab == TabOverview)
+    {
+        @RenderOverviewTab()
+    }
+    else if (_activeTab == TabTemplates)
+    {
+        @RenderTemplatesTab()
+    }
+    else if (_activeTab == TabSettings)
+    {
+        @RenderSettingsTab()
+    }
+</section>
+
+@code {
+    private const string TabOverview = "overview";
+    private const string TabTemplates = "templates";
+    private const string TabSettings = "settings";
+
+    [Parameter, EditorRequired] public string ProjectId { get; set; } = default!;
+    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private string _activeTab = TabOverview;
+
+    private string IsTab(string tab) => _activeTab == tab ? "active" : "";
+    private void SetTab(string tab) { _activeTab = tab; }
+    private PipelineProject _project = new() { Id = "", Name = "" };
+    private PipelineConfiguration _globalConfig = new();
+    private List<ProviderConfig> _issueProviders = new();
+    private List<PipelineJobTemplate> _allTemplates = new();
+
+    // Overview fields
+    private string _name = "";
+    private string _description = "";
+    private bool _enabled = true;
+    private string? _epicIssueProviderId;
+
+    // Settings override fields
+    private int? _maxRetries;
+    private int? _maxAnalysisRetries;
+    private int? _agentTimeoutMinutes;
+    private string? _analysisPrompt;
+    private string? _implementationPrompt;
+    private bool? _analysisReviewEnabled;
+    private string? _analysisReviewPrompt;
+    private string? _analysisRefinementPrompt;
+    private bool? _baselineHealthCheckEnabled;
+    private int? _externalCiTimeoutMinutes;
+    private int? _externalCiPollIntervalSeconds;
+    private int? _maxInfrastructureRetries;
+    private int? _stallWarningIntervalMinutes;
+    private int? _maxDecompositionSubIssues;
+    private int? _maxConcurrentDecompositions;
+    private int? _decompositionTimeoutMinutes;
+    private int? _maxOpenIssuesForContext;
+    private int? _maxRefactoringProposals;
+    private bool? _refactoringReviewEnabled;
+    private bool? _brainConsolidationReviewEnabled;
+    private bool? _harnessSuggestionsReviewEnabled;
+    private bool? _brainReadOnly;
+
+    // Template management
+    private string? _selectedTemplateToAdd;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        var project = await ConfigStore.GetProjectByIdAsync(ProjectId, CancellationToken.None);
+        if (project is null) return;
+
+        _project = project;
+        _globalConfig = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        _issueProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
+        _allTemplates = _globalConfig.PipelineJobTemplates.ToList();
+
+        // Populate overview fields
+        _name = _project.Name;
+        _description = _project.Description ?? "";
+        _enabled = _project.Enabled;
+        _epicIssueProviderId = _project.EpicIssueProviderId;
+
+        // Populate settings override fields
+        _maxRetries = _project.MaxRetries;
+        _maxAnalysisRetries = _project.MaxAnalysisRetries;
+        _agentTimeoutMinutes = _project.AgentTimeout.HasValue ? (int?)_project.AgentTimeout.Value.TotalMinutes : null;
+        _analysisPrompt = _project.AnalysisPrompt;
+        _implementationPrompt = _project.ImplementationPrompt;
+        _analysisReviewEnabled = _project.AnalysisReviewEnabled;
+        _analysisReviewPrompt = _project.AnalysisReviewPrompt;
+        _analysisRefinementPrompt = _project.AnalysisRefinementPrompt;
+        _baselineHealthCheckEnabled = _project.BaselineHealthCheckEnabled;
+        _externalCiTimeoutMinutes = _project.ExternalCiTimeout.HasValue ? (int?)_project.ExternalCiTimeout.Value.TotalMinutes : null;
+        _externalCiPollIntervalSeconds = _project.ExternalCiPollInterval.HasValue ? (int?)_project.ExternalCiPollInterval.Value.TotalSeconds : null;
+        _maxInfrastructureRetries = _project.MaxInfrastructureRetries;
+        _stallWarningIntervalMinutes = _project.StallWarningInterval.HasValue ? (int?)_project.StallWarningInterval.Value.TotalMinutes : null;
+        _maxDecompositionSubIssues = _project.MaxDecompositionSubIssues;
+        _maxConcurrentDecompositions = _project.MaxConcurrentDecompositions;
+        _decompositionTimeoutMinutes = _project.DecompositionTimeout.HasValue ? (int?)_project.DecompositionTimeout.Value.TotalMinutes : null;
+        _maxOpenIssuesForContext = _project.MaxOpenIssuesForContext;
+        _maxRefactoringProposals = _project.MaxRefactoringProposals;
+        _refactoringReviewEnabled = _project.RefactoringReviewEnabled;
+        _brainConsolidationReviewEnabled = _project.BrainConsolidationReviewEnabled;
+        _harnessSuggestionsReviewEnabled = _project.HarnessSuggestionsReviewEnabled;
+        _brainReadOnly = _project.BrainReadOnly;
+    }
+
+    private RenderFragment RenderOverviewTab() => __builder =>
+    {
+        <div class="provider-form">
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" @bind="_name" maxlength="128" />
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <textarea @bind="_description" rows="3" maxlength="512"></textarea>
+            </div>
+            <div class="form-group form-checkbox">
+                <label>
+                    <input type="checkbox" @bind="_enabled" />
+                    Enabled
+                </label>
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Epic Issue Provider</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Optional centralized issue tracker for cross-repo epic decomposition. When set, the loop polls this provider for agent:epic issues.">?</span>
+                </div>
+                <select @bind="_epicIssueProviderId">
+                    <option value="">— None —</option>
+                    @foreach (var provider in _issueProviders)
+                    {
+                        <option value="@provider.Id">@provider.DisplayName</option>
+                    }
+                </select>
+            </div>
+            <div class="pipeline-form-actions">
+                <button class="btn-save" @onclick="SaveOverviewAsync">Save Overview</button>
+            </div>
+        </div>
+    };
+
+    private RenderFragment RenderTemplatesTab() => __builder =>
+    {
+        <div class="provider-form">
+            <h3>Templates in this project</h3>
+            @if (_project.TemplateIds.Count == 0)
+            {
+                <p class="form-hint">No templates assigned to this project.</p>
+            }
+            else
+            {
+                <div class="template-list">
+                    @for (var i = 0; i < _project.TemplateIds.Count; i++)
+                    {
+                        var index = i;
+                        var templateId = _project.TemplateIds[index];
+                        var template = _allTemplates.FirstOrDefault(t => t.Id == templateId);
+                        var displayName = template?.Name ?? $"Unknown ({templateId[..8]}...)";
+
+                        <div class="template-row">
+                            <span class="template-order">@(index + 1).</span>
+                            <span class="template-name">@displayName</span>
+                            <div class="template-actions">
+                                <button class="btn-icon" disabled="@(index == 0)" @onclick="() => MoveTemplateUp(index)" title="Move up">▲</button>
+                                <button class="btn-icon" disabled="@(index == _project.TemplateIds.Count - 1)" @onclick="() => MoveTemplateDown(index)" title="Move down">▼</button>
+                                <button class="btn-icon btn-danger" @onclick="() => RemoveTemplate(index)" title="Remove">✕</button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            <div class="template-add-row">
+                <select @bind="_selectedTemplateToAdd">
+                    <option value="">— Select template to add —</option>
+                    @foreach (var template in GetAvailableTemplates())
+                    {
+                        <option value="@template.Id">@template.Name</option>
+                    }
+                </select>
+                <button class="btn-save" disabled="@(string.IsNullOrEmpty(_selectedTemplateToAdd))" @onclick="AddTemplate">Add</button>
+            </div>
+        </div>
+    };
+
+    private RenderFragment RenderSettingsTab() => __builder =>
+    {
+        <div class="provider-form">
+            <p class="form-hint">Override global defaults for this project. Fields set to "Using global default" inherit from the global pipeline configuration.</p>
+
+            <h3>Retries &amp; Timeouts</h3>
+            @RenderIntOverride("Max Retries", () => _maxRetries, v => _maxRetries = v, _globalConfig.MaxRetries, 0, 10)
+            @RenderIntOverride("Max Analysis Retries", () => _maxAnalysisRetries, v => _maxAnalysisRetries = v, _globalConfig.MaxAnalysisRetries, 0, 10)
+            @RenderIntOverride("Agent Timeout (minutes)", () => _agentTimeoutMinutes, v => _agentTimeoutMinutes = v, (int)_globalConfig.AgentTimeout.TotalMinutes, 1, 120)
+            @RenderIntOverride("Max Infrastructure Retries", () => _maxInfrastructureRetries, v => _maxInfrastructureRetries = v, _globalConfig.MaxInfrastructureRetries, 0, 10)
+            @RenderIntOverride("Stall Warning Interval (minutes)", () => _stallWarningIntervalMinutes, v => _stallWarningIntervalMinutes = v, (int)_globalConfig.StallWarningInterval.TotalMinutes, 1, 60)
+            @RenderIntOverride("External CI Timeout (minutes)", () => _externalCiTimeoutMinutes, v => _externalCiTimeoutMinutes = v, (int)_globalConfig.ExternalCiTimeout.TotalMinutes, 1, 120)
+            @RenderIntOverride("External CI Poll Interval (seconds)", () => _externalCiPollIntervalSeconds, v => _externalCiPollIntervalSeconds = v, (int)_globalConfig.ExternalCiPollInterval.TotalSeconds, 5, 300)
+
+            <h3>Decomposition</h3>
+            @RenderIntOverride("Max Sub-Issues Per Epic", () => _maxDecompositionSubIssues, v => _maxDecompositionSubIssues = v, _globalConfig.MaxDecompositionSubIssues, 1, 20)
+            @RenderIntOverride("Max Concurrent Decompositions", () => _maxConcurrentDecompositions, v => _maxConcurrentDecompositions = v, _globalConfig.MaxConcurrentDecompositions, 1, 10)
+            @RenderIntOverride("Decomposition Timeout (minutes)", () => _decompositionTimeoutMinutes, v => _decompositionTimeoutMinutes = v, (int)_globalConfig.DecompositionTimeout.TotalMinutes, 5, 60)
+            @RenderIntOverride("Max Open Issues for Context", () => _maxOpenIssuesForContext, v => _maxOpenIssuesForContext = v, _globalConfig.MaxOpenIssuesForContext, 1, 200)
+            @RenderIntOverride("Max Refactoring Proposals", () => _maxRefactoringProposals, v => _maxRefactoringProposals = v, _globalConfig.MaxRefactoringProposals, 1, 10)
+
+            <h3>Feature Toggles</h3>
+            @RenderBoolOverride("Analysis Review Enabled", () => _analysisReviewEnabled, v => _analysisReviewEnabled = v, _globalConfig.AnalysisReviewEnabled)
+            @RenderBoolOverride("Baseline Health Check Enabled", () => _baselineHealthCheckEnabled, v => _baselineHealthCheckEnabled = v, _globalConfig.BaselineHealthCheckEnabled)
+            @RenderBoolOverride("Refactoring Review Enabled", () => _refactoringReviewEnabled, v => _refactoringReviewEnabled = v, _globalConfig.RefactoringReviewEnabled)
+            @RenderBoolOverride("Brain Consolidation Review Enabled", () => _brainConsolidationReviewEnabled, v => _brainConsolidationReviewEnabled = v, _globalConfig.BrainConsolidationReviewEnabled)
+            @RenderBoolOverride("Harness Suggestions Review Enabled", () => _harnessSuggestionsReviewEnabled, v => _harnessSuggestionsReviewEnabled = v, _globalConfig.HarnessSuggestionsReviewEnabled)
+            @RenderBoolOverride("Brain Read-Only", () => _brainReadOnly, v => _brainReadOnly = v, _globalConfig.BrainReadOnly)
+
+            <h3>Prompts</h3>
+            @RenderStringOverride("Analysis Prompt", () => _analysisPrompt, v => _analysisPrompt = v, _globalConfig.AnalysisPrompt)
+            @RenderStringOverride("Implementation Prompt", () => _implementationPrompt, v => _implementationPrompt = v, _globalConfig.ImplementationPrompt)
+            @RenderStringOverride("Analysis Review Prompt", () => _analysisReviewPrompt, v => _analysisReviewPrompt = v, _globalConfig.AnalysisReviewPrompt)
+            @RenderStringOverride("Analysis Refinement Prompt", () => _analysisRefinementPrompt, v => _analysisRefinementPrompt = v, _globalConfig.AnalysisRefinementPrompt)
+
+            <div class="pipeline-form-actions">
+                <button class="btn-save" @onclick="SaveSettingsAsync">Save Settings</button>
+            </div>
+        </div>
+    };
+
+    private RenderFragment RenderIntOverride(string label, Func<int?> getter, Action<int?> setter, int globalDefault, int min, int max) => __builder =>
+    {
+        var value = getter();
+        <div class="form-group override-group">
+            <div class="override-header">
+                <label>@label</label>
+                @if (value.HasValue)
+                {
+                    <button class="btn-revert" @onclick="() => { setter(null); }">Reset to global</button>
+                }
+                else
+                {
+                    <button class="btn-override" @onclick="() => { setter(globalDefault); }">Override</button>
+                }
+            </div>
+            @if (value.HasValue)
+            {
+                <input type="number" value="@value.Value" @onchange="e => setter(int.TryParse(e.Value?.ToString(), out var v) ? v : null)" min="@min" max="@max" />
+            }
+            else
+            {
+                <span class="global-default-hint">Using global default: @globalDefault</span>
+            }
+        </div>
+    };
+
+    private RenderFragment RenderBoolOverride(string label, Func<bool?> getter, Action<bool?> setter, bool globalDefault) => __builder =>
+    {
+        var value = getter();
+        <div class="form-group override-group">
+            <div class="override-header">
+                <label>@label</label>
+                @if (value.HasValue)
+                {
+                    <button class="btn-revert" @onclick="() => { setter(null); }">Reset to global</button>
+                }
+                else
+                {
+                    <button class="btn-override" @onclick="() => { setter(globalDefault); }">Override</button>
+                }
+            </div>
+            @if (value.HasValue)
+            {
+                <label class="form-checkbox-inline">
+                    <input type="checkbox" checked="@value.Value" @onchange="e => setter((bool?)e.Value)" />
+                    @(value.Value ? "Enabled" : "Disabled")
+                </label>
+            }
+            else
+            {
+                <span class="global-default-hint">Using global default: @(globalDefault ? "Enabled" : "Disabled")</span>
+            }
+        </div>
+    };
+
+    private RenderFragment RenderStringOverride(string label, Func<string?> getter, Action<string?> setter, string globalDefault) => __builder =>
+    {
+        var value = getter();
+        <div class="form-group override-group">
+            <div class="override-header">
+                <label>@label</label>
+                @if (value is not null)
+                {
+                    <button class="btn-revert" @onclick="() => { setter(null); }">Reset to global</button>
+                }
+                else
+                {
+                    <button class="btn-override" @onclick="() => { setter(globalDefault); }">Override</button>
+                }
+            </div>
+            @if (value is not null)
+            {
+                <textarea @bind="value" @bind:after="() => setter(value)" rows="4"></textarea>
+            }
+            else
+            {
+                <span class="global-default-hint">Using global default (click Override to customize)</span>
+            }
+        </div>
+    };
+
+    private IEnumerable<PipelineJobTemplate> GetAvailableTemplates()
+    {
+        var assignedIds = _project.TemplateIds.ToHashSet();
+        return _allTemplates.Where(t => !assignedIds.Contains(t.Id));
+    }
+
+    private async Task AddTemplate()
+    {
+        if (string.IsNullOrEmpty(_selectedTemplateToAdd)) return;
+
+        var newIds = _project.TemplateIds.ToList();
+        newIds.Add(_selectedTemplateToAdd);
+        _project = _project with { TemplateIds = newIds };
+        _selectedTemplateToAdd = null;
+
+        await SaveProjectAsync();
+    }
+
+    private async Task RemoveTemplate(int index)
+    {
+        var newIds = _project.TemplateIds.ToList();
+        newIds.RemoveAt(index);
+        _project = _project with { TemplateIds = newIds };
+
+        await SaveProjectAsync();
+    }
+
+    private async Task MoveTemplateUp(int index)
+    {
+        if (index <= 0) return;
+        var newIds = _project.TemplateIds.ToList();
+        (newIds[index], newIds[index - 1]) = (newIds[index - 1], newIds[index]);
+        _project = _project with { TemplateIds = newIds };
+
+        await SaveProjectAsync();
+    }
+
+    private async Task MoveTemplateDown(int index)
+    {
+        if (index >= _project.TemplateIds.Count - 1) return;
+        var newIds = _project.TemplateIds.ToList();
+        (newIds[index], newIds[index + 1]) = (newIds[index + 1], newIds[index]);
+        _project = _project with { TemplateIds = newIds };
+
+        await SaveProjectAsync();
+    }
+
+    private async Task SaveOverviewAsync()
+    {
+        try
+        {
+            _project = _project with
+            {
+                Name = _name,
+                Description = string.IsNullOrWhiteSpace(_description) ? null : _description,
+                Enabled = _enabled,
+                EpicIssueProviderId = string.IsNullOrEmpty(_epicIssueProviderId) ? null : _epicIssueProviderId
+            };
+
+            await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
+            await OnShowStatus.InvokeAsync(("Project overview saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+
+    private async Task SaveSettingsAsync()
+    {
+        try
+        {
+            _project = _project with
+            {
+                MaxRetries = _maxRetries,
+                MaxAnalysisRetries = _maxAnalysisRetries,
+                AgentTimeout = _agentTimeoutMinutes.HasValue ? TimeSpan.FromMinutes(_agentTimeoutMinutes.Value) : null,
+                AnalysisPrompt = _analysisPrompt,
+                ImplementationPrompt = _implementationPrompt,
+                AnalysisReviewEnabled = _analysisReviewEnabled,
+                AnalysisReviewPrompt = _analysisReviewPrompt,
+                AnalysisRefinementPrompt = _analysisRefinementPrompt,
+                BaselineHealthCheckEnabled = _baselineHealthCheckEnabled,
+                ExternalCiTimeout = _externalCiTimeoutMinutes.HasValue ? TimeSpan.FromMinutes(_externalCiTimeoutMinutes.Value) : null,
+                ExternalCiPollInterval = _externalCiPollIntervalSeconds.HasValue ? TimeSpan.FromSeconds(_externalCiPollIntervalSeconds.Value) : null,
+                MaxInfrastructureRetries = _maxInfrastructureRetries,
+                StallWarningInterval = _stallWarningIntervalMinutes.HasValue ? TimeSpan.FromMinutes(_stallWarningIntervalMinutes.Value) : null,
+                MaxDecompositionSubIssues = _maxDecompositionSubIssues,
+                MaxConcurrentDecompositions = _maxConcurrentDecompositions,
+                DecompositionTimeout = _decompositionTimeoutMinutes.HasValue ? TimeSpan.FromMinutes(_decompositionTimeoutMinutes.Value) : null,
+                MaxOpenIssuesForContext = _maxOpenIssuesForContext,
+                MaxRefactoringProposals = _maxRefactoringProposals,
+                RefactoringReviewEnabled = _refactoringReviewEnabled,
+                BrainConsolidationReviewEnabled = _brainConsolidationReviewEnabled,
+                HarnessSuggestionsReviewEnabled = _harnessSuggestionsReviewEnabled,
+                BrainReadOnly = _brainReadOnly
+            };
+
+            await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
+            await OnShowStatus.InvokeAsync(("Project settings saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+
+    private async Task SaveProjectAsync()
+    {
+        try
+        {
+            await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
+            await OnShowStatus.InvokeAsync(("Project updated.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+}

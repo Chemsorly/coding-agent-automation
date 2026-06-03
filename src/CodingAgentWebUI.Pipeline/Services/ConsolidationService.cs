@@ -14,6 +14,7 @@ public sealed class ConsolidationService : IConsolidationService
 {
     private readonly ILogger _logger;
     private readonly PipelineConfiguration _config;
+    private readonly IProjectStore _projectStore;
     private readonly IPipelineRunHistoryService _runHistoryService;
     private readonly IConsolidationDispatcher? _dispatcher;
     private readonly string _consolidationRunsDirectory;
@@ -30,6 +31,7 @@ public sealed class ConsolidationService : IConsolidationService
     public ConsolidationService(
         ILogger logger,
         PipelineConfiguration config,
+        IProjectStore projectStore,
         IPipelineRunHistoryService runHistoryService,
         IConsolidationDispatcher? dispatcher = null,
         string consolidationRunsDirectory = PipelineConstants.ConsolidationRunsDirectory,
@@ -37,10 +39,12 @@ public sealed class ConsolidationService : IConsolidationService
     {
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(projectStore);
         ArgumentNullException.ThrowIfNull(runHistoryService);
 
         _logger = logger;
         _config = config;
+        _projectStore = projectStore;
         _runHistoryService = runHistoryService;
         _dispatcher = dispatcher;
         _consolidationRunsDirectory = consolidationRunsDirectory;
@@ -91,12 +95,11 @@ public sealed class ConsolidationService : IConsolidationService
         // WARNING 4 fix: Use TryAdd as the sole concurrency guard (eliminates TOCTOU race)
         var key = (type, templateId);
 
-        // Resolve template name for display
+        // Resolve template name for display using project-based lookup
         string? templateName = null;
         if (templateId is not null)
         {
-            var template = _config.PipelineJobTemplates
-                .FirstOrDefault(t => t.Id == templateId);
+            var template = await ResolveTemplateAsync(templateId, ct);
             if (template is null)
             {
                 _logger.Warning("Consolidation run rejected: template {TemplateId} not found", templateId);
@@ -684,5 +687,61 @@ public sealed class ConsolidationService : IConsolidationService
                 "This is non-fatal and the workspace can be manually removed.",
                 runId, workspacePath);
         }
+    }
+
+    /// <summary>
+    /// Resolves a template by ID from projects via IProjectStore.
+    /// Flattens all enabled projects' templates and finds the matching template.
+    /// Falls back to PipelineConfiguration.PipelineJobTemplates for templates not yet
+    /// assigned to projects (pre-migration scenario).
+    /// </summary>
+    private async Task<PipelineJobTemplate?> ResolveTemplateAsync(string templateId, CancellationToken ct)
+    {
+        // Primary: look up from projects (project-based ownership)
+        var projects = await _projectStore.LoadProjectsAsync(ct);
+        var templateLookup = _config.PipelineJobTemplates.ToDictionary(t => t.Id);
+
+        foreach (var project in projects.Where(p => p.Enabled))
+        {
+            if (project.TemplateIds.Contains(templateId) && templateLookup.TryGetValue(templateId, out var template))
+                return template;
+        }
+
+        // Fallback: check global config directly (handles pre-migration or orphaned templates)
+        if (templateLookup.TryGetValue(templateId, out var fallbackTemplate))
+        {
+            _logger.Warning("Template '{TemplateId}' not found in any enabled project, using fallback from global config", templateId);
+            return fallbackTemplate;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Returns all enabled templates from all enabled projects, resolved via IProjectStore.
+    /// Falls back to PipelineConfiguration.PipelineJobTemplates when no projects exist (pre-migration).
+    /// </summary>
+    internal async Task<IReadOnlyList<PipelineJobTemplate>> GetEnabledTemplatesFromProjectsAsync(CancellationToken ct)
+    {
+        var projects = await _projectStore.LoadProjectsAsync(ct);
+        var templateLookup = _config.PipelineJobTemplates.ToDictionary(t => t.Id);
+
+        if (projects.Count == 0)
+        {
+            // Pre-migration fallback: use global config directly
+            return _config.PipelineJobTemplates.Where(t => t.Enabled).ToList();
+        }
+
+        var result = new List<PipelineJobTemplate>();
+        foreach (var project in projects.Where(p => p.Enabled).OrderBy(p => p.Name, StringComparer.Ordinal))
+        {
+            foreach (var tid in project.TemplateIds)
+            {
+                if (templateLookup.TryGetValue(tid, out var template) && template.Enabled)
+                    result.Add(template);
+            }
+        }
+
+        return result;
     }
 }

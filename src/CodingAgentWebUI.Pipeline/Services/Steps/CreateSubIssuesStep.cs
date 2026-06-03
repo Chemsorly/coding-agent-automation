@@ -5,9 +5,13 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
 /// <summary>
 /// Phase 2, Step 4: Parses sub-issue JSON files from the workspace, resolves dependencies,
-/// sanitizes content, and creates GitHub issues sequentially via the orchestrator proxy.
+/// sanitizes content, and creates issues sequentially via the orchestrator proxy.
 /// Enforces the configured sub-issue cap, retries transient errors, and tracks results
 /// for the summary step.
+///
+/// Supports cross-repo decomposition routing: when a <c>ProjectContext</c> is present and
+/// a proposal specifies a <c>TargetRepository</c>, the issue is routed to that template's
+/// issue provider instead of the dispatching template's default provider.
 /// </summary>
 internal sealed class CreateSubIssuesStep : IPipelineStep
 {
@@ -31,6 +35,7 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
         activity?.SetTag("pipeline.run_id", context.Run.RunId);
         activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
         activity?.SetTag("pipeline.run_type", context.Run.RunType.ToString());
+        PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
 
         // 1. Transition to CreatingIssues
         context.Callbacks.TransitionTo(PipelineStep.CreatingIssues);
@@ -77,7 +82,8 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
                     "Creation timeout exceeded; marking remaining sub-issues as failed. Title: {Title}",
                     proposal.Title);
 
-                PipelineTelemetry.SubIssuesFailed.Add(1, PipelineTelemetry.RunTypeTag(context.Run.RunType));
+                PipelineTelemetry.SubIssuesFailed.Add(1,
+                    PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
 
                 results.Add(new SubIssueCreationResult
                 {
@@ -140,6 +146,9 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
             }
         }
 
+        // Resolve target issue provider for cross-repo routing
+        var targetProviderId = ResolveTargetIssueProviderId(proposal, context);
+
         // 9. Retry transient errors (3 attempts, exponential backoff: 0s, 1s, 3s)
         for (var attempt = 0; attempt < MaxRetryAttempts; attempt++)
         {
@@ -154,14 +163,21 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
                     }
                 }
 
-                var created = await context.IssueOps.CreateIssueAsync(
-                    sanitizedTitle, sanitizedBody, labels, ct);
+                // Create the issue — route to specific provider if target is resolved,
+                // otherwise use the dispatching template's default provider.
+                var created = targetProviderId is not null
+                    ? await context.IssueOps.CreateIssueForProviderAsync(
+                        targetProviderId, sanitizedTitle, sanitizedBody, labels, ct)
+                    : await context.IssueOps.CreateIssueAsync(
+                        sanitizedTitle, sanitizedBody, labels, ct);
 
                 context.Logger.Information(
-                    "Created sub-issue {Identifier}: {Title}",
-                    created.Identifier, sanitizedTitle);
+                    "Created issue {Identifier}: {Title}{RouteInfo}",
+                    created.Identifier, sanitizedTitle,
+                    targetProviderId is not null ? $" (routed to provider {targetProviderId})" : "");
 
-                PipelineTelemetry.SubIssuesCreated.Add(1, PipelineTelemetry.RunTypeTag(context.Run.RunType));
+                PipelineTelemetry.SubIssuesCreated.Add(1,
+                    PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
 
                 return new SubIssueCreationResult
                 {
@@ -174,7 +190,8 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
             catch (OperationCanceledException)
             {
                 // Timeout or external cancellation — don't retry
-                PipelineTelemetry.SubIssuesFailed.Add(1, PipelineTelemetry.RunTypeTag(context.Run.RunType));
+                PipelineTelemetry.SubIssuesFailed.Add(1,
+                    PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
                 return new SubIssueCreationResult
                 {
                     Title = proposal.Title,
@@ -186,17 +203,18 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
             {
                 context.Logger.Warning(
                     ex,
-                    "Transient error creating sub-issue '{Title}' (attempt {Attempt}/{MaxAttempts})",
+                    "Transient error creating issue '{Title}' (attempt {Attempt}/{MaxAttempts})",
                     proposal.Title, attempt + 1, MaxRetryAttempts);
 
                 // If this was the last attempt, fall through to failure
                 if (attempt == MaxRetryAttempts - 1)
                 {
                     context.Logger.Warning(
-                        "Exhausted retries for sub-issue '{Title}': {Error}",
+                        "Exhausted retries for issue '{Title}': {Error}",
                         proposal.Title, ex.Message);
 
-                    PipelineTelemetry.SubIssuesFailed.Add(1, PipelineTelemetry.RunTypeTag(context.Run.RunType));
+                    PipelineTelemetry.SubIssuesFailed.Add(1,
+                        PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
 
                     return new SubIssueCreationResult
                     {
@@ -211,10 +229,11 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
                 // Non-transient error — skip immediately without retry
                 context.Logger.Warning(
                     ex,
-                    "Non-transient error creating sub-issue '{Title}': {Error}",
+                    "Non-transient error creating issue '{Title}': {Error}",
                     proposal.Title, ex.Message);
 
-                PipelineTelemetry.SubIssuesFailed.Add(1, PipelineTelemetry.RunTypeTag(context.Run.RunType));
+                PipelineTelemetry.SubIssuesFailed.Add(1,
+                    PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
 
                 return new SubIssueCreationResult
                 {
@@ -232,6 +251,66 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
             Success = false,
             FailureReason = "Unexpected: exhausted retry loop without result"
         };
+    }
+
+    /// <summary>
+    /// Resolves the target issue provider config ID for a decomposed issue proposal.
+    /// When <c>targetRepository</c> matches a template name in the project context,
+    /// returns that template's <c>IssueProviderId</c>.
+    /// Falls back to null (use dispatching template's default provider) when:
+    /// - <c>targetRepository</c> is null or empty (default behavior)
+    /// - No <c>ProjectContext</c> is available (per-template decomposition, backward compatible)
+    /// - <c>targetRepository</c> does not match any template name (logs warning)
+    /// </summary>
+    private static string? ResolveTargetIssueProviderId(SubIssueProposal proposal, PipelineStepContext context)
+        => ResolveTargetIssueProviderId(proposal.TargetRepository, context.ProjectContext, context.Logger);
+
+    /// <summary>
+    /// Pure routing logic extracted for testability. Resolves a <c>targetRepository</c> value
+    /// to an issue provider config ID using the project context's repository list.
+    /// Returns null when the target is unresolvable (fallback to dispatching template's default provider).
+    /// Never throws for invalid inputs — always falls back safely.
+    /// </summary>
+    internal static string? ResolveTargetIssueProviderId(
+        string? targetRepository,
+        DecompositionProjectContext? projectContext,
+        Serilog.ILogger? logger = null)
+    {
+        // No target specified — use dispatching template's default provider
+        if (string.IsNullOrEmpty(targetRepository))
+            return null;
+
+        // No project context — per-template decomposition, use default provider
+        if (projectContext is null)
+        {
+            logger?.Warning(
+                "targetRepository '{Target}' specified but no project context is available; using default provider",
+                targetRepository);
+            return null;
+        }
+
+        // Resolve targetRepository → matching repository target → issue provider ID
+        var targetRepo = projectContext.Repositories
+            .FirstOrDefault(r => string.Equals(r.TemplateName, targetRepository, StringComparison.Ordinal));
+
+        if (targetRepo is null)
+        {
+            logger?.Warning(
+                "Target repository '{Target}' not found in project '{Project}'; using dispatching template's provider",
+                targetRepository, projectContext.ProjectName);
+            return null;
+        }
+
+        // Target found but no issue provider ID configured
+        if (string.IsNullOrEmpty(targetRepo.IssueProviderId))
+        {
+            logger?.Warning(
+                "Target repository '{Target}' in project '{Project}' has no IssueProviderId; using dispatching template's provider",
+                targetRepository, projectContext.ProjectName);
+            return null;
+        }
+
+        return targetRepo.IssueProviderId;
     }
 
     /// <summary>

@@ -17,6 +17,7 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
     private readonly string _runsDir;
     private readonly string _suggestionsPath;
     private readonly Mock<IPipelineRunHistoryService> _mockRunHistory;
+    private readonly Mock<IProjectStore> _mockProjectStore;
     private readonly PipelineConfiguration _config;
 
     public ConsolidationWorkspaceTests()
@@ -45,6 +46,19 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
                 }
             }
         };
+
+        // Mock IProjectStore to return a default project owning all templates
+        _mockProjectStore = new Mock<IProjectStore>();
+        _mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new()
+                {
+                    Id = WellKnownIds.DefaultProjectId,
+                    Name = "Default",
+                    TemplateIds = new List<string> { "tmpl-1" }
+                }
+            });
     }
 
     public void Dispose()
@@ -59,6 +73,7 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
     private ConsolidationService CreateSut(ILogger? logger = null) => new(
         logger ?? new LoggerConfiguration().CreateLogger(),
         _config,
+        _mockProjectStore.Object,
         _mockRunHistory.Object,
         consolidationRunsDirectory: _runsDir,
         harnessSuggestionsPath: _suggestionsPath);

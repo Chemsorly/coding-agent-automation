@@ -11,6 +11,7 @@ public class JsonConfigurationStore : IConfigurationStore
 {
     private readonly string _baseDirectory;
     private readonly SemaphoreSlim _pipelineConfigLock = new(1, 1);
+    private readonly SemaphoreSlim _projectLock = new(1, 1);
     private readonly ILogger _logger = Log.ForContext<JsonConfigurationStore>();
 
     private static JsonSerializerOptions JsonOptions => PipelineJsonOptions.Default;
@@ -130,6 +131,109 @@ public class JsonConfigurationStore : IConfigurationStore
 
     public Task DeleteReviewerConfigAsync(string id, CancellationToken ct)
         => DeleteEntityAsync(id, "reviewers");
+
+    // --- Projects ---
+
+    public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
+        => LoadEntitiesAsync<PipelineProject>("projects", ct);
+
+    public async Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        if (!IsValidGuidFormat(id))
+            return null;
+
+        var path = Path.Combine(_baseDirectory, "projects", $"{id}.json");
+        return await LoadJsonAsync<PipelineProject>(path, ct);
+    }
+
+    public async Task SaveProjectAsync(PipelineProject project, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ValidateProjectId(project.Id);
+        ValidateProjectFields(project);
+
+        await _projectLock.WaitAsync(ct);
+        try
+        {
+            await SaveEntityAsync(project, "projects", p => p.Id, ct);
+        }
+        finally
+        {
+            _projectLock.Release();
+        }
+    }
+
+    public async Task DeleteProjectAsync(string id, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        ValidateProjectId(id);
+
+        if (string.Equals(id, WellKnownIds.DefaultProjectId, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The Default project cannot be deleted.");
+
+        await _projectLock.WaitAsync(ct);
+        try
+        {
+            var projectToDelete = await GetProjectByIdAsync(id, ct);
+            if (projectToDelete is null)
+                return;
+
+            // Move orphaned templates to the Default project
+            if (projectToDelete.TemplateIds.Count > 0)
+            {
+                var defaultProject = await GetProjectByIdAsync(WellKnownIds.DefaultProjectId, ct);
+                if (defaultProject is not null)
+                {
+                    var updatedTemplateIds = defaultProject.TemplateIds.ToList();
+                    updatedTemplateIds.AddRange(projectToDelete.TemplateIds);
+                    var updatedDefault = defaultProject with { TemplateIds = updatedTemplateIds };
+                    await SaveEntityAsync(updatedDefault, "projects", p => p.Id, ct);
+
+                    _logger.Information(
+                        "Moved {Count} templates from deleted project '{ProjectName}' to Default project",
+                        projectToDelete.TemplateIds.Count, projectToDelete.Name);
+                }
+                else
+                {
+                    _logger.Warning(
+                        "Default project not found when deleting project '{ProjectName}' — orphaned templates: {TemplateIds}",
+                        projectToDelete.Name, projectToDelete.TemplateIds);
+                }
+            }
+
+            await DeleteEntityAsync(id, "projects");
+        }
+        finally
+        {
+            _projectLock.Release();
+        }
+    }
+
+    private static void ValidateProjectId(string id)
+    {
+        if (!IsValidGuidFormat(id))
+            throw new ArgumentException(
+                $"Project ID '{id}' is not a valid GUID format. Only GUID-formatted IDs are accepted to prevent path traversal.",
+                nameof(id));
+    }
+
+    private static bool IsValidGuidFormat(string id)
+        => Guid.TryParse(id, out _);
+
+    private static void ValidateProjectFields(PipelineProject project)
+    {
+        if (string.IsNullOrWhiteSpace(project.Name))
+            throw new ArgumentException("Project name must be non-empty.", nameof(project));
+
+        if (project.Name.Length > 128)
+            throw new ArgumentException(
+                $"Project name must not exceed 128 characters (was {project.Name.Length}).", nameof(project));
+
+        if (project.Description is not null && project.Description.Length > 512)
+            throw new ArgumentException(
+                $"Project description must not exceed 512 characters (was {project.Description.Length}).", nameof(project));
+    }
 
     private Task<IReadOnlyList<T>> LoadEntitiesAsync<T>(string subfolder, CancellationToken ct) where T : class
         => LoadAllFromDirectoryAsync<T>(Path.Combine(_baseDirectory, subfolder), ct);

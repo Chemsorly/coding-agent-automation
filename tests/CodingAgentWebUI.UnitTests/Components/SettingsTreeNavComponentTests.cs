@@ -1,7 +1,10 @@
 using Bunit;
 using Microsoft.AspNetCore.Components;
+using Microsoft.Extensions.DependencyInjection;
 using CodingAgentWebUI.Components.Pages;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using Moq;
 
 namespace CodingAgentWebUI.UnitTests.Components;
 
@@ -11,6 +14,13 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class SettingsTreeNavComponentTests : BunitContext
 {
+    public SettingsTreeNavComponentTests()
+    {
+        var mockProjectStore = new Mock<IProjectStore>();
+        mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+        Services.AddSingleton(mockProjectStore.Object);
+    }
     [Fact]
     public void TreeNav_RendersAllGroups()
     {
@@ -19,7 +29,8 @@ public class SettingsTreeNavComponentTests : BunitContext
             .Add(s => s.OnNodeSelected, EventCallback<string>.Empty));
 
         Assert.Contains("Providers", cut.Markup);
-        Assert.Contains("Pipeline", cut.Markup);
+        Assert.Contains("Projects", cut.Markup);
+        Assert.Contains("Global Defaults", cut.Markup);
         Assert.Contains("Label Routing", cut.Markup);
     }
 
@@ -119,8 +130,8 @@ public class SettingsTreeNavComponentTests : BunitContext
 
         // After collapse, children should not be visible
         var childNodes = cut.FindAll(".tree-group-children");
-        // The Providers group children should be gone (only Pipeline and Label Routing remain)
-        Assert.Equal(2, childNodes.Count);
+        // The Providers group children should be gone (Projects, Global Defaults, and Label Routing remain)
+        Assert.Equal(3, childNodes.Count);
     }
 
     [Fact]
@@ -130,8 +141,8 @@ public class SettingsTreeNavComponentTests : BunitContext
             .Add(s => s.SelectedNode, "")
             .Add(s => s.OnNodeSelected, EventCallback<string>.Empty));
 
-        // Click the "Pipeline" group header to collapse
-        var pipelineHeader = cut.FindAll(".tree-group-header").First(h => h.TextContent.Contains("Pipeline"));
+        // Click the "Global Defaults" group header to collapse
+        var pipelineHeader = cut.FindAll(".tree-group-header").First(h => h.TextContent.Contains("Global Defaults"));
         await pipelineHeader.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
         // "General" node should no longer be visible
@@ -146,9 +157,9 @@ public class SettingsTreeNavComponentTests : BunitContext
             .Add(s => s.SelectedNode, "")
             .Add(s => s.OnNodeSelected, EventCallback<string>.Empty));
 
-        // All three groups should have children visible
+        // All four groups should have children visible
         var childGroups = cut.FindAll(".tree-group-children");
-        Assert.Equal(3, childGroups.Count);
+        Assert.Equal(4, childGroups.Count);
     }
 
     [Fact]
@@ -159,7 +170,7 @@ public class SettingsTreeNavComponentTests : BunitContext
             .Add(s => s.OnNodeSelected, EventCallback<string>.Empty));
 
         var chevrons = cut.FindAll(".tree-chevron");
-        Assert.Equal(3, chevrons.Count);
+        Assert.Equal(4, chevrons.Count);
         // All expanded by default, so all should show ▼
         Assert.All(chevrons, c => Assert.Contains("▼", c.TextContent));
     }

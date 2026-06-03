@@ -22,6 +22,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     private readonly List<AgentProfile> _agentProfiles = new();
     private readonly List<QualityGateConfiguration> _qualityGateConfigs = new();
     private readonly List<ReviewerConfiguration> _reviewerConfigs = new();
+    private readonly List<PipelineProject> _projects = new();
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     public void Reset()
@@ -160,6 +161,26 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     public Task DeleteReviewerConfigAsync(string id, CancellationToken ct)
     {
         _reviewerConfigs.RemoveAll(c => c.Id == id);
+        return Task.CompletedTask;
+    }
+
+    // Projects
+    public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<PipelineProject>>(_projects.ToList());
+
+    public Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct) =>
+        Task.FromResult(_projects.FirstOrDefault(p => p.Id == id));
+
+    public Task SaveProjectAsync(PipelineProject project, CancellationToken ct)
+    {
+        _projects.RemoveAll(p => p.Id == project.Id);
+        _projects.Add(project);
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteProjectAsync(string id, CancellationToken ct)
+    {
+        _projects.RemoveAll(p => p.Id == id);
         return Task.CompletedTask;
     }
 }
