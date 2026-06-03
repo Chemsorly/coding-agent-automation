@@ -56,8 +56,13 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddSingleton(_pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
-        Services.AddSingleton(new PipelineLoopService(_pipelineService, _mockFactory.Object, _mockStore.Object, _mockStore.Object, mockLogger.Object));
+        Services.AddSingleton(new PipelineLoopService(_pipelineService, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, mockLogger.Object));
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
+
+        var mockProjectStore = new Mock<IProjectStore>();
+        mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+        Services.AddSingleton(mockProjectStore.Object);
 
         var registry = new AgentRegistryService(mockLogger.Object);
         Services.AddSingleton(registry);

@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Serilog;
 
 namespace CodingAgentWebUI.Pipeline.Models;
 
@@ -183,6 +184,81 @@ public sealed record PipelineConfiguration
     }
 
     /// <summary>
+    /// Applies non-null project overrides to a PipelineConfiguration instance.
+    /// Called BEFORE ApplyTemplateOverrides in the dispatch pipeline.
+    /// Each non-null property on the project replaces the corresponding global value.
+    /// Nested objects (e.g., CodeReview) use REPLACE semantics — no deep merge.
+    /// </summary>
+    public static PipelineConfiguration ApplyProjectOverrides(
+        PipelineConfiguration config, PipelineProject? project)
+    {
+        if (project is null) return config;
+
+        try
+        {
+            if (project.MaxRetries.HasValue)
+                config = config with { MaxRetries = project.MaxRetries.Value };
+            if (project.MaxAnalysisRetries.HasValue)
+                config = config with { MaxAnalysisRetries = project.MaxAnalysisRetries.Value };
+            if (project.AgentTimeout.HasValue)
+                config = config with { AgentTimeout = project.AgentTimeout.Value };
+            if (project.AnalysisPrompt is not null)
+                config = config with { AnalysisPrompt = project.AnalysisPrompt };
+            if (project.ImplementationPrompt is not null)
+                config = config with { ImplementationPrompt = project.ImplementationPrompt };
+            if (project.AnalysisReviewEnabled.HasValue)
+                config = config with { AnalysisReviewEnabled = project.AnalysisReviewEnabled.Value };
+            if (project.AnalysisReviewPrompt is not null)
+                config = config with { AnalysisReviewPrompt = project.AnalysisReviewPrompt };
+            if (project.AnalysisRefinementPrompt is not null)
+                config = config with { AnalysisRefinementPrompt = project.AnalysisRefinementPrompt };
+            if (project.CodeReview is not null)
+                config = config with { CodeReview = project.CodeReview }; // REPLACE semantics — entire object replaced
+            if (project.BaselineHealthCheckEnabled.HasValue)
+                config = config with { BaselineHealthCheckEnabled = project.BaselineHealthCheckEnabled.Value };
+            if (project.ExternalCiTimeout.HasValue)
+                config = config with { ExternalCiTimeout = project.ExternalCiTimeout.Value };
+            if (project.ExternalCiPollInterval.HasValue)
+                config = config with { ExternalCiPollInterval = project.ExternalCiPollInterval.Value };
+            if (project.MaxInfrastructureRetries.HasValue)
+                config = config with { MaxInfrastructureRetries = project.MaxInfrastructureRetries.Value };
+            if (project.StallWarningInterval.HasValue)
+                config = config with { StallWarningInterval = project.StallWarningInterval.Value };
+            if (project.MaxDecompositionSubIssues.HasValue)
+                config = config with { MaxDecompositionSubIssues = project.MaxDecompositionSubIssues.Value };
+            if (project.MaxConcurrentDecompositions.HasValue)
+                config = config with { MaxConcurrentDecompositions = project.MaxConcurrentDecompositions.Value };
+            if (project.DecompositionTimeout.HasValue)
+                config = config with { DecompositionTimeout = project.DecompositionTimeout.Value };
+            if (project.MaxOpenIssuesForContext.HasValue)
+                config = config with { MaxOpenIssuesForContext = project.MaxOpenIssuesForContext.Value };
+            if (project.MaxRefactoringProposals.HasValue)
+                config = config with { MaxRefactoringProposals = project.MaxRefactoringProposals.Value };
+            if (project.RefactoringReviewEnabled.HasValue)
+                config = config with { RefactoringReviewEnabled = project.RefactoringReviewEnabled.Value };
+            if (project.BrainConsolidationReviewEnabled.HasValue)
+                config = config with { BrainConsolidationReviewEnabled = project.BrainConsolidationReviewEnabled.Value };
+            if (project.HarnessSuggestionsReviewEnabled.HasValue)
+                config = config with { HarnessSuggestionsReviewEnabled = project.HarnessSuggestionsReviewEnabled.Value };
+            if (project.BlacklistedPaths is not null)
+                config = config with { BlacklistedPaths = project.BlacklistedPaths };
+            if (project.BlacklistMode.HasValue)
+                config = config with { BlacklistMode = project.BlacklistMode.Value };
+            if (project.BrainReadOnly.HasValue)
+                config = config with { BrainReadOnly = project.BrainReadOnly.Value };
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            Log.Warning(
+                "Project '{ProjectName}' (ID: {ProjectId}) has out-of-range override values — falling back to global defaults. {ErrorMessage}",
+                project.Name, project.Id, ex.Message);
+            return config;
+        }
+
+        return config;
+    }
+
+    /// <summary>
     /// Applies per-repo blacklist overrides from a <see cref="ProviderConfig"/>.
     /// When the provider config specifies <see cref="ProviderConfig.BlacklistedPaths"/>
     /// or <see cref="ProviderConfig.BlacklistMode"/>, they take precedence over the
@@ -332,6 +408,7 @@ public sealed record PipelineConfiguration
     /// Each template pairs an issue provider with a repository provider.
     /// When non-empty, the pipeline loop iterates through enabled templates each cycle.
     /// </summary>
+    // Phase 2 TODO: Move template storage to per-project directories, then add [Obsolete]
     public IReadOnlyList<PipelineJobTemplate> PipelineJobTemplates { get; init; } = Array.Empty<PipelineJobTemplate>();
 
     /// <summary>

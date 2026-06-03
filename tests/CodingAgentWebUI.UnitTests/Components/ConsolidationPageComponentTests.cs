@@ -44,6 +44,11 @@ public class ConsolidationPageComponentTests : BunitContext
         Services.AddSingleton<IConsolidationService>(_mockConsolidationService.Object);
         Services.AddSingleton<IConfigurationStore>(_mockConfigStore.Object);
         Services.AddSingleton(_badgeService);
+
+        var mockProjectStore = new Mock<IProjectStore>();
+        mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+        Services.AddSingleton(mockProjectStore.Object);
     }
 
     private static PipelineJobTemplate CreateTemplate(

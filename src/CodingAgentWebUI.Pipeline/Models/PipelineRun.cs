@@ -175,6 +175,19 @@ public sealed class PipelineRun
     /// <summary>Agent provider config ID used for this run, or null for legacy/local runs.</summary>
     public string? AgentProviderConfigId { get; init; }
 
+    /// <summary>Project ID that owned the dispatching template at dispatch time.</summary>
+    public string? ProjectId { get; set; }
+
+    /// <summary>Project display name for UI rendering without reverse-lookup.</summary>
+    public string? ProjectName { get; set; }
+
+    /// <summary>
+    /// For decomposition runs: whether the epic was polled from the project-level
+    /// EpicIssueProviderId ("project-level") or the template's own IssueProviderId ("template-level").
+    /// Null for non-decomposition runs.
+    /// </summary>
+    public string? DecompositionSource { get; init; }
+
     /// <summary>Agent Profile Id that was resolved at dispatch time.</summary>
     public string? ResolvedProfileId { get; set; }
 
@@ -235,6 +248,8 @@ public sealed class PipelineRun
         TotalTokens = TotalTokens,
         TotalCost = TotalCost,
         DecompositionSubIssuesCreated = DecompositionSubIssuesCreated,
-        DecompositionSubIssuesAttempted = DecompositionSubIssuesAttempted
+        DecompositionSubIssuesAttempted = DecompositionSubIssuesAttempted,
+        ProjectName = ProjectName,
+        DecompositionSource = DecompositionSource
     };
 }

@@ -55,8 +55,10 @@ public class DispatchFeedbackComponentTests : BunitContext
         Services.AddSingleton(pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
-        Services.AddSingleton(new PipelineLoopService(pipelineService, _mockFactory.Object, _mockStore.Object, _mockStore.Object, mockLogger.Object));
+        Services.AddSingleton(new PipelineLoopService(pipelineService, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, mockLogger.Object));
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
+
+        Services.AddSingleton<IProjectStore>(_mockStore.Object);
 
         var registry = new AgentRegistryService(mockLogger.Object);
         Services.AddSingleton(registry);
@@ -100,6 +102,8 @@ public class DispatchFeedbackComponentTests : BunitContext
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
         _mockStore.Setup(s => s.SavePipelineConfigAsync(It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
 
         _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<IssueSummary>

@@ -51,6 +51,12 @@ internal sealed class PipelineStepContext
     public IQualityGateValidator? QualityGateValidator { get; init; }
 
     /// <summary>
+    /// Project context for cross-repo decomposition, populated when the epic
+    /// originates from a project-level EpicIssueProviderId.
+    /// </summary>
+    public DecompositionProjectContext? ProjectContext { get; init; }
+
+    /// <summary>
     /// Pre-resolved reviewer configurations. When non-null, <see cref="ReviewCodeStep"/>
     /// uses these directly instead of resolving from the config store.
     /// </summary>

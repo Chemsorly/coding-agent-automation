@@ -14,7 +14,8 @@ public sealed partial class AgentJobDispatcher
         string? pipelineProviderId,
         string initiatedBy,
         CancellationToken ct,
-        string? issueTitle = null)
+        string? issueTitle = null,
+        PipelineProject? project = null)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(issueProviderId);
@@ -41,7 +42,8 @@ public sealed partial class AgentJobDispatcher
             // Agent available — dispatch immediately
             return await DispatchToAgentAsync(
                 agent, issueIdentifier, issueProviderId, repoProviderId,
-                brainProviderId, pipelineProviderId, initiatedBy, requiredLabels, ct);
+                brainProviderId, pipelineProviderId, initiatedBy, requiredLabels, ct,
+                project: project);
         }
 
         // No idle agent — enqueue for later dispatch
@@ -55,7 +57,8 @@ public sealed partial class AgentJobDispatcher
             PipelineProviderId = pipelineProviderId,
             EnqueuedAt = DateTimeOffset.UtcNow,
             InitiatedBy = initiatedBy,
-            RequiredLabels = requiredLabels
+            RequiredLabels = requiredLabels,
+            Project = project
         });
 
         if (enqueued)
@@ -65,7 +68,7 @@ public sealed partial class AgentJobDispatcher
     }
 
     /// <inheritdoc />
-    public async Task<bool> TryDispatchReviewAsync(ReviewDispatchRequest request, CancellationToken ct)
+    public async Task<bool> TryDispatchReviewAsync(ReviewDispatchRequest request, CancellationToken ct, PipelineProject? project = null)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -88,7 +91,7 @@ public sealed partial class AgentJobDispatcher
         {
             // Agent available — dispatch immediately
             return await DispatchReviewToAgentAsync(
-                agent, request, requiredLabels, ct);
+                agent, request, requiredLabels, ct, project: project);
         }
 
         // No idle agent — enqueue for later dispatch
@@ -107,7 +110,8 @@ public sealed partial class AgentJobDispatcher
             PrBranchName = request.PrBranchName,
             PrDescription = request.PrDescription,
             PrUrl = request.PrUrl,
-            PrTargetBranch = request.PrTargetBranch
+            PrTargetBranch = request.PrTargetBranch,
+            Project = project
         });
 
         if (enqueued)
@@ -125,7 +129,9 @@ public sealed partial class AgentJobDispatcher
         string repoProviderId,
         string? brainProviderId,
         string initiatedBy,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? decompositionSource = null,
+        PipelineProject? project = null)
     {
         ArgumentNullException.ThrowIfNull(epicIdentifier);
         ArgumentNullException.ThrowIfNull(epicTitle);
@@ -158,7 +164,9 @@ public sealed partial class AgentJobDispatcher
             return await DispatchDecompositionToAgentAsync(
                 agent, epicIdentifier, epicTitle, phaseType,
                 issueProviderId, repoProviderId, brainProviderId,
-                initiatedBy, requiredLabels, ct);
+                initiatedBy, requiredLabels, ct,
+                decompositionSource: decompositionSource,
+                project: project);
         }
 
         // No idle agent — enqueue for later dispatch
@@ -173,7 +181,9 @@ public sealed partial class AgentJobDispatcher
             EnqueuedAt = DateTimeOffset.UtcNow,
             InitiatedBy = initiatedBy,
             RequiredLabels = requiredLabels,
-            RunType = phaseType
+            RunType = phaseType,
+            DecompositionSource = decompositionSource,
+            Project = project
         });
 
         if (enqueued)

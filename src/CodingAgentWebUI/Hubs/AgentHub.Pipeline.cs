@@ -438,6 +438,43 @@ public sealed partial class AgentHub
     }
 
     /// <summary>
+    /// Creates a new issue via a specific issue provider (for cross-repo decomposition routing).
+    /// Called by the agent's <c>OrchestratorProxy.CreateIssueForProviderAsync</c> when the
+    /// decomposed issue's <c>targetRepository</c> resolves to a different template's issue provider.
+    /// </summary>
+    [RequiresActiveJob]
+    public async Task<CreatedIssueResult> RequestCreateIssueForProvider(
+        string jobId, string issueProviderConfigId, string title, string body, IReadOnlyList<string> labels)
+    {
+        ArgumentNullException.ThrowIfNull(jobId);
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+        ArgumentNullException.ThrowIfNull(title);
+        ArgumentNullException.ThrowIfNull(body);
+        ArgumentNullException.ThrowIfNull(labels);
+
+        var run = _facade.GetRun(jobId);
+        if (run is null)
+            throw new HubException($"No active run found for job {jobId}");
+
+        var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+        var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == issueProviderConfigId);
+        if (issueConfig is null)
+            throw new HubException($"Issue provider config '{issueProviderConfigId}' not found for cross-repo routing in job {jobId}");
+
+        await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
+        try
+        {
+            return await issueProvider.CreateIssueAsync(title, body, labels, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "RequestCreateIssueForProvider failed for job {JobId}, provider {ProviderId}",
+                jobId, issueProviderConfigId);
+            throw new HubException($"Failed to create issue for job {jobId} via provider {issueProviderConfigId}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Lists open issues with optional label filtering via the run's configured <see cref="IIssueProvider"/>.
     /// Called by the agent's <c>OrchestratorProxy.ListOpenIssuesAsync</c>.
     /// </summary>

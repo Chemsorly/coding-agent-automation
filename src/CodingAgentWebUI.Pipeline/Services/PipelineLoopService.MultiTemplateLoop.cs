@@ -104,21 +104,33 @@ public sealed partial class PipelineLoopService
             var maxConsecutiveFailures = config.ClosedLoopMaxConsecutivePollFailures;
             var maxPagesToFetch = config.ClosedLoopMaxPagesToFetch;
 
-            var enabledTemplates = config.PipelineJobTemplates.Where(t => t.Enabled).ToList();
+            // Load projects and flatten templates using project-based ordering
+            var projects = await _projectStore.LoadProjectsAsync(ct) ?? (IReadOnlyList<PipelineProject>)[];
+            var flattenedTemplates = FlattenTemplates(projects, config);
+            var enabledTemplates = flattenedTemplates.Select(ft => ft.Template).ToList();
+
+            // Pre-built lookup shared by FlattenTemplates logic and SelectDecompositionTemplate
+            var templateLookup = config.PipelineJobTemplates.ToDictionary(t => t.Id);
 
             // Filter out rate-limited templates
             var now = DateTimeOffset.UtcNow;
-            var pollableTemplates = enabledTemplates.Where(t =>
+            var pollableEntries = flattenedTemplates.Where(ft =>
             {
-                if (_templateStatuses.TryGetValue(t.Id, out var status) && status.RateLimitResetAt.HasValue)
+                if (_templateStatuses.TryGetValue(ft.Template.Id, out var status) && status.RateLimitResetAt.HasValue)
                     return now >= status.RateLimitResetAt.Value;
                 return true;
             }).ToList();
+            var pollableTemplates = pollableEntries.Select(pe => pe.Template).ToList();
 
             CurrentCycleTemplateCount = enabledTemplates.Count;
 
             // Step 2: Provider cache reconciliation
             var neededIds = enabledTemplates.Select(t => t.IssueProviderId).ToHashSet();
+
+            // Include project-level EpicIssueProviderId values so the cache contains epic providers for polling
+            foreach (var project in projects.Where(p => p.Enabled && !string.IsNullOrEmpty(p.EpicIssueProviderId)))
+                neededIds.Add(project.EpicIssueProviderId!);
+
             var issueProviderConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
             await ReconcileProviderCacheAsync(neededIds, issueProviderConfigs, ct);
 
@@ -323,6 +335,60 @@ public sealed partial class PipelineLoopService
 
             if (_stopRequested || ct.IsCancellationRequested) break;
 
+            // Step 3b: Project-level epic polling — poll EpicIssueProviderId for each enabled project
+            // that has the field set and at least one decomposition-enabled template.
+            // This is separate from per-template decomposition polling (which uses the template's own IssueProviderId).
+            var projectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>();
+            foreach (var project in projects.Where(p => p.Enabled && !string.IsNullOrEmpty(p.EpicIssueProviderId)))
+            {
+                if (_stopRequested || ct.IsCancellationRequested) break;
+
+                var epicProviderId = project.EpicIssueProviderId!;
+
+                // Validate that EpicIssueProviderId references an existing provider config in the cache
+                if (!_providerCache.TryGetValue(epicProviderId, out var epicProvider))
+                {
+                    _logger.Warning("Project '{ProjectName}': EpicIssueProviderId '{EpicProviderId}' not found in provider cache, skipping project-level epic polling",
+                        project.Name, epicProviderId);
+                    continue;
+                }
+
+                // Select the first decomposition-enabled template in the project
+                var decompositionTemplate = SelectDecompositionTemplate(project, templateLookup);
+                if (decompositionTemplate is null)
+                {
+                    _logger.Warning("Project '{ProjectName}': no decomposition-enabled template found, skipping project-level epic polling",
+                        project.Name);
+                    continue;
+                }
+
+                try
+                {
+                    var projectQueue = new List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>();
+
+                    // Poll for agent:epic issues (Phase 1 candidates)
+                    var epicIssues = await FetchEpicIssuesAsync(epicProvider, AgentLabels.Epic, maxPagesToFetch, ct);
+                    foreach (var epic in epicIssues)
+                        projectQueue.Add((epic, PipelineRunType.DecompositionAnalysis, decompositionTemplate));
+
+                    // Poll for agent:epic-approved issues (Phase 2 candidates)
+                    var approvedIssues = await FetchEpicIssuesAsync(epicProvider, AgentLabels.EpicApproved, maxPagesToFetch, ct);
+                    foreach (var approved in approvedIssues)
+                        projectQueue.Add((approved, PipelineRunType.Decomposition, decompositionTemplate));
+
+                    if (projectQueue.Count > 0)
+                        projectLevelDecompositionQueues[project.Id] = projectQueue;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Project '{ProjectName}' project-level epic polling failed: {Error}",
+                        project.Name, ex.Message);
+                }
+            }
+
+            if (_stopRequested || ct.IsCancellationRequested) break;
+
             // Step 4: Circuit breaker — trip only when ALL enabled templates are failing
             var allFailing = enabledTemplates.Count > 0 && enabledTemplates.All(t =>
             {
@@ -357,6 +423,9 @@ public sealed partial class PipelineLoopService
                 // Per-cycle dependency state cache shared across all issue evaluations
                 var cycleStateCache = new Dictionary<int, bool>();
 
+                // Build template → project lookup for passing project context at dispatch time
+                var templateProjectLookup = flattenedTemplates.ToDictionary(ft => ft.Template.Id, ft => ft.Project);
+
                 // Count active decomposition runs for concurrency enforcement
                 var activeDecompositionCount = _orchestration.GetAllActiveRuns()
                     .Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
@@ -374,7 +443,8 @@ public sealed partial class PipelineLoopService
 
                     bool hasIssues = HasEligibleIssues(pollableTemplates, issueQueues);
                     bool hasPrs = HasEligiblePrs(pollableTemplates, prQueues);
-                    bool hasDecomp = HasEligibleDecomposition(pollableTemplates, decompositionQueues)
+                    bool hasDecomp = (HasEligibleDecomposition(pollableTemplates, decompositionQueues)
+                        || HasEligibleProjectLevelDecomposition(projectLevelDecompositionQueues))
                         && activeDecompositionCount < config.MaxConcurrentDecompositions;
 
                     // Determine which queue to dispatch from this iteration.
@@ -451,7 +521,8 @@ public sealed partial class PipelineLoopService
                                 template.BrainProviderId, template.PipelineProviderId,
                                 initiatedBy: "loop",
                                 stopToken,
-                                issueTitle: issue.Title);
+                                issueTitle: issue.Title,
+                                project: templateProjectLookup[template.Id]);
 
                             if (dispatched)
                                 _logger.Information("Dispatched issue #{Issue} from template '{Template}'",
@@ -514,7 +585,8 @@ public sealed partial class PipelineLoopService
                                     BrainProviderId = template.BrainProviderId,
                                     InitiatedBy = "loop"
                                 },
-                                stopToken);
+                                stopToken,
+                                project: templateProjectLookup[template.Id]);
 
                             if (dispatched)
                                 _logger.Information("Dispatched PR #{PrIdentifier} review from template '{Template}'",
@@ -577,7 +649,8 @@ public sealed partial class PipelineLoopService
                                 template.RepoProviderId,
                                 template.BrainProviderId,
                                 initiatedBy: "loop",
-                                stopToken);
+                                stopToken,
+                                project: templateProjectLookup[template.Id]);
 
                             if (dispatched)
                             {
@@ -590,6 +663,79 @@ public sealed partial class PipelineLoopService
                         }, remaining, stoppingToken, ct);
                         decompMadeProgress = progress;
                         remaining -= count;
+                    }
+
+                    // ── Project-level decomposition dispatch ──
+                    // Dispatch epics from project-level EpicIssueProviderId after template-level decomposition.
+                    // These use the first decomposition-enabled template in the project (SelectDecompositionTemplate).
+                    if (currentTurn == 2 && !decompMadeProgress && projectLevelDecompositionQueues.Count > 0
+                        && activeDecompositionCount < config.MaxConcurrentDecompositions)
+                    {
+                        foreach (var kvp in projectLevelDecompositionQueues.ToList())
+                        {
+                            if (remaining <= 0 || _stopRequested || ct.IsCancellationRequested) break;
+                            if (activeDecompositionCount >= config.MaxConcurrentDecompositions) break;
+
+                            var queue = kvp.Value;
+                            while (queue.Count > 0 && remaining > 0)
+                            {
+                                if (activeDecompositionCount >= config.MaxConcurrentDecompositions) break;
+
+                                var candidate = queue[0];
+                                queue.RemoveAt(0);
+
+                                // Deduplication: skip if already being processed or queued
+                                // (may have been picked up by template-level polling of the same issue)
+                                if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier))
+                                    continue;
+                                if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier))
+                                    continue;
+
+                                var phaseLabel = candidate.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
+
+                                CurrentIssueIdentifier = candidate.Issue.Identifier;
+                                StatusMessage = $"🧩 Dispatching project-level epic #{candidate.Issue.Identifier} {phaseLabel} from '{candidate.Template.Name}'";
+                                NotifyChange();
+
+                                try
+                                {
+                                    var dispatched = await _jobDispatcher!.TryDispatchDecompositionAsync(
+                                        candidate.Issue.Identifier,
+                                        candidate.Issue.Title,
+                                        candidate.Phase,
+                                        candidate.Template.IssueProviderId,
+                                        candidate.Template.RepoProviderId,
+                                        candidate.Template.BrainProviderId,
+                                        initiatedBy: "loop",
+                                        stoppingToken,
+                                        decompositionSource: "project-level",
+                                        project: templateProjectLookup.GetValueOrDefault(candidate.Template.Id));
+
+                                    if (dispatched)
+                                    {
+                                        activeDecompositionCount++;
+                                        remaining--;
+                                        decompMadeProgress = true;
+                                        _logger.Information("Dispatched project-level epic #{EpicIdentifier} ({Phase}) via template '{Template}'",
+                                            candidate.Issue.Identifier, candidate.Phase, candidate.Template.Name);
+                                    }
+                                }
+                                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+                                catch (Exception ex)
+                                {
+                                    _logger.Error(ex, "Project-level decomposition dispatch failed for epic #{EpicIdentifier}: {Error}",
+                                        candidate.Issue.Identifier, ex.Message);
+                                    remaining--;
+                                    decompMadeProgress = true;
+                                }
+
+                                break; // One dispatch per project per round (fair alternation)
+                            }
+                        }
+
+                        // Remove empty project queues
+                        foreach (var key in projectLevelDecompositionQueues.Where(kvp => kvp.Value.Count == 0).Select(kvp => kvp.Key).ToList())
+                            projectLevelDecompositionQueues.Remove(key);
                     }
 
                     // If no queue made progress, all are exhausted
@@ -847,5 +993,132 @@ public sealed partial class PipelineLoopService
             await Task.Delay(interval, ct);
         }
         catch (OperationCanceledException) { }
+    }
+
+    /// <summary>
+    /// Flattens all enabled projects' templates into a single ordered list.
+    /// Order: projects alphabetical by Name, templates by TemplateIds position.
+    /// Templates are looked up from PipelineConfiguration.PipelineJobTemplates (Phase 1 —
+    /// templates remain stored in the global config, projects only own IDs).
+    /// Skips disabled projects entirely. Skips missing template IDs with a warning.
+    /// Only includes templates that are individually enabled.
+    /// </summary>
+    internal IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> FlattenTemplates(
+        IReadOnlyList<PipelineProject> projects,
+        PipelineConfiguration globalConfig)
+    {
+        var result = new List<(PipelineJobTemplate, PipelineProject)>();
+        // Build lookup for O(1) template resolution
+        var templateLookup = globalConfig.PipelineJobTemplates.ToDictionary(t => t.Id);
+
+        // If no projects exist yet (pre-migration or test scenario), create a virtual Default
+        // containing all template IDs to preserve backward compatibility
+        if (projects.Count == 0)
+        {
+            var virtualDefault = new PipelineProject
+            {
+                Id = WellKnownIds.DefaultProjectId,
+                Name = "Default",
+                TemplateIds = globalConfig.PipelineJobTemplates.Select(t => t.Id).ToList()
+            };
+            projects = new List<PipelineProject> { virtualDefault };
+        }
+        else
+        {
+            // Handle orphaned templates: templates in globalConfig that don't appear in any project
+            var allProjectTemplateIds = projects
+                .SelectMany(p => p.TemplateIds)
+                .ToHashSet();
+
+            var orphanedTemplateIds = globalConfig.PipelineJobTemplates
+                .Where(t => !allProjectTemplateIds.Contains(t.Id))
+                .Select(t => t.Id)
+                .ToList();
+
+            if (orphanedTemplateIds.Count > 0)
+            {
+                _logger.Warning("Found {Count} orphaned template(s) not assigned to any project — assigning to Default: {TemplateIds}",
+                    orphanedTemplateIds.Count, string.Join(", ", orphanedTemplateIds));
+
+                // Find Default project and add orphaned templates to it for this cycle
+                var defaultProject = projects.FirstOrDefault(p => p.Id == WellKnownIds.DefaultProjectId);
+                if (defaultProject is not null)
+                {
+                    var updatedTemplateIds = defaultProject.TemplateIds.Concat(orphanedTemplateIds).ToList();
+                    var updatedDefault = defaultProject with { TemplateIds = updatedTemplateIds };
+
+                    // Replace in a new list for this cycle's processing
+                    projects = projects
+                        .Select(p => p.Id == WellKnownIds.DefaultProjectId ? updatedDefault : p)
+                        .ToList();
+                }
+                else
+                {
+                    // Default project is missing — create a virtual one for orphans
+                    _logger.Warning("Default project not found — creating virtual Default for orphaned templates");
+                    var virtualDefault = new PipelineProject
+                    {
+                        Id = WellKnownIds.DefaultProjectId,
+                        Name = "Default",
+                        TemplateIds = orphanedTemplateIds
+                    };
+                    projects = projects.Concat(new[] { virtualDefault }).ToList();
+                }
+            }
+        }
+
+        foreach (var project in projects.Where(p => p.Enabled).OrderBy(p => p.Name, StringComparer.Ordinal))
+        {
+            foreach (var templateId in project.TemplateIds)
+            {
+                if (!templateLookup.TryGetValue(templateId, out var template))
+                {
+                    _logger.Warning("Project '{ProjectName}' references template '{TemplateId}' which does not exist, skipping",
+                        project.Name, templateId);
+                    continue;
+                }
+                if (template.Enabled)
+                    result.Add((template, project));
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Selects the repository template for a project-level epic decomposition dispatch.
+    /// Returns the first decomposition-enabled template in the project (by TemplateIds position).
+    /// Returns null if no decomposition-enabled template exists (skip this project's epic polling).
+    /// </summary>
+    private static PipelineJobTemplate? SelectDecompositionTemplate(
+        PipelineProject project,
+        Dictionary<string, PipelineJobTemplate> templateLookup)
+    {
+        foreach (var templateId in project.TemplateIds)
+        {
+            if (templateLookup.TryGetValue(templateId, out var template)
+                && template.Enabled
+                && template.DecompositionEnabled)
+            {
+                return template;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Checks whether any project-level decomposition queue has eligible epics remaining.
+    /// Used by the fair alternation logic to include project-level epics in the decomposition turn.
+    /// </summary>
+    private static bool HasEligibleProjectLevelDecomposition(
+        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>> projectLevelQueues)
+    {
+        foreach (var kvp in projectLevelQueues)
+        {
+            if (kvp.Value.Count > 0)
+                return true;
+        }
+        return false;
     }
 }

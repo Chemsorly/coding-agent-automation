@@ -29,4 +29,33 @@ public static class PipelineTelemetry
     /// <summary>Creates a run_type tag from the given <see cref="PipelineRunType"/>.</summary>
     public static KeyValuePair<string, object?> RunTypeTag(PipelineRunType runType) =>
         new("run_type", runType.ToString().ToLowerInvariant());
+
+    /// <summary>Creates a pipeline.project_id tag.</summary>
+    public static KeyValuePair<string, object?> ProjectIdTag(string? projectId) =>
+        new("pipeline.project_id", projectId ?? "unknown");
+
+    /// <summary>Creates a pipeline.project_name tag.</summary>
+    public static KeyValuePair<string, object?> ProjectNameTag(string? projectName) =>
+        new("pipeline.project_name", projectName ?? "unknown");
+
+    /// <summary>
+    /// Sets project-related tags on an <see cref="Activity"/>.
+    /// </summary>
+    public static void SetProjectTags(Activity? activity, string? projectId, string? projectName)
+    {
+        activity?.SetTag("pipeline.project_id", projectId ?? "unknown");
+        activity?.SetTag("pipeline.project_name", projectName ?? "unknown");
+    }
+
+    /// <summary>
+    /// Builds a <see cref="TagList"/> containing run_type, project_id, and project_name tags.
+    /// Use this when recording metrics that should include project context.
+    /// </summary>
+    public static TagList BuildTags(PipelineRunType runType, string? projectId, string? projectName) =>
+        new(
+        [
+            RunTypeTag(runType),
+            ProjectIdTag(projectId),
+            ProjectNameTag(projectName)
+        ]);
 }

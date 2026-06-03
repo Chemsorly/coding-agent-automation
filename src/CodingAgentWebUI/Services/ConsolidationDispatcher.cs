@@ -19,6 +19,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private readonly JobDispatcherService _jobDispatcher;
     private readonly IAgentCommunication _agentComm;
     private readonly IConfigurationStore _configStore;
+    private readonly IProjectStore _projectStore;
     private readonly ITokenVendingService _tokenVending;
     private readonly PipelineConfiguration _config;
     private readonly ConsolidationQueueService _queueService;
@@ -31,6 +32,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         JobDispatcherService jobDispatcher,
         IAgentCommunication agentComm,
         IConfigurationStore configStore,
+        IProjectStore projectStore,
         ITokenVendingService tokenVending,
         PipelineConfiguration config,
         ConsolidationQueueService queueService,
@@ -42,6 +44,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         ArgumentNullException.ThrowIfNull(jobDispatcher);
         ArgumentNullException.ThrowIfNull(agentComm);
         ArgumentNullException.ThrowIfNull(configStore);
+        ArgumentNullException.ThrowIfNull(projectStore);
         ArgumentNullException.ThrowIfNull(tokenVending);
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(queueService);
@@ -52,6 +55,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         _jobDispatcher = jobDispatcher;
         _agentComm = agentComm;
         _configStore = configStore;
+        _projectStore = projectStore;
         _tokenVending = tokenVending;
         _config = config;
         _queueService = queueService;
@@ -195,9 +199,8 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         // Build provider configs for the consolidation job and vend tokens
         var includeIssuePermission = type == ConsolidationRunType.RefactoringDetection;
         var rawConfigs = await BuildProviderConfigsAsync(type, templateId, ct);
-        var repoProviderId = templateId is not null
-            ? _config.PipelineJobTemplates.FirstOrDefault(t => t.Id == templateId)?.RepoProviderId ?? ""
-            : "";
+        var template = templateId is not null ? await ResolveTemplateAsync(templateId, ct) : null;
+        var repoProviderId = template?.RepoProviderId ?? "";
         var providerConfigs = await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct, includeIssuePermission);
 
         // Resolve last successful run timestamp for this type+template
@@ -287,13 +290,14 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
     /// <summary>
     /// Resolves required agent labels for the given template.
+    /// Uses project-based template lookup via IProjectStore.
     /// </summary>
     internal async Task<IReadOnlyList<string>> ResolveRequiredLabelsAsync(string? templateId, CancellationToken ct)
     {
         if (templateId is null)
             return JobDispatcherService.ResolveRequiredLabels(null, _config);
 
-        var template = _config.PipelineJobTemplates.FirstOrDefault(t => t.Id == templateId);
+        var template = await ResolveTemplateAsync(templateId, ct);
         if (template is null)
             return JobDispatcherService.ResolveRequiredLabels(null, _config);
 
@@ -303,6 +307,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
     /// <summary>
     /// Builds the provider configs list for the consolidation job based on the run type and template.
+    /// Uses project-based template lookup via IProjectStore.
     /// </summary>
     private async Task<IReadOnlyList<ProviderConfig>> BuildProviderConfigsAsync(
         ConsolidationRunType type,
@@ -320,7 +325,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         if (templateId is null)
             return configs.AsReadOnly();
 
-        var template = _config.PipelineJobTemplates.FirstOrDefault(t => t.Id == templateId);
+        var template = await ResolveTemplateAsync(templateId, ct);
         if (template is null)
             return configs.AsReadOnly();
 
@@ -388,5 +393,33 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         }
 
         return latest;
+    }
+
+    /// <summary>
+    /// Resolves a template by ID from projects via IProjectStore.
+    /// Flattens all enabled projects' templates and finds the matching template.
+    /// Falls back to PipelineConfiguration.PipelineJobTemplates for templates not yet
+    /// assigned to projects (pre-migration scenario).
+    /// </summary>
+    private async Task<PipelineJobTemplate?> ResolveTemplateAsync(string templateId, CancellationToken ct)
+    {
+        // Primary: look up from projects (project-based ownership)
+        var projects = await _projectStore.LoadProjectsAsync(ct);
+        var templateLookup = _config.PipelineJobTemplates.ToDictionary(t => t.Id);
+
+        foreach (var project in projects.Where(p => p.Enabled))
+        {
+            if (project.TemplateIds.Contains(templateId) && templateLookup.TryGetValue(templateId, out var template))
+                return template;
+        }
+
+        // Fallback: check global config directly (handles pre-migration or orphaned templates)
+        if (templateLookup.TryGetValue(templateId, out var fallbackTemplate))
+        {
+            _logger.Warning("Template '{TemplateId}' not found in any enabled project, using fallback from global config", templateId);
+            return fallbackTemplate;
+        }
+
+        return null;
     }
 }

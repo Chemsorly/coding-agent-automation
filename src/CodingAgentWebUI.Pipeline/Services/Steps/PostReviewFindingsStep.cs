@@ -50,6 +50,7 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("PostReviewFindings");
         activity?.SetTag("pipeline.run_id", context.Run.RunId);
         activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
         activity?.SetTag("pipeline.run_type", context.Run.RunType.ToString());
 
         context.Callbacks.TransitionTo(PipelineStep.PostingFindings);

@@ -1,0 +1,173 @@
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+
+<section class="settings-section">
+    <h2>Projects</h2>
+    <p class="section-description">Manage pipeline projects. Each project groups job templates and can override global pipeline settings.</p>
+
+    <div class="projects-list-actions">
+        <button class="btn-save" @onclick="AddProjectAsync">+ Add Project</button>
+    </div>
+
+    @if (_projects.Count == 0)
+    {
+        <p class="form-hint">No projects configured yet.</p>
+    }
+    else
+    {
+        <table class="projects-list-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Description</th>
+                    <th>Templates</th>
+                    <th>Enabled</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var project in _projects)
+                {
+                    var isDefault = project.Id == WellKnownIds.DefaultProjectId;
+                    <tr class="@(isDefault ? "projects-row-default" : "")">
+                        <td class="projects-name-cell">
+                            @if (isDefault)
+                            {
+                                <span class="projects-lock-icon">🔒</span>
+                            }
+                            @if (project.EpicIssueProviderId is not null)
+                            {
+                                <span class="projects-epic-icon">🧩</span>
+                            }
+                            <span>@project.Name</span>
+                            @if (isDefault)
+                            {
+                                <span class="badge-default">default</span>
+                            }
+                        </td>
+                        <td class="projects-description-cell">
+                            @(Truncate(project.Description, 60))
+                        </td>
+                        <td>@project.TemplateIds.Count</td>
+                        <td>
+                            <label class="projects-toggle">
+                                <input type="checkbox" checked="@project.Enabled"
+                                       @onchange="e => ToggleEnabledAsync(project, (bool)(e.Value ?? false))" />
+                                @(project.Enabled ? "Yes" : "No")
+                            </label>
+                        </td>
+                        <td class="projects-actions-cell">
+                            <button class="btn-edit" @onclick="() => NavigateToProject(project.Id)">Edit</button>
+                            <button class="btn-delete" disabled="@isDefault"
+                                    @onclick="() => ConfirmDeleteAsync(project)"
+                                    title="@(isDefault ? "Cannot delete Default project" : "Delete project")">Delete</button>
+                        </td>
+                    </tr>
+                    @if (isDefault)
+                    {
+                        <tr class="projects-note-row">
+                            <td colspan="5"><span class="projects-note">Cannot be deleted</span></td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    }
+
+    @if (_confirmingDelete is not null)
+    {
+        <div class="projects-confirm-overlay">
+            <div class="projects-confirm-dialog">
+                <p>Delete project "<strong>@_confirmingDelete.Name</strong>"?</p>
+                <p class="form-hint">This action cannot be undone. All template associations will be lost.</p>
+                <div class="projects-confirm-actions">
+                    <button class="btn-delete" @onclick="ExecuteDeleteAsync">Delete</button>
+                    <button class="btn-cancel" @onclick="CancelDelete">Cancel</button>
+                </div>
+            </div>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter] public EventCallback<string> OnNavigateToProject { get; set; }
+    [Parameter] public EventCallback OnProjectsChanged { get; set; }
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private List<PipelineProject> _projects = new();
+    private PipelineProject? _confirmingDelete;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProjectsAsync();
+    }
+
+    public async Task LoadProjectsAsync()
+    {
+        _projects = (await ConfigStore.LoadProjectsAsync(CancellationToken.None)).ToList();
+        StateHasChanged();
+    }
+
+    private async Task AddProjectAsync()
+    {
+        var newId = Guid.NewGuid().ToString();
+        await OnNavigateToProject.InvokeAsync(newId);
+    }
+
+    private async Task ToggleEnabledAsync(PipelineProject project, bool enabled)
+    {
+        try
+        {
+            var updated = project with { Enabled = enabled };
+            await ConfigStore.SaveProjectAsync(updated, CancellationToken.None);
+            await LoadProjectsAsync();
+            await OnShowStatus.InvokeAsync(($"Project {(enabled ? "enabled" : "disabled")}.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to update: {ex.Message}", true));
+        }
+    }
+
+    private void NavigateToProject(string projectId)
+    {
+        OnNavigateToProject.InvokeAsync(projectId);
+    }
+
+    private void ConfirmDeleteAsync(PipelineProject project)
+    {
+        if (project.Id == WellKnownIds.DefaultProjectId) return;
+        _confirmingDelete = project;
+    }
+
+    private async Task ExecuteDeleteAsync()
+    {
+        if (_confirmingDelete is null) return;
+
+        try
+        {
+            await ConfigStore.DeleteProjectAsync(_confirmingDelete.Id, CancellationToken.None);
+            _confirmingDelete = null;
+            await LoadProjectsAsync();
+            await OnProjectsChanged.InvokeAsync();
+            await OnShowStatus.InvokeAsync(("Project deleted.", false));
+        }
+        catch (Exception ex)
+        {
+            _confirmingDelete = null;
+            await OnShowStatus.InvokeAsync(($"Failed to delete: {ex.Message}", true));
+        }
+    }
+
+    private void CancelDelete()
+    {
+        _confirmingDelete = null;
+    }
+
+    private static string Truncate(string? text, int maxLength)
+    {
+        if (string.IsNullOrEmpty(text)) return "—";
+        return text.Length <= maxLength ? text : text[..maxLength] + "…";
+    }
+}

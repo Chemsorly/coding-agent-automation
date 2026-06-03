@@ -91,8 +91,12 @@ public class ConsolidationServicePropertyTests : IDisposable
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(h => h.GetRunHistory()).Returns([]);
 
+        var mockProjectStore = new Mock<IProjectStore>();
+        mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>());
+
         var sut = new ConsolidationService(
-            Serilog.Log.Logger, config, mockHistory.Object,
+            Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
             consolidationRunsDirectory: runsDir);
 
         var count = Math.Min(runCount.Get, 5);
@@ -153,8 +157,20 @@ public class ConsolidationServicePropertyTests : IDisposable
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(h => h.GetRunHistory()).Returns([]);
 
+        var mockProjectStore = new Mock<IProjectStore>();
+        mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new()
+                {
+                    Id = WellKnownIds.DefaultProjectId,
+                    Name = "Default",
+                    TemplateIds = new List<string> { "tmpl-1", "tmpl-2" }
+                }
+            });
+
         var sut = new ConsolidationService(
-            Serilog.Log.Logger, config, mockHistory.Object,
+            Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
             consolidationRunsDirectory: runsDir);
 
         // First trigger succeeds

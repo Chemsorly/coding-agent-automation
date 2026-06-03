@@ -17,6 +17,7 @@ internal sealed class PostDecompositionSummaryStep : IPipelineStep
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("PostDecompositionSummary");
         activity?.SetTag("pipeline.run_id", context.Run.RunId);
         activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
         activity?.SetTag("pipeline.run_type", context.Run.RunType.ToString());
 
         context.Callbacks.TransitionTo(PipelineStep.PostingSummary);

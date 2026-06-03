@@ -20,4 +20,10 @@ public sealed record SubIssueProposal
 
     /// <summary>Additional labels beyond the auto-applied agent:next.</summary>
     public required IReadOnlyList<string> Labels { get; init; }
+
+    /// <summary>
+    /// Target repository for cross-repo decomposition routing.
+    /// Must match a template Name within the project. Null = use dispatching template's provider.
+    /// </summary>
+    public string? TargetRepository { get; init; }
 }

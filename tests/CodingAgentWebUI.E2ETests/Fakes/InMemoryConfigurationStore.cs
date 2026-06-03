@@ -22,6 +22,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     private readonly List<AgentProfile> _agentProfiles = new();
     private readonly List<QualityGateConfiguration> _qualityGateConfigs = new();
     private readonly List<ReviewerConfiguration> _reviewerConfigs = new();
+    private readonly List<PipelineProject> _projects = new();
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     public void Reset()
@@ -37,6 +38,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         _agentProfiles.Clear();
         _qualityGateConfigs.Clear();
         _reviewerConfigs.Clear();
+        _projects.Clear();
         SeedDefaults();
     }
 
@@ -160,6 +162,46 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     public Task DeleteReviewerConfigAsync(string id, CancellationToken ct)
     {
         _reviewerConfigs.RemoveAll(c => c.Id == id);
+        return Task.CompletedTask;
+    }
+
+    // Projects
+    public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
+    {
+        if (_projects.Count > 0)
+            return Task.FromResult<IReadOnlyList<PipelineProject>>(_projects.ToList());
+
+        // Auto-generate a Default project containing all template IDs from PipelineJobTemplates.
+        // This mirrors production behavior where ProjectMigrationService creates a Default project
+        // referencing all templates. Without this, the Consolidation page (and ConsolidationService)
+        // would use the pre-migration fallback path which may not match the code paths under test.
+        var templateIds = _pipelineConfig.PipelineJobTemplates.Select(t => t.Id).ToList();
+        if (templateIds.Count == 0)
+            return Task.FromResult<IReadOnlyList<PipelineProject>>(Array.Empty<PipelineProject>());
+
+        var defaultProject = new PipelineProject
+        {
+            Id = WellKnownIds.DefaultProjectId,
+            Name = "Default",
+            Enabled = true,
+            TemplateIds = templateIds
+        };
+        return Task.FromResult<IReadOnlyList<PipelineProject>>(new List<PipelineProject> { defaultProject });
+    }
+
+    public Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct) =>
+        Task.FromResult(_projects.FirstOrDefault(p => p.Id == id));
+
+    public Task SaveProjectAsync(PipelineProject project, CancellationToken ct)
+    {
+        _projects.RemoveAll(p => p.Id == project.Id);
+        _projects.Add(project);
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteProjectAsync(string id, CancellationToken ct)
+    {
+        _projects.RemoveAll(p => p.Id == id);
         return Task.CompletedTask;
     }
 }

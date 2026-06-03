@@ -2,7 +2,11 @@
 
 Pipeline behavior is configured in `config/pipeline/pipeline-config.json`.
 
-See also: [Pipeline Orchestration](pipeline-orchestration.md) for how these settings affect the state machine, and [Label Routing](label-routing.md) for per-stack quality gate and reviewer configuration.
+See also: [Pipeline Orchestration](pipeline-orchestration.md) for how these settings affect the state machine, [Label Routing](label-routing.md) for per-stack quality gate and reviewer configuration, and [Projects](projects.md) for per-project settings inheritance.
+
+## Project-Level Settings
+
+Projects can override most general settings on a per-project basis using a nullable override pattern. When a project setting is non-null, it replaces the corresponding global value for all templates in that project. See [Projects](projects.md) for full details on the inheritance model and configuration examples.
 
 ## General Settings
 
