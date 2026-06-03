@@ -28,7 +28,7 @@
     }
 
     <div class="settings-layout">
-        <SettingsTreeNav SelectedNode="@_selectedNode"
+        <SettingsTreeNav @ref="_treeNav" SelectedNode="@_selectedNode"
                          OnNodeSelected="SelectNode" />
 
         <div class="settings-content">
@@ -38,10 +38,18 @@
                 <ProjectDetailSection
                     ProjectId="@projectId"
                     ConfigStore="ConfigStore"
+                    OnProjectSaved="RefreshTreeNavProjects"
                     OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
             }
             else switch (_selectedNode)
             {
+                case SettingsNodes.Projects:
+                    <ProjectsListSection
+                        ConfigStore="ConfigStore"
+                        OnNavigateToProject="NavigateToProjectDetail"
+                        OnProjectsChanged="RefreshTreeNavProjects"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
                 case SettingsNodes.ProvidersIssue:
                     <IssueProviderSection
                         Providers="_issueProviders"
@@ -148,6 +156,7 @@
     private CancellationTokenSource _cts = new();
     private CancellationTokenSource? _toastCts;
     private SettingsModals? _modals;
+    private SettingsTreeNav? _treeNav;
     private string _selectedNode = SettingsNodes.ProvidersIssue;
 
     private List<ProviderConfig> _issueProviders = new();
@@ -265,6 +274,19 @@
     private void SelectNode(string nodeId)
     {
         _selectedNode = nodeId;
+    }
+
+    private async Task NavigateToProjectDetail(string projectId)
+    {
+        _selectedNode = $"{SettingsNodes.ProjectDetail}:{projectId}";
+        if (_treeNav is not null)
+            await _treeNav.RefreshProjectsAsync();
+    }
+
+    private async Task RefreshTreeNavProjects()
+    {
+        if (_treeNav is not null)
+            await _treeNav.RefreshProjectsAsync();
     }
 
     public async ValueTask DisposeAsync()

@@ -271,7 +271,8 @@ select option { background: var(--surface); color: var(--text); }
 .btn-edit { padding: 4px 10px; border: 1px solid var(--accent); color: var(--accent-light); font-size: 0.8rem; }
 .btn-edit:hover { background: var(--accent); color: white; }
 .btn-delete { padding: 4px 10px; border: 1px solid var(--error); color: var(--error); font-size: 0.8rem; }
-.btn-delete:hover { background: var(--error); color: white; }
+.btn-delete:hover:not(:disabled) { background: var(--error); color: white; }
+.btn-delete:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-add { padding: 8px 16px; border: 1px dashed var(--border); color: var(--text-muted); width: 100%; }
 .btn-add:hover { border-color: var(--accent); color: var(--accent-light); }
 .btn-revert { padding: 4px 10px; color: var(--text-muted); font-size: 0.8rem; text-decoration: underline; margin-top: 4px; }
@@ -595,7 +596,7 @@ select option { background: var(--surface); color: var(--text); }
 .monitoring-section-toggle h2 { margin-bottom: 0; }
 .monitoring-toggle-icon { font-size: 0.85rem; color: var(--text-muted); }
 
-.monitoring-table-wrap { overflow-x: auto; }
+.monitoring-table-wrap { position: relative; }
 .monitoring-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
 .monitoring-table th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .monitoring-table th:has(.th-hint), .monitoring-table th.th-has-hint { overflow: visible; }
@@ -1013,3 +1014,62 @@ select option { background: var(--surface); color: var(--text); }
 .consolidation-status-error { background: var(--bg-error); color: var(--error); border-left: 3px solid var(--error); }
 
 .sidebar-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: white; font-size: 0.65rem; font-weight: 700; margin-left: auto; }
+
+/* ═══ Project Detail Section ═══ */
+.project-tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+.project-tabs .tab-btn { padding: 8px 16px; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: color 0.15s, border-color 0.15s; }
+.project-tabs .tab-btn:hover { color: var(--text); }
+.project-tabs .tab-btn.active { color: var(--accent-light); border-bottom-color: var(--accent); }
+
+.override-group { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+.override-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.override-header label { font-size: 0.82rem; font-weight: 500; color: var(--text); margin: 0; }
+.btn-override { font-size: 0.72rem; padding: 2px 8px; border-radius: 3px; border: 1px solid var(--border); background: var(--surface-alt); color: var(--text-muted); cursor: pointer; }
+.btn-override:hover { border-color: var(--accent); color: var(--accent-light); }
+.global-default-hint { font-size: 0.78rem; color: var(--text-muted); font-style: italic; }
+.form-checkbox-inline { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--text); }
+
+.template-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.template-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); }
+.template-order { font-size: 0.75rem; color: var(--text-muted); font-weight: 600; min-width: 20px; }
+.template-name { flex: 1; font-size: 0.82rem; color: var(--text); }
+.template-actions { display: flex; gap: 2px; }
+.btn-icon { background: none; border: 1px solid transparent; color: var(--text-muted); cursor: pointer; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem; transition: background 0.15s, color 0.15s; }
+.btn-icon:hover:not(:disabled) { background: var(--surface-alt); color: var(--text); border-color: var(--border); }
+.btn-icon:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn-icon.btn-danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.1); color: var(--error); border-color: var(--error); }
+.template-add-row { display: flex; gap: 8px; align-items: center; }
+.template-add-row select { flex: 1; }
+
+/* ═══ Projects List Section ═══ */
+.projects-list-actions { margin-bottom: 16px; }
+.projects-list-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.projects-list-table th { text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--border); color: var(--text-muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+.projects-list-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; }
+.projects-list-table tbody tr:hover { background: var(--surface-alt); }
+.projects-row-default { background: rgba(30, 107, 58, 0.06); }
+.projects-row-default:hover { background: rgba(30, 107, 58, 0.12) !important; }
+.projects-name-cell { display: flex; align-items: center; gap: 4px; font-weight: 500; }
+.projects-lock-icon, .projects-epic-icon { font-size: 0.8rem; }
+.projects-description-cell { color: var(--text-muted); font-size: 0.82rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.projects-toggle { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--text); cursor: pointer; }
+.projects-actions-cell { display: flex; gap: 6px; }
+.btn-edit-small { font-size: 0.75rem; padding: 3px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface-alt); color: var(--text); cursor: pointer; transition: border-color 0.15s, color 0.15s; }
+.btn-edit-small:hover { border-color: var(--accent); color: var(--accent-light); }
+.btn-delete-small { font-size: 0.75rem; padding: 3px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface-alt); color: var(--text-muted); cursor: pointer; transition: border-color 0.15s, color 0.15s, background 0.15s; }
+.btn-delete-small:hover:not(:disabled) { border-color: var(--error); color: var(--error); background: rgba(239, 68, 68, 0.08); }
+.btn-delete-small:disabled { opacity: 0.4; cursor: not-allowed; }
+.projects-note-row td { padding: 2px 10px 8px 10px; border-bottom: 1px solid var(--border); }
+.projects-note { font-size: 0.72rem; color: var(--text-muted); font-style: italic; }
+.projects-confirm-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.projects-confirm-dialog { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; max-width: 400px; width: 90%; }
+.projects-confirm-dialog p { margin: 0 0 12px 0; font-size: 0.9rem; color: var(--text); }
+.projects-confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.tree-group-header.active { color: var(--accent-light); font-weight: 600; }
+
+/* ═══ Tree Nav — Clickable Group Header (Projects) ═══ */
+.tree-group-header-clickable { cursor: pointer; }
+.tree-group-header-clickable:hover { color: var(--accent-light); }
+.tree-group-header-clickable.active { color: var(--accent-light); }
+.tree-manage-hint { margin-left: auto; font-size: 0.7rem; color: var(--text-muted); opacity: 0.5; transition: opacity 0.15s; }
+.tree-group-header-clickable:hover .tree-manage-hint { opacity: 1; color: var(--accent-light); }

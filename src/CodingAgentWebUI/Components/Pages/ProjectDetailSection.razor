@@ -32,6 +32,7 @@
 
     [Parameter, EditorRequired] public string ProjectId { get; set; } = default!;
     [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter] public EventCallback OnProjectSaved { get; set; }
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private string _activeTab = TabOverview;
@@ -42,6 +43,7 @@
     private PipelineConfiguration _globalConfig = new();
     private List<ProviderConfig> _issueProviders = new();
     private List<PipelineJobTemplate> _allTemplates = new();
+    private IReadOnlyList<PipelineProject> _allProjects = [];
 
     // Overview fields
     private string _name = "";
@@ -89,12 +91,19 @@
     private async Task LoadDataAsync()
     {
         var project = await ConfigStore.GetProjectByIdAsync(ProjectId, CancellationToken.None);
-        if (project is null) return;
-
-        _project = project;
+        if (project is null)
+        {
+            // New project being created — pre-populate with defaults, don't persist yet
+            _project = new PipelineProject { Id = ProjectId, Name = "", Enabled = true };
+        }
+        else
+        {
+            _project = project;
+        }
         _globalConfig = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         _issueProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
         _allTemplates = _globalConfig.PipelineJobTemplates.ToList();
+        _allProjects = await ConfigStore.LoadProjectsAsync(CancellationToken.None);
 
         // Populate overview fields
         _name = _project.Name;
@@ -331,7 +340,10 @@
 
     private IEnumerable<PipelineJobTemplate> GetAvailableTemplates()
     {
-        var assignedIds = _project.TemplateIds.ToHashSet();
+        // Exclude templates already assigned to ANY project (a template belongs to at most one project)
+        var assignedIds = _allProjects
+            .SelectMany(p => p.TemplateIds)
+            .ToHashSet();
         return _allTemplates.Where(t => !assignedIds.Contains(t.Id));
     }
 
@@ -389,6 +401,7 @@
             };
 
             await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
+            await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project overview saved.", false));
         }
         catch (Exception ex)
@@ -428,6 +441,7 @@
             };
 
             await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
+            await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project settings saved.", false));
         }
         catch (Exception ex)
@@ -441,6 +455,7 @@
         try
         {
             await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
+            await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project updated.", false));
         }
         catch (Exception ex)

@@ -30,7 +30,7 @@
     {
         <div class="settings-status status-info loop-status-bar">
             <span class="loop-status-text">@LoopService.StatusMessage</span>
-            <button class="btn-revert loop-stop-btn" @onclick="StopLoop">⏹ Stop Loop</button>
+            <button class="btn-cancel loop-stop-btn" @onclick="StopLoop">⏹ Stop Loop</button>
         </div>
     }
 
@@ -40,7 +40,7 @@
             @LoopService.StatusMessage
             <span style="margin-left: 1rem;">
                 <button class="btn-save" @onclick="ResumeLoop" style="margin-right: 0.5rem;">Resume</button>
-                <button class="btn-revert" @onclick="StopLoop">Stop</button>
+                <button class="btn-cancel" @onclick="StopLoop">Stop</button>
             </span>
         </div>
     }
@@ -244,7 +244,8 @@
                                                                                 <button class="btn-cancel" style="font-size: 0.75rem; padding: 2px 8px;" @onclick="() => ToggleMoveMenu(template.Id)">Move to…</button>
                                                                                 @if (_moveMenuTemplateId == template.Id)
                                                                                 {
-                                                                                    <div class="move-to-menu" style="position: absolute; top: 100%; right: 0; z-index: 100; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 4px 12px rgba(0,0,0,0.3); min-width: 160px; padding: 4px 0;">
+                                                                                    <div class="move-to-backdrop" style="position: fixed; inset: 0; z-index: 99;" @onclick="() => ToggleMoveMenu(null)"></div>
+                                                                                    <div class="move-to-menu" style="position: absolute; top: 100%; right: 0; z-index: 100; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 4px 12px rgba(0,0,0,0.3); min-width: 160px; padding: 4px 0;">
                                                                                         @foreach (var targetProject in _projects.Where(p => p.Id != projectGroup.Project.Id))
                                                                                         {
                                                                                             <button class="move-to-option" style="display: block; width: 100%; text-align: left; padding: 6px 12px; background: none; border: none; color: var(--text); cursor: pointer; font-size: 0.8rem;"
@@ -534,7 +535,7 @@
                                 }
                                 else
                                 {
-                                    <button class="btn-revert" @onclick="StopLoop">⏹ Stop Loop</button>
+                                    <button class="btn-cancel" @onclick="StopLoop">⏹ Stop Loop</button>
                                 }
 
                                 @if (LoopService.IsLoopActive)
@@ -698,9 +699,9 @@
                 @if (_drawerHasMore || _drawerPage > 1)
                 {
                     <div style="display: flex; justify-content: center; gap: 8px; padding: 8px 0;">
-                        <button class="btn-cancel" @onclick="DrawerPrevPage" disabled="@(_drawerPage <= 1)">← Prev</button>
+                        <button class="btn-page" @onclick="DrawerPrevPage" disabled="@(_drawerPage <= 1)">← Prev</button>
                         <span class="monitoring-muted" style="align-self: center; font-size: 0.8rem;">Page @_drawerPage</span>
-                        <button class="btn-cancel" @onclick="DrawerNextPage" disabled="@(!_drawerHasMore)">Next →</button>
+                        <button class="btn-page" @onclick="DrawerNextPage" disabled="@(!_drawerHasMore)">Next →</button>
                     </div>
                 }
             }
@@ -799,9 +800,9 @@
                 @if (_prDrawerHasMore || _prDrawerPage > 1)
                 {
                     <div style="display: flex; justify-content: center; gap: 8px; padding: 8px 0;">
-                        <button class="btn-cancel" @onclick="PrDrawerPrevPage" disabled="@(_prDrawerPage <= 1)">← Prev</button>
+                        <button class="btn-page" @onclick="PrDrawerPrevPage" disabled="@(_prDrawerPage <= 1)">← Prev</button>
                         <span class="monitoring-muted" style="align-self: center; font-size: 0.8rem;">Page @_prDrawerPage</span>
-                        <button class="btn-cancel" @onclick="PrDrawerNextPage" disabled="@(!_prDrawerHasMore)">Next →</button>
+                        <button class="btn-page" @onclick="PrDrawerNextPage" disabled="@(!_prDrawerHasMore)">Next →</button>
                     </div>
                 }
             }
@@ -1075,7 +1076,7 @@
         _showAddForm = true;
     }
 
-    private void ToggleMoveMenu(string templateId)
+    private void ToggleMoveMenu(string? templateId)
     {
         _moveMenuTemplateId = _moveMenuTemplateId == templateId ? null : templateId;
     }
