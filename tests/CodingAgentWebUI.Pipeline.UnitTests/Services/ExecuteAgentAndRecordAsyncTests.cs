@@ -83,19 +83,16 @@ public class ExecuteAgentAndRecordAsyncTests
         result.Should().NotBeNull();
         result!.ExitCode.Should().Be(0);
 
-        // Output lines should be enqueued to run.OutputLines via the callback
-        _run.OutputLines.Should().HaveCount(3);
-        _run.OutputLines.Should().Contain("line1");
-        _run.OutputLines.Should().Contain("line2");
-        _run.OutputLines.Should().Contain("line3");
+        // EmitOutputLine should have been called for each line
+        _mockCallbacks.Verify(c => c.EmitOutputLine(It.IsAny<string>()), Times.Exactly(3));
+        _mockCallbacks.Verify(c => c.EmitOutputLine("line1"), Times.Once);
+        _mockCallbacks.Verify(c => c.EmitOutputLine("line2"), Times.Once);
+        _mockCallbacks.Verify(c => c.EmitOutputLine("line3"), Times.Once);
 
         // ChatHistory should contain the output summary
         _run.ChatHistory.Should().Contain(c =>
             c.Role == ChatRole.Agent &&
             c.Content.Contains("line1"));
-
-        // EmitOutputLine should have been called for each line
-        _mockCallbacks.Verify(c => c.EmitOutputLine(It.IsAny<string>()), Times.Exactly(3));
     }
 
     [Fact]

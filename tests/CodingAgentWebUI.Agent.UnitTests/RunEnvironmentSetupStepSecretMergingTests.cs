@@ -341,11 +341,11 @@ public class RunEnvironmentSetupStepSecretMergingTests : IDisposable
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        // Arrange — both null
+        // Arrange — both null, no setup steps → step returns immediately
         var job = CreateJobWithProjectAndRepoSecrets(
             projectSecrets: null,
             repoSecrets: null,
-            setupSteps: [new SetupStep { Name = "Noop", Command = "true" }]);
+            setupSteps: null);
 
         var step = new RunEnvironmentSetupStep(job);
         var context = CreateTestContext();
@@ -353,9 +353,10 @@ public class RunEnvironmentSetupStepSecretMergingTests : IDisposable
         // Act
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Assert — no secrets injected, context remains null
+        // Assert — no secrets injected, step skipped entirely
         result.Should().Be(StepResult.Continue);
-        // No secrets or setup steps means immediate return
+        context.InjectedSecretKeys.Should().BeNull();
+        context.InjectedSecrets.Should().BeNull();
         _mockCallbacks.Verify(c => c.TransitionTo(It.IsAny<PipelineStep>()), Times.Never);
     }
 
