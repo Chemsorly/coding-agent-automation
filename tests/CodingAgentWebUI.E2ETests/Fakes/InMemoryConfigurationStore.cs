@@ -165,8 +165,28 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     }
 
     // Projects
-    public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<PipelineProject>>(_projects.ToList());
+    public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
+    {
+        if (_projects.Count > 0)
+            return Task.FromResult<IReadOnlyList<PipelineProject>>(_projects.ToList());
+
+        // Auto-generate a Default project containing all template IDs from PipelineJobTemplates.
+        // This mirrors production behavior where ProjectMigrationService creates a Default project
+        // referencing all templates. Without this, the Consolidation page (and ConsolidationService)
+        // would use the pre-migration fallback path which may not match the code paths under test.
+        var templateIds = _pipelineConfig.PipelineJobTemplates.Select(t => t.Id).ToList();
+        if (templateIds.Count == 0)
+            return Task.FromResult<IReadOnlyList<PipelineProject>>(Array.Empty<PipelineProject>());
+
+        var defaultProject = new PipelineProject
+        {
+            Id = WellKnownIds.DefaultProjectId,
+            Name = "Default",
+            Enabled = true,
+            TemplateIds = templateIds
+        };
+        return Task.FromResult<IReadOnlyList<PipelineProject>>(new List<PipelineProject> { defaultProject });
+    }
 
     public Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct) =>
         Task.FromResult(_projects.FirstOrDefault(p => p.Id == id));
