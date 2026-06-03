@@ -246,6 +246,70 @@ public class MessageSerializationPropertyTests
         deserialized.RunType.Should().Be(runType);
     }
 
+    /// <summary>
+    /// ProviderConfig round-trip: Secrets and SetupSteps survive MessagePack serialization
+    /// via ContractlessStandardResolver (matching runtime SignalR behavior).
+    /// **Validates: Requirements 2.1, 6.2**
+    /// </summary>
+    [Fact]
+    public void ProviderConfig_RoundTrip_SecretsAndSetupSteps_Preserved()
+    {
+        var original = new ProviderConfig
+        {
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "myorg/private-project",
+            Settings = new Dictionary<string, string>
+            {
+                ["apiUrl"] = "https://api.github.com",
+                ["owner"] = "myorg",
+                ["repo"] = "private-project"
+            },
+            RepositoryRole = RepositoryRole.Work,
+            Secrets = new Dictionary<string, string>
+            {
+                ["NUGET_FEED_TOKEN"] = "ghp_abc123secretvalue",
+                ["PRIVATE_FEED_URL"] = "https://nuget.pkg.github.com/myorg/index.json"
+            },
+            SetupSteps =
+            [
+                new SetupStep
+                {
+                    Name = "Configure private NuGet feed",
+                    Command = "dotnet nuget add source \"$PRIVATE_FEED_URL\" --name github --username x --password \"$NUGET_FEED_TOKEN\" --store-password-in-clear-text"
+                },
+                new SetupStep
+                {
+                    Name = "Restore dependencies",
+                    Command = "dotnet restore"
+                }
+            ]
+        };
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<ProviderConfig>(bytes, MsgPackOptions);
+
+        deserialized.Should().NotBeNull();
+        deserialized.Kind.Should().Be(original.Kind);
+        deserialized.ProviderType.Should().Be(original.ProviderType);
+        deserialized.DisplayName.Should().Be(original.DisplayName);
+        deserialized.RepositoryRole.Should().Be(original.RepositoryRole);
+
+        // Secrets preserved
+        deserialized.Secrets.Should().NotBeNull();
+        deserialized.Secrets.Should().HaveCount(2);
+        deserialized.Secrets!["NUGET_FEED_TOKEN"].Should().Be("ghp_abc123secretvalue");
+        deserialized.Secrets["PRIVATE_FEED_URL"].Should().Be("https://nuget.pkg.github.com/myorg/index.json");
+
+        // SetupSteps preserved in order
+        deserialized.SetupSteps.Should().NotBeNull();
+        deserialized.SetupSteps.Should().HaveCount(2);
+        deserialized.SetupSteps![0].Name.Should().Be("Configure private NuGet feed");
+        deserialized.SetupSteps[0].Command.Should().Be("dotnet nuget add source \"$PRIVATE_FEED_URL\" --name github --username x --password \"$NUGET_FEED_TOKEN\" --store-password-in-clear-text");
+        deserialized.SetupSteps[1].Name.Should().Be("Restore dependencies");
+        deserialized.SetupSteps[1].Command.Should().Be("dotnet restore");
+    }
+
     private static JobAssignmentMessage CreateMinimalJobAssignmentMessage(PipelineRunType runType)
     {
         return new JobAssignmentMessage

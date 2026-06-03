@@ -1013,3 +1013,236 @@ select option { background: var(--surface); color: var(--text); }
 .consolidation-status-error { background: var(--bg-error); color: var(--error); border-left: 3px solid var(--error); }
 
 .sidebar-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: white; font-size: 0.65rem; font-weight: 700; margin-left: auto; }
+
+/* ═══ Secrets Section (Repo Provider Form) ═══ */
+.secrets-section {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+}
+
+.secrets-section[open] > .secrets-section-header {
+    border-bottom: 1px solid var(--border);
+}
+
+.secrets-section-header {
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--text);
+    list-style: none;
+}
+
+.secrets-section-header::-webkit-details-marker {
+    display: none;
+}
+
+.secrets-section-header::before {
+    content: "▸ ";
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.secrets-section[open] > .secrets-section-header::before {
+    content: "▾ ";
+}
+
+.secrets-section-body {
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.secret-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.secret-key-input {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.82rem;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    outline: none;
+}
+
+.secret-key-input:focus {
+    border-color: var(--accent);
+}
+
+.secret-value-input {
+    flex: 2;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.82rem;
+    outline: none;
+}
+
+.secret-value-input:focus {
+    border-color: var(--accent);
+}
+
+.btn-icon {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    transition: border-color 0.15s, color 0.15s;
+}
+
+.btn-icon:hover {
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+.btn-icon-danger:hover {
+    border-color: var(--error);
+    color: var(--error);
+}
+
+.btn-add-inline {
+    align-self: flex-start;
+    background: none;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    font-size: 0.82rem;
+    color: var(--accent-light);
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+}
+
+.btn-add-inline:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.secret-validation-error {
+    font-size: 0.75rem;
+    color: var(--error);
+    padding-left: 4px;
+    margin-top: -4px;
+}
+
+/* ═══ Setup Steps Section (Repo Provider Form) ═══ */
+.setup-steps-section {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+}
+
+.setup-steps-section[open] > .setup-steps-section-header {
+    border-bottom: 1px solid var(--border);
+}
+
+.setup-steps-section-header {
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--text);
+    list-style: none;
+}
+
+.setup-steps-section-header::-webkit-details-marker {
+    display: none;
+}
+
+.setup-steps-section-header::before {
+    content: "▸ ";
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.setup-steps-section[open] > .setup-steps-section-header::before {
+    content: "▾ ";
+}
+
+.setup-steps-section-body {
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.setup-step-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-alt);
+}
+
+.setup-step-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.setup-step-number {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    min-width: 20px;
+}
+
+.setup-step-name-input {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.82rem;
+    outline: none;
+}
+
+.setup-step-name-input:focus {
+    border-color: var(--accent);
+}
+
+.setup-step-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.setup-step-command-input {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.82rem;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    resize: vertical;
+    outline: none;
+    min-height: 48px;
+}
+
+.setup-step-command-input:focus {
+    border-color: var(--accent);
+}
+
+.setup-step-validation-error {
+    font-size: 0.75rem;
+    color: var(--error);
+    padding-left: 4px;
+}

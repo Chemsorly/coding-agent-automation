@@ -29,5 +29,6 @@ public enum PipelineStep
     PostingPlan,
     GeneratingSubIssues,
     CreatingIssues,
-    PostingSummary
+    PostingSummary,
+    RunningEnvironmentSetup
 }

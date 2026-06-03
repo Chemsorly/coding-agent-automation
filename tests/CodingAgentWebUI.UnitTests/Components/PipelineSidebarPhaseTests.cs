@@ -253,9 +253,9 @@ public class PipelineSidebarPhaseTests : BunitContext
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
-        // Preparation has 4 visible steps (no brain provider → SyncingBrainRepoPreRun hidden)
+        // Preparation has 5 visible steps (no brain provider → SyncingBrainRepoPreRun hidden)
         var counter = cut.Find("[data-testid='phase-preparation'] .phase-counter").TextContent;
-        Assert.Contains("4/4 ✓", counter);
+        Assert.Contains("5/5 ✓", counter);
     }
 
     [Fact]
@@ -294,23 +294,23 @@ public class PipelineSidebarPhaseTests : BunitContext
     [Fact]
     public void BrainStepsHidden_WhenNoBrainProvider_AffectsCounter()
     {
-        // No brain provider → SyncingBrainRepoPreRun hidden → Preparation has 4 steps
+        // No brain provider → SyncingBrainRepoPreRun hidden → Preparation has 5 steps
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
         var counter = cut.Find("[data-testid='phase-preparation'] .phase-counter").TextContent;
-        Assert.Contains("4/4", counter);
+        Assert.Contains("5/5", counter);
     }
 
     [Fact]
     public void BrainStepsVisible_WhenBrainProviderConfigured_AffectsCounter()
     {
-        // Brain provider set → SyncingBrainRepoPreRun visible → Preparation has 5 steps
+        // Brain provider set → SyncingBrainRepoPreRun visible → Preparation has 6 steps
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode, brainProviderConfigId: "brain-1");
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
         var counter = cut.Find("[data-testid='phase-preparation'] .phase-counter").TextContent;
-        Assert.Contains("5/5", counter);
+        Assert.Contains("6/6", counter);
     }
 
     [Fact]

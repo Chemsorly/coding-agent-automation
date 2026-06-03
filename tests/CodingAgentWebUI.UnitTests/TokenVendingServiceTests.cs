@@ -398,6 +398,88 @@ public class TokenVendingServiceTests
 
     #endregion
 
+    #region PrepareAgentConfigsAsync preserves all ProviderConfig properties
+
+    /// <summary>
+    /// Verifies that PrepareAgentConfigsAsync preserves Secrets, SetupSteps, RequiredLabels,
+    /// BlacklistedPaths, and BlacklistMode through the non-GitHub-App path (no privateKeyBase64).
+    /// **Validates: Requirements 2.1, 2.2, 2.3**
+    /// </summary>
+    [Fact]
+    public async Task PrepareAgentConfigsAsync_PreservesSecretsSetupStepsAndBlacklistProperties()
+    {
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
+
+        var secrets = new Dictionary<string, string>
+        {
+            ["NUGET_FEED_TOKEN"] = "ghp_abc123secretvalue",
+            ["PRIVATE_FEED_URL"] = "https://nuget.pkg.github.com/myorg/index.json"
+        };
+
+        var setupSteps = new List<SetupStep>
+        {
+            new() { Name = "Configure NuGet feed", Command = "dotnet nuget add source \"$PRIVATE_FEED_URL\" --name github --username x --password \"$NUGET_FEED_TOKEN\"" },
+            new() { Name = "Restore dependencies", Command = "dotnet restore" }
+        };
+
+        var requiredLabels = new List<string> { "dotnet", "dotnet10" };
+        var blacklistedPaths = new List<string> { "docs/", "*.md" };
+        var blacklistMode = BlacklistMode.Fail;
+
+        var configs = new List<ProviderConfig>
+        {
+            new()
+            {
+                Id = "repo-1",
+                Kind = ProviderKind.Repository,
+                ProviderType = "GitHub",
+                DisplayName = "myorg/private-project",
+                Settings = new Dictionary<string, string>
+                {
+                    [ProviderSettingKeys.Owner] = "myorg",
+                    [ProviderSettingKeys.Repo] = "private-project",
+                    [ProviderSettingKeys.BaseBranch] = "main"
+                },
+                RepositoryRole = RepositoryRole.Work,
+                RequiredLabels = requiredLabels,
+                BlacklistedPaths = blacklistedPaths,
+                BlacklistMode = blacklistMode,
+                Secrets = secrets,
+                SetupSteps = setupSteps
+            }
+        };
+
+        var result = await service.PrepareAgentConfigsAsync(configs, "repo-1", CancellationToken.None);
+
+        result.Should().HaveCount(1);
+        var output = result[0];
+
+        // Verify Secrets are preserved unchanged (Requirement 2.2)
+        output.Secrets.Should().NotBeNull();
+        output.Secrets.Should().BeEquivalentTo(secrets);
+
+        // Verify SetupSteps are preserved unchanged (Requirement 2.3)
+        output.SetupSteps.Should().NotBeNull();
+        output.SetupSteps.Should().HaveCount(2);
+        output.SetupSteps![0].Name.Should().Be("Configure NuGet feed");
+        output.SetupSteps[0].Command.Should().Be("dotnet nuget add source \"$PRIVATE_FEED_URL\" --name github --username x --password \"$NUGET_FEED_TOKEN\"");
+        output.SetupSteps[1].Name.Should().Be("Restore dependencies");
+        output.SetupSteps[1].Command.Should().Be("dotnet restore");
+
+        // Verify RequiredLabels are preserved (Requirement 2.1 — latent bug fix)
+        output.RequiredLabels.Should().NotBeNull();
+        output.RequiredLabels.Should().BeEquivalentTo(requiredLabels);
+
+        // Verify BlacklistedPaths are preserved (Requirement 2.1 — latent bug fix)
+        output.BlacklistedPaths.Should().NotBeNull();
+        output.BlacklistedPaths.Should().BeEquivalentTo(blacklistedPaths);
+
+        // Verify BlacklistMode is preserved (Requirement 2.1 — latent bug fix)
+        output.BlacklistMode.Should().Be(blacklistMode);
+    }
+
+    #endregion
+
     #region Property 6: PrepareAgentConfigsAsync strips private keys
 
     /// <summary>
