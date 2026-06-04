@@ -36,6 +36,10 @@ internal sealed class WriteProjectContextStep : IPipelineStep
             sb.AppendLine($"- **Description:** {repo.Description}");
             sb.AppendLine($"- **Decomposition enabled:** {repo.DecompositionEnabled}");
             sb.AppendLine($"- **Status:** {status}");
+            if (repo.LocalPath is not null)
+                sb.AppendLine($"- **Local path:** `{repo.LocalPath}/`");
+            else if (repo.RepoProviderId == context.Run.RepoProviderConfigId)
+                sb.AppendLine("- **Local path:** `.` (workspace root — primary repository)");
             if (repo.Labels.Count > 0)
                 sb.AppendLine($"- **Labels:** {string.Join(", ", repo.Labels)}");
             sb.AppendLine();

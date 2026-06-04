@@ -188,12 +188,30 @@ public static class SubIssueFileParser
                 labels.Add(label.GetString()!);
             }
 
+            // Parse targetRepository: optional, string (for cross-repo routing)
+            string? targetRepository = null;
+            if (root.TryGetProperty("targetRepository", out var targetRepoElement) ||
+                root.TryGetProperty("TargetRepository", out targetRepoElement))
+            {
+                if (targetRepoElement.ValueKind == JsonValueKind.String)
+                {
+                    var value = targetRepoElement.GetString();
+                    if (!string.IsNullOrWhiteSpace(value))
+                        targetRepository = value;
+                }
+                else if (targetRepoElement.ValueKind != JsonValueKind.Null)
+                {
+                    logger.Warning("Sub-issue file {FileName} has 'targetRepository' with incorrect type (expected string or null), ignoring", fileName);
+                }
+            }
+
             return new SubIssueProposal
             {
                 Title = title,
                 Body = body,
                 Dependencies = dependencies,
-                Labels = labels
+                Labels = labels,
+                TargetRepository = targetRepository
             };
         }
     }

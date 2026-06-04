@@ -123,6 +123,7 @@ public sealed class LocalPipelineExecutor
         IAgentProvider? agentProvider = null;
         IRepositoryProvider? brainProvider = null;
         IPipelineProvider? pipelineProvider = null;
+        List<(string TemplateName, IRepositoryProvider Provider)>? additionalRepoProviders = null;
         JobCompletionPayload? result = null;
 
         try
@@ -156,6 +157,39 @@ public sealed class LocalPipelineExecutor
                     pipelineProvider = providerFactory.CreatePipelineProvider(pipelineConfig);
             }
 
+            // Resolve additional repo providers for cross-repo decomposition
+            if (job.ProjectContext is not null &&
+                job.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+            {
+                additionalRepoProviders = [];
+                foreach (var repoTarget in job.ProjectContext.Repositories)
+                {
+                    // Skip the primary repo (already resolved as repoProvider) and repos without a provider ID
+                    if (string.IsNullOrEmpty(repoTarget.RepoProviderId) ||
+                        repoTarget.RepoProviderId == job.RepoProviderConfigId)
+                        continue;
+
+                    var additionalConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == repoTarget.RepoProviderId);
+                    if (additionalConfig is null)
+                    {
+                        _logger.Warning("Additional repo provider config '{ProviderId}' for template '{Template}' not found in job assignment",
+                            repoTarget.RepoProviderId, repoTarget.TemplateName);
+                        continue;
+                    }
+
+                    try
+                    {
+                        var additionalProvider = providerFactory.CreateRepositoryProvider(additionalConfig);
+                        additionalRepoProviders.Add((repoTarget.TemplateName, additionalProvider));
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.Warning(ex, "Failed to create repo provider for template '{Template}', skipping",
+                            repoTarget.TemplateName);
+                    }
+                }
+            }
+
             await repoProvider.ValidateAsync(ct);
             await agentProvider.ValidateAsync(ct);
             if (pipelineProvider is not null)
@@ -163,7 +197,7 @@ public sealed class LocalPipelineExecutor
 
             result = await ExecutePipelineStepsAsync(
                 job, config, repoProvider, agentProvider, brainProvider, pipelineProvider,
-                issueOps, connection, outputBatcher, onStepChanged, ct);
+                issueOps, connection, outputBatcher, onStepChanged, ct, additionalRepoProviders);
 
             activity?.SetTag("pipeline.final_step", result.FinalStep.ToString());
             return result;
@@ -189,6 +223,15 @@ public sealed class LocalPipelineExecutor
             if (agentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
             if (brainProvider is IAsyncDisposable brd) await brd.DisposeAsync();
             if (pipelineProvider is IAsyncDisposable pd) await pd.DisposeAsync();
+
+            // Dispose additional repo providers used for cross-repo decomposition cloning
+            if (additionalRepoProviders is not null)
+            {
+                foreach (var (_, provider) in additionalRepoProviders)
+                {
+                    if (provider is IAsyncDisposable ard) await ard.DisposeAsync();
+                }
+            }
         }
     }
 
@@ -203,7 +246,8 @@ public sealed class LocalPipelineExecutor
         HubConnection connection,
         OutputBatcher outputBatcher,
         Action<PipelineStep?>? onStepChanged,
-        CancellationToken ct)
+        CancellationToken ct,
+        List<(string TemplateName, IRepositoryProvider Provider)>? additionalRepoProviders = null)
     {
         var run = new PipelineRun
         {
@@ -280,12 +324,16 @@ public sealed class LocalPipelineExecutor
                 pipelineProvider, issueOps, connection, prOrchestrator, agentExecution,
                 qualityGates, localCts, prContext, TransitionTo, EmitOutputLine, ReportQualityGateResult, ct);
 
+            // Inject additional repo providers for cross-repo decomposition cloning
+            if (additionalRepoProviders is { Count: > 0 })
+                context.AdditionalRepoProviders = additionalRepoProviders;
+
             // Build step pipeline based on run type
             var steps = run.RunType switch
             {
                 PipelineRunType.Review => BuildReviewStepPipeline(job),
                 PipelineRunType.DecompositionAnalysis => BuildDecompositionAnalysisStepPipeline(job, _openIssueContextWriter),
-                PipelineRunType.Decomposition => BuildDecompositionStepPipeline(job),
+                PipelineRunType.Decomposition => BuildDecompositionStepPipeline(job, _openIssueContextWriter),
                 _ => BuildAgentStepPipeline(job, connection)
             };
 
@@ -478,6 +526,7 @@ public sealed class LocalPipelineExecutor
         return new IPipelineStep[]
         {
             new CloneRepositoryStep(),
+            new CloneProjectRepositoriesStep(),
             new RunEnvironmentSetupStep(job),
             new SyncBrainPreRunStep(),
             new WriteProjectContextStep(),
@@ -489,15 +538,23 @@ public sealed class LocalPipelineExecutor
 
     /// <summary>
     /// Builds the step pipeline for Decomposition (Phase 2).
-    /// Sequence: Clone → SyncBrain → Decomposition → CreateSubIssues → PostDecompositionSummary.
+    /// Sequence: Clone → SyncBrain → WriteProjectContext → WriteOpenIssueContext → Decomposition → CreateSubIssues → PostDecompositionSummary.
+    /// WriteProjectContextStep is included so the agent has cross-repo routing context
+    /// when generating sub-issue JSON files with targetRepository values.
+    /// WriteOpenIssueContextStep provides deduplication context for the agent.
     /// </summary>
-    internal static IReadOnlyList<IPipelineStep> BuildDecompositionStepPipeline(JobAssignmentMessage job)
+    internal static IReadOnlyList<IPipelineStep> BuildDecompositionStepPipeline(
+        JobAssignmentMessage job,
+        IOpenIssueContextWriter openIssueContextWriter)
     {
         return new IPipelineStep[]
         {
             new CloneRepositoryStep(),
+            new CloneProjectRepositoriesStep(),
             new RunEnvironmentSetupStep(job),
             new SyncBrainPreRunStep(),
+            new WriteProjectContextStep(),
+            new WriteOpenIssueContextStep(openIssueContextWriter),
             new DecompositionStep(),
             new CreateSubIssuesStep(),
             new PostDecompositionSummaryStep()

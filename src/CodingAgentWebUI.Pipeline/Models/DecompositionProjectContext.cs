@@ -40,4 +40,17 @@ public sealed record RepositoryTarget
     /// to route decomposed issues to the correct target repository's issue tracker.
     /// </summary>
     public string? IssueProviderId { get; init; }
+
+    /// <summary>
+    /// Repository provider config ID for the template. Used by <c>CloneProjectRepositoriesStep</c>
+    /// to clone additional project repos into the workspace for cross-repo code exploration.
+    /// </summary>
+    public string? RepoProviderId { get; init; }
+
+    /// <summary>
+    /// Local filesystem path (relative to workspace root) where this repository is cloned.
+    /// Set by <c>CloneProjectRepositoriesStep</c> after successful clone.
+    /// Null if the repo was not cloned (unavailable, clone failed, or is the primary repo at workspace root).
+    /// </summary>
+    public string? LocalPath { get; set; }
 }
