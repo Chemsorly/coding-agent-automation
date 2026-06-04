@@ -274,20 +274,25 @@ The pipeline supports multiple provider backends. Each provider type requires sp
 
 ```
 src/
-  CodingAgentWebUI/                — Blazor Server app (UI, DI wiring, entry point)
-  CodingAgentWebUI.Pipeline/       — Core library (interfaces, models, orchestration)
-  CodingAgentWebUI.Infrastructure/ — Provider implementations (see table below)
-  CodingAgentWebUI.Orchestration/  — Agent registry, job dispatch, run tracking
-  CodingAgentWebUI.Agent/          — Agent worker container (SignalR client, CLI invocation)
-  KiroCliLib/                      — Shared library (agent CLI process management)
+  CodingAgentWebUI/                    — Blazor Server app (UI, DI wiring, entry point)
+  CodingAgentWebUI.Pipeline/           — Core library (interfaces, models, orchestration)
+  CodingAgentWebUI.Pipeline.CodeReview/ — Code review parsing (findings parser, inline comments, diff hunks)
+  CodingAgentWebUI.Infrastructure/     — Provider implementations (see table below)
+  CodingAgentWebUI.Orchestration/      — Agent registry, job dispatch, run tracking
+  CodingAgentWebUI.Agent/              — Agent worker container (SignalR client, CLI invocation)
+  CodingAgentWebUI.Agent.KiroCli/      — Kiro CLI agent provider (process wrapper)
+  CodingAgentWebUI.Agent.OpenCode/     — OpenCode agent provider (alternative agent backend)
+  KiroCliLib/                          — Shared library (agent CLI process management)
 tests/
   CodingAgentWebUI.UnitTests/              — WebUI unit tests
   CodingAgentWebUI.Pipeline.UnitTests/     — Pipeline core unit + property tests
   CodingAgentWebUI.Infrastructure.UnitTests/ — Infrastructure unit tests
+  CodingAgentWebUI.Infrastructure.IntegrationTests/ — Infrastructure integration tests
   CodingAgentWebUI.Agent.UnitTests/        — Agent unit tests
   CodingAgentWebUI.IntegrationTests/       — Integration tests (bUnit)
   CodingAgentWebUI.E2ETests/               — End-to-end tests
   KiroCliLib.UnitTests/                    — KiroCliLib unit tests
+  CodingAgentWebUI.TestUtilities/          — Shared test utilities
 dockerfiles/
   webui.Dockerfile                    — Orchestrator (web UI)
   kiro/
