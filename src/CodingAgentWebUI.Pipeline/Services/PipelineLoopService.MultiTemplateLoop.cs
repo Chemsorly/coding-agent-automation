@@ -97,668 +97,765 @@ public sealed partial class PipelineLoopService
 
         while (!_stopRequested && !ct.IsCancellationRequested)
         {
-            // Step 1: Snapshot — read config at cycle start (immutable for cycle duration)
-            var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
-            var pollInterval = config.ClosedLoopPollInterval;
-            var maxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
-            var maxConsecutiveFailures = config.ClosedLoopMaxConsecutivePollFailures;
-            var maxPagesToFetch = config.ClosedLoopMaxPagesToFetch;
+            // Step 1–2: Snapshot config and reconcile provider caches
+            var snapshot = await SnapshotAndReconcileAsync(ct);
+            if (snapshot is null) { await DelayOrStop(TimeSpan.FromSeconds(5), ct); continue; }
 
-            // Load projects and flatten templates using project-based ordering
-            var projects = await _projectStore.LoadProjectsAsync(ct) ?? (IReadOnlyList<PipelineProject>)[];
-            var flattenedTemplates = FlattenTemplates(projects, config);
-            var enabledTemplates = flattenedTemplates.Select(ft => ft.Template).ToList();
-
-            // Pre-built lookup shared by FlattenTemplates logic and SelectDecompositionTemplate
-            var templateLookup = config.PipelineJobTemplates.ToDictionary(t => t.Id);
-
-            // Filter out rate-limited templates
-            var now = DateTimeOffset.UtcNow;
-            var pollableEntries = flattenedTemplates.Where(ft =>
-            {
-                if (_templateStatuses.TryGetValue(ft.Template.Id, out var status) && status.RateLimitResetAt.HasValue)
-                    return now >= status.RateLimitResetAt.Value;
-                return true;
-            }).ToList();
-            var pollableTemplates = pollableEntries.Select(pe => pe.Template).ToList();
-
-            CurrentCycleTemplateCount = enabledTemplates.Count;
-
-            // Step 2: Provider cache reconciliation
-            var neededIds = enabledTemplates.Select(t => t.IssueProviderId).ToHashSet();
-
-            // Include project-level EpicIssueProviderId values so the cache contains epic providers for polling
-            foreach (var project in projects.Where(p => p.Enabled && !string.IsNullOrEmpty(p.EpicIssueProviderId)))
-                neededIds.Add(project.EpicIssueProviderId!);
-
-            var issueProviderConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
-            await ReconcileProviderCacheAsync(neededIds, issueProviderConfigs, ct);
-
-            // Reconcile repo provider cache for templates with ReviewEnabled or DecompositionEnabled
-            var neededRepoIds = enabledTemplates
-                .Where(t => t.ReviewEnabled || t.DecompositionEnabled)
-                .Select(t => t.RepoProviderId)
-                .ToHashSet();
-            if (neededRepoIds.Count > 0)
-            {
-                try
-                {
-                    var repoProviderConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-                    await ReconcileRepoProviderCacheAsync(neededRepoIds, repoProviderConfigs, ct);
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Failed to reconcile repo provider cache, PR polling will be skipped this cycle");
-                }
-            }
-
-            // Step 3: Poll once per pollable template (issues + PRs + decomposition)
-            var issueQueues = new Dictionary<string, List<IssueSummary>>();
-            var prQueues = new Dictionary<string, List<PullRequestSummary>>();
-            var decompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
-            for (int i = 0; i < pollableTemplates.Count; i++)
-            {
-                if (_stopRequested || ct.IsCancellationRequested) break;
-
-                var template = pollableTemplates[i];
-                CurrentCycleTemplateIndex = i;
-                StatusMessage = $"🔄 Polling template '{template.Name}' ({i + 1} of {pollableTemplates.Count})";
-
-                // Mark as currently polling
-                _templateStatuses[template.Id] = (_templateStatuses.TryGetValue(template.Id, out var prev) ? prev : ConfigStatusSnapshot.Empty)
-                    with { IsCurrentlyPolling = true };
-                NotifyChange();
-
-                try
-                {
-                    // ── Issue polling (only when ImplementationEnabled) ──
-                    if (template.ImplementationEnabled)
-                    {
-                        if (!_providerCache.TryGetValue(template.IssueProviderId, out var provider))
-                        {
-                            // Provider not in cache (config issue) — skip issues
-                            _templateStatuses[template.Id] = new ConfigStatusSnapshot
-                            {
-                                LastPollTime = DateTimeOffset.UtcNow,
-                                LastError = $"Issue provider '{template.IssueProviderId}' not found in cache.",
-                                IsCurrentlyPolling = false
-                            };
-                            issueQueues[template.Id] = new List<IssueSummary>();
-                        }
-                        else
-                        {
-                            var issues = await FetchAgentNextIssuesForProviderAsync(provider, maxPagesToFetch, ct);
-                            issueQueues[template.Id] = issues;
-                        }
-                    }
-                    else
-                    {
-                        issueQueues[template.Id] = new List<IssueSummary>();
-                    }
-
-                    // ── PR polling (only when ReviewEnabled) ──
-                    // Wrapped in its own try-catch so that a PR polling failure does not
-                    // discard the already-fetched issue queue for this template.
-                    prQueues[template.Id] = new List<PullRequestSummary>();
-                    if (template.ReviewEnabled)
-                    {
-                        try
-                        {
-                            if (!_repoProviderCache.TryGetValue(template.RepoProviderId, out var repoProvider))
-                            {
-                                _logger.Warning("Template '{TemplateName}': repo provider '{RepoProviderId}' not found in cache, skipping PR polling",
-                                    template.Name, template.RepoProviderId);
-                            }
-                            else
-                            {
-                                var prs = await FetchAgentNextPullRequestsAsync(repoProvider, maxPagesToFetch, ct);
-                                prQueues[template.Id] = prs;
-                            }
-                        }
-                        catch (OperationCanceledException) { throw; }
-                        catch (Exception ex)
-                        {
-                            _logger.Warning(ex, "Template '{TemplateName}' PR polling failed, issue polling unaffected: {Error}",
-                                template.Name, ex.Message);
-                        }
-                    }
-
-                    // ── Decomposition polling (only when DecompositionEnabled) ──
-                    // Wrapped in its own try-catch so that a decomposition polling failure does not
-                    // discard the already-fetched issue/PR queues for this template.
-                    decompositionQueues[template.Id] = new List<(IssueSummary, PipelineRunType)>();
-                    if (template.DecompositionEnabled)
-                    {
-                        try
-                        {
-                            if (!_providerCache.TryGetValue(template.IssueProviderId, out var decompProvider))
-                            {
-                                _logger.Warning("Template '{TemplateName}': issue provider '{IssueProviderId}' not found in cache, skipping decomposition polling",
-                                    template.Name, template.IssueProviderId);
-                            }
-                            else
-                            {
-                                // Validate that RepoProviderId references an existing provider config (Req 1.3)
-                                // IssueProviderId is already validated by the provider cache lookup above.
-                                if (!_repoProviderCache.ContainsKey(template.RepoProviderId))
-                                {
-                                    _logger.Warning("Template '{TemplateName}': decomposition skipped — RepoProviderId '{RepoProviderId}' references non-existent provider config",
-                                        template.Name, template.RepoProviderId);
-                                }
-                                else
-                                {
-                                    // Poll for agent:epic issues (Phase 1 candidates)
-                                    var epicIssues = await FetchEpicIssuesAsync(decompProvider, AgentLabels.Epic, maxPagesToFetch, ct);
-                                    foreach (var epic in epicIssues)
-                                        decompositionQueues[template.Id].Add((epic, PipelineRunType.DecompositionAnalysis));
-
-                                    // Poll for agent:epic-approved issues (Phase 2 candidates)
-                                    var approvedIssues = await FetchEpicIssuesAsync(decompProvider, AgentLabels.EpicApproved, maxPagesToFetch, ct);
-                                    foreach (var approved in approvedIssues)
-                                        decompositionQueues[template.Id].Add((approved, PipelineRunType.Decomposition));
-                                }
-                            }
-                        }
-                        catch (OperationCanceledException) { throw; }
-                        catch (Exception ex)
-                        {
-                            _logger.Warning(ex, "Template '{TemplateName}' decomposition polling failed, issue/PR polling unaffected: {Error}",
-                                template.Name, ex.Message);
-                        }
-                    }
-
-                    // Success — update status
-                    var issueCount = issueQueues[template.Id].Count;
-                    var prCount = prQueues[template.Id].Count;
-                    var decompCount = decompositionQueues[template.Id].Count;
-                    _templateStatuses[template.Id] = new ConfigStatusSnapshot
-                    {
-                        LastPollTime = DateTimeOffset.UtcNow,
-                        LastPollIssueCount = issueCount + prCount + decompCount,
-                        LastError = null,
-                        ConsecutiveFailures = 0,
-                        RateLimitResetAt = null,
-                        IsCurrentlyPolling = false
-                    };
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-                catch (RateLimitExceededException ex)
-                {
-                    _logger.Warning("Template '{TemplateName}' rate limited until {ResetAt}", template.Name, ex.ResetAt);
-                    var prevStatus = _templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
-                    _templateStatuses[template.Id] = prevStatus with
-                    {
-                        LastPollTime = DateTimeOffset.UtcNow,
-                        RateLimitResetAt = ex.ResetAt,
-                        IsCurrentlyPolling = false
-                    };
-                    issueQueues[template.Id] = new List<IssueSummary>();
-                    prQueues[template.Id] = new List<PullRequestSummary>();
-                    decompositionQueues[template.Id] = new List<(IssueSummary, PipelineRunType)>();
-                }
-                catch (Exception ex) when (IsAuthError(ex))
-                {
-                    _logger.Warning(ex, "Template '{TemplateName}' auth error, evicting cached provider", template.Name);
-                    await EvictProviderOnAuthErrorAsync(template.IssueProviderId);
-                    var prevStatus = _templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
-                    _templateStatuses[template.Id] = prevStatus with
-                    {
-                        LastPollTime = DateTimeOffset.UtcNow,
-                        LastError = ex.Message,
-                        ConsecutiveFailures = prevStatus.ConsecutiveFailures + 1,
-                        IsCurrentlyPolling = false
-                    };
-                    issueQueues[template.Id] = new List<IssueSummary>();
-                    prQueues[template.Id] = new List<PullRequestSummary>();
-                    decompositionQueues[template.Id] = new List<(IssueSummary, PipelineRunType)>();
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Template '{TemplateName}' poll failed: {Error}", template.Name, ex.Message);
-                    var prevStatus = _templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
-                    _templateStatuses[template.Id] = prevStatus with
-                    {
-                        LastPollTime = DateTimeOffset.UtcNow,
-                        LastError = ex.Message,
-                        ConsecutiveFailures = prevStatus.ConsecutiveFailures + 1,
-                        IsCurrentlyPolling = false
-                    };
-                    issueQueues[template.Id] = new List<IssueSummary>();
-                    prQueues[template.Id] = new List<PullRequestSummary>();
-                    decompositionQueues[template.Id] = new List<(IssueSummary, PipelineRunType)>();
-                }
-            }
+            // Step 3: Poll per-template queues (issues + PRs + decomposition)
+            var (issueQueues, prQueues, decompositionQueues) = await PollTemplateQueuesAsync(
+                snapshot.PollableTemplates, snapshot.MaxPagesToFetch, ct);
 
             if (_stopRequested || ct.IsCancellationRequested) break;
 
-            // Step 3b: Project-level epic polling — poll EpicIssueProviderId for each enabled project
-            // that has the field set and at least one decomposition-enabled template.
-            // This is separate from per-template decomposition polling (which uses the template's own IssueProviderId).
-            var projectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>();
-            foreach (var project in projects.Where(p => p.Enabled && !string.IsNullOrEmpty(p.EpicIssueProviderId)))
-            {
-                if (_stopRequested || ct.IsCancellationRequested) break;
-
-                var epicProviderId = project.EpicIssueProviderId!;
-
-                // Validate that EpicIssueProviderId references an existing provider config in the cache
-                if (!_providerCache.TryGetValue(epicProviderId, out var epicProvider))
-                {
-                    _logger.Warning("Project '{ProjectName}': EpicIssueProviderId '{EpicProviderId}' not found in provider cache, skipping project-level epic polling",
-                        project.Name, epicProviderId);
-                    continue;
-                }
-
-                // Select the first decomposition-enabled template in the project
-                var decompositionTemplate = SelectDecompositionTemplate(project, templateLookup);
-                if (decompositionTemplate is null)
-                {
-                    _logger.Warning("Project '{ProjectName}': no decomposition-enabled template found, skipping project-level epic polling",
-                        project.Name);
-                    continue;
-                }
-
-                try
-                {
-                    var projectQueue = new List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>();
-
-                    // Poll for agent:epic issues (Phase 1 candidates)
-                    var epicIssues = await FetchEpicIssuesAsync(epicProvider, AgentLabels.Epic, maxPagesToFetch, ct);
-                    foreach (var epic in epicIssues)
-                        projectQueue.Add((epic, PipelineRunType.DecompositionAnalysis, decompositionTemplate));
-
-                    // Poll for agent:epic-approved issues (Phase 2 candidates)
-                    var approvedIssues = await FetchEpicIssuesAsync(epicProvider, AgentLabels.EpicApproved, maxPagesToFetch, ct);
-                    foreach (var approved in approvedIssues)
-                        projectQueue.Add((approved, PipelineRunType.Decomposition, decompositionTemplate));
-
-                    if (projectQueue.Count > 0)
-                        projectLevelDecompositionQueues[project.Id] = projectQueue;
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Project '{ProjectName}' project-level epic polling failed: {Error}",
-                        project.Name, ex.Message);
-                }
-            }
+            // Step 3b: Project-level epic polling
+            var projectLevelDecompositionQueues = await PollProjectLevelEpicsAsync(
+                snapshot.Projects, snapshot.TemplateLookup, snapshot.MaxPagesToFetch, ct);
 
             if (_stopRequested || ct.IsCancellationRequested) break;
 
-            // Step 4: Circuit breaker — trip only when ALL enabled templates are failing
-            var allFailing = enabledTemplates.Count > 0 && enabledTemplates.All(t =>
-            {
-                if (_templateStatuses.TryGetValue(t.Id, out var s))
-                    return s.ConsecutiveFailures >= maxConsecutiveFailures;
-                return false;
-            });
-
-            if (allFailing)
-            {
-                IsCircuitBroken = true;
-                StatusMessage = $"⚠️ Loop paused — all {enabledTemplates.Count} templates failing.";
-                NotifyChange();
-                _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures",
-                    enabledTemplates.Count, maxConsecutiveFailures);
-
-                _resumeSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                try { await _resumeSignal.Task.WaitAsync(ct); }
-                catch (OperationCanceledException) { break; }
-                if (_stopRequested) break;
+            // Step 4: Circuit breaker
+            if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.MaxConsecutiveFailures, ct))
                 continue;
-            }
 
-            // Step 5: Fair dispatch — three-way interleaved round-robin (issues → PRs → decomposition)
-            // Alternates between dispatching one round of issues (one per template), one round
-            // of PRs (one per template), and one round of decomposition (one per template) to
-            // ensure all three queue types get fair access to the budget.
-            // Within each round, templates are served round-robin (one item per template per pass).
-            {
-                int remaining = maxRunsPerCycle > 0 ? maxRunsPerCycle : int.MaxValue;
-
-                // Per-cycle dependency state cache shared across all issue evaluations
-                var cycleStateCache = new Dictionary<int, bool>();
-
-                // Build template → project lookup for passing project context at dispatch time
-                var templateProjectLookup = flattenedTemplates.ToDictionary(ft => ft.Template.Id, ft => ft.Project);
-
-                // Count active decomposition runs for concurrency enforcement
-                var activeDecompositionCount = _orchestration.GetAllActiveRuns()
-                    .Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
-
-                // Three-way turn tracking: 0 = issues, 1 = PRs, 2 = decomposition
-                int currentTurn = 0;
-
-                while (remaining > 0)
-                {
-                    if (_stopRequested || ct.IsCancellationRequested) break;
-
-                    bool issueMadeProgress = false;
-                    bool prMadeProgress = false;
-                    bool decompMadeProgress = false;
-
-                    bool hasIssues = HasEligibleIssues(pollableTemplates, issueQueues);
-                    bool hasPrs = HasEligiblePrs(pollableTemplates, prQueues);
-                    bool hasDecomp = (HasEligibleDecomposition(pollableTemplates, decompositionQueues)
-                        || HasEligibleProjectLevelDecomposition(projectLevelDecompositionQueues))
-                        && activeDecompositionCount < config.MaxConcurrentDecompositions;
-
-                    // Determine which queue to dispatch from this iteration.
-                    // If the current turn's queue is empty, try the next non-empty queue.
-                    int startTurn = currentTurn;
-                    bool foundTurn = false;
-                    for (int attempt = 0; attempt < 3; attempt++)
-                    {
-                        int tryTurn = (startTurn + attempt) % 3;
-                        if ((tryTurn == 0 && hasIssues) || (tryTurn == 1 && hasPrs) || (tryTurn == 2 && hasDecomp))
-                        {
-                            currentTurn = tryTurn;
-                            foundTurn = true;
-                            break;
-                        }
-                    }
-                    if (!foundTurn) break; // All queues exhausted
-
-                    // ── Issue dispatch (one per template per pass) ──
-                    if (currentTurn == 0 && hasIssues)
-                    {
-                        var (progress, count) = await DispatchRoundAsync(pollableTemplates, async (template, stopToken) =>
-                        {
-                            if (!template.ImplementationEnabled) return DispatchAttemptResult.Skip;
-                            if (!issueQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
-                                return DispatchAttemptResult.Skip;
-
-                            // Dequeue next valid issue
-                            IssueSummary? issue = null;
-                            while (queue.Count > 0)
-                            {
-                                var candidate = queue[0];
-                                queue.RemoveAt(0);
-
-                                if (candidate.Labels.Contains(AgentLabels.Error) || candidate.Labels.Contains(AgentLabels.NeedsRefinement))
-                                    continue;
-                                if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
-                                    continue;
-                                if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier))
-                                    continue;
-
-                                if (_dependencyChecker != null)
-                                {
-                                    if (!_providerCache.TryGetValue(template.IssueProviderId, out var provider))
-                                    {
-                                        _logger.Warning("Provider '{ProviderId}' not in cache during dependency check for #{Identifier}, skipping dispatch",
-                                            template.IssueProviderId, candidate.Identifier);
-                                        continue;
-                                    }
-
-                                    var depResult = await _dependencyChecker.CheckAsync(
-                                        candidate.Identifier, candidate.Description, provider, cycleStateCache, ct);
-                                    if (!depResult.IsReady)
-                                    {
-                                        _logger.Information("Issue #{Identifier} blocked by open issues: {BlockedBy}. Skipping dispatch.",
-                                            candidate.Identifier, depResult.BlockedBy);
-                                        continue;
-                                    }
-                                }
-
-                                issue = candidate;
-                                break;
-                            }
-
-                            if (issue is null) return DispatchAttemptResult.Skip;
-
-                            CurrentIssueIdentifier = issue.Identifier;
-                            StatusMessage = $"🔄 Dispatching #{issue.Identifier} from '{template.Name}'";
-                            NotifyChange();
-
-                            var dispatchProject = templateProjectLookup.GetValueOrDefault(template.Id);
-                            _logger.Information("Dispatching issue {Issue} with project '{ProjectName}' (id={ProjectId}, template={TemplateId})",
-                                issue.Identifier, dispatchProject?.Name ?? "NULL", dispatchProject?.Id ?? "NULL", template.Id);
-
-                            var dispatched = await _jobDispatcher!.TryDispatchAsync(
-                                issue.Identifier,
-                                template.IssueProviderId, template.RepoProviderId,
-                                template.BrainProviderId, template.PipelineProviderId,
-                                initiatedBy: "loop",
-                                stopToken,
-                                issueTitle: issue.Title,
-                                project: dispatchProject);
-
-                            if (dispatched)
-                                _logger.Information("Dispatched issue #{Issue} from template '{Template}'",
-                                    issue.Identifier, template.Name);
-
-                            return new DispatchAttemptResult(dispatched);
-                        }, remaining, stoppingToken, ct);
-                        issueMadeProgress = progress;
-                        remaining -= count;
-                    }
-
-                    if (_stopRequested || ct.IsCancellationRequested || remaining <= 0) break;
-
-                    // ── PR review dispatch (one per template per pass) ──
-                    if (currentTurn == 1 && hasPrs)
-                    {
-                        var (progress, count) = await DispatchRoundAsync(pollableTemplates, async (template, stopToken) =>
-                        {
-                            if (!template.ReviewEnabled) return DispatchAttemptResult.Skip;
-                            if (!prQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
-                                return DispatchAttemptResult.Skip;
-
-                            PullRequestSummary? pr = null;
-                            while (queue.Count > 0)
-                            {
-                                var candidate = queue[0];
-                                queue.RemoveAt(0);
-
-                                if (candidate.Labels.Contains(AgentLabels.Error) ||
-                                    candidate.Labels.Contains(AgentLabels.InProgress) ||
-                                    candidate.Labels.Contains(AgentLabels.Done) ||
-                                    candidate.Labels.Contains(AgentLabels.Cancelled))
-                                    continue;
-                                if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
-                                    continue;
-                                if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier))
-                                    continue;
-
-                                pr = candidate;
-                                break;
-                            }
-
-                            if (pr is null) return DispatchAttemptResult.Skip;
-
-                            CurrentIssueIdentifier = pr.Identifier;
-                            StatusMessage = $"🔄 Dispatching PR #{pr.Identifier} review from '{template.Name}'";
-                            NotifyChange();
-
-                            var dispatched = await _jobDispatcher!.TryDispatchReviewAsync(
-                                new ReviewDispatchRequest
-                                {
-                                    PrIdentifier = pr.Identifier,
-                                    PrBranchName = pr.BranchName,
-                                    PrTitle = pr.Title,
-                                    PrDescription = pr.Description,
-                                    PrAuthor = pr.Author,
-                                    PrUrl = pr.Url,
-                                    PrTargetBranch = pr.TargetBranch,
-                                    IssueProviderId = template.IssueProviderId,
-                                    RepoProviderId = template.RepoProviderId,
-                                    BrainProviderId = template.BrainProviderId,
-                                    InitiatedBy = "loop"
-                                },
-                                stopToken,
-                                project: templateProjectLookup[template.Id]);
-
-                            if (dispatched)
-                                _logger.Information("Dispatched PR #{PrIdentifier} review from template '{Template}'",
-                                    pr.Identifier, template.Name);
-
-                            return new DispatchAttemptResult(dispatched);
-                        }, remaining, stoppingToken, ct);
-                        prMadeProgress = progress;
-                        remaining -= count;
-                    }
-
-                    if (_stopRequested || ct.IsCancellationRequested || remaining <= 0) break;
-
-                    // ── Decomposition dispatch (one per template per pass) ──
-                    if (currentTurn == 2 && hasDecomp)
-                    {
-                        var (progress, count) = await DispatchRoundAsync(pollableTemplates, async (template, stopToken) =>
-                        {
-                            if (!template.DecompositionEnabled) return DispatchAttemptResult.Skip;
-                            if (!decompositionQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
-                                return DispatchAttemptResult.Skip;
-
-                            // Re-check concurrency limit before each dispatch
-                            if (activeDecompositionCount >= config.MaxConcurrentDecompositions)
-                            {
-                                _logger.Information("Decomposition concurrency limit reached ({Active}/{Max}), skipping remaining decomposition dispatch",
-                                    activeDecompositionCount, config.MaxConcurrentDecompositions);
-                                return DispatchAttemptResult.Abort;
-                            }
-
-                            (IssueSummary Issue, PipelineRunType Phase)? epic = null;
-                            while (queue.Count > 0)
-                            {
-                                var candidate = queue[0];
-                                queue.RemoveAt(0);
-
-                                if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier))
-                                    continue;
-                                if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier))
-                                    continue;
-
-                                epic = candidate;
-                                break;
-                            }
-
-                            if (epic is null) return DispatchAttemptResult.Skip;
-
-                            var epicItem = epic.Value;
-                            var phaseLabel = epicItem.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
-
-                            CurrentIssueIdentifier = epicItem.Issue.Identifier;
-                            StatusMessage = $"🧩 Dispatching epic #{epicItem.Issue.Identifier} {phaseLabel} from '{template.Name}'";
-                            NotifyChange();
-
-                            var dispatched = await _jobDispatcher!.TryDispatchDecompositionAsync(
-                                epicItem.Issue.Identifier,
-                                epicItem.Issue.Title,
-                                epicItem.Phase,
-                                template.IssueProviderId,
-                                template.RepoProviderId,
-                                template.BrainProviderId,
-                                initiatedBy: "loop",
-                                stopToken,
-                                project: templateProjectLookup[template.Id]);
-
-                            if (dispatched)
-                            {
-                                activeDecompositionCount++;
-                                _logger.Information("Dispatched epic #{EpicIdentifier} ({Phase}) from template '{Template}'",
-                                    epicItem.Issue.Identifier, epicItem.Phase, template.Name);
-                            }
-
-                            return new DispatchAttemptResult(dispatched);
-                        }, remaining, stoppingToken, ct);
-                        decompMadeProgress = progress;
-                        remaining -= count;
-                    }
-
-                    // ── Project-level decomposition dispatch ──
-                    // Dispatch epics from project-level EpicIssueProviderId after template-level decomposition.
-                    // These use the first decomposition-enabled template in the project (SelectDecompositionTemplate).
-                    if (currentTurn == 2 && !decompMadeProgress && projectLevelDecompositionQueues.Count > 0
-                        && activeDecompositionCount < config.MaxConcurrentDecompositions)
-                    {
-                        foreach (var kvp in projectLevelDecompositionQueues.ToList())
-                        {
-                            if (remaining <= 0 || _stopRequested || ct.IsCancellationRequested) break;
-                            if (activeDecompositionCount >= config.MaxConcurrentDecompositions) break;
-
-                            var queue = kvp.Value;
-                            while (queue.Count > 0 && remaining > 0)
-                            {
-                                if (activeDecompositionCount >= config.MaxConcurrentDecompositions) break;
-
-                                var candidate = queue[0];
-                                queue.RemoveAt(0);
-
-                                // Deduplication: skip if already being processed or queued
-                                // (may have been picked up by template-level polling of the same issue)
-                                if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier))
-                                    continue;
-                                if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier))
-                                    continue;
-
-                                var phaseLabel = candidate.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
-
-                                CurrentIssueIdentifier = candidate.Issue.Identifier;
-                                StatusMessage = $"🧩 Dispatching project-level epic #{candidate.Issue.Identifier} {phaseLabel} from '{candidate.Template.Name}'";
-                                NotifyChange();
-
-                                try
-                                {
-                                    var dispatched = await _jobDispatcher!.TryDispatchDecompositionAsync(
-                                        candidate.Issue.Identifier,
-                                        candidate.Issue.Title,
-                                        candidate.Phase,
-                                        candidate.Template.IssueProviderId,
-                                        candidate.Template.RepoProviderId,
-                                        candidate.Template.BrainProviderId,
-                                        initiatedBy: "loop",
-                                        stoppingToken,
-                                        decompositionSource: "project-level",
-                                        project: templateProjectLookup.GetValueOrDefault(candidate.Template.Id));
-
-                                    if (dispatched)
-                                    {
-                                        activeDecompositionCount++;
-                                        remaining--;
-                                        decompMadeProgress = true;
-                                        _logger.Information("Dispatched project-level epic #{EpicIdentifier} ({Phase}) via template '{Template}'",
-                                            candidate.Issue.Identifier, candidate.Phase, candidate.Template.Name);
-                                    }
-                                }
-                                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-                                catch (Exception ex)
-                                {
-                                    _logger.Error(ex, "Project-level decomposition dispatch failed for epic #{EpicIdentifier}: {Error}",
-                                        candidate.Issue.Identifier, ex.Message);
-                                    remaining--;
-                                    decompMadeProgress = true;
-                                }
-
-                                break; // One dispatch per project per round (fair alternation)
-                            }
-                        }
-
-                        // Remove empty project queues
-                        foreach (var key in projectLevelDecompositionQueues.Where(kvp => kvp.Value.Count == 0).Select(kvp => kvp.Key).ToList())
-                            projectLevelDecompositionQueues.Remove(key);
-                    }
-
-                    // If no queue made progress, all are exhausted
-                    if (!issueMadeProgress && !prMadeProgress && !decompMadeProgress) break;
-
-                    // Advance to next turn for fair alternation
-                    currentTurn = (currentTurn + 1) % 3;
-                }
-            }
+            // Step 5: Fair dispatch
+            await DispatchFairRoundRobinAsync(
+                snapshot.PollableTemplates, snapshot.FlattenedTemplates, snapshot.Config,
+                issueQueues, prQueues, decompositionQueues, projectLevelDecompositionQueues,
+                stoppingToken, ct);
 
             CurrentIssueIdentifier = null;
             if (_stopRequested || ct.IsCancellationRequested) break;
 
             // Step 6: Wait before next cycle
-            StatusMessage = $"🔄 Cycle complete. Polling {enabledTemplates.Count} templates every {(int)pollInterval.TotalSeconds}s.";
+            StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} templates every {(int)snapshot.PollInterval.TotalSeconds}s.";
             NotifyChange();
-            await DelayOrStop(pollInterval, ct);
+            await DelayOrStop(snapshot.PollInterval, ct);
         }
+    }
+
+    /// <summary>
+    /// Snapshot record bundling all cycle-immutable state from Steps 1–2.
+    /// </summary>
+    private sealed record CycleSnapshot(
+        PipelineConfiguration Config,
+        IReadOnlyList<PipelineProject> Projects,
+        IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> FlattenedTemplates,
+        List<PipelineJobTemplate> EnabledTemplates,
+        List<PipelineJobTemplate> PollableTemplates,
+        Dictionary<string, PipelineJobTemplate> TemplateLookup,
+        TimeSpan PollInterval,
+        int MaxRunsPerCycle,
+        int MaxConsecutiveFailures,
+        int MaxPagesToFetch);
+
+    /// <summary>
+    /// Step 1–2: Reads config snapshot, loads projects, flattens templates, filters rate-limited,
+    /// and reconciles provider caches. Returns null if no templates are available.
+    /// </summary>
+    private async Task<CycleSnapshot?> SnapshotAndReconcileAsync(CancellationToken ct)
+    {
+        // Step 1: Snapshot — read config at cycle start (immutable for cycle duration)
+        var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
+        var pollInterval = config.ClosedLoopPollInterval;
+        var maxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
+        var maxConsecutiveFailures = config.ClosedLoopMaxConsecutivePollFailures;
+        var maxPagesToFetch = config.ClosedLoopMaxPagesToFetch;
+
+        // Load projects and flatten templates using project-based ordering
+        var projects = await _projectStore.LoadProjectsAsync(ct) ?? (IReadOnlyList<PipelineProject>)[];
+        var flattenedTemplates = FlattenTemplates(projects, config);
+        var enabledTemplates = flattenedTemplates.Select(ft => ft.Template).ToList();
+
+        // Pre-built lookup shared by FlattenTemplates logic and SelectDecompositionTemplate
+        var templateLookup = config.PipelineJobTemplates.ToDictionary(t => t.Id);
+
+        // Filter out rate-limited templates
+        var now = DateTimeOffset.UtcNow;
+        var pollableEntries = flattenedTemplates.Where(ft =>
+        {
+            if (_templateStatuses.TryGetValue(ft.Template.Id, out var status) && status.RateLimitResetAt.HasValue)
+                return now >= status.RateLimitResetAt.Value;
+            return true;
+        }).ToList();
+        var pollableTemplates = pollableEntries.Select(pe => pe.Template).ToList();
+
+        CurrentCycleTemplateCount = enabledTemplates.Count;
+
+        // Step 2: Provider cache reconciliation
+        var neededIds = enabledTemplates.Select(t => t.IssueProviderId).ToHashSet();
+
+        // Include project-level EpicIssueProviderId values so the cache contains epic providers for polling
+        foreach (var project in projects.Where(p => p.Enabled && !string.IsNullOrEmpty(p.EpicIssueProviderId)))
+            neededIds.Add(project.EpicIssueProviderId!);
+
+        var issueProviderConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
+        await ReconcileProviderCacheAsync(neededIds, issueProviderConfigs, ct);
+
+        // Reconcile repo provider cache for templates with ReviewEnabled or DecompositionEnabled
+        var neededRepoIds = enabledTemplates
+            .Where(t => t.ReviewEnabled || t.DecompositionEnabled)
+            .Select(t => t.RepoProviderId)
+            .ToHashSet();
+        if (neededRepoIds.Count > 0)
+        {
+            try
+            {
+                var repoProviderConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+                await ReconcileRepoProviderCacheAsync(neededRepoIds, repoProviderConfigs, ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to reconcile repo provider cache, PR polling will be skipped this cycle");
+            }
+        }
+
+        return new CycleSnapshot(
+            config, projects, flattenedTemplates, enabledTemplates, pollableTemplates,
+            templateLookup, pollInterval, maxRunsPerCycle, maxConsecutiveFailures, maxPagesToFetch);
+    }
+
+    /// <summary>
+    /// Step 3: Polls once per pollable template for issues, PRs, and decomposition candidates.
+    /// </summary>
+    private async Task<(Dictionary<string, List<IssueSummary>> IssueQueues, Dictionary<string, List<PullRequestSummary>> PrQueues, Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> DecompositionQueues)>
+        PollTemplateQueuesAsync(List<PipelineJobTemplate> pollableTemplates, int maxPagesToFetch, CancellationToken ct)
+    {
+        var issueQueues = new Dictionary<string, List<IssueSummary>>();
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>();
+        var decompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
+
+        for (int i = 0; i < pollableTemplates.Count; i++)
+        {
+            if (_stopRequested || ct.IsCancellationRequested) break;
+
+            var template = pollableTemplates[i];
+            CurrentCycleTemplateIndex = i;
+            StatusMessage = $"🔄 Polling template '{template.Name}' ({i + 1} of {pollableTemplates.Count})";
+
+            // Mark as currently polling
+            _templateStatuses[template.Id] = (_templateStatuses.TryGetValue(template.Id, out var prev) ? prev : ConfigStatusSnapshot.Empty)
+                with { IsCurrentlyPolling = true };
+            NotifyChange();
+
+            try
+            {
+                // ── Issue polling (only when ImplementationEnabled) ──
+                if (template.ImplementationEnabled)
+                {
+                    if (!_providerCache.TryGetValue(template.IssueProviderId, out var provider))
+                    {
+                        // Provider not in cache (config issue) — skip issues
+                        _templateStatuses[template.Id] = new ConfigStatusSnapshot
+                        {
+                            LastPollTime = DateTimeOffset.UtcNow,
+                            LastError = $"Issue provider '{template.IssueProviderId}' not found in cache.",
+                            IsCurrentlyPolling = false
+                        };
+                        issueQueues[template.Id] = new List<IssueSummary>();
+                    }
+                    else
+                    {
+                        var issues = await FetchAgentNextIssuesForProviderAsync(provider, maxPagesToFetch, ct);
+                        issueQueues[template.Id] = issues;
+                    }
+                }
+                else
+                {
+                    issueQueues[template.Id] = new List<IssueSummary>();
+                }
+
+                // ── PR polling (only when ReviewEnabled) ──
+                // Wrapped in its own try-catch so that a PR polling failure does not
+                // discard the already-fetched issue queue for this template.
+                prQueues[template.Id] = new List<PullRequestSummary>();
+                if (template.ReviewEnabled)
+                {
+                    try
+                    {
+                        if (!_repoProviderCache.TryGetValue(template.RepoProviderId, out var repoProvider))
+                        {
+                            _logger.Warning("Template '{TemplateName}': repo provider '{RepoProviderId}' not found in cache, skipping PR polling",
+                                template.Name, template.RepoProviderId);
+                        }
+                        else
+                        {
+                            var prs = await FetchAgentNextPullRequestsAsync(repoProvider, maxPagesToFetch, ct);
+                            prQueues[template.Id] = prs;
+                        }
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex, "Template '{TemplateName}' PR polling failed, issue polling unaffected: {Error}",
+                            template.Name, ex.Message);
+                    }
+                }
+
+                // ── Decomposition polling (only when DecompositionEnabled) ──
+                // Wrapped in its own try-catch so that a decomposition polling failure does not
+                // discard the already-fetched issue/PR queues for this template.
+                decompositionQueues[template.Id] = new List<(IssueSummary, PipelineRunType)>();
+                if (template.DecompositionEnabled)
+                {
+                    try
+                    {
+                        if (!_providerCache.TryGetValue(template.IssueProviderId, out var decompProvider))
+                        {
+                            _logger.Warning("Template '{TemplateName}': issue provider '{IssueProviderId}' not found in cache, skipping decomposition polling",
+                                template.Name, template.IssueProviderId);
+                        }
+                        else
+                        {
+                            // Validate that RepoProviderId references an existing provider config (Req 1.3)
+                            // IssueProviderId is already validated by the provider cache lookup above.
+                            if (!_repoProviderCache.ContainsKey(template.RepoProviderId))
+                            {
+                                _logger.Warning("Template '{TemplateName}': decomposition skipped — RepoProviderId '{RepoProviderId}' references non-existent provider config",
+                                    template.Name, template.RepoProviderId);
+                            }
+                            else
+                            {
+                                // Poll for agent:epic issues (Phase 1 candidates)
+                                var epicIssues = await FetchEpicIssuesAsync(decompProvider, AgentLabels.Epic, maxPagesToFetch, ct);
+                                foreach (var epic in epicIssues)
+                                    decompositionQueues[template.Id].Add((epic, PipelineRunType.DecompositionAnalysis));
+
+                                // Poll for agent:epic-approved issues (Phase 2 candidates)
+                                var approvedIssues = await FetchEpicIssuesAsync(decompProvider, AgentLabels.EpicApproved, maxPagesToFetch, ct);
+                                foreach (var approved in approvedIssues)
+                                    decompositionQueues[template.Id].Add((approved, PipelineRunType.Decomposition));
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex, "Template '{TemplateName}' decomposition polling failed, issue/PR polling unaffected: {Error}",
+                            template.Name, ex.Message);
+                    }
+                }
+
+                // Success — update status
+                var issueCount = issueQueues[template.Id].Count;
+                var prCount = prQueues[template.Id].Count;
+                var decompCount = decompositionQueues[template.Id].Count;
+                _templateStatuses[template.Id] = new ConfigStatusSnapshot
+                {
+                    LastPollTime = DateTimeOffset.UtcNow,
+                    LastPollIssueCount = issueCount + prCount + decompCount,
+                    LastError = null,
+                    ConsecutiveFailures = 0,
+                    RateLimitResetAt = null,
+                    IsCurrentlyPolling = false
+                };
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (RateLimitExceededException ex)
+            {
+                _logger.Warning("Template '{TemplateName}' rate limited until {ResetAt}", template.Name, ex.ResetAt);
+                var prevStatus = _templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
+                _templateStatuses[template.Id] = prevStatus with
+                {
+                    LastPollTime = DateTimeOffset.UtcNow,
+                    RateLimitResetAt = ex.ResetAt,
+                    IsCurrentlyPolling = false
+                };
+                ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues);
+            }
+            catch (Exception ex) when (IsAuthError(ex))
+            {
+                _logger.Warning(ex, "Template '{TemplateName}' auth error, evicting cached provider", template.Name);
+                await EvictProviderOnAuthErrorAsync(template.IssueProviderId);
+                var prevStatus = _templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
+                _templateStatuses[template.Id] = prevStatus with
+                {
+                    LastPollTime = DateTimeOffset.UtcNow,
+                    LastError = ex.Message,
+                    ConsecutiveFailures = prevStatus.ConsecutiveFailures + 1,
+                    IsCurrentlyPolling = false
+                };
+                ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Template '{TemplateName}' poll failed: {Error}", template.Name, ex.Message);
+                var prevStatus = _templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
+                _templateStatuses[template.Id] = prevStatus with
+                {
+                    LastPollTime = DateTimeOffset.UtcNow,
+                    LastError = ex.Message,
+                    ConsecutiveFailures = prevStatus.ConsecutiveFailures + 1,
+                    IsCurrentlyPolling = false
+                };
+                ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues);
+            }
+        }
+
+        return (issueQueues, prQueues, decompositionQueues);
+    }
+
+    /// <summary>
+    /// Step 3b: Project-level epic polling — polls EpicIssueProviderId for each enabled project
+    /// that has the field set and at least one decomposition-enabled template.
+    /// This is separate from per-template decomposition polling (which uses the template's own IssueProviderId).
+    /// </summary>
+    private async Task<Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>>
+        PollProjectLevelEpicsAsync(
+            IReadOnlyList<PipelineProject> projects,
+            Dictionary<string, PipelineJobTemplate> templateLookup,
+            int maxPagesToFetch,
+            CancellationToken ct)
+    {
+        var projectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>();
+
+        foreach (var project in projects.Where(p => p.Enabled && !string.IsNullOrEmpty(p.EpicIssueProviderId)))
+        {
+            if (_stopRequested || ct.IsCancellationRequested) break;
+
+            var epicProviderId = project.EpicIssueProviderId!;
+
+            // Validate that EpicIssueProviderId references an existing provider config in the cache
+            if (!_providerCache.TryGetValue(epicProviderId, out var epicProvider))
+            {
+                _logger.Warning("Project '{ProjectName}': EpicIssueProviderId '{EpicProviderId}' not found in provider cache, skipping project-level epic polling",
+                    project.Name, epicProviderId);
+                continue;
+            }
+
+            // Select the first decomposition-enabled template in the project
+            var decompositionTemplate = SelectDecompositionTemplate(project, templateLookup);
+            if (decompositionTemplate is null)
+            {
+                _logger.Warning("Project '{ProjectName}': no decomposition-enabled template found, skipping project-level epic polling",
+                    project.Name);
+                continue;
+            }
+
+            try
+            {
+                var projectQueue = new List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>();
+
+                // Poll for agent:epic issues (Phase 1 candidates)
+                var epicIssues = await FetchEpicIssuesAsync(epicProvider, AgentLabels.Epic, maxPagesToFetch, ct);
+                foreach (var epic in epicIssues)
+                    projectQueue.Add((epic, PipelineRunType.DecompositionAnalysis, decompositionTemplate));
+
+                // Poll for agent:epic-approved issues (Phase 2 candidates)
+                var approvedIssues = await FetchEpicIssuesAsync(epicProvider, AgentLabels.EpicApproved, maxPagesToFetch, ct);
+                foreach (var approved in approvedIssues)
+                    projectQueue.Add((approved, PipelineRunType.Decomposition, decompositionTemplate));
+
+                if (projectQueue.Count > 0)
+                    projectLevelDecompositionQueues[project.Id] = projectQueue;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Project '{ProjectName}' project-level epic polling failed: {Error}",
+                    project.Name, ex.Message);
+            }
+        }
+
+        return projectLevelDecompositionQueues;
+    }
+
+    /// <summary>
+    /// Step 4: Circuit breaker — trips only when ALL enabled templates are failing.
+    /// Returns true if the circuit breaker tripped (caller should continue to next cycle).
+    /// </summary>
+    private async Task<bool> CheckCircuitBreakerAsync(
+        List<PipelineJobTemplate> enabledTemplates,
+        int maxConsecutiveFailures,
+        CancellationToken ct)
+    {
+        var allFailing = enabledTemplates.Count > 0 && enabledTemplates.All(t =>
+        {
+            if (_templateStatuses.TryGetValue(t.Id, out var s))
+                return s.ConsecutiveFailures >= maxConsecutiveFailures;
+            return false;
+        });
+
+        if (!allFailing) return false;
+
+        IsCircuitBroken = true;
+        StatusMessage = $"⚠️ Loop paused — all {enabledTemplates.Count} templates failing.";
+        NotifyChange();
+        _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures",
+            enabledTemplates.Count, maxConsecutiveFailures);
+
+        _resumeSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try { await _resumeSignal.Task.WaitAsync(ct); }
+        catch (OperationCanceledException) { return true; }
+        if (_stopRequested) return true;
+        return true;
+    }
+
+    /// <summary>
+    /// Step 5: Fair dispatch — three-way interleaved round-robin (issues → PRs → decomposition).
+    /// Alternates between dispatching one round of issues (one per template), one round
+    /// of PRs (one per template), and one round of decomposition (one per template) to
+    /// ensure all three queue types get fair access to the budget.
+    /// </summary>
+    private async Task DispatchFairRoundRobinAsync(
+        List<PipelineJobTemplate> pollableTemplates,
+        IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> flattenedTemplates,
+        PipelineConfiguration config,
+        Dictionary<string, List<IssueSummary>> issueQueues,
+        Dictionary<string, List<PullRequestSummary>> prQueues,
+        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
+        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>> projectLevelDecompositionQueues,
+        CancellationToken stoppingToken,
+        CancellationToken ct)
+    {
+        int remaining = config.ClosedLoopMaxRunsPerCycle > 0 ? config.ClosedLoopMaxRunsPerCycle : int.MaxValue;
+
+        // Per-cycle dependency state cache shared across all issue evaluations
+        var cycleStateCache = new Dictionary<int, bool>();
+
+        // Build template → project lookup for passing project context at dispatch time
+        var templateProjectLookup = flattenedTemplates.ToDictionary(ft => ft.Template.Id, ft => ft.Project);
+
+        // Count active decomposition runs for concurrency enforcement
+        var activeDecompositionCount = _orchestration.GetAllActiveRuns()
+            .Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
+
+        // Three-way turn tracking: 0 = issues, 1 = PRs, 2 = decomposition
+        int currentTurn = 0;
+
+        while (remaining > 0)
+        {
+            if (_stopRequested || ct.IsCancellationRequested) break;
+
+            bool issueMadeProgress = false;
+            bool prMadeProgress = false;
+            bool decompMadeProgress = false;
+
+            bool hasIssues = HasEligible(pollableTemplates, issueQueues, t => t.ImplementationEnabled);
+            bool hasPrs = HasEligible(pollableTemplates, prQueues, t => t.ReviewEnabled);
+            bool hasDecomp = (HasEligible(pollableTemplates, decompositionQueues, t => t.DecompositionEnabled)
+                || HasEligibleProjectLevelDecomposition(projectLevelDecompositionQueues))
+                && activeDecompositionCount < config.MaxConcurrentDecompositions;
+
+            // Determine which queue to dispatch from this iteration.
+            // If the current turn's queue is empty, try the next non-empty queue.
+            int startTurn = currentTurn;
+            bool foundTurn = false;
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                int tryTurn = (startTurn + attempt) % 3;
+                if ((tryTurn == 0 && hasIssues) || (tryTurn == 1 && hasPrs) || (tryTurn == 2 && hasDecomp))
+                {
+                    currentTurn = tryTurn;
+                    foundTurn = true;
+                    break;
+                }
+            }
+            if (!foundTurn) break; // All queues exhausted
+
+            // ── Issue dispatch (one per template per pass) ──
+            if (currentTurn == 0 && hasIssues)
+            {
+                var (progress, count) = await DispatchRoundAsync(pollableTemplates, async (template, stopToken) =>
+                {
+                    if (!template.ImplementationEnabled) return DispatchAttemptResult.Skip;
+                    if (!issueQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
+                        return DispatchAttemptResult.Skip;
+
+                    // Dequeue next valid issue
+                    IssueSummary? issue = null;
+                    while (queue.Count > 0)
+                    {
+                        var candidate = queue[0];
+                        queue.RemoveAt(0);
+
+                        if (candidate.Labels.Contains(AgentLabels.Error) || candidate.Labels.Contains(AgentLabels.NeedsRefinement))
+                            continue;
+                        if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
+                            continue;
+                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier))
+                            continue;
+
+                        if (_dependencyChecker != null)
+                        {
+                            if (!_providerCache.TryGetValue(template.IssueProviderId, out var provider))
+                            {
+                                _logger.Warning("Provider '{ProviderId}' not in cache during dependency check for #{Identifier}, skipping dispatch",
+                                    template.IssueProviderId, candidate.Identifier);
+                                continue;
+                            }
+
+                            var depResult = await _dependencyChecker.CheckAsync(
+                                candidate.Identifier, candidate.Description, provider, cycleStateCache, ct);
+                            if (!depResult.IsReady)
+                            {
+                                _logger.Information("Issue #{Identifier} blocked by open issues: {BlockedBy}. Skipping dispatch.",
+                                    candidate.Identifier, depResult.BlockedBy);
+                                continue;
+                            }
+                        }
+
+                        issue = candidate;
+                        break;
+                    }
+
+                    if (issue is null) return DispatchAttemptResult.Skip;
+
+                    CurrentIssueIdentifier = issue.Identifier;
+                    StatusMessage = $"🔄 Dispatching #{issue.Identifier} from '{template.Name}'";
+                    NotifyChange();
+
+                    var dispatchProject = templateProjectLookup.GetValueOrDefault(template.Id);
+                    _logger.Information("Dispatching issue {Issue} with project '{ProjectName}' (id={ProjectId}, template={TemplateId})",
+                        issue.Identifier, dispatchProject?.Name ?? "NULL", dispatchProject?.Id ?? "NULL", template.Id);
+
+                    var dispatched = await _jobDispatcher!.TryDispatchAsync(
+                        issue.Identifier,
+                        template.IssueProviderId, template.RepoProviderId,
+                        template.BrainProviderId, template.PipelineProviderId,
+                        initiatedBy: "loop",
+                        stopToken,
+                        issueTitle: issue.Title,
+                        project: dispatchProject);
+
+                    if (dispatched)
+                        _logger.Information("Dispatched issue #{Issue} from template '{Template}'",
+                            issue.Identifier, template.Name);
+
+                    return new DispatchAttemptResult(dispatched);
+                }, remaining, stoppingToken, ct);
+                issueMadeProgress = progress;
+                remaining -= count;
+            }
+
+            if (_stopRequested || ct.IsCancellationRequested || remaining <= 0) break;
+
+            // ── PR review dispatch (one per template per pass) ──
+            if (currentTurn == 1 && hasPrs)
+            {
+                var (progress, count) = await DispatchRoundAsync(pollableTemplates, async (template, stopToken) =>
+                {
+                    if (!template.ReviewEnabled) return DispatchAttemptResult.Skip;
+                    if (!prQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
+                        return DispatchAttemptResult.Skip;
+
+                    PullRequestSummary? pr = null;
+                    while (queue.Count > 0)
+                    {
+                        var candidate = queue[0];
+                        queue.RemoveAt(0);
+
+                        if (candidate.Labels.Contains(AgentLabels.Error) ||
+                            candidate.Labels.Contains(AgentLabels.InProgress) ||
+                            candidate.Labels.Contains(AgentLabels.Done) ||
+                            candidate.Labels.Contains(AgentLabels.Cancelled))
+                            continue;
+                        if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
+                            continue;
+                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier))
+                            continue;
+
+                        pr = candidate;
+                        break;
+                    }
+
+                    if (pr is null) return DispatchAttemptResult.Skip;
+
+                    CurrentIssueIdentifier = pr.Identifier;
+                    StatusMessage = $"🔄 Dispatching PR #{pr.Identifier} review from '{template.Name}'";
+                    NotifyChange();
+
+                    var dispatched = await _jobDispatcher!.TryDispatchReviewAsync(
+                        new ReviewDispatchRequest
+                        {
+                            PrIdentifier = pr.Identifier,
+                            PrBranchName = pr.BranchName,
+                            PrTitle = pr.Title,
+                            PrDescription = pr.Description,
+                            PrUrl = pr.Url,
+                            PrTargetBranch = pr.TargetBranch,
+                            IssueProviderId = template.IssueProviderId,
+                            RepoProviderId = template.RepoProviderId,
+                            BrainProviderId = template.BrainProviderId,
+                            InitiatedBy = "loop"
+                        },
+                        stopToken,
+                        project: templateProjectLookup[template.Id]);
+
+                    if (dispatched)
+                        _logger.Information("Dispatched PR #{PrIdentifier} review from template '{Template}'",
+                            pr.Identifier, template.Name);
+
+                    return new DispatchAttemptResult(dispatched);
+                }, remaining, stoppingToken, ct);
+                prMadeProgress = progress;
+                remaining -= count;
+            }
+
+            if (_stopRequested || ct.IsCancellationRequested || remaining <= 0) break;
+
+            // ── Decomposition dispatch (one per template per pass) ──
+            if (currentTurn == 2 && hasDecomp)
+            {
+                var (progress, count) = await DispatchRoundAsync(pollableTemplates, async (template, stopToken) =>
+                {
+                    if (!template.DecompositionEnabled) return DispatchAttemptResult.Skip;
+                    if (!decompositionQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
+                        return DispatchAttemptResult.Skip;
+
+                    // Re-check concurrency limit before each dispatch
+                    if (activeDecompositionCount >= config.MaxConcurrentDecompositions)
+                    {
+                        _logger.Information("Decomposition concurrency limit reached ({Active}/{Max}), skipping remaining decomposition dispatch",
+                            activeDecompositionCount, config.MaxConcurrentDecompositions);
+                        return DispatchAttemptResult.Abort;
+                    }
+
+                    (IssueSummary Issue, PipelineRunType Phase)? epic = null;
+                    while (queue.Count > 0)
+                    {
+                        var candidate = queue[0];
+                        queue.RemoveAt(0);
+
+                        if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier))
+                            continue;
+                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier))
+                            continue;
+
+                        epic = candidate;
+                        break;
+                    }
+
+                    if (epic is null) return DispatchAttemptResult.Skip;
+
+                    var epicItem = epic.Value;
+                    var phaseLabel = epicItem.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
+
+                    CurrentIssueIdentifier = epicItem.Issue.Identifier;
+                    StatusMessage = $"🧩 Dispatching epic #{epicItem.Issue.Identifier} {phaseLabel} from '{template.Name}'";
+                    NotifyChange();
+
+                    var dispatched = await _jobDispatcher!.TryDispatchDecompositionAsync(
+                        epicItem.Issue.Identifier,
+                        epicItem.Issue.Title,
+                        epicItem.Phase,
+                        template.IssueProviderId,
+                        template.RepoProviderId,
+                        template.BrainProviderId,
+                        initiatedBy: "loop",
+                        stopToken,
+                        project: templateProjectLookup[template.Id]);
+
+                    if (dispatched)
+                    {
+                        activeDecompositionCount++;
+                        _logger.Information("Dispatched epic #{EpicIdentifier} ({Phase}) from template '{Template}'",
+                            epicItem.Issue.Identifier, epicItem.Phase, template.Name);
+                    }
+
+                    return new DispatchAttemptResult(dispatched);
+                }, remaining, stoppingToken, ct);
+                decompMadeProgress = progress;
+                remaining -= count;
+            }
+
+            // ── Project-level decomposition dispatch ──
+            // Dispatch epics from project-level EpicIssueProviderId after template-level decomposition.
+            // These use the first decomposition-enabled template in the project (SelectDecompositionTemplate).
+            if (currentTurn == 2 && !decompMadeProgress && projectLevelDecompositionQueues.Count > 0
+                && activeDecompositionCount < config.MaxConcurrentDecompositions)
+            {
+                foreach (var kvp in projectLevelDecompositionQueues.ToList())
+                {
+                    if (remaining <= 0 || _stopRequested || ct.IsCancellationRequested) break;
+                    if (activeDecompositionCount >= config.MaxConcurrentDecompositions) break;
+
+                    var queue = kvp.Value;
+                    while (queue.Count > 0 && remaining > 0)
+                    {
+                        if (activeDecompositionCount >= config.MaxConcurrentDecompositions) break;
+
+                        var candidate = queue[0];
+                        queue.RemoveAt(0);
+
+                        // Deduplication: skip if already being processed or queued
+                        // (may have been picked up by template-level polling of the same issue)
+                        if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier))
+                            continue;
+                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier))
+                            continue;
+
+                        var phaseLabel = candidate.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
+
+                        CurrentIssueIdentifier = candidate.Issue.Identifier;
+                        StatusMessage = $"🧩 Dispatching project-level epic #{candidate.Issue.Identifier} {phaseLabel} from '{candidate.Template.Name}'";
+                        NotifyChange();
+
+                        try
+                        {
+                            var dispatched = await _jobDispatcher!.TryDispatchDecompositionAsync(
+                                candidate.Issue.Identifier,
+                                candidate.Issue.Title,
+                                candidate.Phase,
+                                candidate.Template.IssueProviderId,
+                                candidate.Template.RepoProviderId,
+                                candidate.Template.BrainProviderId,
+                                initiatedBy: "loop",
+                                stoppingToken,
+                                decompositionSource: "project-level",
+                                project: templateProjectLookup.GetValueOrDefault(candidate.Template.Id));
+
+                            if (dispatched)
+                            {
+                                activeDecompositionCount++;
+                                remaining--;
+                                decompMadeProgress = true;
+                                _logger.Information("Dispatched project-level epic #{EpicIdentifier} ({Phase}) via template '{Template}'",
+                                    candidate.Issue.Identifier, candidate.Phase, candidate.Template.Name);
+                            }
+                        }
+                        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+                        catch (Exception ex)
+                        {
+                            _logger.Error(ex, "Project-level decomposition dispatch failed for epic #{EpicIdentifier}: {Error}",
+                                candidate.Issue.Identifier, ex.Message);
+                            remaining--;
+                            decompMadeProgress = true;
+                        }
+
+                        break; // One dispatch per project per round (fair alternation)
+                    }
+                }
+
+                // Remove empty project queues
+                foreach (var key in projectLevelDecompositionQueues.Where(kvp => kvp.Value.Count == 0).Select(kvp => kvp.Key).ToList())
+                    projectLevelDecompositionQueues.Remove(key);
+            }
+
+            // If no queue made progress, all are exhausted
+            if (!issueMadeProgress && !prMadeProgress && !decompMadeProgress) break;
+
+            // Advance to next turn for fair alternation
+            currentTurn = (currentTurn + 1) % 3;
+        }
+    }
+
+    /// <summary>
+    /// Clears all three queue dictionaries for a given template. Used in error catch blocks
+    /// to ensure a failed template doesn't leave stale partial data in queues.
+    /// </summary>
+    private static void ClearQueuesForTemplate(
+        string templateId,
+        Dictionary<string, List<IssueSummary>> issueQueues,
+        Dictionary<string, List<PullRequestSummary>> prQueues,
+        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues)
+    {
+        issueQueues[templateId] = new List<IssueSummary>();
+        prQueues[templateId] = new List<PullRequestSummary>();
+        decompositionQueues[templateId] = new List<(IssueSummary, PipelineRunType)>();
     }
 
     /// <summary>
@@ -831,51 +928,19 @@ public sealed partial class PipelineLoopService
     }
 
     /// <summary>
-    /// Checks whether any pollable template has eligible issues remaining in its queue.
-    /// Used by the fair alternation logic to allow the other queue to consume remaining budget.
+    /// Checks whether any pollable template has eligible items remaining in its queue,
+    /// filtered by a template-level feature-enabled predicate.
+    /// Used by the fair alternation logic to determine which queues have work available.
     /// </summary>
-    private static bool HasEligibleIssues(
+    private static bool HasEligible<T>(
         List<PipelineJobTemplate> pollableTemplates,
-        Dictionary<string, List<IssueSummary>> issueQueues)
+        Dictionary<string, List<T>> queues,
+        Func<PipelineJobTemplate, bool> isEnabledForTemplate)
     {
         foreach (var template in pollableTemplates)
         {
-            if (!template.ImplementationEnabled) continue;
-            if (issueQueues.TryGetValue(template.Id, out var queue) && queue.Count > 0)
-                return true;
-        }
-        return false;
-    }
-
-    /// <summary>
-    /// Checks whether any pollable template has eligible PRs remaining in its queue.
-    /// Used by the fair alternation logic to allow the other queue to consume remaining budget.
-    /// </summary>
-    private static bool HasEligiblePrs(
-        List<PipelineJobTemplate> pollableTemplates,
-        Dictionary<string, List<PullRequestSummary>> prQueues)
-    {
-        foreach (var template in pollableTemplates)
-        {
-            if (!template.ReviewEnabled) continue;
-            if (prQueues.TryGetValue(template.Id, out var queue) && queue.Count > 0)
-                return true;
-        }
-        return false;
-    }
-
-    /// <summary>
-    /// Checks whether any pollable template has eligible decomposition epics remaining in its queue.
-    /// Used by the fair alternation logic to allow the other queues to consume remaining budget.
-    /// </summary>
-    private static bool HasEligibleDecomposition(
-        List<PipelineJobTemplate> pollableTemplates,
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues)
-    {
-        foreach (var template in pollableTemplates)
-        {
-            if (!template.DecompositionEnabled) continue;
-            if (decompositionQueues.TryGetValue(template.Id, out var queue) && queue.Count > 0)
+            if (!isEnabledForTemplate(template)) continue;
+            if (queues.TryGetValue(template.Id, out var queue) && queue.Count > 0)
                 return true;
         }
         return false;
