@@ -10,6 +10,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class ReviewCodeStep : IPipelineStep
 {
+    public string StepName => "ReviewCode";
+
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("ReviewCode");

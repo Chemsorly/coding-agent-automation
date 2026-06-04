@@ -15,6 +15,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class CreateSubIssuesStep : IPipelineStep
 {
+    public string StepName => "CreateSubIssues";
+
     /// <summary>Maximum retry attempts for transient errors.</summary>
     private const int MaxRetryAttempts = 3;
 

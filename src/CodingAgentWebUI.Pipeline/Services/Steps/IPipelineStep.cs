@@ -7,6 +7,12 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 internal interface IPipelineStep
 {
     /// <summary>
+    /// A stable identifier for this step, used as a metric tag value.
+    /// Must be a constant PascalCase string that does not change across refactors.
+    /// </summary>
+    string StepName { get; }
+
+    /// <summary>
     /// Executes this pipeline step.
     /// </summary>
     /// <returns><see cref="StepResult.Continue"/> to proceed to the next step,

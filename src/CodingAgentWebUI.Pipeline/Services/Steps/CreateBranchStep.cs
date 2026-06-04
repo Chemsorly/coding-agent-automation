@@ -7,6 +7,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class CreateBranchStep : IPipelineStep
 {
+    public string StepName => "CreateBranch";
+
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
         context.Callbacks.TransitionTo(PipelineStep.CreatingBranch);

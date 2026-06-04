@@ -11,6 +11,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class RunEnvironmentSetupStep : IPipelineStep
 {
+    public string StepName => "RunEnvironmentSetup";
+
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
         if (!OperatingSystem.IsLinux())

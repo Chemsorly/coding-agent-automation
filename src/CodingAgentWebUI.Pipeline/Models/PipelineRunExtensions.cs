@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.Telemetry;
+
 namespace CodingAgentWebUI.Pipeline.Models;
 
 public static class PipelineRunExtensions
@@ -32,5 +34,8 @@ public static class PipelineRunExtensions
         run.TotalTokens += result.Usage.TotalTokens;
         if (result.Cost is not null)
             run.TotalCost = (run.TotalCost ?? 0m) + result.Cost.Value;
+
+        PipelineTelemetry.TokensUsed.Add(result.Usage.TotalTokens,
+            PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
     }
 }

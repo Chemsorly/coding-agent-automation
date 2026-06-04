@@ -9,6 +9,8 @@ namespace CodingAgentWebUI.Agent;
 /// </summary>
 internal sealed class WriteMcpConfigStep : IPipelineStep
 {
+    public string StepName => "WriteMcpConfig";
+
     private readonly JobAssignmentMessage _job;
 
     public WriteMcpConfigStep(JobAssignmentMessage job)

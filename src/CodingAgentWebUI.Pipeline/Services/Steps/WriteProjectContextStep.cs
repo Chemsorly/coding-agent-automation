@@ -9,6 +9,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class WriteProjectContextStep : IPipelineStep
 {
+    public string StepName => "WriteProjectContext";
+
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
         // Skip if not cross-repo decomposition (no project context needed)

@@ -8,6 +8,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class FetchIssueStep : IPipelineStep
 {
+    public string StepName => "FetchIssue";
+
     private readonly IssueDescriptionParser _issueParser;
 
     public FetchIssueStep(IssueDescriptionParser issueParser)

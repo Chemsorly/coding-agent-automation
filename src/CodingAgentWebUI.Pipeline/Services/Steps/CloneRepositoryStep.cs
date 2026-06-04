@@ -7,6 +7,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class CloneRepositoryStep : IPipelineStep
 {
+    public string StepName => "CloneRepository";
+
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
         var workspacePath = Path.Combine(context.Config.WorkspaceBaseDirectory, context.Run.RunId);

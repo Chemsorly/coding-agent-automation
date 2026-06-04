@@ -622,6 +622,8 @@ public class PipelineStepTests
         private readonly Func<StepResult> _execute;
         private readonly bool _throwOnCancel;
 
+        public string StepName => "Test";
+
         public TestStep(Func<StepResult> execute, bool throwOnCancel = false)
         {
             _execute = execute;

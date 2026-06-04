@@ -9,6 +9,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class RunQualityGatesStep : IPipelineStep
 {
+    public string StepName => "RunQualityGates";
+
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("RunQualityGates");

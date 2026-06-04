@@ -7,6 +7,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class SyncBrainPreRunStep : IPipelineStep
 {
+    public string StepName => "SyncBrainPreRun";
+
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
         if (context.BrainProvider is null || context.BrainSync is null)
