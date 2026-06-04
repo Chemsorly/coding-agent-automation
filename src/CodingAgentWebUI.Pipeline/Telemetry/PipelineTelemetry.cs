@@ -26,29 +26,23 @@ public static class PipelineTelemetry
     public static readonly Histogram<double> DecompositionDuration = Meter.CreateHistogram<double>(
         "pipeline.decomposition.duration", "s", "Duration of decomposition phases in seconds");
 
-    public static readonly Histogram<double> QueueWaitTime = Meter.CreateHistogram<double>(
-        "dispatch.queue.wait_time", "s", "Time jobs wait in queue before pickup");
+    public static readonly Counter<long> QualityGateRetries = Meter.CreateCounter<long>(
+        "quality_gate.retries", "{retry}", "Quality gate retry attempts");
+    public static readonly Histogram<double> QualityGateDuration = Meter.CreateHistogram<double>(
+        "quality_gate.duration", "s", "Total time in quality gate phase");
+    public static readonly Counter<long> QualityGateEvaluations = Meter.CreateCounter<long>(
+        "quality_gate.evaluations", "{evaluation}", "Individual gate evaluation events");
+    public static readonly Histogram<double> ExternalCiDuration = Meter.CreateHistogram<double>(
+        "quality_gate.external_ci.duration", "s", "Time waiting for external CI");
 
-    public static readonly Counter<long> TokensUsed = Meter.CreateCounter<long>(
-        "agent.tokens.used", "{token}", "LLM tokens consumed by agent calls");
-
-    public static readonly Histogram<double> StepDuration = Meter.CreateHistogram<double>(
-        "pipeline.step.duration", "s", "Duration of individual pipeline steps");
-
-    public static readonly Counter<long> StepCount = Meter.CreateCounter<long>(
-        "pipeline.step.count", "{step}", "Total pipeline steps executed");
-
-    /// <summary>
-    /// Builds a <see cref="TagList"/> for per-step metrics including step name, run type, and project context.
-    /// </summary>
-    public static TagList BuildStepTags(string stepName, PipelineRun run) =>
-        new(
-        [
-            new("step_name", stepName),
-            RunTypeTag(run.RunType),
-            ProjectIdTag(run.ProjectId),
-            ProjectNameTag(run.ProjectName)
-        ]);
+    internal static class QualityGateNames
+    {
+        public const string Compilation = "compilation";
+        public const string Tests = "tests";
+        public const string Coverage = "coverage";
+        public const string Security = "security";
+        public const string ExternalCi = "external_ci";
+    }
 
     /// <summary>Creates a run_type tag from the given <see cref="PipelineRunType"/>.</summary>
     public static KeyValuePair<string, object?> RunTypeTag(PipelineRunType runType) =>
