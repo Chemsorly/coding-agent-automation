@@ -227,6 +227,7 @@ public sealed partial class AgentJobDispatcher
                 ReviewPrTargetBranch = request.PrTargetBranch,
                 ReviewPrUrl = request.PrUrl,
                 ReviewPrDescription = request.PrDescription,
+                ReviewPrAuthor = request.PrAuthor,
                 ProjectId = project.Id,
                 ProjectName = project.Name,
                 LinkedPullRequest = new LinkedPullRequest
@@ -295,6 +296,7 @@ public sealed partial class AgentJobDispatcher
                 RunType = PipelineRunType.Review,
                 ReviewPrTargetBranch = request.PrTargetBranch,
                 ReviewPrDescription = request.PrDescription,
+                ReviewPrAuthor = request.PrAuthor,
                 ProjectId = project.Id,
                 ProjectName = project.Name,
                 ProjectSecrets = project.Secrets

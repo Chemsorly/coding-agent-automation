@@ -305,4 +305,57 @@ public partial class GitHubRepositoryProvider
 
         return issueNumbers.ToList().AsReadOnly();
     }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<Pipeline.Models.PrConversationComment>> ListPullRequestCommentsAsync(
+        int prNumber, string prAuthor, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(prAuthor);
+
+        var results = new List<Pipeline.Models.PrConversationComment>();
+
+        // Fetch general discussion comments (issue comments on the PR)
+        var issueComments = await ExecuteWithResilienceAsync(
+            client => client.Issue.Comment.GetAllForIssue(Owner, Repo, prNumber),
+            "ListPrComments.IssueComments", ct);
+
+        foreach (var c in issueComments)
+        {
+            var author = c.User?.Login ?? "";
+            results.Add(new Pipeline.Models.PrConversationComment
+            {
+                Author = author,
+                CreatedAt = c.CreatedAt.UtcDateTime,
+                Body = c.Body ?? string.Empty,
+                IsBot = c.User?.Type == AccountType.Bot || author.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase),
+                IsAuthor = string.Equals(author, prAuthor, StringComparison.OrdinalIgnoreCase),
+                FilePath = null,
+                Line = null,
+                IsResolved = null
+            });
+        }
+
+        // Fetch review comments (inline comments on specific code lines)
+        var reviewComments = await ExecuteWithResilienceAsync(
+            client => client.PullRequest.ReviewComment.GetAll(Owner, Repo, prNumber),
+            "ListPrComments.ReviewComments", ct);
+
+        foreach (var c in reviewComments)
+        {
+            var author = c.User?.Login ?? "";
+            results.Add(new Pipeline.Models.PrConversationComment
+            {
+                Author = author,
+                CreatedAt = c.CreatedAt.UtcDateTime,
+                Body = c.Body ?? string.Empty,
+                IsBot = c.User?.Type == AccountType.Bot || author.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase),
+                IsAuthor = string.Equals(author, prAuthor, StringComparison.OrdinalIgnoreCase),
+                FilePath = c.Path,
+                Line = c.OriginalPosition,
+                IsResolved = null // GitHub review comments don't have individual resolution status via Octokit
+            });
+        }
+
+        return results.OrderBy(c => c.CreatedAt).ToList().AsReadOnly();
+    }
 }

@@ -225,6 +225,7 @@ public sealed class LocalPipelineExecutor
             ReviewPrBranchName = job.LinkedPullRequest?.BranchName,
             ReviewPrTargetBranch = job.ReviewPrTargetBranch,
             ReviewPrDescription = job.ReviewPrDescription,
+            ReviewPrAuthor = job.ReviewPrAuthor,
             LinkedIssueContexts = job.LinkedIssueContexts
         };
 

@@ -187,6 +187,13 @@ public static class PromptBuilder
 
         sb.AppendLine(reviewInstructions);
         sb.AppendLine();
+
+        // PR conversation context reference
+        sb.AppendLine($"PR conversation and prior review context is available at `{AgentWorkspacePaths.PrConversationContextFilePath}`.");
+        sb.AppendLine("Comments marked [HUMAN] represent feedback from team members — treat these as authoritative context about intentional design decisions. Comments from the PR author are marked [HUMAN/AUTHOR].");
+        sb.AppendLine("If prior review findings are present, verify whether they were addressed by the current changes AND look for new issues.");
+        sb.AppendLine();
+
         sb.AppendLine($"Write your findings to the file `{findingsFilePath}` in the workspace. Do NOT print the findings to stdout — only write them to that file.");
         sb.AppendLine();
         sb.AppendLine(PipelineConstants.GitRestrictionFull);

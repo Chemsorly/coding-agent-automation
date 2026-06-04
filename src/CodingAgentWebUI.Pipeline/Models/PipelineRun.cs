@@ -166,6 +166,9 @@ public sealed class PipelineRun
     /// <summary>PR body/description for review runs.</summary>
     public string? ReviewPrDescription { get; init; }
 
+    /// <summary>PR author username for review runs (used for [HUMAN/AUTHOR] attribution).</summary>
+    public string? ReviewPrAuthor { get; init; }
+
     /// <summary>Pre-fetched linked issue details for review runs.</summary>
     public IReadOnlyList<LinkedIssueContext>? LinkedIssueContexts { get; init; }
 
