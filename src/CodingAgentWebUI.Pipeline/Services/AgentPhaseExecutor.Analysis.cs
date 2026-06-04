@@ -102,11 +102,7 @@ internal partial class AgentPhaseExecutor
                             UseResume = true
                         },
                         run, config, "Analysis agent", context.Callbacks.NotifyChange, _logger, ct,
-                        line =>
-                        {
-                            run.OutputLines.Enqueue(line);
-                            context.Callbacks.EmitOutputLine(line);
-                        });
+                        line => context.Callbacks.EmitOutputLine(line));
 
                     run.AccumulateTokenUsage(analysisResult);
 
@@ -218,11 +214,7 @@ internal partial class AgentPhaseExecutor
                     refinementPrompt,
                     AgentWorkspacePaths.AnalysisReviewFilePath,
                     reviewConfig,
-                    line =>
-                    {
-                        run.OutputLines.Enqueue(line);
-                        context.Callbacks.EmitOutputLine(line);
-                    },
+                    line => context.Callbacks.EmitOutputLine(line),
                     _logger,
                     ct);
 

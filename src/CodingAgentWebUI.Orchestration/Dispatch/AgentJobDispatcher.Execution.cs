@@ -118,7 +118,8 @@ public sealed partial class AgentJobDispatcher
                 McpServers = profile.McpServers,
                 ReviewerConfigs = resolvedReviewerConfigs,
                 ProjectId = project.Id,
-                ProjectName = project.Name
+                ProjectName = project.Name,
+                ProjectSecrets = project.Secrets
             };
 
             // Assign the job to the agent in the registry
@@ -295,7 +296,8 @@ public sealed partial class AgentJobDispatcher
                 ReviewPrTargetBranch = request.PrTargetBranch,
                 ReviewPrDescription = request.PrDescription,
                 ProjectId = project.Id,
-                ProjectName = project.Name
+                ProjectName = project.Name,
+                ProjectSecrets = project.Secrets
             };
 
             // Assign the job to the agent in the registry
@@ -486,7 +488,8 @@ public sealed partial class AgentJobDispatcher
                 RunType = phaseType,
                 ProjectId = project.Id,
                 ProjectName = project.Name,
-                ProjectContext = projectContext
+                ProjectContext = projectContext,
+                ProjectSecrets = project.Secrets
             };
 
             // Swap label to agent:in-progress before dispatch so the epic is immediately marked

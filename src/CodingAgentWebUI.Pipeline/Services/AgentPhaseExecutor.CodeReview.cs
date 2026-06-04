@@ -41,11 +41,7 @@ internal partial class AgentPhaseExecutor
                 },
                 run, config, $"Follow-up for reviewer '{reviewerConfig.DisplayName}'",
                 context.Callbacks.NotifyChange, _logger, ct,
-                line =>
-                {
-                    run.OutputLines.Enqueue(line);
-                    context.Callbacks.EmitOutputLine(line);
-                });
+                line => context.Callbacks.EmitOutputLine(line));
 
             run.AccumulateTokenUsage(agentResult);
 
@@ -186,11 +182,7 @@ internal partial class AgentPhaseExecutor
                             UseResume = !isolated
                         },
                         run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,
-                        line =>
-                        {
-                            run.OutputLines.Enqueue(line);
-                            context.Callbacks.EmitOutputLine(line);
-                        });
+                        line => context.Callbacks.EmitOutputLine(line));
 
                     run.AccumulateTokenUsage(reviewResult);
                     agentsRun.Add(agent.Name);

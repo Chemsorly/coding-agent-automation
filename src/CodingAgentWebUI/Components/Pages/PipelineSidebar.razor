@@ -119,6 +119,7 @@
         new("Preparation", "preparation", new[] {
             PipelineStep.Created,
             PipelineStep.CloningRepository,
+            PipelineStep.RunningEnvironmentSetup,
             PipelineStep.SyncingBrainRepoPreRun,
             PipelineStep.CreatingBranch,
             PipelineStep.VerifyingBaseline
@@ -385,7 +386,47 @@
         _ => "pending"
     };
 
-    // ─── Step-level logic (unchanged) ────────────────────────────────────
+    // ─── Logical step ordering ─────────────────────────────────────────
+    // Maps each PipelineStep to its logical execution position.
+    // Required because enum integer values don't match logical order
+    // (e.g., RunningEnvironmentSetup is appended at end but runs early).
+    private static readonly Dictionary<PipelineStep, int> _logicalOrder = new()
+    {
+        [PipelineStep.Created] = 0,
+        [PipelineStep.CloningRepository] = 1,
+        [PipelineStep.RunningEnvironmentSetup] = 2,
+        [PipelineStep.SyncingBrainRepoPreRun] = 3,
+        [PipelineStep.CreatingBranch] = 4,
+        [PipelineStep.VerifyingBaseline] = 5,
+        [PipelineStep.AnalyzingCode] = 6,
+        [PipelineStep.ReviewingAnalysis] = 7,
+        [PipelineStep.PostingAnalysis] = 8,
+        [PipelineStep.GeneratingCode] = 9,
+        [PipelineStep.ReviewingCode] = 10,
+        [PipelineStep.RunningQualityGates] = 11,
+        [PipelineStep.ExtractingLinkedIssues] = 12,
+        [PipelineStep.PostingFindings] = 13,
+        [PipelineStep.PreparingForPullRequest] = 14,
+        [PipelineStep.CreatingPullRequest] = 15,
+        [PipelineStep.ReflectingOnRun] = 16,
+        [PipelineStep.SyncingBrainRepoPostRun] = 17,
+        [PipelineStep.DownloadingOpenIssues] = 18,
+        [PipelineStep.ExploringCodebase] = 19,
+        [PipelineStep.GeneratingPlan] = 20,
+        [PipelineStep.ReviewingPlan] = 21,
+        [PipelineStep.PostingPlan] = 22,
+        [PipelineStep.GeneratingSubIssues] = 23,
+        [PipelineStep.CreatingIssues] = 24,
+        [PipelineStep.PostingSummary] = 25,
+        [PipelineStep.Completed] = 100,
+        [PipelineStep.Failed] = 101,
+        [PipelineStep.Cancelled] = 102,
+    };
+
+    private static int LogicalOrder(PipelineStep step) =>
+        _logicalOrder.TryGetValue(step, out var order) ? order : (int)step;
+
+    // ─── Step-level logic ────────────────────────────────────────────────
 
     private StepState GetStepState(PipelineStep step)
     {
@@ -394,21 +435,23 @@
         if (current is PipelineStep.Failed or PipelineStep.Cancelled)
         {
             var last = GetLastReachedStep();
-            if ((int)step < (int)last) return StepState.Completed;
-            if ((int)step == (int)last)
+            if (LogicalOrder(step) < LogicalOrder(last)) return StepState.Completed;
+            if (step == last)
                 return current == PipelineStep.Failed ? StepState.Failed : StepState.Cancelled;
             return StepState.Pending;
         }
 
         if (current == PipelineStep.Completed)
-            return (int)step <= (int)PipelineStep.SyncingBrainRepoPostRun ? StepState.Completed : StepState.Pending;
+            return step is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled
+                ? StepState.Pending
+                : StepState.Completed;
 
         if (step == current) return StepState.Active;
 
-        if ((int)step > (int)current && (int)step <= (int)Run.HighWaterMark)
+        if (LogicalOrder(step) > LogicalOrder(current) && LogicalOrder(step) <= LogicalOrder(Run.HighWaterMark))
             return StepState.Revisited;
 
-        return (int)step < (int)current ? StepState.Completed : StepState.Pending;
+        return LogicalOrder(step) < LogicalOrder(current) ? StepState.Completed : StepState.Pending;
     }
 
     private PipelineStep GetLastReachedStep() => Run.GetLastReachedStep();
@@ -427,6 +470,7 @@
     {
         PipelineStep.Created => "Pipeline Created",
         PipelineStep.CloningRepository => "Cloning Repository",
+        PipelineStep.RunningEnvironmentSetup => "Environment Setup",
         PipelineStep.SyncingBrainRepoPreRun => "Loading Brain Context",
         PipelineStep.CreatingBranch => "Creating Branch",
         PipelineStep.VerifyingBaseline => "Verifying Baseline",

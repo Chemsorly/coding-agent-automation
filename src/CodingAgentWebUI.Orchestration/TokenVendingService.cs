@@ -191,15 +191,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
                     clonedSettings[ProviderSettingKeys.Token] = token;
                     clonedSettings[ProviderSettingKeys.TokenExpiresAt] = expiresAt.ToString("O");
 
-                    result.Add(new ProviderConfig
-                    {
-                        Id = config.Id,
-                        Kind = config.Kind,
-                        ProviderType = config.ProviderType,
-                        DisplayName = config.DisplayName,
-                        Settings = clonedSettings,
-                        RepositoryRole = config.RepositoryRole
-                    });
+                    result.Add(CloneWithSettings(config, clonedSettings));
                 }
                 catch (Exception ex)
                 {
@@ -209,15 +201,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
                     var clonedSettings = new Dictionary<string, string>(config.Settings);
                     clonedSettings.Remove(ProviderSettingKeys.PrivateKeyBase64);
 
-                    result.Add(new ProviderConfig
-                    {
-                        Id = config.Id,
-                        Kind = config.Kind,
-                        ProviderType = config.ProviderType,
-                        DisplayName = config.DisplayName,
-                        Settings = clonedSettings,
-                        RepositoryRole = config.RepositoryRole
-                    });
+                    result.Add(CloneWithSettings(config, clonedSettings));
                 }
             }
             else
@@ -238,19 +222,35 @@ public sealed partial class TokenVendingService : ITokenVendingService
                     clonedSettings.Remove(ProviderSettingKeys.AccessToken);
                 }
 
-                result.Add(new ProviderConfig
-                {
-                    Id = config.Id,
-                    Kind = config.Kind,
-                    ProviderType = config.ProviderType,
-                    DisplayName = config.DisplayName,
-                    Settings = clonedSettings,
-                    RepositoryRole = config.RepositoryRole
-                });
+                result.Add(CloneWithSettings(config, clonedSettings));
             }
         }
 
         return result.AsReadOnly();
+    }
+
+    /// <summary>
+    /// Creates a new <see cref="ProviderConfig"/> copying all properties from the original,
+    /// replacing only the <see cref="ProviderConfig.Settings"/> dictionary.
+    /// This ensures newer properties (Secrets, SetupSteps, RequiredLabels, etc.) are never
+    /// accidentally dropped when cloning configs during token vending.
+    /// </summary>
+    private static ProviderConfig CloneWithSettings(ProviderConfig original, Dictionary<string, string> newSettings)
+    {
+        return new ProviderConfig
+        {
+            Id = original.Id,
+            Kind = original.Kind,
+            ProviderType = original.ProviderType,
+            DisplayName = original.DisplayName,
+            Settings = newSettings,
+            RepositoryRole = original.RepositoryRole,
+            RequiredLabels = original.RequiredLabels,
+            BlacklistedPaths = original.BlacklistedPaths,
+            BlacklistMode = original.BlacklistMode,
+            Secrets = original.Secrets,
+            SetupSteps = original.SetupSteps
+        };
     }
 
     /// <summary>

@@ -240,10 +240,19 @@ public sealed class LocalPipelineExecutor
 
         // Fire-and-forget wrappers — delegate to class-level async methods for testability.
         void TransitionTo(PipelineStep step) => _ = TransitionToInternalAsync(run, connection, job.JobId, onStepChanged, step, ct);
-        void EmitOutputLine(string line) => _ = EmitOutputLineInternalAsync(run, outputBatcher, line, ct);
         void ReportQualityGateResult(QualityGateReport report) => _ = ReportQualityGateResultInternalAsync(connection, job.JobId, report, ct);
 
         CancellationTokenSource? localCts = null;
+        PipelineStepContext? context = null;
+
+        // Wrap EmitOutputLine so ALL output is masked once secrets are populated.
+        // context.InjectedSecrets is null until RunEnvironmentSetupStep populates it,
+        // so output before that step passes through unmasked (no secrets exist yet).
+        void EmitOutputLine(string line)
+        {
+            var masked = MaskSecretsInOutput(line, context);
+            _ = EmitOutputLineInternalAsync(run, outputBatcher, masked, ct);
+        }
 
         try
         {
@@ -265,7 +274,7 @@ public sealed class LocalPipelineExecutor
             };
 
             // Build step context
-            var context = CreateStepContext(
+            context = CreateStepContext(
                 job, run, config, repoProvider, agentProvider, brainProvider, brainSync,
                 pipelineProvider, issueOps, connection, prOrchestrator, agentExecution,
                 qualityGates, localCts, prContext, TransitionTo, EmitOutputLine, ReportQualityGateResult, ct);
@@ -273,9 +282,9 @@ public sealed class LocalPipelineExecutor
             // Build step pipeline based on run type
             var steps = run.RunType switch
             {
-                PipelineRunType.Review => BuildReviewStepPipeline(),
-                PipelineRunType.DecompositionAnalysis => BuildDecompositionAnalysisStepPipeline(_openIssueContextWriter),
-                PipelineRunType.Decomposition => BuildDecompositionStepPipeline(),
+                PipelineRunType.Review => BuildReviewStepPipeline(job),
+                PipelineRunType.DecompositionAnalysis => BuildDecompositionAnalysisStepPipeline(job, _openIssueContextWriter),
+                PipelineRunType.Decomposition => BuildDecompositionStepPipeline(job),
                 _ => BuildAgentStepPipeline(job, connection)
             };
 
@@ -320,6 +329,14 @@ public sealed class LocalPipelineExecutor
         {
             localCts?.Dispose();
 
+            // Clean up injected environment secrets
+            if (context?.InjectedSecretKeys is { Count: > 0 })
+            {
+                foreach (var key in context.InjectedSecretKeys)
+                    Environment.SetEnvironmentVariable(key, null);
+                _logger.Debug("Cleaned up {Count} injected secret keys", context.InjectedSecretKeys.Count);
+            }
+
             // Workspace cleanup
             try
             {
@@ -335,6 +352,24 @@ public sealed class LocalPipelineExecutor
                 _logger.Warning(ex, "Failed to clean up workspace {WorkspacePath}", run.WorkspacePath);
             }
         }
+    }
+
+    /// <summary>
+    /// Masks known secret values in pipeline output. If no secrets are populated on the context
+    /// (i.e., before <see cref="RunEnvironmentSetupStep"/> runs), the output passes through unchanged.
+    /// Values shorter than 4 characters are not masked to avoid excessive false-positive redaction.
+    /// </summary>
+    private static string MaskSecretsInOutput(string output, PipelineStepContext? context)
+    {
+        if (context?.InjectedSecrets is not { Count: > 0 })
+            return output;
+
+        foreach (var (_, value) in context.InjectedSecrets)
+        {
+            if (value.Length >= 4)
+                output = output.Replace(value, "***");
+        }
+        return output;
     }
 
     /// <summary>
@@ -397,6 +432,7 @@ public sealed class LocalPipelineExecutor
         {
             new CloneRepositoryStep(),
             new WriteMcpConfigStep(job),
+            new RunEnvironmentSetupStep(job),
             new SyncBrainPreRunStep(),
             new DetectReworkStep(),
             new CreateBranchStep(),
@@ -412,14 +448,15 @@ public sealed class LocalPipelineExecutor
 
     /// <summary>
     /// Builds the ordered step pipeline for PR review runs.
-    /// Shorter sequence: Clone → CreateBranch → SyncBrain → ExtractLinkedIssues → ReviewCode → PostFindings.
+    /// Shorter sequence: Clone → EnvironmentSetup → CreateBranch → SyncBrain → ExtractLinkedIssues → ReviewCode → PostFindings.
     /// Skips analysis, code generation, quality gates, and rework detection.
     /// </summary>
-    internal static IReadOnlyList<IPipelineStep> BuildReviewStepPipeline()
+    internal static IReadOnlyList<IPipelineStep> BuildReviewStepPipeline(JobAssignmentMessage job)
     {
         return new IPipelineStep[]
         {
             new CloneRepositoryStep(),
+            new RunEnvironmentSetupStep(job),
             new CreateBranchStep(),
             new SyncBrainPreRunStep(),
             new ExtractLinkedIssuesStep(new IssueDescriptionParser()),
@@ -434,11 +471,13 @@ public sealed class LocalPipelineExecutor
     /// IOpenIssueContextWriter is injected into the WriteOpenIssueContextStep via constructor.
     /// </summary>
     internal static IReadOnlyList<IPipelineStep> BuildDecompositionAnalysisStepPipeline(
+        JobAssignmentMessage job,
         IOpenIssueContextWriter openIssueContextWriter)
     {
         return new IPipelineStep[]
         {
             new CloneRepositoryStep(),
+            new RunEnvironmentSetupStep(job),
             new SyncBrainPreRunStep(),
             new WriteProjectContextStep(),
             new WriteOpenIssueContextStep(openIssueContextWriter),
@@ -451,11 +490,12 @@ public sealed class LocalPipelineExecutor
     /// Builds the step pipeline for Decomposition (Phase 2).
     /// Sequence: Clone → SyncBrain → Decomposition → CreateSubIssues → PostDecompositionSummary.
     /// </summary>
-    internal static IReadOnlyList<IPipelineStep> BuildDecompositionStepPipeline()
+    internal static IReadOnlyList<IPipelineStep> BuildDecompositionStepPipeline(JobAssignmentMessage job)
     {
         return new IPipelineStep[]
         {
             new CloneRepositoryStep(),
+            new RunEnvironmentSetupStep(job),
             new SyncBrainPreRunStep(),
             new DecompositionStep(),
             new CreateSubIssuesStep(),

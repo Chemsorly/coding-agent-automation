@@ -1,5 +1,6 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
+@using System.Text.RegularExpressions
 
 <section class="settings-section">
     <h2>@_project.Name</h2>
@@ -8,6 +9,7 @@
     <div class="project-tabs">
         <button class="tab-btn @(IsTab(TabOverview))" @onclick="() => SetTab(TabOverview)">Overview</button>
         <button class="tab-btn @(IsTab(TabTemplates))" @onclick="() => SetTab(TabTemplates)">Templates</button>
+        <button class="tab-btn @(IsTab(TabSecrets))" @onclick="() => SetTab(TabSecrets)">Secrets</button>
         <button class="tab-btn @(IsTab(TabSettings))" @onclick="() => SetTab(TabSettings)">Settings</button>
     </div>
 
@@ -19,6 +21,10 @@
     {
         @RenderTemplatesTab()
     }
+    else if (_activeTab == TabSecrets)
+    {
+        @RenderSecretsTab()
+    }
     else if (_activeTab == TabSettings)
     {
         @RenderSettingsTab()
@@ -28,6 +34,7 @@
 @code {
     private const string TabOverview = "overview";
     private const string TabTemplates = "templates";
+    private const string TabSecrets = "secrets";
     private const string TabSettings = "settings";
 
     [Parameter, EditorRequired] public string ProjectId { get; set; } = default!;
@@ -78,6 +85,11 @@
     // Template management
     private string? _selectedTemplateToAdd;
 
+    // Secrets management
+    private List<SecretEntry> _secrets = new();
+    private HashSet<int> _revealedSecrets = new();
+    private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);
+
     protected override async Task OnInitializedAsync()
     {
         await LoadDataAsync();
@@ -114,6 +126,10 @@
         // Populate settings override fields
         _maxRetries = _project.MaxRetries;
         _maxAnalysisRetries = _project.MaxAnalysisRetries;
+
+        // Populate secrets
+        _secrets = _project.Secrets?.Select(kv => new SecretEntry { Key = kv.Key, Value = kv.Value }).ToList() ?? new();
+        _revealedSecrets.Clear();
         _agentTimeoutMinutes = _project.AgentTimeout.HasValue ? (int?)_project.AgentTimeout.Value.TotalMinutes : null;
         _analysisPrompt = _project.AnalysisPrompt;
         _implementationPrompt = _project.ImplementationPrompt;
@@ -212,6 +228,44 @@
                     }
                 </select>
                 <button class="btn-save" disabled="@(string.IsNullOrEmpty(_selectedTemplateToAdd))" @onclick="AddTemplate">Add</button>
+            </div>
+        </div>
+    };
+
+    private RenderFragment RenderSecretsTab() => __builder =>
+    {
+        <div class="provider-form">
+            <h3>🔐 Project Secrets</h3>
+            <p class="form-hint">Environment variables injected into every run for this project. Merged with repo-level secrets (repo wins on key collision).</p>
+            <div class="secrets-section-body">
+                @for (var i = 0; i < _secrets.Count; i++)
+                {
+                    var index = i;
+                    var secret = _secrets[index];
+                    var isRevealed = _revealedSecrets.Contains(index);
+                    <div class="secret-row">
+                        <input type="text"
+                               class="secret-key-input"
+                               value="@secret.Key"
+                               @onchange="e => UpdateSecretKey(index, e.Value?.ToString() ?? string.Empty)"
+                               placeholder="ENV_VAR_NAME" />
+                        <input type="@(isRevealed ? "text" : "password")"
+                               class="secret-value-input"
+                               value="@secret.Value"
+                               @onchange="e => UpdateSecretValue(index, e.Value?.ToString() ?? string.Empty)"
+                               placeholder="secret value" />
+                        <button type="button" class="btn-icon" title="@(isRevealed ? "Hide" : "Reveal")" @onclick="() => ToggleSecretVisibility(index)">@(isRevealed ? "🙈" : "👁")</button>
+                        <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSecret(index)">🗑</button>
+                    </div>
+                    @if (!string.IsNullOrEmpty(secret.ValidationError))
+                    {
+                        <div class="secret-validation-error">@secret.ValidationError</div>
+                    }
+                }
+                <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
+            </div>
+            <div class="pipeline-form-actions">
+                <button class="btn-save" @onclick="SaveSecretsAsync">Save Secrets</button>
             </div>
         </div>
     };
@@ -410,10 +464,30 @@
         }
     }
 
+    private async Task SaveSecretsAsync()
+    {
+        if (!ValidateSecrets()) return;
+
+        try
+        {
+            _project = _project with { Secrets = BuildSecretsDictionary() };
+            await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
+            await OnProjectSaved.InvokeAsync();
+            await OnShowStatus.InvokeAsync(("Project secrets saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+
     private async Task SaveSettingsAsync()
     {
         try
         {
+            if (!ValidateSecrets())
+                return;
+
             _project = _project with
             {
                 MaxRetries = _maxRetries,
@@ -462,5 +536,104 @@
         {
             await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
         }
+    }
+
+    // --- Secrets management ---
+
+    private void AddSecret()
+    {
+        _secrets.Add(new SecretEntry());
+    }
+
+    private void RemoveSecret(int index)
+    {
+        if (index >= 0 && index < _secrets.Count)
+        {
+            _secrets.RemoveAt(index);
+            var newRevealed = new HashSet<int>();
+            foreach (var i in _revealedSecrets)
+            {
+                if (i < index) newRevealed.Add(i);
+                else if (i > index) newRevealed.Add(i - 1);
+            }
+            _revealedSecrets = newRevealed;
+        }
+    }
+
+    private void UpdateSecretKey(int index, string value)
+    {
+        if (index >= 0 && index < _secrets.Count)
+        {
+            _secrets[index].Key = value;
+            _secrets[index].ValidationError = null;
+        }
+    }
+
+    private void UpdateSecretValue(int index, string value)
+    {
+        if (index >= 0 && index < _secrets.Count)
+        {
+            _secrets[index].Value = value;
+        }
+    }
+
+    private void ToggleSecretVisibility(int index)
+    {
+        if (!_revealedSecrets.Remove(index))
+            _revealedSecrets.Add(index);
+    }
+
+    private bool ValidateSecrets()
+    {
+        if (_secrets.Count == 0) return true;
+
+        var isValid = true;
+        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var secret in _secrets)
+        {
+            secret.ValidationError = null;
+
+            if (string.IsNullOrWhiteSpace(secret.Key))
+            {
+                secret.ValidationError = "Key is required.";
+                isValid = false;
+                continue;
+            }
+
+            if (!SecretKeyPattern.IsMatch(secret.Key))
+            {
+                secret.ValidationError = "Key must match POSIX env var pattern (letters, digits, underscores; cannot start with digit).";
+                isValid = false;
+                continue;
+            }
+
+            if (!seenKeys.Add(secret.Key))
+            {
+                secret.ValidationError = "Duplicate key.";
+                isValid = false;
+            }
+        }
+
+        return isValid;
+    }
+
+    private Dictionary<string, string>? BuildSecretsDictionary()
+    {
+        if (_secrets.Count == 0) return null;
+        var dict = new Dictionary<string, string>();
+        foreach (var secret in _secrets)
+        {
+            if (!string.IsNullOrWhiteSpace(secret.Key))
+                dict[secret.Key] = secret.Value;
+        }
+        return dict.Count > 0 ? dict : null;
+    }
+
+    private class SecretEntry
+    {
+        public string Key { get; set; } = "";
+        public string Value { get; set; } = "";
+        public string? ValidationError { get; set; }
     }
 }

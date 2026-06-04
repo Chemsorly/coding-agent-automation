@@ -101,11 +101,7 @@ internal partial class AgentPhaseExecutor : IAgentPhaseExecutor
                     ResumeSessionId = resumeSessionId
                 },
                 run, config, description, callbacks.NotifyChange, logger, ct,
-                line =>
-                {
-                    run.OutputLines.Enqueue(line);
-                    callbacks.EmitOutputLine(line);
-                });
+                line => callbacks.EmitOutputLine(line));
 
             run.AccumulateTokenUsage(agentResult);
 

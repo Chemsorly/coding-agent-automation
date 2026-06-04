@@ -40,4 +40,18 @@ public sealed class ProviderConfig
     /// <see cref="PipelineConfiguration.BlacklistMode"/> global default.
     /// </summary>
     public BlacklistMode? BlacklistMode { get; init; }
+
+    /// <summary>
+    /// Environment secrets injected into setup step processes as environment variables.
+    /// Only meaningful when Kind == Repository and RepositoryRole == Work.
+    /// Keys are variable names, values are plaintext.
+    /// </summary>
+    public Dictionary<string, string>? Secrets { get; init; }
+
+    /// <summary>
+    /// Shell commands executed sequentially after clone, before the agent starts.
+    /// Only meaningful when Kind == Repository and RepositoryRole == Work.
+    /// Commands can reference Secrets via standard shell variable expansion ($KEY).
+    /// </summary>
+    public IReadOnlyList<SetupStep>? SetupSteps { get; init; }
 }

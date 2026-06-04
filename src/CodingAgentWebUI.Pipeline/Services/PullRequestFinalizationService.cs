@@ -44,11 +44,7 @@ internal sealed class PullRequestFinalizationService
                     UseResume = true
                 },
                 ct,
-                line =>
-                {
-                    run.OutputLines.Enqueue(line);
-                    emitOutputLine(line);
-                });
+                line => emitOutputLine(line));
 
             run.AccumulateTokenUsage(reflectionResult);
             _logger.Information("Pipeline {RunId} reflection step completed", run.RunId);
@@ -119,11 +115,7 @@ internal sealed class PullRequestFinalizationService
                     UseResume = true
                 },
                 ct,
-                line =>
-                {
-                    run.OutputLines.Enqueue(line);
-                    emitOutputLine(line);
-                });
+                line => emitOutputLine(line));
 
             var responseText = string.Join("\n", feedbackResult.OutputLines);
             run.Feedback = feedbackService.ParseFeedbackFromResponse(responseText, FeedbackOutcome.Success, DateTime.UtcNow);

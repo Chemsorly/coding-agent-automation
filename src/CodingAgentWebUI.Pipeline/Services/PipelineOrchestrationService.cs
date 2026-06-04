@@ -371,6 +371,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         {
             new Steps.FetchIssueStep(_issueParser),
             new Steps.CloneRepositoryStep(),
+            new Steps.RunEnvironmentSetupStep(),
             new Steps.SyncBrainPreRunStep(),
             new Steps.DetectReworkStep(),
             new Steps.CreateBranchStep(),

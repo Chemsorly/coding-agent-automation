@@ -1,3 +1,4 @@
+@using System.Text.RegularExpressions
 @using CodingAgentWebUI.Pipeline
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
@@ -80,6 +81,70 @@
                                 <option value="Fail">Fail (stop pipeline on violation)</option>
                             </select>
                         </div>
+                        <details class="secrets-section">
+                            <summary class="secrets-section-header">🔑 Secrets (@_form.Secrets.Count)</summary>
+                            <div class="secrets-section-body">
+                                @for (var i = 0; i < _form.Secrets.Count; i++)
+                                {
+                                    var index = i;
+                                    var secret = _form.Secrets[index];
+                                    var isRevealed = _revealedSecrets.Contains(index);
+                                    <div class="secret-row">
+                                        <input type="text"
+                                               class="secret-key-input"
+                                               value="@secret.Key"
+                                               @onchange="e => UpdateSecretKey(index, e.Value?.ToString() ?? string.Empty)"
+                                               placeholder="ENV_VAR_NAME" />
+                                        <input type="@(isRevealed ? "text" : "password")"
+                                               class="secret-value-input"
+                                               value="@secret.Value"
+                                               @onchange="e => UpdateSecretValue(index, e.Value?.ToString() ?? string.Empty)"
+                                               placeholder="secret value" />
+                                        <button type="button" class="btn-icon" title="@(isRevealed ? "Hide" : "Reveal")" @onclick="() => ToggleSecretVisibility(index)">@(isRevealed ? "🙈" : "👁")</button>
+                                        <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSecret(index)">🗑</button>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(secret.ValidationError))
+                                    {
+                                        <div class="secret-validation-error">@secret.ValidationError</div>
+                                    }
+                                }
+                                <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
+                            </div>
+                        </details>
+                        <details class="setup-steps-section">
+                            <summary class="setup-steps-section-header">⚙️ Setup Steps (@_form.SetupSteps.Count)</summary>
+                            <div class="setup-steps-section-body">
+                                @for (var i = 0; i < _form.SetupSteps.Count; i++)
+                                {
+                                    var index = i;
+                                    var step = _form.SetupSteps[index];
+                                    <div class="setup-step-row">
+                                        <div class="setup-step-header">
+                                            <span class="setup-step-number">@(index + 1).</span>
+                                            <input type="text"
+                                                   class="setup-step-name-input"
+                                                   value="@step.Name"
+                                                   @onchange="e => UpdateSetupStepName(index, e.Value?.ToString() ?? string.Empty)"
+                                                   placeholder="Step name (e.g. Configure NuGet feed)" />
+                                            <div class="setup-step-actions">
+                                                <button type="button" class="btn-icon" title="Move up" disabled="@(index == 0)" @onclick="() => MoveSetupStepUp(index)">↑</button>
+                                                <button type="button" class="btn-icon" title="Move down" disabled="@(index == _form.SetupSteps.Count - 1)" @onclick="() => MoveSetupStepDown(index)">↓</button>
+                                                <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSetupStep(index)">🗑</button>
+                                            </div>
+                                        </div>
+                                        <textarea class="setup-step-command-input"
+                                                  rows="2"
+                                                  @onchange="e => UpdateSetupStepCommand(index, e.Value?.ToString() ?? string.Empty)"
+                                                  placeholder="Shell command (e.g. dotnet nuget add source ...)">@step.Command</textarea>
+                                        @if (!string.IsNullOrEmpty(step.ValidationError))
+                                        {
+                                            <div class="setup-step-validation-error">@step.ValidationError</div>
+                                        }
+                                    </div>
+                                }
+                                <button type="button" class="btn-add-inline" @onclick="AddSetupStep">+ Add Step</button>
+                            </div>
+                        </details>
                     }
                 </AdditionalFields>
             </GitLabProviderForm>
@@ -140,6 +205,70 @@
                                 <option value="Fail">Fail (stop pipeline on violation)</option>
                             </select>
                         </div>
+                        <details class="secrets-section">
+                            <summary class="secrets-section-header">🔑 Secrets (@_form.Secrets.Count)</summary>
+                            <div class="secrets-section-body">
+                                @for (var i = 0; i < _form.Secrets.Count; i++)
+                                {
+                                    var index = i;
+                                    var secret = _form.Secrets[index];
+                                    var isRevealed = _revealedSecrets.Contains(index);
+                                    <div class="secret-row">
+                                        <input type="text"
+                                               class="secret-key-input"
+                                               value="@secret.Key"
+                                               @onchange="e => UpdateSecretKey(index, e.Value?.ToString() ?? string.Empty)"
+                                               placeholder="ENV_VAR_NAME" />
+                                        <input type="@(isRevealed ? "text" : "password")"
+                                               class="secret-value-input"
+                                               value="@secret.Value"
+                                               @onchange="e => UpdateSecretValue(index, e.Value?.ToString() ?? string.Empty)"
+                                               placeholder="secret value" />
+                                        <button type="button" class="btn-icon" title="@(isRevealed ? "Hide" : "Reveal")" @onclick="() => ToggleSecretVisibility(index)">@(isRevealed ? "🙈" : "👁")</button>
+                                        <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSecret(index)">🗑</button>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(secret.ValidationError))
+                                    {
+                                        <div class="secret-validation-error">@secret.ValidationError</div>
+                                    }
+                                }
+                                <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
+                            </div>
+                        </details>
+                        <details class="setup-steps-section">
+                            <summary class="setup-steps-section-header">⚙️ Setup Steps (@_form.SetupSteps.Count)</summary>
+                            <div class="setup-steps-section-body">
+                                @for (var i = 0; i < _form.SetupSteps.Count; i++)
+                                {
+                                    var index = i;
+                                    var step = _form.SetupSteps[index];
+                                    <div class="setup-step-row">
+                                        <div class="setup-step-header">
+                                            <span class="setup-step-number">@(index + 1).</span>
+                                            <input type="text"
+                                                   class="setup-step-name-input"
+                                                   value="@step.Name"
+                                                   @onchange="e => UpdateSetupStepName(index, e.Value?.ToString() ?? string.Empty)"
+                                                   placeholder="Step name (e.g. Configure NuGet feed)" />
+                                            <div class="setup-step-actions">
+                                                <button type="button" class="btn-icon" title="Move up" disabled="@(index == 0)" @onclick="() => MoveSetupStepUp(index)">↑</button>
+                                                <button type="button" class="btn-icon" title="Move down" disabled="@(index == _form.SetupSteps.Count - 1)" @onclick="() => MoveSetupStepDown(index)">↓</button>
+                                                <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSetupStep(index)">🗑</button>
+                                            </div>
+                                        </div>
+                                        <textarea class="setup-step-command-input"
+                                                  rows="2"
+                                                  @onchange="e => UpdateSetupStepCommand(index, e.Value?.ToString() ?? string.Empty)"
+                                                  placeholder="Shell command (e.g. dotnet nuget add source ...)">@step.Command</textarea>
+                                        @if (!string.IsNullOrEmpty(step.ValidationError))
+                                        {
+                                            <div class="setup-step-validation-error">@step.ValidationError</div>
+                                        }
+                                    </div>
+                                }
+                                <button type="button" class="btn-add-inline" @onclick="AddSetupStep">+ Add Step</button>
+                            </div>
+                        </details>
                     }
                 </AdditionalFields>
                 <HelpContent>
@@ -187,6 +316,9 @@
     private string? _validationMessage;
     private bool _validationSuccess;
     private bool _saving;
+    private HashSet<int> _revealedSecrets = new();
+
+    private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);
 
     private void ShowAddForm()
     {
@@ -195,6 +327,7 @@
         _availableRepos.Clear();
         _selectedRepo = "";
         _validationMessage = null;
+        _revealedSecrets.Clear();
         _showForm = true;
     }
 
@@ -218,8 +351,11 @@
             BlacklistMode = p.BlacklistMode?.ToString() ?? "",
             GitLabApiUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, ProviderSettingKeys.DefaultGitLabApiUrl),
             GitLabAccessToken = p.Settings.GetValueOrDefault(ProviderSettingKeys.AccessToken, ""),
-            GitLabProjectId = p.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId, "")
+            GitLabProjectId = p.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId, ""),
+            Secrets = p.Secrets?.Select(kv => new SecretEntry { Key = kv.Key, Value = kv.Value }).ToList() ?? new(),
+            SetupSteps = p.SetupSteps?.Select(s => new SetupStepEntry { Name = s.Name, Command = s.Command }).ToList() ?? new()
         };
+        _revealedSecrets.Clear();
         _showForm = true;
     }
 
@@ -274,6 +410,18 @@
             return;
         }
 
+        if (!ValidateSecrets())
+        {
+            _saving = false;
+            return;
+        }
+
+        if (!ValidateSetupSteps())
+        {
+            _saving = false;
+            return;
+        }
+
         var config = new ProviderConfig
         {
             Id = _editingProvider?.Id ?? Guid.NewGuid().ToString(),
@@ -284,6 +432,8 @@
             RequiredLabels = ParseLabels(_form.RequiredLabels),
             BlacklistedPaths = ParseBlacklistedPaths(_form.BlacklistedPaths),
             BlacklistMode = Enum.TryParse<BlacklistMode>(_form.BlacklistMode, out var mode) ? mode : null,
+            Secrets = BuildSecretsDictionary(),
+            SetupSteps = BuildSetupStepsList(),
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.ApiUrl] = _form.ApiUrl,
@@ -320,6 +470,7 @@
         _showForm = false;
         _availableRepos.Clear();
         _validationMessage = null;
+        _revealedSecrets.Clear();
     }
 
     private async Task FetchRepos()
@@ -376,10 +527,26 @@
         public string RequiredLabels { get; set; } = "";
         public string BlacklistedPaths { get; set; } = "";
         public string BlacklistMode { get; set; } = "";
+        public List<SecretEntry> Secrets { get; set; } = new();
+        public List<SetupStepEntry> SetupSteps { get; set; } = new();
         // GitLab-specific fields
         public string GitLabApiUrl { get; set; } = ProviderSettingKeys.DefaultGitLabApiUrl;
         public string GitLabAccessToken { get; set; } = "";
         public string GitLabProjectId { get; set; } = "";
+    }
+
+    private class SecretEntry
+    {
+        public string Key { get; set; } = "";
+        public string Value { get; set; } = "";
+        public string? ValidationError { get; set; }
+    }
+
+    private class SetupStepEntry
+    {
+        public string Name { get; set; } = "";
+        public string Command { get; set; } = "";
+        public string? ValidationError { get; set; }
     }
 
     private void OnProviderTypeChanged(string newType)
@@ -444,6 +611,18 @@
                 ? ProviderSettingKeys.DefaultBaseBranch
                 : _form.BaseBranch;
 
+            if (!ValidateSecrets())
+            {
+                _saving = false;
+                return;
+            }
+
+            if (!ValidateSetupSteps())
+            {
+                _saving = false;
+                return;
+            }
+
             var config = new ProviderConfig
             {
                 Id = _editingProvider?.Id ?? Guid.NewGuid().ToString(),
@@ -454,6 +633,8 @@
                 RequiredLabels = ParseLabels(_form.RequiredLabels),
                 BlacklistedPaths = ParseBlacklistedPaths(_form.BlacklistedPaths),
                 BlacklistMode = Enum.TryParse<BlacklistMode>(_form.BlacklistMode, out var mode) ? mode : null,
+                Secrets = BuildSecretsDictionary(),
+                SetupSteps = BuildSetupStepsList(),
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.ApiUrl] = apiUrl,
@@ -496,5 +677,199 @@
             .Where(p => !string.IsNullOrWhiteSpace(p))
             .ToList();
         return paths.Count > 0 ? paths : null;
+    }
+
+    // --- Secrets management ---
+
+    private void AddSecret()
+    {
+        _form.Secrets.Add(new SecretEntry());
+    }
+
+    private void RemoveSecret(int index)
+    {
+        if (index >= 0 && index < _form.Secrets.Count)
+        {
+            _form.Secrets.RemoveAt(index);
+            // Rebuild revealed set since indices shifted
+            var newRevealed = new HashSet<int>();
+            foreach (var i in _revealedSecrets)
+            {
+                if (i < index) newRevealed.Add(i);
+                else if (i > index) newRevealed.Add(i - 1);
+            }
+            _revealedSecrets = newRevealed;
+        }
+    }
+
+    private void UpdateSecretKey(int index, string value)
+    {
+        if (index >= 0 && index < _form.Secrets.Count)
+        {
+            _form.Secrets[index].Key = value;
+            _form.Secrets[index].ValidationError = null;
+        }
+    }
+
+    private void UpdateSecretValue(int index, string value)
+    {
+        if (index >= 0 && index < _form.Secrets.Count)
+        {
+            _form.Secrets[index].Value = value;
+        }
+    }
+
+    private void ToggleSecretVisibility(int index)
+    {
+        if (!_revealedSecrets.Remove(index))
+            _revealedSecrets.Add(index);
+    }
+
+    private bool ValidateSecrets()
+    {
+        if (_form.Secrets.Count == 0) return true;
+
+        var isValid = true;
+        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var secret in _form.Secrets)
+        {
+            secret.ValidationError = null;
+
+            if (string.IsNullOrWhiteSpace(secret.Key))
+            {
+                secret.ValidationError = "Key is required.";
+                isValid = false;
+                continue;
+            }
+
+            if (!SecretKeyPattern.IsMatch(secret.Key))
+            {
+                secret.ValidationError = "Key must match POSIX env var pattern (letters, digits, underscores; cannot start with digit).";
+                isValid = false;
+                continue;
+            }
+
+            if (!seenKeys.Add(secret.Key))
+            {
+                secret.ValidationError = "Duplicate key.";
+                isValid = false;
+            }
+        }
+
+        if (!isValid)
+        {
+            _validationMessage = "Fix secret key errors before saving.";
+            _validationSuccess = false;
+        }
+
+        return isValid;
+    }
+
+    private Dictionary<string, string>? BuildSecretsDictionary()
+    {
+        if (_form.Secrets.Count == 0) return null;
+        var dict = new Dictionary<string, string>();
+        foreach (var secret in _form.Secrets)
+        {
+            if (!string.IsNullOrWhiteSpace(secret.Key))
+                dict[secret.Key] = secret.Value;
+        }
+        return dict.Count > 0 ? dict : null;
+    }
+
+    // --- Setup Steps management ---
+
+    private void AddSetupStep()
+    {
+        _form.SetupSteps.Add(new SetupStepEntry());
+    }
+
+    private void RemoveSetupStep(int index)
+    {
+        if (index >= 0 && index < _form.SetupSteps.Count)
+        {
+            _form.SetupSteps.RemoveAt(index);
+        }
+    }
+
+    private void MoveSetupStepUp(int index)
+    {
+        if (index > 0 && index < _form.SetupSteps.Count)
+        {
+            (_form.SetupSteps[index - 1], _form.SetupSteps[index]) = (_form.SetupSteps[index], _form.SetupSteps[index - 1]);
+        }
+    }
+
+    private void MoveSetupStepDown(int index)
+    {
+        if (index >= 0 && index < _form.SetupSteps.Count - 1)
+        {
+            (_form.SetupSteps[index], _form.SetupSteps[index + 1]) = (_form.SetupSteps[index + 1], _form.SetupSteps[index]);
+        }
+    }
+
+    private void UpdateSetupStepName(int index, string value)
+    {
+        if (index >= 0 && index < _form.SetupSteps.Count)
+        {
+            _form.SetupSteps[index].Name = value;
+            _form.SetupSteps[index].ValidationError = null;
+        }
+    }
+
+    private void UpdateSetupStepCommand(int index, string value)
+    {
+        if (index >= 0 && index < _form.SetupSteps.Count)
+        {
+            _form.SetupSteps[index].Command = value;
+            _form.SetupSteps[index].ValidationError = null;
+        }
+    }
+
+    private bool ValidateSetupSteps()
+    {
+        if (_form.SetupSteps.Count == 0) return true;
+
+        var isValid = true;
+
+        foreach (var step in _form.SetupSteps)
+        {
+            step.ValidationError = null;
+
+            if (string.IsNullOrWhiteSpace(step.Name) && string.IsNullOrWhiteSpace(step.Command))
+            {
+                step.ValidationError = "Name and command are required.";
+                isValid = false;
+            }
+            else if (string.IsNullOrWhiteSpace(step.Name))
+            {
+                step.ValidationError = "Step name is required.";
+                isValid = false;
+            }
+            else if (string.IsNullOrWhiteSpace(step.Command))
+            {
+                step.ValidationError = "Command is required.";
+                isValid = false;
+            }
+        }
+
+        if (!isValid)
+        {
+            _validationMessage = "Fix setup step errors before saving.";
+            _validationSuccess = false;
+        }
+
+        return isValid;
+    }
+
+    private IReadOnlyList<SetupStep>? BuildSetupStepsList()
+    {
+        if (_form.SetupSteps.Count == 0) return null;
+        var steps = _form.SetupSteps
+            .Where(s => !string.IsNullOrWhiteSpace(s.Name) && !string.IsNullOrWhiteSpace(s.Command))
+            .Select(s => new SetupStep { Name = s.Name.Trim(), Command = s.Command.Trim() })
+            .ToList();
+        return steps.Count > 0 ? steps : null;
     }
 }
