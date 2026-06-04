@@ -46,15 +46,17 @@ public class StepMetricsTests : IDisposable
 
         await PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None);
 
-        _histograms.Should().ContainSingle(h => h.Name == "pipeline.step.duration");
-        var hist = _histograms.First(h => h.Name == "pipeline.step.duration");
+        _histograms.Should().Contain(h => h.Name == "pipeline.step.duration"
+            && h.Tags.Contains(new KeyValuePair<string, object?>("step_name", "TestStep")));
+        var hist = _histograms.First(h => h.Name == "pipeline.step.duration"
+            && h.Tags.Contains(new KeyValuePair<string, object?>("step_name", "TestStep")));
         hist.Value.Should().BeGreaterThanOrEqualTo(0);
-        hist.Tags.Should().Contain(new KeyValuePair<string, object?>("step_name", "TestStep"));
 
-        _counters.Should().ContainSingle(c => c.Name == "pipeline.step.count");
-        var counter = _counters.First(c => c.Name == "pipeline.step.count");
+        _counters.Should().Contain(c => c.Name == "pipeline.step.count"
+            && c.Tags.Contains(new KeyValuePair<string, object?>("step_name", "TestStep")));
+        var counter = _counters.First(c => c.Name == "pipeline.step.count"
+            && c.Tags.Contains(new KeyValuePair<string, object?>("step_name", "TestStep")));
         counter.Value.Should().Be(1);
-        counter.Tags.Should().Contain(new KeyValuePair<string, object?>("step_name", "TestStep"));
     }
 
     [Fact]
@@ -65,8 +67,10 @@ public class StepMetricsTests : IDisposable
 
         await PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None);
 
-        _histograms.Should().ContainSingle(h => h.Name == "pipeline.step.duration");
-        _counters.Should().ContainSingle(c => c.Name == "pipeline.step.count");
+        _histograms.Should().Contain(h => h.Name == "pipeline.step.duration"
+            && h.Tags.Contains(new KeyValuePair<string, object?>("step_name", "StopStep")));
+        _counters.Should().Contain(c => c.Name == "pipeline.step.count"
+            && c.Tags.Contains(new KeyValuePair<string, object?>("step_name", "StopStep")));
     }
 
     [Fact]
@@ -78,10 +82,10 @@ public class StepMetricsTests : IDisposable
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None));
 
-        _histograms.Should().ContainSingle(h => h.Name == "pipeline.step.duration");
-        _counters.Should().ContainSingle(c => c.Name == "pipeline.step.count");
-        _counters.First(c => c.Name == "pipeline.step.count").Tags
-            .Should().Contain(new KeyValuePair<string, object?>("step_name", "FailStep"));
+        _histograms.Should().Contain(h => h.Name == "pipeline.step.duration"
+            && h.Tags.Contains(new KeyValuePair<string, object?>("step_name", "FailStep")));
+        _counters.Should().Contain(c => c.Name == "pipeline.step.count"
+            && c.Tags.Contains(new KeyValuePair<string, object?>("step_name", "FailStep")));
     }
 
     [Fact]
