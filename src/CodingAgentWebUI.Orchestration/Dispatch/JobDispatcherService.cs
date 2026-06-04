@@ -25,6 +25,7 @@ public sealed record PendingJob
     public string? PrDescription { get; init; }
     public string? PrUrl { get; init; }
     public string? PrTargetBranch { get; init; }
+    public string? PrAuthor { get; init; }
 
     /// <summary>The project that owns this template. Set at poll time, used at dispatch time for settings resolution.</summary>
     public PipelineProject? Project { get; init; }
