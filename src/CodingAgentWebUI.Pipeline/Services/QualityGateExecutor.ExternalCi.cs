@@ -16,7 +16,7 @@ internal partial class QualityGateExecutor
         if (context.QualityGateConfigs.Count > 0)
         {
             // Multi-QGC mode: validate against matched QGCs
-            return await _qualityGateValidator.ValidateAsync(workspacePath, context.QualityGateConfigs, ct);
+            return await _qualityGateValidator.ValidateAsync(workspacePath, context.QualityGateConfigs, ct, context.RepoProvider.BaseBranch);
         }
 
         // No QGCs matched (or none configured) — skip quality gates

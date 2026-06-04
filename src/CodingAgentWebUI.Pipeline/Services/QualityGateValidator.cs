@@ -23,17 +23,16 @@ public class QualityGateValidator : IQualityGateValidator
 
     /// <inheritdoc />
     public virtual async Task<QualityGateReport> ValidateAsync(
-        string workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, CancellationToken ct)
+        string workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, CancellationToken ct, string? baseBranch = null)
     {
-        return await ValidateAsync(workspacePath, qualityGateConfigs, null, ct);
+        return await ValidateAsync(workspacePath, qualityGateConfigs, null, ct, baseBranch);
     }
 
     /// <summary>
     /// Validates quality gates with optional branch-awareness for quarantine filtering.
     /// </summary>
-    // TODO: Either add this overload to IQualityGateValidator interface, or reduce visibility to internal/private if not intended for external callers
     public virtual async Task<QualityGateReport> ValidateAsync(
-        string workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, IReadOnlyList<string>? branchModifiedFiles, CancellationToken ct)
+        string workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, IReadOnlyList<string>? branchModifiedFiles, CancellationToken ct, string? baseBranch = null)
     {
         ArgumentNullException.ThrowIfNull(workspacePath);
         ArgumentNullException.ThrowIfNull(qualityGateConfigs);
@@ -69,7 +68,7 @@ public class QualityGateValidator : IQualityGateValidator
         var hasQuarantine = qualityGateConfigs.Any(q => q.TestQuarantine is { Enabled: true });
         if (branchModifiedFiles == null && hasQuarantine)
         {
-            branchModifiedFiles = await ComputeBranchModifiedFilesAsync(workspacePath, ct);
+            branchModifiedFiles = await ComputeBranchModifiedFilesAsync(workspacePath, baseBranch, ct);
         }
 
         var qgcResults = new List<QgcExecutionResult>();
@@ -577,13 +576,12 @@ public class QualityGateValidator : IQualityGateValidator
     /// Computes the list of files modified by the current branch relative to the base branch.
     /// Uses git diff --name-only. Returns null if git is not available or the command fails.
     /// </summary>
-    private async Task<IReadOnlyList<string>?> ComputeBranchModifiedFilesAsync(string workspacePath, CancellationToken ct)
+    private async Task<IReadOnlyList<string>?> ComputeBranchModifiedFilesAsync(string workspacePath, string? baseBranch, CancellationToken ct)
     {
         try
         {
             var (exitCode, stdout, _) = await RunProcessAsync(
-                // TODO: Use "origin/main...HEAD" instead of "HEAD~1...HEAD" to capture all branch changes for multi-commit branches
-                "git", "diff --name-only HEAD~1...HEAD", workspacePath, ct);
+                "git", $"diff --name-only origin/{baseBranch ?? "main"}...HEAD", workspacePath, ct);
 
             if (exitCode != 0)
             {
