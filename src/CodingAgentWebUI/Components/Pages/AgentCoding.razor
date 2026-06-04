@@ -1497,7 +1497,8 @@
                 _drawerTemplate.PipelineProviderId,
                 initiatedBy: "manual",
                 CancellationToken.None,
-                issueTitle: _selectedDrawerIssue.Title);
+                issueTitle: _selectedDrawerIssue.Title,
+                project: GetParentProject(_drawerTemplate.Id));
 
             if (dispatched)
             {
@@ -1629,7 +1630,8 @@
                     BrainProviderId = _prDrawerTemplate.BrainProviderId,
                     InitiatedBy = "manual"
                 },
-                CancellationToken.None);
+                CancellationToken.None,
+                project: GetParentProject(_prDrawerTemplate.Id));
 
             if (dispatched)
             {
@@ -1780,7 +1782,8 @@
                 _epicDrawerTemplate.RepoProviderId,
                 _epicDrawerTemplate.BrainProviderId,
                 initiatedBy: "manual",
-                CancellationToken.None);
+                CancellationToken.None,
+                project: GetParentProject(_epicDrawerTemplate.Id));
 
             if (dispatched)
             {

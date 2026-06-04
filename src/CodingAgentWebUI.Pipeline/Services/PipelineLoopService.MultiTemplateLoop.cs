@@ -515,6 +515,10 @@ public sealed partial class PipelineLoopService
                             StatusMessage = $"🔄 Dispatching #{issue.Identifier} from '{template.Name}'";
                             NotifyChange();
 
+                            var dispatchProject = templateProjectLookup.GetValueOrDefault(template.Id);
+                            _logger.Information("Dispatching issue {Issue} with project '{ProjectName}' (id={ProjectId}, template={TemplateId})",
+                                issue.Identifier, dispatchProject?.Name ?? "NULL", dispatchProject?.Id ?? "NULL", template.Id);
+
                             var dispatched = await _jobDispatcher!.TryDispatchAsync(
                                 issue.Identifier,
                                 template.IssueProviderId, template.RepoProviderId,
@@ -522,7 +526,7 @@ public sealed partial class PipelineLoopService
                                 initiatedBy: "loop",
                                 stopToken,
                                 issueTitle: issue.Title,
-                                project: templateProjectLookup[template.Id]);
+                                project: dispatchProject);
 
                             if (dispatched)
                                 _logger.Information("Dispatched issue #{Issue} from template '{Template}'",

@@ -31,8 +31,9 @@ public static class ProjectMigrationService
         var existingProjects = await projectStore.LoadProjectsAsync(ct);
         if (existingProjects.Count > 0)
         {
-            // Already migrated — ensure Default project self-healing
+            // Already migrated — ensure Default project self-healing + assign orphans
             await EnsureDefaultProjectExistsAsync(existingProjects, projectStore, ct);
+            await AssignOrphanedTemplatesAsync(existingProjects, projectStore, configStore, ct);
             return;
         }
 
@@ -89,5 +90,44 @@ public static class ProjectMigrationService
             Name = "Default",
             TemplateIds = []
         }, ct);
+    }
+
+    /// <summary>
+    /// Assigns any templates that aren't owned by any project to the Default project.
+    /// This handles the case where new templates were added after the initial migration,
+    /// or where templates were removed from projects without being re-assigned.
+    /// </summary>
+    private static async Task AssignOrphanedTemplatesAsync(
+        IReadOnlyList<PipelineProject> projects,
+        IProjectStore projectStore,
+        IPipelineConfigStore configStore,
+        CancellationToken ct)
+    {
+        var config = await configStore.LoadPipelineConfigAsync(ct);
+        if (config.PipelineJobTemplates.Count == 0)
+            return;
+
+        var allAssignedIds = projects
+            .SelectMany(p => p.TemplateIds)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var orphanedIds = config.PipelineJobTemplates
+            .Where(t => !allAssignedIds.Contains(t.Id))
+            .Select(t => t.Id)
+            .ToList();
+
+        if (orphanedIds.Count == 0)
+            return;
+
+        var defaultProject = projects.FirstOrDefault(p => p.Id == WellKnownIds.DefaultProjectId);
+        if (defaultProject is null)
+            return; // EnsureDefaultProjectExistsAsync should have created it
+
+        var updatedIds = defaultProject.TemplateIds.Concat(orphanedIds).ToList();
+        var updated = defaultProject with { TemplateIds = updatedIds };
+        await projectStore.SaveProjectAsync(updated, ct);
+
+        Log.Information("Assigned {Count} orphaned template(s) to Default project: {TemplateIds}",
+            orphanedIds.Count, string.Join(", ", orphanedIds));
     }
 }
