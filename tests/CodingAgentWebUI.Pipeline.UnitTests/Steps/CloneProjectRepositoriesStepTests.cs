@@ -294,7 +294,7 @@ public class CloneProjectRepositoriesStepTests : IDisposable
         var step = new CloneProjectRepositoriesStep();
 
         // Act & Assert — should propagate cancellation
-        await Assert.ThrowsAsync<OperationCanceledException>(
+        var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => step.ExecuteAsync(context, cts.Token));
     }
 
