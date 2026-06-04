@@ -28,6 +28,9 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
     public AgentProviderType ProviderType => AgentProviderType.OpenCode;
 
+    /// <inheritdoc />
+    public IReadOnlyList<string> SteeringBlacklistPaths { get; } = ["AGENTS.md"];
+
     public OpenCodeAgentProvider(
         IHttpClientFactory httpClientFactory,
         ILogger? logger = null,

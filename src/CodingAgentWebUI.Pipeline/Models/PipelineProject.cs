@@ -57,6 +57,12 @@ public sealed record PipelineProject
     public bool? BrainReadOnly { get; init; }
 
     /// <summary>
+    /// Optional markdown steering content written to the agent workspace before each run.
+    /// Provides persistent behavioral instructions (code style, tool preferences, constraints).
+    /// </summary>
+    public string? SteeringContent { get; init; }
+
+    /// <summary>
     /// Project-level secrets injected as process-wide environment variables for every run
     /// in this project. Merged with repo-level secrets at dispatch time (repo wins on key collision).
     /// Keys must match POSIX env var pattern: [A-Za-z_][A-Za-z0-9_]*

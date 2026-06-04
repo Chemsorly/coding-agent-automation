@@ -10,6 +10,12 @@ public interface IAgentProvider : IAsyncDisposable
     AgentHealthStatus GetHealthStatus();
 
     /// <summary>
+    /// Provider-specific paths that should be excluded from commits when steering files are written.
+    /// Merged with config.BlacklistedPaths at commit time.
+    /// </summary>
+    IReadOnlyList<string> SteeringBlacklistPaths { get; }
+
+    /// <summary>
     /// Ensures a CLI session is established for the given workspace path by sending a
     /// read-only warm-up prompt on the first call. Subsequent calls for the same
     /// (normalized) workspace path are no-ops. Exceptions from the underlying agent

@@ -158,6 +158,14 @@ public sealed record JobAssignmentMessage
     /// <summary>PR author username for review runs (used for [HUMAN/AUTHOR] attribution in conversation context).</summary>
     [Key(27)]
     public string? ReviewPrAuthor { get; init; }
+
+    /// <summary>Project-level steering content (markdown) to write to the workspace before agent invocation.</summary>
+    [Key(28)]
+    public string? ProjectSteeringContent { get; init; }
+
+    /// <summary>Repository-level steering content (markdown) to write to the workspace before agent invocation.</summary>
+    [Key(29)]
+    public string? RepoSteeringContent { get; init; }
 }
 
 /// <summary>

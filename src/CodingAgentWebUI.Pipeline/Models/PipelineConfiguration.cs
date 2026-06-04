@@ -277,6 +277,16 @@ public sealed record PipelineConfiguration
     }
 
     /// <summary>
+    /// Merges provider-specific steering blacklist paths into the configuration.
+    /// Called after agent provider creation to ensure steering files are excluded from commits.
+    /// </summary>
+    public static PipelineConfiguration ApplyProviderBlacklist(PipelineConfiguration config, IReadOnlyList<string> providerPaths)
+    {
+        if (providerPaths.Count == 0) return config;
+        return config with { BlacklistedPaths = config.BlacklistedPaths.Concat(providerPaths).Distinct().ToList() };
+    }
+
+    /// <summary>
     /// Number of days to retain workspace folders for failed or cancelled runs.
     /// Set to 0 to delete immediately. Set to -1 to retain indefinitely.
     /// </summary>

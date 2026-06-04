@@ -54,4 +54,10 @@ public sealed class ProviderConfig
     /// Commands can reference Secrets via standard shell variable expansion ($KEY).
     /// </summary>
     public IReadOnlyList<SetupStep>? SetupSteps { get; init; }
+
+    /// <summary>
+    /// Optional markdown steering content written to the agent workspace before each run.
+    /// Only meaningful when Kind == Repository.
+    /// </summary>
+    public string? SteeringContent { get; init; }
 }
