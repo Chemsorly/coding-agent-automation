@@ -3,6 +3,7 @@ using System.Text;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure;
+using CodingAgentWebUI.Infrastructure.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -14,6 +15,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
+using Serilog.Enrichers.Span;
 
 // ── Read required environment variables early ──
 var orchestratorUrl = Environment.GetEnvironmentVariable(AgentDefaults.EnvOrchestratorUrl)
@@ -45,8 +47,10 @@ Log.Logger = new LoggerConfiguration()
     // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every 10s)
     .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()
+    .Enrich.WithSpan()
     .Enrich.WithProperty("AgentId", agentId)
     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{AgentId}] {Message:lj}{NewLine}{Exception}")
+    .WriteToOtlpIfConfigured("coding-agent-worker")
     .CreateLogger();
 
 try
