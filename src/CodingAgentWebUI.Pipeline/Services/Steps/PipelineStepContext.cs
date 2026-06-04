@@ -57,6 +57,14 @@ internal sealed class PipelineStepContext
     public DecompositionProjectContext? ProjectContext { get; init; }
 
     /// <summary>
+    /// Pre-resolved repository providers for additional project repos (cross-repo decomposition).
+    /// Keyed by template name. Used by <see cref="CloneProjectRepositoriesStep"/> to clone
+    /// secondary repos into workspace subdirectories for agent exploration.
+    /// Null for non-decomposition runs or per-template decomposition.
+    /// </summary>
+    public IReadOnlyList<(string TemplateName, IRepositoryProvider Provider)>? AdditionalRepoProviders { get; set; }
+
+    /// <summary>
     /// Pre-resolved reviewer configurations. When non-null, <see cref="ReviewCodeStep"/>
     /// uses these directly instead of resolving from the config store.
     /// </summary>

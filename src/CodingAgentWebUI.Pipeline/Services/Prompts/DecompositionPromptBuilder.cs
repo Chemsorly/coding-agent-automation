@@ -373,12 +373,23 @@ public static class DecompositionPromptBuilder
         sb.AppendLine();
         sb.AppendLine("## Cross-Repository Routing");
         sb.AppendLine();
+        sb.AppendLine("This is a cross-repository decomposition. Multiple project repositories are available for exploration.");
+        sb.AppendLine();
         sb.AppendLine("Read `.agent/project-context.md` to understand all repositories in this project.");
+        sb.AppendLine("Each repository's **Local path** tells you where its code is cloned:");
+        sb.AppendLine("- The primary repository is at workspace root (`.`)");
+        sb.AppendLine("- Additional repositories are at `repos/{template-name}/`");
+        sb.AppendLine();
+        sb.AppendLine("EXPLORATION STRATEGY:");
+        sb.AppendLine("- Start by exploring the primary repository at workspace root");
+        sb.AppendLine("- When you identify sub-issues that target a specific secondary repository, explore its code at the listed path to validate file paths and understand its patterns");
+        sb.AppendLine("- Do NOT exhaustively explore all repos — only explore a secondary repo when a sub-issue clearly belongs there");
         sb.AppendLine();
         sb.AppendLine("ROUTING RULES:");
         sb.AppendLine("- For each sub-issue JSON file, include a `targetRepository` field matching EXACTLY one of the template names from the project context (case-sensitive).");
         sb.AppendLine("- If a sub-issue requires changes in multiple repositories, assign it to the PRIMARY repository and note cross-cutting dependencies in the issue body.");
         sb.AppendLine("- If you cannot determine the appropriate repository, omit the `targetRepository` field (the issue will be created in the default repository).");
+        sb.AppendLine("- Do NOT route sub-issues to repositories marked as unavailable in the project context.");
 
         return sb.ToString();
     }

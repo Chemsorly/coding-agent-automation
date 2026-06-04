@@ -28,6 +28,8 @@ README.md
 
 # Test projects — not needed for any production Docker build
 tests/
+# But allow E2E tests (needed by e2e-tests.Dockerfile)
+!tests/CodingAgentWebUI.E2ETests/
 
 # Kiro CLI auth data — mounted as volumes at runtime, not baked into images
 config/kiro-cli-data/

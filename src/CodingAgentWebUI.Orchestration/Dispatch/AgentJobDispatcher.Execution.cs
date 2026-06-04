@@ -410,14 +410,6 @@ public sealed partial class AgentJobDispatcher
             // Populate resolved profile ID on the run
             run.ResolvedProfileId = profile.Id;
 
-            // Build and prepare provider configs for the agent
-            var providerConfigs = await PrepareProviderConfigsAsync(
-                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, ct);
-
-            // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
-            config = PipelineConfiguration.ApplyProjectOverrides(config, project);
-            config = ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs);
-
             // Build a synthetic IssueDetail from epic metadata for the job assignment
             var syntheticIssueDetail = new IssueDetail
             {
@@ -454,6 +446,7 @@ public sealed partial class AgentJobDispatcher
                         DecompositionEnabled = tmpl.DecompositionEnabled,
                         Available = tmpl.Enabled,
                         IssueProviderId = tmpl.IssueProviderId,
+                        RepoProviderId = tmpl.RepoProviderId,
                         Labels = repoConfigLookup.TryGetValue(tmpl.RepoProviderId, out var rc)
                             ? (rc.RequiredLabels ?? [])
                             : []
@@ -466,6 +459,20 @@ public sealed partial class AgentJobDispatcher
                     Repositories = repositories.AsReadOnly()
                 };
             }
+
+            // Build and prepare provider configs for the agent.
+            // For project-level decomposition, include all project repos' provider configs
+            // so the agent can clone secondary repos for cross-repo code exploration.
+            var additionalRepoProviderIds = projectContext?.Repositories
+                .Select(r => r.RepoProviderId)
+                .Where(id => !string.IsNullOrEmpty(id))
+                .Cast<string>();
+            var providerConfigs = await PrepareProviderConfigsAsync(
+                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, ct, additionalRepoProviderIds);
+
+            // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
+            config = PipelineConfiguration.ApplyProjectOverrides(config, project);
+            config = ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs);
 
             var message = new JobAssignmentMessage
             {
@@ -718,10 +725,11 @@ public sealed partial class AgentJobDispatcher
         string agentProviderId,
         string? brainProviderId,
         string? pipelineProviderId,
-        CancellationToken ct)
+        CancellationToken ct,
+        IEnumerable<string>? additionalRepoProviderIds = null)
     {
         var rawConfigs = await BuildAgentProviderConfigsAsync(
-            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct);
+            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct, additionalRepoProviderIds);
         return await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct);
     }
 
@@ -732,7 +740,8 @@ public sealed partial class AgentJobDispatcher
     private async Task<IReadOnlyList<ProviderConfig>> BuildAgentProviderConfigsAsync(
         string repoProviderId, string agentProviderId,
         string? brainProviderId, string? pipelineProviderId,
-        CancellationToken ct)
+        CancellationToken ct,
+        IEnumerable<string>? additionalRepoProviderIds = null)
     {
         var configs = new List<ProviderConfig>();
 
@@ -740,6 +749,22 @@ public sealed partial class AgentJobDispatcher
         var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == repoProviderId);
         if (repoConfig != null)
             configs.Add(repoConfig);
+
+        // Include additional repo provider configs for cross-repo decomposition.
+        // These are needed so the agent can clone secondary repos for code exploration.
+        if (additionalRepoProviderIds is not null)
+        {
+            var addedIds = new HashSet<string> { repoProviderId }; // primary already added
+            foreach (var additionalId in additionalRepoProviderIds)
+            {
+                if (string.IsNullOrEmpty(additionalId) || !addedIds.Add(additionalId))
+                    continue; // skip null/empty or duplicates
+
+                var additionalConfig = repoConfigs.FirstOrDefault(c => c.Id == additionalId);
+                if (additionalConfig != null)
+                    configs.Add(additionalConfig);
+            }
+        }
 
         var agentConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
         var agentConfig = agentConfigs.FirstOrDefault(c => c.Id == agentProviderId);

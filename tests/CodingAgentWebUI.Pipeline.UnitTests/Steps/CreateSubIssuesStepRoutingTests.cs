@@ -556,5 +556,309 @@ public class CreateSubIssuesStepRoutingTests : IDisposable
         File.WriteAllText(Path.Combine(dir, filename), json);
     }
 
+    private void WriteSubIssueFileWithTargetRepository(string filename, string title, string body, string targetRepository)
+    {
+        var dir = Path.Combine(_workspacePath, AgentWorkspacePaths.SubIssuesDirectory);
+        Directory.CreateDirectory(dir);
+        var json = $$"""
+        {
+            "title": "{{title}}",
+            "body": "{{body}}",
+            "dependencies": [],
+            "labels": ["enhancement"],
+            "targetRepository": "{{targetRepository}}"
+        }
+        """;
+        File.WriteAllText(Path.Combine(dir, filename), json);
+    }
+
+    #endregion
+
+    #region End-to-End: JSON with targetRepository → Parse → Route → CreateIssueForProviderAsync
+
+    [Fact]
+    public async Task ExecuteAsync_JsonWithTargetRepository_RoutesToCorrectProvider()
+    {
+        // Arrange — write JSON file with targetRepository matching a template in the project context
+        WriteSubIssueFileWithTargetRepository(
+            "01-backend-feature.json", "Add API endpoint", "Implement GET /users", "backend-api");
+
+        string? capturedProviderId = null;
+        _issueOps.Setup(x => x.CreateIssueForProviderAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, IReadOnlyList<string>, CancellationToken>(
+                (providerId, _, _, _, _) => capturedProviderId = providerId)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "201", Url = "https://example.com/201" });
+
+        var run = CreateRun();
+        var context = BuildContextWithProjectContext(run);
+        var step = new CreateSubIssuesStep();
+
+        // Act
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        // Assert — routed to CreateIssueForProviderAsync with the correct provider ID
+        capturedProviderId.Should().Be("provider-backend-001");
+        _issueOps.Verify(x => x.CreateIssueAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+            It.IsAny<CancellationToken>()), Times.Never,
+            "Should NOT call default CreateIssueAsync when targetRepository resolves");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_JsonWithTargetRepository_MatchesSecondTemplate_RoutesCorrectly()
+    {
+        // Arrange — target matches the second template in the project
+        WriteSubIssueFileWithTargetRepository(
+            "01-frontend-feature.json", "Add login page", "Create login form component", "frontend-web");
+
+        string? capturedProviderId = null;
+        _issueOps.Setup(x => x.CreateIssueForProviderAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, IReadOnlyList<string>, CancellationToken>(
+                (providerId, _, _, _, _) => capturedProviderId = providerId)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "202", Url = "https://example.com/202" });
+
+        var run = CreateRun();
+        var context = BuildContextWithProjectContext(run);
+        var step = new CreateSubIssuesStep();
+
+        // Act
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        // Assert — routed to frontend provider
+        capturedProviderId.Should().Be("provider-frontend-002");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_JsonWithUnresolvableTargetRepository_FallsBackToDefault()
+    {
+        // Arrange — targetRepository does not match any template name
+        WriteSubIssueFileWithTargetRepository(
+            "01-unknown.json", "Some feature", "Implementation details", "nonexistent-repo");
+
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "203", Url = "https://example.com/203" });
+
+        var run = CreateRun();
+        var context = BuildContextWithProjectContext(run);
+        var step = new CreateSubIssuesStep();
+
+        // Act
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        // Assert — fell back to default CreateIssueAsync (not routed)
+        _issueOps.Verify(x => x.CreateIssueAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(x => x.CreateIssueForProviderAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_JsonWithoutTargetRepository_UsesDefaultProvider()
+    {
+        // Arrange — no targetRepository field in JSON (backward compatible)
+        WriteSubIssueFile("01-simple.json", "Simple feature", "Basic implementation");
+
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "204", Url = "https://example.com/204" });
+
+        var run = CreateRun();
+        var context = BuildContextWithProjectContext(run);
+        var step = new CreateSubIssuesStep();
+
+        // Act
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        // Assert — default path used (CreateIssueAsync, not CreateIssueForProviderAsync)
+        _issueOps.Verify(x => x.CreateIssueAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(x => x.CreateIssueForProviderAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MixedTargetRepositories_RoutesEachCorrectly()
+    {
+        // Arrange — multiple sub-issues routed to different providers
+        WriteSubIssueFileWithTargetRepository(
+            "01-backend.json", "Backend work", "API changes", "backend-api");
+        WriteSubIssueFileWithTargetRepository(
+            "02-frontend.json", "Frontend work", "UI changes", "frontend-web");
+        WriteSubIssueFile("03-default.json", "Default work", "Unrouted changes");
+
+        var routedProviderIds = new List<string>();
+        _issueOps.Setup(x => x.CreateIssueForProviderAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, IReadOnlyList<string>, CancellationToken>(
+                (providerId, _, _, _, _) => routedProviderIds.Add(providerId))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "300", Url = "https://example.com/300" });
+
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "301", Url = "https://example.com/301" });
+
+        var run = CreateRun();
+        var context = BuildContextWithProjectContext(run);
+        var step = new CreateSubIssuesStep();
+
+        // Act
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        // Assert — two routed, one default
+        routedProviderIds.Should().HaveCount(2);
+        routedProviderIds.Should().Contain("provider-backend-001");
+        routedProviderIds.Should().Contain("provider-frontend-002");
+        _issueOps.Verify(x => x.CreateIssueAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    #endregion
+
+    #region SubIssueFileParser — targetRepository field parsing
+
+    [Fact]
+    public async Task ParseSubIssueFiles_WithTargetRepository_PopulatesField()
+    {
+        // Arrange
+        WriteSubIssueFileWithTargetRepository(
+            "01-routed.json", "Routed issue", "Goes to backend", "backend-api");
+
+        // Act
+        var proposals = await SubIssueFileParser.ParseSubIssueFilesAsync(_workspacePath, _logger, CancellationToken.None);
+
+        // Assert
+        proposals.Should().HaveCount(1);
+        proposals[0].TargetRepository.Should().Be("backend-api");
+    }
+
+    [Fact]
+    public async Task ParseSubIssueFiles_WithoutTargetRepository_LeavesFieldNull()
+    {
+        // Arrange
+        WriteSubIssueFile("01-simple.json", "Simple", "No routing");
+
+        // Act
+        var proposals = await SubIssueFileParser.ParseSubIssueFilesAsync(_workspacePath, _logger, CancellationToken.None);
+
+        // Assert
+        proposals.Should().HaveCount(1);
+        proposals[0].TargetRepository.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ParseSubIssueFiles_WithNullTargetRepository_LeavesFieldNull()
+    {
+        // Arrange — explicit JSON null
+        var dir = Path.Combine(_workspacePath, AgentWorkspacePaths.SubIssuesDirectory);
+        Directory.CreateDirectory(dir);
+        var json = """
+        {
+            "title": "Null target",
+            "body": "Body text",
+            "dependencies": [],
+            "labels": [],
+            "targetRepository": null
+        }
+        """;
+        File.WriteAllText(Path.Combine(dir, "01-null.json"), json);
+
+        // Act
+        var proposals = await SubIssueFileParser.ParseSubIssueFilesAsync(_workspacePath, _logger, CancellationToken.None);
+
+        // Assert
+        proposals.Should().HaveCount(1);
+        proposals[0].TargetRepository.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ParseSubIssueFiles_WithWrongTypeTargetRepository_StillParsesFile()
+    {
+        // Arrange — targetRepository as integer (wrong type, should be ignored but file accepted)
+        var dir = Path.Combine(_workspacePath, AgentWorkspacePaths.SubIssuesDirectory);
+        Directory.CreateDirectory(dir);
+        var json = """
+        {
+            "title": "Wrong type target",
+            "body": "Body text",
+            "dependencies": [],
+            "labels": [],
+            "targetRepository": 42
+        }
+        """;
+        File.WriteAllText(Path.Combine(dir, "01-wrongtype.json"), json);
+
+        // Act
+        var proposals = await SubIssueFileParser.ParseSubIssueFilesAsync(_workspacePath, _logger, CancellationToken.None);
+
+        // Assert — file accepted, targetRepository ignored
+        proposals.Should().HaveCount(1);
+        proposals[0].TargetRepository.Should().BeNull();
+        proposals[0].Title.Should().Be("Wrong type target");
+    }
+
+    [Fact]
+    public async Task ParseSubIssueFiles_WithEmptyStringTargetRepository_LeavesFieldNull()
+    {
+        // Arrange — empty string treated as absent
+        var dir = Path.Combine(_workspacePath, AgentWorkspacePaths.SubIssuesDirectory);
+        Directory.CreateDirectory(dir);
+        var json = """
+        {
+            "title": "Empty target",
+            "body": "Body text",
+            "dependencies": [],
+            "labels": [],
+            "targetRepository": ""
+        }
+        """;
+        File.WriteAllText(Path.Combine(dir, "01-empty.json"), json);
+
+        // Act
+        var proposals = await SubIssueFileParser.ParseSubIssueFilesAsync(_workspacePath, _logger, CancellationToken.None);
+
+        // Assert
+        proposals.Should().HaveCount(1);
+        proposals[0].TargetRepository.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ParseSubIssueFiles_WithPascalCaseTargetRepository_ParsesCorrectly()
+    {
+        // Arrange — PascalCase property name (alternative casing)
+        var dir = Path.Combine(_workspacePath, AgentWorkspacePaths.SubIssuesDirectory);
+        Directory.CreateDirectory(dir);
+        var json = """
+        {
+            "title": "PascalCase target",
+            "body": "Body text",
+            "dependencies": [],
+            "labels": [],
+            "TargetRepository": "my-service"
+        }
+        """;
+        File.WriteAllText(Path.Combine(dir, "01-pascal.json"), json);
+
+        // Act
+        var proposals = await SubIssueFileParser.ParseSubIssueFilesAsync(_workspacePath, _logger, CancellationToken.None);
+
+        // Assert
+        proposals.Should().HaveCount(1);
+        proposals[0].TargetRepository.Should().Be("my-service");
+    }
+
     #endregion
 }
