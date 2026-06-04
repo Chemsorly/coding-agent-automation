@@ -582,6 +582,7 @@ public sealed partial class PipelineLoopService
                                     PrBranchName = pr.BranchName,
                                     PrTitle = pr.Title,
                                     PrDescription = pr.Description,
+                                    PrAuthor = pr.Author,
                                     PrUrl = pr.Url,
                                     PrTargetBranch = pr.TargetBranch,
                                     IssueProviderId = template.IssueProviderId,

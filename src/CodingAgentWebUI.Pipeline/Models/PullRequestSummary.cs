@@ -16,6 +16,9 @@ public sealed class PullRequestSummary
     public required string Url { get; init; }
     public required bool IsDraft { get; init; }
 
+    /// <summary>PR author username (e.g., GitHub login or GitLab username).</summary>
+    public string? Author { get; init; }
+
     /// <summary>PR creation date, used for FIFO ordering in the pipeline loop.</summary>
     public DateTime? CreatedAt { get; init; }
 }

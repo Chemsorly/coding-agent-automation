@@ -109,6 +109,7 @@ public sealed partial class AgentJobDispatcher
             RunType = PipelineRunType.Review,
             PrBranchName = request.PrBranchName,
             PrDescription = request.PrDescription,
+            PrAuthor = request.PrAuthor,
             PrUrl = request.PrUrl,
             PrTargetBranch = request.PrTargetBranch,
             Project = project

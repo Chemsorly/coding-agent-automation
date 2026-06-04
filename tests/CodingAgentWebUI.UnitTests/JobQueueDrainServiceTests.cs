@@ -217,6 +217,40 @@ public class JobQueueDrainServiceTests
     }
 
     [Fact]
+    public async Task DrainAsync_ReviewRunType_PreservesPrAuthor()
+    {
+        RegisterIdleAgent();
+        _dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = "pr-20",
+            IssueTitle = "PR #20",
+            IssueProviderId = "ip",
+            RepoProviderId = "rp",
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            InitiatedBy = "loop",
+            RequiredLabels = Array.Empty<string>(),
+            RunType = PipelineRunType.Review,
+            PrBranchName = "feature/author",
+            PrDescription = "desc",
+            PrAuthor = "alice",
+            PrUrl = "https://github.com/org/repo/pull/20",
+            PrTargetBranch = "main"
+        });
+
+        _mockJobDispatcher
+            .Setup(d => d.TryDispatchReviewAsync(It.IsAny<ReviewDispatchRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        await _service.DrainAsync(CancellationToken.None);
+
+        _mockJobDispatcher.Verify(
+            d => d.TryDispatchReviewAsync(
+                It.Is<ReviewDispatchRequest>(r => r.PrAuthor == "alice"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task DrainAsync_DecompositionRunType_RoutesToTryDispatchDecompositionAsync()
     {
         RegisterIdleAgent();

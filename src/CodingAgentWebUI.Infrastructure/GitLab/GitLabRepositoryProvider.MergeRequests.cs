@@ -179,6 +179,7 @@ public partial class GitLabRepositoryProvider
             TargetBranch = mr.TargetBranch,
             Url = mr.WebUrl,
             IsDraft = mr.Draft,
+            Author = mr.Author?.Username,
             CreatedAt = mr.CreatedAt
         }).ToList();
 

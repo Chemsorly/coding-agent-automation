@@ -213,6 +213,7 @@ public partial class GitHubRepositoryProvider
                 TargetBranch = pr.Base.Ref,
                 Url = pr.HtmlUrl,
                 IsDraft = pr.Draft,
+                Author = pr.User?.Login,
                 CreatedAt = pr.CreatedAt.UtcDateTime
             });
         }

@@ -172,6 +172,7 @@ public sealed class JobQueueDrainService : BackgroundService
                             PrBranchName = pendingJob.PrBranchName!,
                             PrTitle = pendingJob.IssueTitle ?? $"PR #{pendingJob.IssueIdentifier}",
                             PrDescription = pendingJob.PrDescription ?? string.Empty,
+                            PrAuthor = pendingJob.PrAuthor,
                             PrUrl = pendingJob.PrUrl ?? string.Empty,
                             PrTargetBranch = pendingJob.PrTargetBranch ?? "main",
                             IssueProviderId = pendingJob.IssueProviderId,
