@@ -44,33 +44,15 @@ internal class PullRequestOrchestrator
         var effectiveIssueRef = issueReference ?? $"#{run.IssueIdentifier}";
         var closeRef = repoProvider.FormatCloseReference(run.IssueIdentifier);
 
-        // Commit any uncommitted changes
-        try
-        {
-            var commitMessage = PipelineFormatting.GenerateCommitMessage(
-                run.IssueTitle, effectiveIssueRef);
-            var blacklisted = await repoProvider.CommitAllAsync(
-                run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct);
-            if (blacklisted.Count > 0)
-            {
-                RecordBlacklistedFiles(run, blacklisted, config);
-                if (config.BlacklistMode == BlacklistMode.Fail)
-                    return null; // Caller handles failure transition
-            }
-            // NOTE: [UX-16] File counts may be stale — UpdateFileChangeStatsAsync runs after push, not before this line
-            onOutputLine?.Invoke($"📦 Committed {run.FilesChangedCount} files (+{run.LinesAdded} -{run.LinesRemoved})");
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
-        {
-            _logger.Information("Pipeline {RunId} no uncommitted changes, skipping commit", run.RunId);
-        }
+        // Commit and push
+        var commitSuccess = await CommitAndPushAsync(run, effectiveIssueRef, repoProvider, config, ct,
+            "no uncommitted changes, skipping commit");
+        if (!commitSuccess)
+            return null; // Blacklist fail
 
-        // Always force-push: pipeline owns these feature branches and rebase may rewrite history
-        await repoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
+        // NOTE: [UX-16] File counts may be stale — UpdateFileChangeStatsAsync runs after push, not before this line
+        onOutputLine?.Invoke($"📦 Committed {run.FilesChangedCount} files (+{run.LinesAdded} -{run.LinesRemoved})");
         onOutputLine?.Invoke($"🔀 Pushed to origin/{run.BranchName}");
-
-        // Refresh file change stats
-        await UpdateFileChangeStatsAsync(run, repoProvider);
 
         // Verify commits ahead
         if (!await repoProvider.HasCommitsAheadAsync(run.WorkspacePath!, ct))
@@ -93,16 +75,7 @@ internal class PullRequestOrchestrator
 
         var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, effectiveIssueRef);
 
-        var codeReviewSummary = run.CodeReviewAgentsRun is { Count: > 0 }
-            ? new CodeReviewSummary(
-                run.CodeReviewAgentsRun,
-                run.CodeReviewCriticalCount,
-                run.CodeReviewWarningCount,
-                run.CodeReviewSuggestionCount,
-                run.CodeReviewAgentFindings
-                    .Select(kv => new AgentFindings(kv.Key, kv.Value))
-                    .ToArray())
-            : null;
+        var codeReviewSummary = BuildCodeReviewSummary(run);
 
         var prBody = PipelineFormatting.GeneratePrBody(
             effectiveIssueRef, testsPassed, testsFailed, testsSkipped,
@@ -335,30 +308,13 @@ internal class PullRequestOrchestrator
             return null;
         }
 
-        // Commit any remaining uncommitted changes
-        try
-        {
-            var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, effectiveIssueRef);
-            var blacklisted = await repoProvider.CommitAllAsync(
-                run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct);
-            if (blacklisted.Count > 0)
-            {
-                RecordBlacklistedFiles(run, blacklisted, config);
-                if (config.BlacklistMode == BlacklistMode.Fail)
-                    return null;
-            }
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
-        {
-            _logger.Information("Pipeline {RunId} no uncommitted changes during finalization, skipping commit", run.RunId);
-        }
+        // Commit and push
+        var commitSuccess = await CommitAndPushAsync(run, effectiveIssueRef, repoProvider, config, ct,
+            "no uncommitted changes during finalization, skipping commit");
+        if (!commitSuccess)
+            return null; // Blacklist fail
 
-        // Push final state
-        await repoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
         onOutputLine?.Invoke($"🔀 Pushed final changes to origin/{run.BranchName}");
-
-        // Refresh file change stats
-        await UpdateFileChangeStatsAsync(run, repoProvider);
 
         // Build the full PR body
         var testsPassed = report.Tests.TestsPassed ?? 0;
@@ -368,16 +324,7 @@ internal class PullRequestOrchestrator
         var fileChanges = await repoProvider.GetFileChangesAsync(run.WorkspacePath!, ct);
         var issueTitle = issue?.Title ?? run.IssueTitle;
 
-        var codeReviewSummary = run.CodeReviewAgentsRun is { Count: > 0 }
-            ? new CodeReviewSummary(
-                run.CodeReviewAgentsRun,
-                run.CodeReviewCriticalCount,
-                run.CodeReviewWarningCount,
-                run.CodeReviewSuggestionCount,
-                run.CodeReviewAgentFindings
-                    .Select(kv => new AgentFindings(kv.Key, kv.Value))
-                    .ToArray())
-            : null;
+        var codeReviewSummary = BuildCodeReviewSummary(run);
 
         var prBody = PipelineFormatting.GeneratePrBody(
             effectiveIssueRef, testsPassed, testsFailed, testsSkipped,
@@ -405,5 +352,57 @@ internal class PullRequestOrchestrator
         }
 
         return run.PullRequestUrl;
+    }
+
+    /// <summary>
+    /// Commits uncommitted changes, pushes the branch, and refreshes file change stats.
+    /// Returns false if blacklisted files were detected and BlacklistMode is Fail.
+    /// </summary>
+    private async Task<bool> CommitAndPushAsync(
+        PipelineRun run,
+        string effectiveIssueRef,
+        IRepositoryProvider repoProvider,
+        PipelineConfiguration config,
+        CancellationToken ct,
+        string noCommitLogMessage)
+    {
+        try
+        {
+            var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, effectiveIssueRef);
+            var blacklisted = await repoProvider.CommitAllAsync(
+                run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct);
+            if (blacklisted.Count > 0)
+            {
+                RecordBlacklistedFiles(run, blacklisted, config);
+                if (config.BlacklistMode == BlacklistMode.Fail)
+                    return false;
+            }
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
+        {
+            _logger.Information("Pipeline {RunId} {Message}", run.RunId, noCommitLogMessage);
+        }
+
+        await repoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
+        await UpdateFileChangeStatsAsync(run, repoProvider);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Builds a CodeReviewSummary from the run's review data, or null if no review agents ran.
+    /// </summary>
+    private static CodeReviewSummary? BuildCodeReviewSummary(PipelineRun run)
+    {
+        return run.CodeReviewAgentsRun is { Count: > 0 }
+            ? new CodeReviewSummary(
+                run.CodeReviewAgentsRun,
+                run.CodeReviewCriticalCount,
+                run.CodeReviewWarningCount,
+                run.CodeReviewSuggestionCount,
+                run.CodeReviewAgentFindings
+                    .Select(kv => new AgentFindings(kv.Key, kv.Value))
+                    .ToArray())
+            : null;
     }
 }
