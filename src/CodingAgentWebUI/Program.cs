@@ -3,6 +3,7 @@ using CodingAgentWebUI.Components;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Infrastructure.Telemetry;
 using CodingAgentWebUI.Models;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
@@ -17,6 +18,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
+using Serilog.Enrichers.Span;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -69,7 +71,10 @@ builder.Host.UseSerilog((ctx, lc) => lc
     .MinimumLevel.Is(Serilog.Events.LogEventLevel.Information)
     // Suppress noisy ASP.NET Core framework logging (health checks, static files, Blazor negotiation, auth)
     .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
-    .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None));
+    .Enrich.FromLogContext()
+    .Enrich.WithSpan()
+    .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
+    .WriteToOtlpIfConfigured("coding-agent-orchestrator", ctx.HostingEnvironment.EnvironmentName));
 
 // Configure OpenTelemetry (tracing + metrics)
 builder.Services.AddOpenTelemetry()
