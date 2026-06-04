@@ -10,6 +10,7 @@ public sealed record ReviewDispatchRequest
     public required string PrBranchName { get; init; }
     public required string PrTitle { get; init; }
     public string? PrDescription { get; init; }
+    public string? PrAuthor { get; init; }
     public required string PrUrl { get; init; }
     public required string PrTargetBranch { get; init; }
     public required string IssueProviderId { get; init; }

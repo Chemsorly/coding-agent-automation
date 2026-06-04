@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 
@@ -7,6 +8,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// Extracts linked issue context for PR review runs.
 /// Phase 1: Writes pre-fetched linked issue details as files to the workspace (.agent/ directory).
 /// Phase 2: Synthesizes IssueDetail and ParsedIssue on the context so ReviewCodeStep works unchanged.
+/// Phase 3: Fetches and writes PR conversation context for review agents.
 /// </summary>
 internal sealed class ExtractLinkedIssuesStep : IPipelineStep
 {
@@ -102,6 +104,37 @@ internal sealed class ExtractLinkedIssuesStep : IPipelineStep
             context.ParsedIssue = _issueParser.Parse(prDescription);
         }
 
+        // --- Phase 3: Write PR conversation context (non-fatal) ---
+        await WritePrConversationContextAsync(context, prNumber, ct);
+
         return StepResult.Continue;
+    }
+
+    private static async Task WritePrConversationContextAsync(PipelineStepContext context, int prNumber, CancellationToken ct)
+    {
+        try
+        {
+            // Determine PR author from the run's issue title or a default
+            var prAuthor = context.Run.ReviewPrAuthor ?? "";
+
+            var comments = await context.RepoProvider.ListPullRequestCommentsAsync(prNumber, prAuthor, ct);
+
+            var contextDir = Path.Combine(context.Run.WorkspacePath!, ".agent");
+            Directory.CreateDirectory(contextDir);
+
+            var content = PrConversationContextFormatter.Format(comments);
+            var filePath = Path.Combine(context.Run.WorkspacePath!, AgentWorkspacePaths.PrConversationContextFilePath);
+            await File.WriteAllTextAsync(filePath, content, ct);
+
+            context.Logger.Information(
+                "Wrote PR conversation context ({CommentCount} comments) to {FilePath} for PR #{PrNumber}",
+                comments.Count, AgentWorkspacePaths.PrConversationContextFilePath, prNumber);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            context.Logger.Warning(ex,
+                "Failed to write PR conversation context for PR #{PrNumber}, review will proceed without it",
+                prNumber);
+        }
     }
 }

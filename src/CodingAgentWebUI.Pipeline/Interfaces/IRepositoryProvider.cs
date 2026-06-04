@@ -166,6 +166,18 @@ public interface IRepositoryProvider : IAsyncDisposable
         => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
 
     /// <summary>
+    /// Lists all comments on a pull request/merge request, including discussion comments
+    /// and review thread comments, for building PR conversation context.
+    /// Returns comments in chronological order with author attribution.
+    /// </summary>
+    /// <param name="prNumber">The PR/MR number.</param>
+    /// <param name="prAuthor">The PR author username, used to flag author comments.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<IReadOnlyList<PrConversationComment>> ListPullRequestCommentsAsync(
+        int prNumber, string prAuthor, CancellationToken ct)
+        => Task.FromResult<IReadOnlyList<PrConversationComment>>(Array.Empty<PrConversationComment>());
+
+    /// <summary>
     /// Whether this provider's platform supports native inline review comments
     /// attached to specific file and line positions in the diff.
     /// Default: false (conservative for providers that have not opted in).

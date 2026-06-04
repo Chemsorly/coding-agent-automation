@@ -299,4 +299,131 @@ public class ExtractLinkedIssuesStepTests : IDisposable
             cts.Dispose();
         (_logger as IDisposable)?.Dispose();
     }
+
+    [Fact]
+    public async Task ExecuteAsync_WritesPrConversationContextFile()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"test-pr-conv-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var mockRepo = new Mock<IRepositoryProvider>();
+            mockRepo.Setup(r => r.ListPullRequestCommentsAsync(10, "", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<PrConversationComment>
+                {
+                    new()
+                    {
+                        Author = "alice",
+                        CreatedAt = new DateTime(2026, 6, 1, 14, 0, 0, DateTimeKind.Utc),
+                        Body = "Looks good.",
+                        IsBot = false,
+                        IsAuthor = true,
+                        FilePath = null,
+                        Line = null,
+                        IsResolved = null
+                    }
+                });
+
+            var run = new PipelineRun
+            {
+                RunId = "test-run",
+                IssueIdentifier = "10",
+                IssueTitle = "Test PR",
+                IssueProviderConfigId = "ip",
+                RepoProviderConfigId = "rp",
+                StartedAt = DateTime.UtcNow,
+                WorkspacePath = tempDir,
+                RunType = PipelineRunType.Review,
+                ReviewPrDescription = "desc",
+                LinkedIssueContexts = Array.Empty<LinkedIssueContext>()
+            };
+
+            var context = BuildContextWithRepo(run, mockRepo.Object);
+            var step = new ExtractLinkedIssuesStep(new IssueDescriptionParser());
+
+            await step.ExecuteAsync(context, CancellationToken.None);
+
+            var filePath = Path.Combine(tempDir, AgentWorkspacePaths.PrConversationContextFilePath);
+            File.Exists(filePath).Should().BeTrue();
+            var content = await File.ReadAllTextAsync(filePath);
+            content.Should().Contain("[HUMAN/AUTHOR] @alice");
+            content.Should().Contain("Looks good.");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PrConversationFetchFails_ContinuesWithoutFile()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"test-pr-conv-fail-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var mockRepo = new Mock<IRepositoryProvider>();
+            mockRepo.Setup(r => r.ListPullRequestCommentsAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("API rate limited"));
+
+            var run = new PipelineRun
+            {
+                RunId = "test-run",
+                IssueIdentifier = "10",
+                IssueTitle = "Test PR",
+                IssueProviderConfigId = "ip",
+                RepoProviderConfigId = "rp",
+                StartedAt = DateTime.UtcNow,
+                WorkspacePath = tempDir,
+                RunType = PipelineRunType.Review,
+                ReviewPrDescription = "desc",
+                LinkedIssueContexts = Array.Empty<LinkedIssueContext>()
+            };
+
+            var context = BuildContextWithRepo(run, mockRepo.Object);
+            var step = new ExtractLinkedIssuesStep(new IssueDescriptionParser());
+
+            var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+            // Step should still succeed (non-fatal)
+            result.Should().Be(StepResult.Continue);
+            // Context should still be populated
+            context.Issue.Should().NotBeNull();
+            // File should not exist
+            var filePath = Path.Combine(tempDir, AgentWorkspacePaths.PrConversationContextFilePath);
+            File.Exists(filePath).Should().BeFalse();
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private PipelineStepContext BuildContextWithRepo(PipelineRun run, IRepositoryProvider repoProvider)
+    {
+        var cts = new CancellationTokenSource();
+        _tokenSources.Add(cts);
+        return new PipelineStepContext
+        {
+            Run = run,
+            Config = new PipelineConfiguration { WorkspaceBaseDirectory = run.WorkspacePath ?? "/tmp" },
+            RepoProvider = repoProvider,
+            AgentProvider = Mock.Of<IAgentProvider>(),
+            BrainProvider = null,
+            PipelineProvider = null,
+            Cts = cts,
+            ConfigStore = Mock.Of<IConfigurationStore>(),
+            Callbacks = _callbacks.Object,
+            IssueOps = Mock.Of<IAgentIssueOperations>(),
+            AgentExecution = Mock.Of<IAgentPhaseExecutor>(),
+            QualityGates = Mock.Of<IQualityGateExecutor>(),
+            BrainSync = null,
+            PrOrchestrator = new PullRequestOrchestrator(_logger),
+            Logger = _logger
+        };
+    }
 }
