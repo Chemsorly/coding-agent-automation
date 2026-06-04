@@ -28,7 +28,7 @@
 
     @if (LoopService.IsLoopActive)
     {
-        <div class="settings-status status-info loop-status-bar">
+        <div class="agent-summary-bar" style="border-color: color-mix(in srgb, var(--accent-light) 30%, transparent);">
             <span class="loop-status-text">@LoopService.StatusMessage</span>
             <button class="btn-cancel loop-stop-btn" @onclick="StopLoop">⏹ Stop Loop</button>
         </div>
@@ -36,7 +36,7 @@
 
     @if (LoopService.IsCircuitBroken)
     {
-        <div class="settings-status status-error">
+        <div class="agent-summary-bar" style="background: var(--bg-error); color: var(--error); border-color: var(--error);">
             @LoopService.StatusMessage
             <span style="margin-left: 1rem;">
                 <button class="btn-save" @onclick="ResumeLoop" style="margin-right: 0.5rem;">Resume</button>
@@ -63,9 +63,9 @@
         var implRunCount = agentRuns.Count(r => r.RunType == PipelineRunType.Implementation);
         var reviewRunCount = agentRuns.Count(r => r.RunType == PipelineRunType.Review);
     }
-    @if (agentRuns.Count > 0 || queueLength > 0)
+    @if (_showAgentSummary && (agentRuns.Count > 0 || queueLength > 0))
     {
-        <div class="settings-status status-info" style="margin: 8px 20px 0;">
+        <div class="agent-summary-bar">
             <span>
                 🤖 @agentCount agent(s) registered ·
                 @agentRuns.Count agent run(s) active
@@ -83,6 +83,7 @@
                 }
                 · <a href="/agent-monitoring" style="color: var(--accent-light);">View Dashboard →</a>
             </span>
+            <button class="agent-summary-dismiss" @onclick="DismissAgentSummary" title="Dismiss">✕</button>
         </div>
     }
 
@@ -970,6 +971,7 @@
 
     private string? _errorMessage;
     private string? _successMessage;
+    private bool _showAgentSummary = true;
     private bool _showCompletionOnly;
     private string? _lastRunId;
     private bool _disposed;
@@ -1060,6 +1062,23 @@
         {
             _errorMessage = $"Failed to load configuration: {ex.Message}";
         }
+
+        _ = AutoDismissAgentSummary();
+    }
+
+    private async Task AutoDismissAgentSummary()
+    {
+        await Task.Delay(8000);
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                if (_disposed) return;
+                _showAgentSummary = false;
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
     }
 
     // ── Template Table Methods ──
@@ -1341,6 +1360,11 @@
             });
         }
         catch (ObjectDisposedException) { }
+    }
+
+    private void DismissAgentSummary()
+    {
+        _showAgentSummary = false;
     }
 
     // ── Loop Controls ──
