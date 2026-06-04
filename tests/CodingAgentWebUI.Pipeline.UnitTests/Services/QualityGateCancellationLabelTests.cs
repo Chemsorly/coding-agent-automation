@@ -145,8 +145,9 @@ public class QualityGateCancellationLabelTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(async (string _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken ct) =>
+                It.IsAny<CancellationToken>(),
+                It.IsAny<string?>()))
+            .Returns(async (string _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken ct, string? _) =>
             {
                 // Cancel while "validating"
                 await orchestratorCts.CancelAsync();

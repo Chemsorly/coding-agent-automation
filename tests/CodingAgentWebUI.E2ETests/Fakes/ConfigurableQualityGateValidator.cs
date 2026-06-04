@@ -75,7 +75,7 @@ public sealed class ConfigurableQualityGateValidator : IQualityGateValidator
             };
     }
 
-    public Task<QualityGateReport> ValidateAsync(string workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, CancellationToken ct)
+    public Task<QualityGateReport> ValidateAsync(string workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, CancellationToken ct, string? baseBranch = null)
     {
         var attempt = Interlocked.Increment(ref _attemptCount);
         var report = ReportFactory?.Invoke(attempt) ?? DefaultReport;

@@ -8,5 +8,5 @@ public interface IQualityGateValidator
     /// Validates quality gates using a list of Quality Gate Configurations.
     /// Iterates QGCs in list order, stopping on first failure.
     /// </summary>
-    Task<QualityGateReport> ValidateAsync(string workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, CancellationToken ct);
+    Task<QualityGateReport> ValidateAsync(string workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, CancellationToken ct, string? baseBranch = null);
 }

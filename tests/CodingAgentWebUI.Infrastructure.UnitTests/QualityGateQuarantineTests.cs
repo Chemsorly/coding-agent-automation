@@ -229,6 +229,38 @@ public class QualityGateQuarantineTests : IDisposable
         report.Tests.TestsQuarantined.Should().Be(1);
     }
 
+    [Fact]
+    public async Task ComputeBranchModifiedFiles_UsesOriginBaseBranch()
+    {
+        var validator = new GitDiffCapturingValidator();
+        var qgc = CreateQgc(quarantine: new TestQuarantineConfiguration
+        {
+            Enabled = true,
+            QuarantinedTests = [new QuarantinedTest { TestName = "Ns.Test1", Reason = "flaky", QuarantinedAt = DateTime.UtcNow }]
+        });
+
+        // Pass baseBranch "develop" — should produce "origin/develop...HEAD"
+        await validator.ValidateAsync(_workspacePath, [qgc], ct: CancellationToken.None, baseBranch: "develop");
+
+        validator.CapturedGitArgs.Should().Be("diff --name-only origin/develop...HEAD");
+    }
+
+    [Fact]
+    public async Task ComputeBranchModifiedFiles_FallsBackToMain_WhenBaseBranchNull()
+    {
+        var validator = new GitDiffCapturingValidator();
+        var qgc = CreateQgc(quarantine: new TestQuarantineConfiguration
+        {
+            Enabled = true,
+            QuarantinedTests = [new QuarantinedTest { TestName = "Ns.Test1", Reason = "flaky", QuarantinedAt = DateTime.UtcNow }]
+        });
+
+        // Pass null baseBranch — should fall back to "origin/main...HEAD"
+        await validator.ValidateAsync(_workspacePath, [qgc], ct: CancellationToken.None, baseBranch: null);
+
+        validator.CapturedGitArgs.Should().Be("diff --name-only origin/main...HEAD");
+    }
+
     private static QualityGateConfiguration CreateQgc(TestQuarantineConfiguration? quarantine = null) => new()
     {
         DisplayName = "Test QGC",
@@ -309,6 +341,33 @@ public class QualityGateQuarantineTests : IDisposable
                 </TestRun>
                 """;
             File.WriteAllText(Path.Combine(dir, "results.trx"), xml);
+        }
+    }
+
+    /// <summary>
+    /// Validator that captures the git diff arguments to verify the correct command format.
+    /// </summary>
+    private sealed class GitDiffCapturingValidator : QualityGateValidator
+    {
+        public string? CapturedGitArgs { get; private set; }
+
+        public GitDiffCapturingValidator() : base(Log.Logger) { }
+
+        private protected override Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+            string fileName, string arguments, string workingDirectory, CancellationToken ct)
+        {
+            if (fileName == "git")
+            {
+                CapturedGitArgs = arguments;
+                return Task.FromResult((0, "src/File1.cs\nsrc/File2.cs", ""));
+            }
+
+            // Compilation always passes
+            if (arguments.Contains("build"))
+                return Task.FromResult((0, "Build succeeded.", ""));
+
+            // Tests always pass
+            return Task.FromResult((0, "", ""));
         }
     }
 }
