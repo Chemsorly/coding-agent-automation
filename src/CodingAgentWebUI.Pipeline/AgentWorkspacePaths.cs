@@ -126,6 +126,12 @@ public static class AgentWorkspacePaths
     public const string DecompositionReviewFilePath = ".agent/decomposition-review.md";
 
     /// <summary>
+    /// The file path (relative to workspace) where the pipeline writes PR conversation
+    /// context (discussion comments, prior review findings, human replies) for review agents.
+    /// </summary>
+    public const string PrConversationContextFilePath = ".agent/pr-conversation-context.md";
+
+    /// <summary>
     /// The directory (relative to workspace) where sub-issue JSON files are written
     /// by the decomposition agent for subsequent issue creation.
     /// </summary>

@@ -154,6 +154,10 @@ public sealed record JobAssignmentMessage
     /// </summary>
     [Key(26)]
     public Dictionary<string, string>? ProjectSecrets { get; init; }
+
+    /// <summary>PR author username for review runs (used for [HUMAN/AUTHOR] attribution in conversation context).</summary>
+    [Key(27)]
+    public string? ReviewPrAuthor { get; init; }
 }
 
 /// <summary>

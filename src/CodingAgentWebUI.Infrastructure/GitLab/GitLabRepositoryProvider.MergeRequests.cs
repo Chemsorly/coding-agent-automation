@@ -257,6 +257,49 @@ public partial class GitLabRepositoryProvider
         return issueNumbers.ToList().AsReadOnly();
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<PrConversationComment>> ListPullRequestCommentsAsync(
+        int prNumber, string prAuthor, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(prAuthor);
+
+        var results = new List<PrConversationComment>();
+
+        var discussions = await ExecuteWithResilienceAsync(
+            client =>
+            {
+                var discussionClient = client.GetMergeRequest(ProjectId).Discussions(prNumber);
+                return Task.Run(() => discussionClient.All.ToList(), ct);
+            },
+            "ListPrComments.GetDiscussions", ct);
+
+        foreach (var discussion in discussions)
+        {
+            var notes = discussion.Notes ?? Enumerable.Empty<MergeRequestComment>();
+            foreach (var note in notes)
+            {
+                if (string.IsNullOrEmpty(note.Body)) continue;
+
+                var author = note.Author?.Username ?? "";
+                var isBot = author.Contains("bot", StringComparison.OrdinalIgnoreCase);
+
+                results.Add(new PrConversationComment
+                {
+                    Author = author,
+                    CreatedAt = note.CreatedAt,
+                    Body = note.Body,
+                    IsBot = isBot,
+                    IsAuthor = string.Equals(author, prAuthor, StringComparison.OrdinalIgnoreCase),
+                    FilePath = null,
+                    Line = null,
+                    IsResolved = null
+                });
+            }
+        }
+
+        return results.OrderBy(c => c.CreatedAt).ToList().AsReadOnly();
+    }
+
     // ─── Review Operations ───────────────────────────────────────────────────────
 
     /// <inheritdoc />
