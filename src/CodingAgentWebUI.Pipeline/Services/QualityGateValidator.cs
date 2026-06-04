@@ -312,39 +312,11 @@ public class QualityGateValidator : IQualityGateValidator
 
         if (!gatePassed && failedTestNames.Count > 0 && qgc.TestQuarantine is { Enabled: true })
         {
-            var quarantine = qgc.TestQuarantine;
-            // TODO: Consider injecting TimeProvider to make expiry comparison testable
-            var now = DateTime.UtcNow;
+            var filterResult = ApplyQuarantineFilter(failedTestNames, qgc.TestQuarantine, branchModifiedFiles, DateTime.UtcNow);
 
-            // Determine which failed tests are quarantined
-            foreach (var failedTest in failedTestNames)
+            if (!filterResult.SafetyValveTriggered)
             {
-                var entry = quarantine.QuarantinedTests.FirstOrDefault(q =>
-                    string.Equals(q.TestName, failedTest, StringComparison.Ordinal));
-
-                if (entry == null) continue;
-
-                // Check expiry
-                if (entry.ExpiresAt.HasValue && entry.ExpiresAt.Value < now) continue;
-
-                // Check branch-awareness: if associated source files were modified, lift quarantine
-                // TODO: Replace bidirectional EndsWith with path-normalized matching (e.g., suffix match with path separator check) to avoid false positives on common file name suffixes
-                if (branchModifiedFiles != null && entry.AssociatedSourceFiles is { Count: > 0 })
-                {
-                    var sourceModified = entry.AssociatedSourceFiles.Any(src =>
-                        branchModifiedFiles.Any(mod =>
-                            mod.EndsWith(src, StringComparison.OrdinalIgnoreCase) ||
-                            src.EndsWith(mod, StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(mod, src, StringComparison.OrdinalIgnoreCase)));
-                    if (sourceModified) continue;
-                }
-
-                quarantinedNames.Add(failedTest);
-            }
-
-            // Safety valve: if too many quarantined tests fail, treat all as real failures
-            if (quarantinedNames.Count <= quarantine.MaxQuarantinedFailuresPerRun)
-            {
+                quarantinedNames.AddRange(filterResult.QuarantinedTestNames);
                 var nonQuarantinedFailures = failedTestNames.Count - quarantinedNames.Count;
                 gatePassed = nonQuarantinedFailures == 0;
                 failed = nonQuarantinedFailures;
@@ -358,8 +330,7 @@ public class QualityGateValidator : IQualityGateValidator
             else
             {
                 _logger.Warning("QGC {QgcName} exceeded MaxQuarantinedFailuresPerRun ({Max}), treating all {Count} quarantined failures as real",
-                    qgc.DisplayName, quarantine.MaxQuarantinedFailuresPerRun, quarantinedNames.Count);
-                quarantinedNames.Clear();
+                    qgc.DisplayName, qgc.TestQuarantine.MaxQuarantinedFailuresPerRun, filterResult.QuarantinedTestNames.Count);
             }
         }
 
@@ -396,6 +367,68 @@ public class QualityGateValidator : IQualityGateValidator
             QuarantinedTestNames = quarantinedNames.Count > 0 ? quarantinedNames : null
         };
     }
+
+    /// <summary>
+    /// Applies quarantine filtering to a set of failed test names.
+    /// Returns which tests are quarantined and whether the safety valve was triggered.
+    /// </summary>
+    internal static QuarantineFilterResult ApplyQuarantineFilter(
+        IReadOnlyList<string> failedTestNames,
+        TestQuarantineConfiguration quarantine,
+        IReadOnlyList<string>? branchModifiedFiles,
+        DateTime utcNow)
+    {
+        var quarantinedNames = new List<string>();
+
+        foreach (var failedTest in failedTestNames)
+        {
+            var entry = quarantine.QuarantinedTests.FirstOrDefault(q =>
+                string.Equals(q.TestName, failedTest, StringComparison.Ordinal));
+
+            if (entry == null) continue;
+
+            // Check expiry
+            if (entry.ExpiresAt.HasValue && entry.ExpiresAt.Value < utcNow) continue;
+
+            // Check branch-awareness: if associated source files were modified, lift quarantine
+            if (branchModifiedFiles != null && entry.AssociatedSourceFiles is { Count: > 0 })
+            {
+                var sourceModified = entry.AssociatedSourceFiles.Any(src =>
+                    branchModifiedFiles.Any(mod => IsPathSuffixMatch(mod, src) || IsPathSuffixMatch(src, mod)));
+                if (sourceModified) continue;
+            }
+
+            quarantinedNames.Add(failedTest);
+        }
+
+        var safetyValveTriggered = quarantinedNames.Count > quarantine.MaxQuarantinedFailuresPerRun;
+        return new QuarantineFilterResult(quarantinedNames, safetyValveTriggered);
+    }
+
+    /// <summary>
+    /// Checks whether <paramref name="suffix"/> matches as a path suffix of <paramref name="fullPath"/>,
+    /// ensuring the match starts at a path separator boundary to avoid false positives
+    /// (e.g., "Service.cs" should not match "MyService.cs").
+    /// </summary>
+    internal static bool IsPathSuffixMatch(string fullPath, string suffix)
+    {
+        if (string.Equals(fullPath, suffix, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var normalizedFull = fullPath.Replace('\\', '/');
+        var normalizedSuffix = suffix.Replace('\\', '/');
+
+        if (!normalizedFull.EndsWith(normalizedSuffix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // Ensure the match starts at a path separator boundary
+        var prefixLength = normalizedFull.Length - normalizedSuffix.Length;
+        return prefixLength == 0 || normalizedFull[prefixLength - 1] == '/';
+    }
+
+    internal sealed record QuarantineFilterResult(
+        IReadOnlyList<string> QuarantinedTestNames,
+        bool SafetyValveTriggered);
 
     /// <summary>
     /// Formats a short CI failure summary for GateResult.Details.
