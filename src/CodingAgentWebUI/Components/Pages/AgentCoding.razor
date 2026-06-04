@@ -28,7 +28,7 @@
 
     @if (LoopService.IsLoopActive)
     {
-        <div class="agent-summary-bar" style="border-color: color-mix(in srgb, var(--accent-light) 30%, transparent);">
+        <div class="agent-summary-bar loop-status-bar">
             <span class="loop-status-text">@LoopService.StatusMessage</span>
             <button class="btn-cancel loop-stop-btn" @onclick="StopLoop">⏹ Stop Loop</button>
         </div>
