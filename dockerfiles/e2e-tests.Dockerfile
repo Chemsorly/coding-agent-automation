@@ -39,6 +39,9 @@ RUN dotnet build tests/CodingAgentWebUI.E2ETests/ -c Debug
 # (including _framework/blazor.web.js from NuGet packages) are resolved correctly.
 ENV ASPNETCORE_ENVIRONMENT=Development
 
+# Disable the Terminal Logger's animated progress/timer display (noisy in non-TTY output)
+ENV MSBUILDTERMINALLOGGER=off
+
 # Install PowerShell (needed for playwright.ps1 browser installer)
 RUN apt-get update && apt-get install -y --no-install-recommends wget apt-transport-https \
     && wget -q https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb \
