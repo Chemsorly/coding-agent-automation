@@ -168,6 +168,107 @@ public class ConsolidationProviderResolverTests
         await act.Should().ThrowAsync<NotSupportedException>();
     }
 
+    // ── Refactoring — Unsupported Issue Provider Type ────────────────────
+
+    [Fact]
+    public async Task ResolveRefactoring_UnsupportedIssueProviderType_Throws()
+    {
+        var resolver = CreateResolver();
+        var repoConfig = CreateProviderConfig(ProviderKind.Repository, "GitHub", RepositoryRole.Work,
+            new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "work",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake"
+            });
+        var agentConfig = CreateProviderConfig(ProviderKind.Agent, "KiroCli");
+        var issueConfig = CreateProviderConfig(ProviderKind.Issue, "UnsupportedType");
+        var job = CreateJob(ConsolidationRunType.RefactoringDetection, [repoConfig, agentConfig, issueConfig]);
+
+        var act = () => resolver.ResolveRefactoringProvidersAsync(job, CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*UnsupportedType*");
+    }
+
+    // ── Refactoring — GitLab Issue Provider Validation ───────────────────
+
+    [Fact]
+    public async Task ResolveRefactoring_GitLabIssueProvider_MissingAccessToken_Throws()
+    {
+        var resolver = CreateResolver();
+        var repoConfig = CreateProviderConfig(ProviderKind.Repository, "GitHub", RepositoryRole.Work,
+            new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "work",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake"
+            });
+        var agentConfig = CreateProviderConfig(ProviderKind.Agent, "KiroCli");
+        var issueConfig = CreateProviderConfig(ProviderKind.Issue, "GitLab", settings:
+            new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ProjectId] = "123"
+            });
+        var job = CreateJob(ConsolidationRunType.RefactoringDetection, [repoConfig, agentConfig, issueConfig]);
+
+        var act = () => resolver.ResolveRefactoringProvidersAsync(job, CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*accessToken*");
+    }
+
+    [Fact]
+    public async Task ResolveRefactoring_GitLabIssueProvider_MissingProjectId_Throws()
+    {
+        var resolver = CreateResolver();
+        var repoConfig = CreateProviderConfig(ProviderKind.Repository, "GitHub", RepositoryRole.Work,
+            new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "work",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake"
+            });
+        var agentConfig = CreateProviderConfig(ProviderKind.Agent, "KiroCli");
+        var issueConfig = CreateProviderConfig(ProviderKind.Issue, "GitLab", settings:
+            new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.AccessToken] = "glpat-fake"
+            });
+        var job = CreateJob(ConsolidationRunType.RefactoringDetection, [repoConfig, agentConfig, issueConfig]);
+
+        var act = () => resolver.ResolveRefactoringProvidersAsync(job, CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*projectId*");
+    }
+
+    [Fact]
+    public async Task ResolveRefactoring_GitLabIssueProvider_InvalidProjectId_Throws()
+    {
+        var resolver = CreateResolver();
+        var repoConfig = CreateProviderConfig(ProviderKind.Repository, "GitHub", RepositoryRole.Work,
+            new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "work",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake"
+            });
+        var agentConfig = CreateProviderConfig(ProviderKind.Agent, "KiroCli");
+        var issueConfig = CreateProviderConfig(ProviderKind.Issue, "GitLab", settings:
+            new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.AccessToken] = "glpat-fake",
+                [ProviderSettingKeys.ProjectId] = "not-a-number"
+            });
+        var job = CreateJob(ConsolidationRunType.RefactoringDetection, [repoConfig, agentConfig, issueConfig]);
+
+        var act = () => resolver.ResolveRefactoringProvidersAsync(job, CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*projectId*");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private ConsolidationProviderResolver CreateResolver() =>

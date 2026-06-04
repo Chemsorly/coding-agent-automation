@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Infrastructure.GitHub;
+using CodingAgentWebUI.Infrastructure.GitLab;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -187,6 +188,18 @@ internal sealed class ConsolidationProviderResolver
     /// </summary>
     private static IIssueProvider CreateIssueProviderForConsolidation(ProviderConfig issueConfig)
     {
+        if (issueConfig.ProviderType.Equals("GitHub", StringComparison.OrdinalIgnoreCase))
+            return CreateGitHubIssueProvider(issueConfig);
+
+        if (issueConfig.ProviderType.Equals("GitLab", StringComparison.OrdinalIgnoreCase))
+            return CreateGitLabIssueProvider(issueConfig);
+
+        throw new InvalidOperationException(
+            $"Unsupported issue provider type for consolidation: '{issueConfig.ProviderType}'");
+    }
+
+    private static GitHubIssueProvider CreateGitHubIssueProvider(ProviderConfig issueConfig)
+    {
         var apiUrl = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, "https://api.github.com");
         var token = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Token)
             ?? throw new InvalidOperationException(
@@ -200,6 +213,23 @@ internal sealed class ConsolidationProviderResolver
 
         var connection = new GitHubConnectionInfo(apiUrl, owner, repo);
         return new GitHubIssueProvider(connection, token);
+    }
+
+    private static GitLabIssueProvider CreateGitLabIssueProvider(ProviderConfig issueConfig)
+    {
+        var apiUrl = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, ProviderSettingKeys.DefaultGitLabApiUrl);
+        var accessToken = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.AccessToken)
+            ?? throw new InvalidOperationException(
+                $"Issue provider '{issueConfig.DisplayName}' is missing 'accessToken' setting for consolidation");
+        var projectIdStr = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId)
+            ?? throw new InvalidOperationException(
+                $"Issue provider '{issueConfig.DisplayName}' is missing 'projectId' setting for consolidation");
+
+        if (!int.TryParse(projectIdStr, out var projectId))
+            throw new InvalidOperationException(
+                $"Issue provider '{issueConfig.DisplayName}' has invalid projectId: '{projectIdStr}'. Expected a numeric value.");
+
+        return new GitLabIssueProvider(apiUrl, accessToken, projectId);
     }
 }
 
