@@ -212,11 +212,18 @@ public class ProjectMigrationServiceTests
         _projectStore.Setup(s => s.LoadProjectsAsync(_ct))
             .ReturnsAsync(existingProjects);
 
+        // AssignOrphanedTemplatesAsync loads config to check for orphans — all templates are assigned so no save happens
+        var config = new PipelineConfiguration
+        {
+            PipelineJobTemplates = [CreateTemplate("tmpl-1", "T1"), CreateTemplate("tmpl-2", "T2"), CreateTemplate("tmpl-3", "T3")]
+        };
+        _configStore.Setup(s => s.LoadPipelineConfigAsync(_ct)).ReturnsAsync(config);
+
         // Act
         await ProjectMigrationService.MigrateToProjectsAsync(_projectStore.Object, _configStore.Object, _ct);
 
-        // Assert: No config load, no project saves — complete no-op
-        _configStore.Verify(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Never);
+        // Assert: Config loaded (for orphan check), but no project saves since all templates are assigned
+        _configStore.Verify(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Once);
         _projectStore.Verify(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -224,7 +231,7 @@ public class ProjectMigrationServiceTests
     public async Task MigrateToProjectsAsync_ProjectsExistWithDifferentTemplates_DoesNotReassign()
     {
         // Arrange: Default project exists with only 1 template, config has 3 templates.
-        // Migration should NOT reassign templates since projects already exist.
+        // Orphaned templates (tmpl-2, tmpl-3) get assigned to Default by AssignOrphanedTemplatesAsync.
         var existingProjects = new List<PipelineProject>
         {
             new()
@@ -238,12 +245,27 @@ public class ProjectMigrationServiceTests
         _projectStore.Setup(s => s.LoadProjectsAsync(_ct))
             .ReturnsAsync(existingProjects);
 
+        // Config has 3 templates — tmpl-2 and tmpl-3 are orphaned (not in any project)
+        var config = new PipelineConfiguration
+        {
+            PipelineJobTemplates = [CreateTemplate("tmpl-1", "T1"), CreateTemplate("tmpl-2", "T2"), CreateTemplate("tmpl-3", "T3")]
+        };
+        _configStore.Setup(s => s.LoadPipelineConfigAsync(_ct)).ReturnsAsync(config);
+
+        PipelineProject? savedProject = null;
+        _projectStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), _ct))
+            .Callback<PipelineProject, CancellationToken>((p, _) => savedProject = p)
+            .Returns(Task.CompletedTask);
+
         // Act
         await ProjectMigrationService.MigrateToProjectsAsync(_projectStore.Object, _configStore.Object, _ct);
 
-        // Assert: No reassignment — the migration is a no-op when projects exist
-        _configStore.Verify(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Never);
-        _projectStore.Verify(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Never);
+        // Assert: Orphaned templates assigned to Default (not a full reassignment — just orphans)
+        savedProject.Should().NotBeNull();
+        savedProject!.Id.Should().Be(WellKnownIds.DefaultProjectId);
+        savedProject.TemplateIds.Should().Contain("tmpl-1"); // existing
+        savedProject.TemplateIds.Should().Contain("tmpl-2"); // orphan assigned
+        savedProject.TemplateIds.Should().Contain("tmpl-3"); // orphan assigned
     }
 
     #endregion
@@ -354,6 +376,13 @@ public class ProjectMigrationServiceTests
             .Callback<PipelineProject, CancellationToken>((p, _) => savedProject = p)
             .Returns(Task.CompletedTask);
 
+        // AssignOrphanedTemplatesAsync loads config — return config with tmpl-1 (already assigned, no orphans)
+        var config = new PipelineConfiguration
+        {
+            PipelineJobTemplates = [CreateTemplate("tmpl-1", "T1")]
+        };
+        _configStore.Setup(s => s.LoadPipelineConfigAsync(_ct)).ReturnsAsync(config);
+
         // Act
         await ProjectMigrationService.MigrateToProjectsAsync(_projectStore.Object, _configStore.Object, _ct);
 
@@ -362,9 +391,6 @@ public class ProjectMigrationServiceTests
         savedProject!.Id.Should().Be(WellKnownIds.DefaultProjectId);
         savedProject.Name.Should().Be("Default");
         savedProject.TemplateIds.Should().BeEmpty();
-
-        // Config was NOT loaded (already-migrated path, not fresh migration)
-        _configStore.Verify(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     #endregion
