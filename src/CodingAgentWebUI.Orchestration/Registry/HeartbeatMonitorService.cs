@@ -154,11 +154,20 @@ public sealed class HeartbeatMonitorService : BackgroundService
     }
 
     /// <summary>
-    /// Attempts to swap the issue label to <see cref="AgentLabels.Error"/> via the issue provider.
+    /// Attempts to swap the label to <see cref="AgentLabels.Error"/> via the correct provider.
+    /// Routes to repo provider for PR review runs, issue provider for all others.
     /// Failures are logged but do not propagate — label swap is best-effort during cleanup.
     /// </summary>
     private Task TrySwapLabelToErrorAsync(PipelineRun run, CancellationToken ct)
     {
-        return _labelSwapper.SwapLabelAsync(run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Error, ct);
+        var targetKind = run.RunType == PipelineRunType.Review
+            ? LabelTargetKind.PullRequest
+            : LabelTargetKind.Issue;
+
+        var providerConfigId = targetKind == LabelTargetKind.PullRequest
+            ? run.RepoProviderConfigId
+            : run.IssueProviderConfigId;
+
+        return _labelSwapper.SwapLabelAsync(providerConfigId, run.IssueIdentifier, AgentLabels.Error, targetKind, ct);
     }
 }
