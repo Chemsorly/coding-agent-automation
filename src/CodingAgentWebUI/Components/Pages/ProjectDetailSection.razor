@@ -58,6 +58,9 @@
     private bool _enabled = true;
     private string? _epicIssueProviderId;
 
+    // Steering
+    private string? _steeringContent;
+
     // Settings override fields
     private int? _maxRetries;
     private int? _maxAnalysisRetries;
@@ -150,6 +153,7 @@
         _brainConsolidationReviewEnabled = _project.BrainConsolidationReviewEnabled;
         _harnessSuggestionsReviewEnabled = _project.HarnessSuggestionsReviewEnabled;
         _brainReadOnly = _project.BrainReadOnly;
+        _steeringContent = _project.SteeringContent;
     }
 
     private RenderFragment RenderOverviewTab() => __builder =>
@@ -304,6 +308,13 @@
             @RenderStringOverride("Implementation Prompt", () => _implementationPrompt, v => _implementationPrompt = v, _globalConfig.ImplementationPrompt)
             @RenderStringOverride("Analysis Review Prompt", () => _analysisReviewPrompt, v => _analysisReviewPrompt = v, _globalConfig.AnalysisReviewPrompt)
             @RenderStringOverride("Analysis Refinement Prompt", () => _analysisRefinementPrompt, v => _analysisRefinementPrompt = v, _globalConfig.AnalysisRefinementPrompt)
+
+            <h3>Steering</h3>
+            <div class="form-group">
+                <label>Steering Instructions</label>
+                <p class="form-hint">These instructions are provided to every agent working on issues in this project. Use them for cross-cutting rules like code style, build commands, tool preferences, or quality expectations.</p>
+                <textarea @bind="_steeringContent" rows="15" placeholder="## Code Style&#10;- Use descriptive variable names&#10;- Prefer composition over inheritance&#10;&#10;## Build &amp; Test&#10;- Always run the build after changes&#10;- Run tests before considering work complete&#10;&#10;## Tool Preferences&#10;- Use context7 to look up library documentation before using unfamiliar APIs&#10;- Use sequential-thinking for complex multi-step reasoning"></textarea>
+            </div>
 
             <div class="pipeline-form-actions">
                 <button class="btn-save" @onclick="SaveSettingsAsync">Save Settings</button>
@@ -511,7 +522,8 @@
                 RefactoringReviewEnabled = _refactoringReviewEnabled,
                 BrainConsolidationReviewEnabled = _brainConsolidationReviewEnabled,
                 HarnessSuggestionsReviewEnabled = _harnessSuggestionsReviewEnabled,
-                BrainReadOnly = _brainReadOnly
+                BrainReadOnly = _brainReadOnly,
+                SteeringContent = string.IsNullOrWhiteSpace(_steeringContent) ? null : _steeringContent.Trim()
             };
 
             await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
