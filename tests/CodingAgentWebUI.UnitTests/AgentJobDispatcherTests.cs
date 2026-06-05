@@ -472,6 +472,153 @@ public class AgentJobDispatcherTests : IDisposable
         _dispatcher.IsIssueQueued("epic-2").Should().BeTrue();
     }
 
+    [Fact]
+    public async Task TryDispatchReviewAsync_ExceptionDuringDispatch_ResetsAgentAndRevertsLabel()
+    {
+        _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-rev-exc",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-rev-exc");
+
+        SetupHappyPathMocks("agent-provider-1");
+
+        // Mock ExtractLinkedIssuesAsync
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(r => r.RepositoryFullName).Returns("org/repo");
+        mockRepoProvider.Setup(r => r.ExtractLinkedIssuesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
+        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+
+        // Make AssignJobAsync throw
+        _mockAgentComm.Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Connection lost"));
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.TryDispatchReviewAsync(new ReviewDispatchRequest
+        {
+            PrIdentifier = "10",
+            PrBranchName = "feature/x",
+            PrTitle = "PR Title",
+            PrUrl = "https://github.com/org/repo/pull/10",
+            PrTargetBranch = "main",
+            IssueProviderId = "ip",
+            RepoProviderId = "rp",
+            InitiatedBy = "user"
+        }, CancellationToken.None);
+
+        result.Should().BeFalse();
+        // Verify label reverted to agent:next on PullRequest target using RepoProviderId
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "rp", "10", AgentLabels.Next, LabelTargetKind.PullRequest, CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task TryDispatchDecompositionAsync_HappyPath_TransitionsAgentToBusyAndSwapsLabel()
+    {
+        _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-decomp",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-decomp");
+
+        SetupHappyPathMocks("agent-provider-1");
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.TryDispatchDecompositionAsync(
+            "epic-hp", "Epic Title", PipelineRunType.DecompositionAnalysis,
+            "ip", "rp", null, "user", CancellationToken.None);
+
+        result.Should().BeTrue();
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "ip", "epic-hp", AgentLabels.InProgress, It.IsAny<CancellationToken>()), Times.Once);
+        _mockAgentComm.Verify(c => c.AssignJobAsync("conn-decomp", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TryDispatchDecompositionAsync_Phase2_HappyPath()
+    {
+        _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-decomp2",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-decomp2");
+
+        SetupHappyPathMocks("agent-provider-1");
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.TryDispatchDecompositionAsync(
+            "epic-p2", "Epic Title P2", PipelineRunType.Decomposition,
+            "ip", "rp", null, "user", CancellationToken.None);
+
+        result.Should().BeTrue();
+        _mockAgentComm.Verify(c => c.AssignJobAsync("conn-decomp2", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TryDispatchDecompositionAsync_ExceptionDuringDispatch_ResetsAgentAndRevertsLabel()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-decomp-exc",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-decomp-exc");
+
+        SetupHappyPathMocks("agent-provider-1");
+
+        // Make AssignJobAsync throw
+        _mockAgentComm.Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Connection lost"));
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.TryDispatchDecompositionAsync(
+            "epic-exc", "Epic Title", PipelineRunType.DecompositionAnalysis,
+            "ip", "rp", null, "user", CancellationToken.None);
+
+        result.Should().BeFalse();
+        agent.Status.Should().Be(AgentStatus.Idle);
+        // Phase 1 reverts to agent:epic
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "ip", "epic-exc", AgentLabels.Epic, CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task TryDispatchDecompositionAsync_Phase2_ExceptionRevertsToEpicApproved()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-decomp-exc2",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-decomp-exc2");
+
+        SetupHappyPathMocks("agent-provider-1");
+
+        _mockAgentComm.Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Connection lost"));
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.TryDispatchDecompositionAsync(
+            "epic-exc2", "Epic Title", PipelineRunType.Decomposition,
+            "ip", "rp", null, "user", CancellationToken.None);
+
+        result.Should().BeFalse();
+        agent.Status.Should().Be(AgentStatus.Idle);
+        // Phase 2 reverts to agent:epic-approved
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "ip", "epic-exc2", AgentLabels.EpicApproved, CancellationToken.None), Times.Once);
+    }
+
     #endregion
 
     #region DispatchToAgentAsync
