@@ -180,6 +180,8 @@ public sealed class LocalConsolidationExecutor
 
     private static readonly TraceContextPropagator TraceContextPropagator = new();
 
+    // TODO: ExtractTraceContext is duplicated in LocalPipelineExecutor. Extract to a shared
+    // static helper in PipelineTelemetry to avoid silent divergence if one copy is fixed without the other.
     private static ActivityContext ExtractTraceContext(Dictionary<string, string>? traceContext)
     {
         if (traceContext is not { Count: > 0 })

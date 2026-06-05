@@ -124,7 +124,9 @@ public sealed partial class AgentJobDispatcher
                 ProjectId = project.Id,
                 ProjectName = project.Name,
                 ProjectSecrets = project.Secrets,
-                TraceContext = CaptureTraceContext()
+                TraceContext = CaptureTraceContext(),
+                ProjectSteeringContent = project.SteeringContent,
+                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId)?.SteeringContent
             };
 
             // Assign the job to the agent in the registry
@@ -305,7 +307,9 @@ public sealed partial class AgentJobDispatcher
                 ProjectId = project.Id,
                 ProjectName = project.Name,
                 ProjectSecrets = project.Secrets,
-                TraceContext = CaptureTraceContext()
+                TraceContext = CaptureTraceContext(),
+                ProjectSteeringContent = project.SteeringContent,
+                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == request.RepoProviderId)?.SteeringContent
             };
 
             // Assign the job to the agent in the registry
@@ -505,7 +509,9 @@ public sealed partial class AgentJobDispatcher
                 ProjectName = project.Name,
                 ProjectContext = projectContext,
                 ProjectSecrets = project.Secrets,
-                TraceContext = CaptureTraceContext()
+                TraceContext = CaptureTraceContext(),
+                ProjectSteeringContent = project.SteeringContent,
+                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId)?.SteeringContent
             };
 
             // Swap label to agent:in-progress before dispatch so the epic is immediately marked
@@ -796,6 +802,9 @@ public sealed partial class AgentJobDispatcher
         return configs.AsReadOnly();
     }
 
+    // TODO: The Producer span is created and immediately disposed here, giving it near-zero duration.
+    // Consider starting the Producer activity at the call site so it wraps the actual dispatch operation,
+    // providing visibility into dispatch latency in Grafana Tempo.
     /// <summary>
     /// Creates a short-lived <see cref="ActivityKind.Producer"/> span and captures its
     /// W3C trace context (traceparent + tracestate) into a dictionary suitable for serialization.

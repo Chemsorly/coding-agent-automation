@@ -857,6 +857,8 @@ public sealed class LocalPipelineExecutor
         public required Action<string> EmitOutputLine { get; init; }
     }
 
+    // TODO: ExtractTraceContext is duplicated in LocalConsolidationExecutor. Extract to a shared
+    // static helper in PipelineTelemetry to avoid silent divergence if one copy is fixed without the other.
     /// <summary>
     /// Extracts a parent <see cref="ActivityContext"/> from a W3C trace context dictionary.
     /// Returns <see cref="ActivityContext.default"/> when the dictionary is null or empty,

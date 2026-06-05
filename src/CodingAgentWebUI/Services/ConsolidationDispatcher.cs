@@ -430,6 +430,8 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
     private static readonly TraceContextPropagator TraceContextPropagator = new();
 
+    // TODO: CaptureTraceContext duplicates AgentJobDispatcher.CaptureTraceContext (internal static).
+    // Consider calling AgentJobDispatcher.CaptureTraceContext() directly or extracting to a shared helper.
     private static Dictionary<string, string>? CaptureTraceContext()
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity(

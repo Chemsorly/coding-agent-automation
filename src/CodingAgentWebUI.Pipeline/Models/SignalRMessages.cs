@@ -159,12 +159,22 @@ public sealed record JobAssignmentMessage
     [Key(27)]
     public string? ReviewPrAuthor { get; init; }
 
+    /// <summary>Project-level steering content (markdown) to write to the workspace before agent invocation.</summary>
+    [Key(28)]
+    public string? ProjectSteeringContent { get; init; }
+
+    /// <summary>Repository-level steering content (markdown) to write to the workspace before agent invocation.</summary>
+    [Key(29)]
+    public string? RepoSteeringContent { get; init; }
+
     /// <summary>
     /// W3C trace context (traceparent, tracestate) injected at dispatch time.
     /// Used by the agent to create a child span linked to the orchestrator's trace.
     /// Null when the orchestrator has no active trace or for backward compatibility.
     /// </summary>
-    [Key(28)]
+    // TODO: Issue #562 specified [Key(28)] but Keys 28-29 were already allocated on main.
+    // Using Key(30) to avoid breaking wire compatibility with deployed agents.
+    [Key(30)]
     public Dictionary<string, string>? TraceContext { get; init; }
 }
 
