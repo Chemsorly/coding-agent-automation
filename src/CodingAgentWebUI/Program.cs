@@ -98,9 +98,23 @@ builder.Services.AddOpenTelemetry()
         {
             Boundaries = new double[] { 5, 15, 30, 60, 120, 300, 600, 900, 1800 }
         })
+        .AddView("dispatch.queue.wait_time", new ExplicitBucketHistogramConfiguration
+        {
+            Boundaries = new double[] { 1, 5, 10, 30, 60, 120, 300, 600 }
+        })
         .AddOtlpExporter());
 
 var app = builder.Build();
+
+// Register observable gauges for dispatch queue and agent concurrency metrics
+var dispatcher = app.Services.GetRequiredService<JobDispatcherService>();
+var agentRegistry = app.Services.GetRequiredService<AgentRegistryService>();
+_ = PipelineTelemetry.Meter.CreateObservableGauge("dispatch.queue.depth",
+    () => dispatcher.QueueLength, "{item}", "Jobs waiting for available agent");
+_ = PipelineTelemetry.Meter.CreateObservableGauge("agent.jobs.active",
+    () => agentRegistry.GetBusyAgentCount(), "{job}", "Currently executing agent jobs");
+_ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
+    () => agentRegistry.GetAllAgents().Count, "{connection}", "Total registered agents");
 
 // Graceful shutdown: swap to agent:cancelled label before exit
 var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();

@@ -196,6 +196,14 @@ public sealed class AgentRegistryService
     }
 
     /// <summary>
+    /// Returns the count of agents currently in <see cref="AgentStatus.Busy"/> status.
+    /// </summary>
+    public int GetBusyAgentCount()
+    {
+        return _agents.Values.Count(a => a.Status == AgentStatus.Busy);
+    }
+
+    /// <summary>
     /// Clears all registered agents. Used by E2E tests for state isolation.
     /// </summary>
     internal void Reset() => _agents.Clear();

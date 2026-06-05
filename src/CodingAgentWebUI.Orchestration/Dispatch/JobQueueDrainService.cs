@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 using ILogger = Serilog.ILogger;
@@ -152,6 +153,9 @@ public sealed class JobQueueDrainService : BackgroundService
             var pendingJob = _dispatcher.DequeueForAgent(agent);
             if (pendingJob is null)
                 continue;
+
+            PipelineTelemetry.QueueWaitTime.Record(
+                (DateTimeOffset.UtcNow - pendingJob.EnqueuedAt).TotalSeconds);
 
             _logger.Information(
                 "Drain: dequeued job for issue {IssueIdentifier} → agent {AgentId}",

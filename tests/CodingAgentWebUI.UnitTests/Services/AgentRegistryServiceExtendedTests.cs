@@ -304,6 +304,29 @@ public class AgentRegistryServiceExtendedTests
         agent.Should().NotBeNull();
     }
 
+    // ── GetBusyAgentCount ──────────────────────────────────────────────
+
+    [Fact]
+    public void GetBusyAgentCount_ReturnsBusyAgents()
+    {
+        RegisterAgent("agent-1", "conn-1");
+        RegisterAgent("agent-2", "conn-2");
+        RegisterAgent("agent-3", "conn-3");
+
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        _registry.TransitionStatus("agent-3", AgentStatus.Busy);
+
+        _registry.GetBusyAgentCount().Should().Be(2);
+    }
+
+    [Fact]
+    public void GetBusyAgentCount_NoBusyAgents_ReturnsZero()
+    {
+        RegisterAgent("agent-1", "conn-1");
+
+        _registry.GetBusyAgentCount().Should().Be(0);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private AgentEntry RegisterAgent(string agentId, string connectionId)
