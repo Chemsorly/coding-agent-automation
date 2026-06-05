@@ -1,8 +1,12 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Telemetry;
+using OpenTelemetry;
+using OpenTelemetry.Context.Propagation;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
@@ -120,8 +124,7 @@ public sealed partial class AgentJobDispatcher
                 ProjectId = project.Id,
                 ProjectName = project.Name,
                 ProjectSecrets = project.Secrets,
-                ProjectSteeringContent = project.SteeringContent,
-                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId)?.SteeringContent
+                TraceContext = CaptureTraceContext()
             };
 
             // Assign the job to the agent in the registry
@@ -302,8 +305,7 @@ public sealed partial class AgentJobDispatcher
                 ProjectId = project.Id,
                 ProjectName = project.Name,
                 ProjectSecrets = project.Secrets,
-                ProjectSteeringContent = project.SteeringContent,
-                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == request.RepoProviderId)?.SteeringContent
+                TraceContext = CaptureTraceContext()
             };
 
             // Assign the job to the agent in the registry
@@ -503,8 +505,7 @@ public sealed partial class AgentJobDispatcher
                 ProjectName = project.Name,
                 ProjectContext = projectContext,
                 ProjectSecrets = project.Secrets,
-                ProjectSteeringContent = project.SteeringContent,
-                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId)?.SteeringContent
+                TraceContext = CaptureTraceContext()
             };
 
             // Swap label to agent:in-progress before dispatch so the epic is immediately marked
@@ -794,4 +795,26 @@ public sealed partial class AgentJobDispatcher
 
         return configs.AsReadOnly();
     }
+
+    /// <summary>
+    /// Creates a short-lived <see cref="ActivityKind.Producer"/> span and captures its
+    /// W3C trace context (traceparent + tracestate) into a dictionary suitable for serialization.
+    /// This guarantees a traceparent is always produced regardless of ambient Activity.Current.
+    /// </summary>
+    internal static Dictionary<string, string>? CaptureTraceContext()
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity(
+            "DispatchJob", ActivityKind.Producer);
+        if (activity is null)
+            return null;
+
+        var carrier = new Dictionary<string, string>();
+        TraceContextPropagator.Inject(
+            new PropagationContext(activity.Context, Baggage.Current),
+            carrier,
+            static (c, key, value) => c[key] = value);
+        return carrier.Count > 0 ? carrier : null;
+    }
+
+    private static readonly TraceContextPropagator TraceContextPropagator = new();
 }
