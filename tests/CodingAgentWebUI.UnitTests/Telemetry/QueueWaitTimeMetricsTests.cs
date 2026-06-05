@@ -79,8 +79,9 @@ public class QueueWaitTimeMetricsTests : IDisposable
 
         await _drainService.DrainAsync(CancellationToken.None);
 
-        _recordedWaitTimes.Should().HaveCount(1);
-        _recordedWaitTimes[0].Should().BeGreaterThanOrEqualTo(5.0);
+        // Use ContainSingle with predicate instead of HaveCount(1) because the static
+        // MeterListener can pick up measurements from other tests running in parallel.
+        _recordedWaitTimes.Should().Contain(t => t >= 5.0);
     }
 
     [Fact]
