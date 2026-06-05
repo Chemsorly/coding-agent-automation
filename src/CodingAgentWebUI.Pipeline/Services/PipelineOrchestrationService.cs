@@ -459,14 +459,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 isRework: run.LinkedPullRequest != null,
                 issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
 
-            if (prUrl == null && _activeConfig?.BlacklistMode == BlacklistMode.Fail
-                && run.BlacklistedFilesDetected.Count > 0)
-            { await FailRunAsync(run, $"Blacklisted files detected: {string.Join(", ", run.BlacklistedFilesDetected)}. The agent modified protected paths."); return; }
-
-            if (prUrl == null)
-            { await FailRunAsync(run, "Agent did not produce any changes. No commits ahead of base branch.", ct); return; }
-
-            await PostPullRequestCompletionAsync(run, isDraft, ct);
+            await HandlePrCreationResultAsync(run, prUrl, isDraft, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         { _logger.Error(ex, "Pipeline {RunId} failed to create pull request", run.RunId); await FailRunAsync(run, $"PR creation failed: {ex.Message}"); }
@@ -517,17 +510,22 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 _activeIssueComments, _activeConfig!, ct, line => _lifecycle.EmitOutputLine(line),
                 issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
 
-            if (prUrl == null && _activeConfig?.BlacklistMode == BlacklistMode.Fail
-                && run.BlacklistedFilesDetected.Count > 0)
-            { await FailRunAsync(run, $"Blacklisted files detected: {string.Join(", ", run.BlacklistedFilesDetected)}. The agent modified protected paths."); return; }
-
-            if (prUrl == null)
-            { await FailRunAsync(run, "Agent did not produce any changes. No commits ahead of base branch.", ct); return; }
-
-            await PostPullRequestCompletionAsync(run, isDraft, ct);
+            await HandlePrCreationResultAsync(run, prUrl, isDraft, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         { _logger.Error(ex, "Pipeline {RunId} failed to finalize pull request", run.RunId); await FailRunAsync(run, $"PR finalization failed: {ex.Message}"); }
+    }
+
+    private async Task HandlePrCreationResultAsync(PipelineRun run, string? prUrl, bool isDraft, CancellationToken ct)
+    {
+        if (prUrl == null && _activeConfig?.BlacklistMode == BlacklistMode.Fail
+            && run.BlacklistedFilesDetected.Count > 0)
+        { await FailRunAsync(run, $"Blacklisted files detected: {string.Join(", ", run.BlacklistedFilesDetected)}. The agent modified protected paths."); return; }
+
+        if (prUrl == null)
+        { await FailRunAsync(run, "Agent did not produce any changes. No commits ahead of base branch.", ct); return; }
+
+        await PostPullRequestCompletionAsync(run, isDraft, ct);
     }
 
     private async Task PostPullRequestCompletionAsync(PipelineRun run, bool isDraft, CancellationToken ct)
