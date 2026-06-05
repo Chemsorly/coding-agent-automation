@@ -21,6 +21,8 @@ internal sealed class WriteSteeringStep : IPipelineStep
 
     private readonly JobAssignmentMessage _job;
 
+    public string StepName => "WriteSteering";
+
     public WriteSteeringStep(JobAssignmentMessage job)
     {
         _job = job;
