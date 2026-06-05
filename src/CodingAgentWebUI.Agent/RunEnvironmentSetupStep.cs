@@ -12,6 +12,8 @@ namespace CodingAgentWebUI.Agent;
 /// </summary>
 internal sealed class RunEnvironmentSetupStep : IPipelineStep
 {
+    public string StepName => "RunEnvironmentSetup";
+
     private readonly JobAssignmentMessage _job;
 
     public RunEnvironmentSetupStep(JobAssignmentMessage job)

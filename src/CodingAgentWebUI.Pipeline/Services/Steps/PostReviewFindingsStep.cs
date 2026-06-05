@@ -18,6 +18,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class PostReviewFindingsStep : IPipelineStep
 {
+    public string StepName => "PostReviewFindings";
+
     private const string NoReviewerMessage =
         "No applicable reviewers found for this repository's labels. Review skipped.";
 

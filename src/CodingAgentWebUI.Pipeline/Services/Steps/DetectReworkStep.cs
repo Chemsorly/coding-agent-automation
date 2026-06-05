@@ -5,6 +5,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class DetectReworkStep : IPipelineStep
 {
+    public string StepName => "DetectRework";
+
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
         if (context.Run.LinkedPullRequest is not null)

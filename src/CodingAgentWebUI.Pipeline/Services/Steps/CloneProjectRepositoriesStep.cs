@@ -20,6 +20,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class CloneProjectRepositoriesStep : IPipelineStep
 {
+    public string StepName => "CloneProjectRepositories";
+
     /// <summary>Maximum concurrent repo clones.</summary>
     private const int MaxParallelClones = 3;
 

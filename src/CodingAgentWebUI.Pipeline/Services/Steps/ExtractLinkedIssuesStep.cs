@@ -12,6 +12,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class ExtractLinkedIssuesStep : IPipelineStep
 {
+    public string StepName => "ExtractLinkedIssues";
+
     private readonly IssueDescriptionParser _issueParser;
 
     public ExtractLinkedIssuesStep(IssueDescriptionParser issueParser)

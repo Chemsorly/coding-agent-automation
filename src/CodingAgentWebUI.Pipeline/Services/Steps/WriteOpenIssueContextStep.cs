@@ -10,6 +10,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class WriteOpenIssueContextStep : IPipelineStep
 {
+    public string StepName => "WriteOpenIssueContext";
+
     private readonly IOpenIssueContextWriter _writer;
 
     public WriteOpenIssueContextStep(IOpenIssueContextWriter writer)

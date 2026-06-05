@@ -21,6 +21,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class DecompositionAnalysisStep : IPipelineStep
 {
+    public string StepName => "DecompositionAnalysis";
+
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("DecompositionAnalysis");

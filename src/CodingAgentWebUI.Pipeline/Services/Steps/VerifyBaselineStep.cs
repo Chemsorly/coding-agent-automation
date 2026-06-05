@@ -9,6 +9,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// </summary>
 internal sealed class VerifyBaselineStep : IPipelineStep
 {
+    public string StepName => "VerifyBaseline";
+
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
         if (!context.Config.BaselineHealthCheckEnabled)
