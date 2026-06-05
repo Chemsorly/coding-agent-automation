@@ -42,6 +42,9 @@ public static class PipelineTelemetry
     public static readonly Histogram<double> ExternalCiDuration = Meter.CreateHistogram<double>(
         "quality_gate.external_ci.duration", "s", "Time waiting for external CI");
 
+    public static readonly Histogram<double> QueueWaitTime = Meter.CreateHistogram<double>(
+        "dispatch.queue.wait_time", "s", "Time a job spent waiting in the dispatch queue");
+
     internal static class QualityGateNames
     {
         public const string Compilation = "compilation";
