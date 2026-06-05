@@ -146,6 +146,11 @@
                             </div>
                         </details>
                     }
+                    <div class="form-group">
+                        <label>Steering Instructions</label>
+                        <p class="form-hint">These instructions are provided to agents working on this repository. Use them for repo-specific conventions like architecture constraints, build/test commands, or file organization rules.</p>
+                        <textarea @bind="_form.SteeringContent" rows="15" placeholder="## Architecture&#10;- This is a Spring Boot application using Gradle&#10;- All REST endpoints require OpenAPI annotations&#10;- Database migrations live in src/main/resources/db/migration/&#10;&#10;## Build Commands&#10;- Build: ./gradlew build&#10;- Test: ./gradlew test&#10;- Lint: ./gradlew spotlessCheck"></textarea>
+                    </div>
                 </AdditionalFields>
             </GitLabProviderForm>
         }
@@ -270,6 +275,11 @@
                             </div>
                         </details>
                     }
+                    <div class="form-group">
+                        <label>Steering Instructions</label>
+                        <p class="form-hint">These instructions are provided to agents working on this repository. Use them for repo-specific conventions like architecture constraints, build/test commands, or file organization rules.</p>
+                        <textarea @bind="_form.SteeringContent" rows="15" placeholder="## Architecture&#10;- This is a Spring Boot application using Gradle&#10;- All REST endpoints require OpenAPI annotations&#10;- Database migrations live in src/main/resources/db/migration/&#10;&#10;## Build Commands&#10;- Build: ./gradlew build&#10;- Test: ./gradlew test&#10;- Lint: ./gradlew spotlessCheck"></textarea>
+                    </div>
                 </AdditionalFields>
                 <HelpContent>
                     <h4>🔐 GitHub App Setup</h4>
@@ -353,7 +363,8 @@
             GitLabAccessToken = p.Settings.GetValueOrDefault(ProviderSettingKeys.AccessToken, ""),
             GitLabProjectId = p.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId, ""),
             Secrets = p.Secrets?.Select(kv => new SecretEntry { Key = kv.Key, Value = kv.Value }).ToList() ?? new(),
-            SetupSteps = p.SetupSteps?.Select(s => new SetupStepEntry { Name = s.Name, Command = s.Command }).ToList() ?? new()
+            SetupSteps = p.SetupSteps?.Select(s => new SetupStepEntry { Name = s.Name, Command = s.Command }).ToList() ?? new(),
+            SteeringContent = p.SteeringContent
         };
         _revealedSecrets.Clear();
         _showForm = true;
@@ -434,6 +445,7 @@
             BlacklistMode = Enum.TryParse<BlacklistMode>(_form.BlacklistMode, out var mode) ? mode : null,
             Secrets = BuildSecretsDictionary(),
             SetupSteps = BuildSetupStepsList(),
+            SteeringContent = string.IsNullOrWhiteSpace(_form.SteeringContent) ? null : _form.SteeringContent.Trim(),
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.ApiUrl] = _form.ApiUrl,
@@ -529,6 +541,7 @@
         public string BlacklistMode { get; set; } = "";
         public List<SecretEntry> Secrets { get; set; } = new();
         public List<SetupStepEntry> SetupSteps { get; set; } = new();
+        public string? SteeringContent { get; set; }
         // GitLab-specific fields
         public string GitLabApiUrl { get; set; } = ProviderSettingKeys.DefaultGitLabApiUrl;
         public string GitLabAccessToken { get; set; } = "";
@@ -635,6 +648,7 @@
                 BlacklistMode = Enum.TryParse<BlacklistMode>(_form.BlacklistMode, out var mode) ? mode : null,
                 Secrets = BuildSecretsDictionary(),
                 SetupSteps = BuildSetupStepsList(),
+                SteeringContent = string.IsNullOrWhiteSpace(_form.SteeringContent) ? null : _form.SteeringContent.Trim(),
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.ApiUrl] = apiUrl,

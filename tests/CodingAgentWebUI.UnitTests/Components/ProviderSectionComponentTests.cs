@@ -620,4 +620,89 @@ public class ProviderSectionComponentTests : BunitContext
         // Complete the operation
         tcs.SetResult(true);
     }
+
+    // ═══ RepoProviderSection — Steering ═══
+
+    [Fact]
+    public void RepoSection_SteeringTextarea_RendersInEditForm()
+    {
+        var providers = new List<ProviderConfig>
+        {
+            new()
+            {
+                Id = "rp-steer",
+                Kind = ProviderKind.Repository,
+                ProviderType = "GitHub",
+                DisplayName = "Steer Repo",
+                Settings = new Dictionary<string, string>
+                {
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo",
+                    [ProviderSettingKeys.BaseBranch] = "main",
+                    [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                    [ProviderSettingKeys.ClientId] = "Iv1.test",
+                    [ProviderSettingKeys.InstallationId] = "123",
+                    [ProviderSettingKeys.PrivateKeyBase64] = ""
+                }
+            }
+        };
+
+        var cut = Render<RepoProviderSection>(p => p
+            .Add(s => s.Providers, providers)
+            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.GitHubValidator, _gitHubValidator));
+
+        cut.Find(".btn-edit").Click();
+
+        Assert.Contains("Steering Instructions", cut.Markup);
+        Assert.Contains("These instructions are provided to agents working on this repository", cut.Markup);
+    }
+
+    [Fact]
+    public void RepoSection_SteeringTextarea_ShowsExistingContent()
+    {
+        var providers = new List<ProviderConfig>
+        {
+            new()
+            {
+                Id = "rp-steer2",
+                Kind = ProviderKind.Repository,
+                ProviderType = "GitHub",
+                DisplayName = "Steer Repo",
+                SteeringContent = "Always use Gradle",
+                Settings = new Dictionary<string, string>
+                {
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo",
+                    [ProviderSettingKeys.BaseBranch] = "main",
+                    [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                    [ProviderSettingKeys.ClientId] = "Iv1.test",
+                    [ProviderSettingKeys.InstallationId] = "123",
+                    [ProviderSettingKeys.PrivateKeyBase64] = ""
+                }
+            }
+        };
+
+        var cut = Render<RepoProviderSection>(p => p
+            .Add(s => s.Providers, providers)
+            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.GitHubValidator, _gitHubValidator));
+
+        cut.Find(".btn-edit").Click();
+
+        Assert.Contains("Always use Gradle", cut.Markup);
+    }
+
+    [Fact]
+    public void RepoSection_SteeringTextarea_ShowsHelperText()
+    {
+        var cut = Render<RepoProviderSection>(p => p
+            .Add(s => s.Providers, new List<ProviderConfig>())
+            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.GitHubValidator, _gitHubValidator));
+
+        cut.Find(".btn-add").Click();
+
+        Assert.Contains("These instructions are provided to agents working on this repository", cut.Markup);
+    }
 }
