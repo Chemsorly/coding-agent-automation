@@ -31,18 +31,7 @@ public sealed partial class AgentJobDispatcher
     {
         try
         {
-            // Handle corruption case: template has no parent project — assign to Default and log warning
-            if (project is null)
-            {
-                _logger.Warning(
-                    "Template for issue {IssueIdentifier} has no parent project (data corruption). Assigning to Default project for settings resolution",
-                    issueIdentifier);
-                project = new PipelineProject
-                {
-                    Id = WellKnownIds.DefaultProjectId,
-                    Name = "Default"
-                };
-            }
+            project = EnsureProject(project, issueIdentifier, "issue");
 
             // Resolve profile for this agent
             var profile = await ResolveProfileAsync(agent, ct);
@@ -97,9 +86,7 @@ public sealed partial class AgentJobDispatcher
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct);
 
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
-            var config = await _configStore.LoadPipelineConfigAsync(ct);
-            config = PipelineConfiguration.ApplyProjectOverrides(config, project);
-            config = ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs);
+            var config = await LoadAndApplySettingsAsync(project, repoProviderId, brainProviderId, providerConfigs, ct);
 
             var message = new JobAssignmentMessage
             {
@@ -129,12 +116,7 @@ public sealed partial class AgentJobDispatcher
                 RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId)?.SteeringContent
             };
 
-            // Assign the job to the agent in the registry
-            agent.ActiveJobId = run.RunId;
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
-
-            // Send the assignment via IAgentCommunication
-            await _agentComm.AssignJobAsync(agent.ConnectionId, message, ct);
+            await AssignAndSendAsync(agent, run.RunId, message, ct);
 
             _logger.Information(
                 "Job {JobId} dispatched to agent {AgentId} for issue {IssueIdentifier} (profile={ProfileId}, qgcs={QgcCount}, reviewerConfigs={ReviewerConfigCount}, project={ProjectName})",
@@ -171,18 +153,8 @@ public sealed partial class AgentJobDispatcher
     {
         try
         {
-            // Handle corruption case: template has no parent project — assign to Default and log warning
-            if (project is null)
-            {
-                _logger.Warning(
-                    "Template for PR {PrIdentifier} has no parent project (data corruption). Assigning to Default project for settings resolution",
-                    request.PrIdentifier);
-                project = new PipelineProject
-                {
-                    Id = WellKnownIds.DefaultProjectId,
-                    Name = "Default"
-                };
-            }
+            project = EnsureProject(project, request.PrIdentifier, "PR");
+
             // Resolve profile for this agent
             var profile = await ResolveProfileAsync(agent, ct);
             if (profile is null)
@@ -258,9 +230,7 @@ public sealed partial class AgentJobDispatcher
                 request.RepoProviderId, agentProviderId, request.BrainProviderId, pipelineProviderId: null, ct);
 
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
-            var config = await _configStore.LoadPipelineConfigAsync(ct);
-            config = PipelineConfiguration.ApplyProjectOverrides(config, project);
-            config = ApplyTemplateOverrides(config, request.RepoProviderId, request.BrainProviderId, providerConfigs);
+            var config = await LoadAndApplySettingsAsync(project, request.RepoProviderId, request.BrainProviderId, providerConfigs, ct);
 
             // Swap label to agent:in-progress before dispatch so the PR is immediately marked
             // in-progress, preventing the loop from re-dispatching it on the next cycle.
@@ -312,12 +282,7 @@ public sealed partial class AgentJobDispatcher
                 RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == request.RepoProviderId)?.SteeringContent
             };
 
-            // Assign the job to the agent in the registry
-            agent.ActiveJobId = run.RunId;
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
-
-            // Send the assignment via IAgentCommunication
-            await _agentComm.AssignJobAsync(agent.ConnectionId, message, ct);
+            await AssignAndSendAsync(agent, run.RunId, message, ct);
 
             _logger.Information(
                 "Review job {JobId} dispatched to agent {AgentId} for PR {PrIdentifier} (profile={ProfileId}, reviewerConfigs={ReviewerConfigCount}, linkedIssues={LinkedIssueCount})",
@@ -355,18 +320,7 @@ public sealed partial class AgentJobDispatcher
     {
         try
         {
-            // Handle corruption case: template has no parent project — assign to Default and log warning
-            if (project is null)
-            {
-                _logger.Warning(
-                    "Template for epic {EpicIdentifier} has no parent project (data corruption). Assigning to Default project for settings resolution",
-                    epicIdentifier);
-                project = new PipelineProject
-                {
-                    Id = WellKnownIds.DefaultProjectId,
-                    Name = "Default"
-                };
-            }
+            project = EnsureProject(project, epicIdentifier, "epic");
 
             // Resolve profile for this agent
             var profile = await ResolveProfileAsync(agent, ct);
@@ -387,11 +341,12 @@ public sealed partial class AgentJobDispatcher
                 return false;
             }
 
-            // Replace the initial run with a fully-populated decomposition run atomically.
+            // Load config early — needed for WorkspaceBaseDirectory before settings override
             var config = await _configStore.LoadPipelineConfigAsync(ct);
             var runId = run.RunId;
             var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, "decomposition", runId);
 
+            // Replace the initial run with a fully-populated decomposition run atomically.
             run = new PipelineRun
             {
                 RunId = runId,
@@ -518,12 +473,7 @@ public sealed partial class AgentJobDispatcher
             // in-progress, preventing the loop from re-dispatching it on the next cycle.
             await _labelSwapper.SwapLabelAsync(issueProviderId, epicIdentifier, AgentLabels.InProgress, ct);
 
-            // Assign the job to the agent in the registry
-            agent.ActiveJobId = run.RunId;
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
-
-            // Send the assignment via IAgentCommunication
-            await _agentComm.AssignJobAsync(agent.ConnectionId, message, ct);
+            await AssignAndSendAsync(agent, run.RunId, message, ct);
 
             _logger.Information(
                 "Decomposition {Phase} job {JobId} dispatched to agent {AgentId} for epic {EpicIdentifier} (profile={ProfileId}, project={ProjectName})",
@@ -542,6 +492,50 @@ public sealed partial class AgentJobDispatcher
                 issueProviderId, epicIdentifier, revertLabel);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Ensures a non-null project, falling back to the Default project with a warning log
+    /// if the template has no parent project (data corruption case).
+    /// </summary>
+    private PipelineProject EnsureProject(PipelineProject? project, string identifier, string identifierType)
+    {
+        if (project is not null)
+            return project;
+
+        _logger.Warning(
+            "Template for {IdentifierType} {Identifier} has no parent project (data corruption). Assigning to Default project for settings resolution",
+            identifierType, identifier);
+        return new PipelineProject
+        {
+            Id = WellKnownIds.DefaultProjectId,
+            Name = "Default"
+        };
+    }
+
+    /// <summary>
+    /// Assigns the job to the agent in the registry and sends the assignment via IAgentCommunication.
+    /// </summary>
+    private async Task AssignAndSendAsync(AgentEntry agent, string runId, JobAssignmentMessage message, CancellationToken ct)
+    {
+        agent.ActiveJobId = runId;
+        _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
+        await _agentComm.AssignJobAsync(agent.ConnectionId, message, ct);
+    }
+
+    /// <summary>
+    /// Loads the pipeline configuration and applies project and template overrides.
+    /// </summary>
+    private async Task<PipelineConfiguration> LoadAndApplySettingsAsync(
+        PipelineProject project,
+        string repoProviderId,
+        string? brainProviderId,
+        IReadOnlyList<ProviderConfig> providerConfigs,
+        CancellationToken ct)
+    {
+        var config = await _configStore.LoadPipelineConfigAsync(ct);
+        config = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        return ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs);
     }
 
     /// <summary>
