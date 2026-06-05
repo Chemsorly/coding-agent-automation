@@ -180,7 +180,6 @@ public sealed class LocalConsolidationExecutor
 
     private static readonly TraceContextPropagator TraceContextPropagator = new();
 
-    // TODO: Consider accepting IReadOnlyDictionary<string, string>? for compile-time immutability guarantee
     private static ActivityContext ExtractTraceContext(Dictionary<string, string>? traceContext)
     {
         if (traceContext is not { Count: > 0 })

@@ -862,7 +862,6 @@ public sealed class LocalPipelineExecutor
     /// Returns <see cref="ActivityContext.default"/> when the dictionary is null or empty,
     /// causing <see cref="ActivitySource.StartActivity"/> to create a root span.
     /// </summary>
-    // TODO: Consider accepting IReadOnlyDictionary<string, string>? for compile-time immutability guarantee
     private static ActivityContext ExtractTraceContext(Dictionary<string, string>? traceContext)
     {
         if (traceContext is not { Count: > 0 })
