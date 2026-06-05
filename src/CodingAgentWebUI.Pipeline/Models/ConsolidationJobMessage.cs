@@ -41,4 +41,12 @@ public sealed class ConsolidationJobMessage
     /// </summary>
     [Key(8)]
     public string? WorkspacePath { get; init; }
+
+    /// <summary>
+    /// W3C trace context (traceparent, tracestate) injected at dispatch time.
+    /// Used by the agent to create a child span linked to the orchestrator's trace.
+    /// Null when the orchestrator has no active trace or for backward compatibility.
+    /// </summary>
+    [Key(9)]
+    public Dictionary<string, string>? TraceContext { get; init; }
 }

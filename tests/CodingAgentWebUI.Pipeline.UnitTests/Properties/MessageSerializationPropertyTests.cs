@@ -310,6 +310,92 @@ public class MessageSerializationPropertyTests
         deserialized.SetupSteps[1].Command.Should().Be("dotnet restore");
     }
 
+    /// <summary>
+    /// JobAssignmentMessage round-trip with populated TraceContext dictionary.
+    /// Verifies W3C trace context fields survive MessagePack serialization.
+    /// </summary>
+    [Fact]
+    public void JobAssignmentMessage_RoundTrip_WithTraceContext()
+    {
+        var original = CreateMinimalJobAssignmentMessage(PipelineRunType.Implementation);
+        original = original with
+        {
+            TraceContext = new Dictionary<string, string>
+            {
+                ["traceparent"] = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+                ["tracestate"] = "congo=t61rcWkgMzE"
+            }
+        };
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<JobAssignmentMessage>(bytes, MsgPackOptions);
+
+        deserialized.TraceContext.Should().NotBeNull();
+        deserialized.TraceContext.Should().HaveCount(2);
+        deserialized.TraceContext!["traceparent"].Should().Be("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+        deserialized.TraceContext["tracestate"].Should().Be("congo=t61rcWkgMzE");
+    }
+
+    /// <summary>
+    /// JobAssignmentMessage round-trip with null TraceContext (backward compatibility).
+    /// </summary>
+    [Fact]
+    public void JobAssignmentMessage_RoundTrip_NullTraceContext()
+    {
+        var original = CreateMinimalJobAssignmentMessage(PipelineRunType.Implementation);
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<JobAssignmentMessage>(bytes, MsgPackOptions);
+
+        deserialized.TraceContext.Should().BeNull();
+    }
+
+    /// <summary>
+    /// ConsolidationJobMessage round-trip with populated TraceContext dictionary.
+    /// </summary>
+    [Fact]
+    public void ConsolidationJobMessage_RoundTrip_WithTraceContext()
+    {
+        var original = new ConsolidationJobMessage
+        {
+            JobId = "consolidation-1",
+            Type = ConsolidationRunType.BrainConsolidation,
+            ProviderConfigs = Array.Empty<ProviderConfig>(),
+            PipelineConfiguration = new PipelineConfiguration(),
+            TraceContext = new Dictionary<string, string>
+            {
+                ["traceparent"] = "00-abcdef1234567890abcdef1234567890-1234567890abcdef-01"
+            }
+        };
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<ConsolidationJobMessage>(bytes, MsgPackOptions);
+
+        deserialized.TraceContext.Should().NotBeNull();
+        deserialized.TraceContext.Should().HaveCount(1);
+        deserialized.TraceContext!["traceparent"].Should().Be("00-abcdef1234567890abcdef1234567890-1234567890abcdef-01");
+    }
+
+    /// <summary>
+    /// ConsolidationJobMessage round-trip with null TraceContext (backward compatibility).
+    /// </summary>
+    [Fact]
+    public void ConsolidationJobMessage_RoundTrip_NullTraceContext()
+    {
+        var original = new ConsolidationJobMessage
+        {
+            JobId = "consolidation-2",
+            Type = ConsolidationRunType.HarnessSuggestions,
+            ProviderConfigs = Array.Empty<ProviderConfig>(),
+            PipelineConfiguration = new PipelineConfiguration()
+        };
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<ConsolidationJobMessage>(bytes, MsgPackOptions);
+
+        deserialized.TraceContext.Should().BeNull();
+    }
+
     private static JobAssignmentMessage CreateMinimalJobAssignmentMessage(PipelineRunType runType)
     {
         return new JobAssignmentMessage

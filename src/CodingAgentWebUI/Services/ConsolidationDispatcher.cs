@@ -1,8 +1,12 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
+using OpenTelemetry;
+using OpenTelemetry.Context.Propagation;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Services;
@@ -217,7 +221,8 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
             PipelineConfiguration = _config,
             LastSuccessfulRunUtc = lastSuccessfulRunUtc,
             FeedbackDataJson = feedbackDataJson,
-            WorkspacePath = workspacePath
+            WorkspacePath = workspacePath,
+            TraceContext = CaptureTraceContext()
         };
 
         // Assign the job to the agent
@@ -421,5 +426,24 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         }
 
         return null;
+    }
+
+    private static readonly TraceContextPropagator TraceContextPropagator = new();
+
+    // TODO: CaptureTraceContext duplicates AgentJobDispatcher.CaptureTraceContext (internal static).
+    // Consider calling AgentJobDispatcher.CaptureTraceContext() directly or extracting to a shared helper.
+    private static Dictionary<string, string>? CaptureTraceContext()
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity(
+            "DispatchConsolidation", ActivityKind.Producer);
+        if (activity is null)
+            return null;
+
+        var carrier = new Dictionary<string, string>();
+        TraceContextPropagator.Inject(
+            new PropagationContext(activity.Context, Baggage.Current),
+            carrier,
+            static (c, key, value) => c[key] = value);
+        return carrier.Count > 0 ? carrier : null;
     }
 }

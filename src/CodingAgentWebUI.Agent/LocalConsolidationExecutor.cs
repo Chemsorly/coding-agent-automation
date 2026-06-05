@@ -1,9 +1,12 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Agent.Executors;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
+using OpenTelemetry.Context.Propagation;
 
 namespace CodingAgentWebUI.Agent;
 
@@ -57,6 +60,13 @@ public sealed class LocalConsolidationExecutor
     {
         ArgumentNullException.ThrowIfNull(job);
         ArgumentNullException.ThrowIfNull(connection);
+
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity(
+            "ExecuteConsolidation",
+            ActivityKind.Consumer,
+            ExtractTraceContext(job.TraceContext));
+        activity?.SetTag("pipeline.run_id", job.JobId);
+        activity?.SetTag("pipeline.consolidation_type", job.Type.ToString());
 
         _logger.Information("Starting consolidation job {JobId} of type {Type}",
             job.JobId, job.Type);
@@ -166,5 +176,21 @@ public sealed class LocalConsolidationExecutor
         var executor = new HarnessSuggestionExecutor(_logger);
         return await executor.ExecuteAsync(job, providers.AgentProvider, ct,
             line => _logger.Information("Consolidation output: {Line}", line));
+    }
+
+    private static readonly TraceContextPropagator TraceContextPropagator = new();
+
+    // TODO: ExtractTraceContext is duplicated in LocalPipelineExecutor. Extract to a shared
+    // static helper in PipelineTelemetry to avoid silent divergence if one copy is fixed without the other.
+    private static ActivityContext ExtractTraceContext(Dictionary<string, string>? traceContext)
+    {
+        if (traceContext is not { Count: > 0 })
+            return default;
+
+        var parentContext = TraceContextPropagator.Extract(
+            default,
+            traceContext,
+            static (c, key) => c.TryGetValue(key, out var val) ? [val] : []);
+        return parentContext.ActivityContext;
     }
 }
