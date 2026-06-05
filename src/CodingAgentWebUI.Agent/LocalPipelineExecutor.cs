@@ -322,10 +322,29 @@ public sealed class LocalPipelineExecutor
             };
 
             // Build step context
-            context = CreateStepContext(
-                job, run, config, repoProvider, agentProvider, brainProvider, brainSync,
-                pipelineProvider, issueOps, connection, prOrchestrator, agentExecution,
-                qualityGates, localCts, prContext, TransitionTo, EmitOutputLine, ReportQualityGateResult, ct);
+            var executionContext = new PipelineExecutionContext
+            {
+                Job = job,
+                Run = run,
+                Config = config,
+                RepoProvider = repoProvider,
+                AgentProvider = agentProvider,
+                BrainProvider = brainProvider,
+                BrainSync = brainSync,
+                PipelineProvider = pipelineProvider,
+                IssueOps = issueOps,
+                Connection = connection,
+                PrOrchestrator = prOrchestrator,
+                AgentExecution = agentExecution,
+                QualityGates = qualityGates,
+                LocalCts = localCts,
+                PrContext = prContext,
+                TransitionTo = TransitionTo,
+                EmitOutputLine = EmitOutputLine,
+                ReportQualityGateResult = ReportQualityGateResult
+            };
+
+            context = CreateStepContext(executionContext, ct);
 
             // Inject additional repo providers for cross-repo decomposition cloning
             if (additionalRepoProviders is { Count: > 0 })
@@ -569,66 +588,49 @@ public sealed class LocalPipelineExecutor
     }
 
     private PipelineStepContext CreateStepContext(
-        JobAssignmentMessage job,
-        PipelineRun run,
-        PipelineConfiguration config,
-        IRepositoryProvider repoProvider,
-        IAgentProvider agentProvider,
-        IRepositoryProvider? brainProvider,
-        BrainSyncService? brainSync,
-        IPipelineProvider? pipelineProvider,
-        OrchestratorProxy issueOps,
-        HubConnection connection,
-        PullRequestOrchestrator prOrchestrator,
-        AgentPhaseExecutor agentExecution,
-        QualityGateExecutor qualityGates,
-        CancellationTokenSource localCts,
-        PullRequestCreationContext prContext,
-        Action<PipelineStep> transitionTo,
-        Action<string> emitOutputLine,
-        Action<QualityGateReport> reportQualityGateResult,
+        PipelineExecutionContext inputs,
         CancellationToken ct)
     {
         var callbacks = new AgentCallbacks(
-            transitionTo,
-            emitOutputLine,
-            issueOps,
-            run,
-            prOrchestrator,
-            repoProvider,
-            reportQualityGateResult,
-            (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, prContext, token),
+            inputs.TransitionTo,
+            inputs.EmitOutputLine,
+            inputs.IssueOps,
+            inputs.Run,
+            inputs.PrOrchestrator,
+            inputs.RepoProvider,
+            inputs.ReportQualityGateResult,
+            (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, inputs.PrContext, token),
             async (contextLoaded, fileCount) =>
             {
-                try { await connection.InvokeAsync("ReportBrainSyncResult", job.JobId, contextLoaded, fileCount, ct); }
+                try { await inputs.Connection.InvokeAsync("ReportBrainSyncResult", inputs.Job.JobId, contextLoaded, fileCount, ct); }
                 catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
             });
 
         return new PipelineStepContext
         {
-            Run = run,
-            Config = config,
-            RepoProvider = repoProvider,
-            AgentProvider = agentProvider,
-            BrainProvider = brainProvider,
-            PipelineProvider = pipelineProvider,
-            Cts = localCts,
+            Run = inputs.Run,
+            Config = inputs.Config,
+            RepoProvider = inputs.RepoProvider,
+            AgentProvider = inputs.AgentProvider,
+            BrainProvider = inputs.BrainProvider,
+            PipelineProvider = inputs.PipelineProvider,
+            Cts = inputs.LocalCts,
             ConfigStore = new NullConfigurationStore(),
             Callbacks = callbacks,
-            IssueOps = issueOps,
-            AgentExecution = agentExecution,
-            QualityGates = qualityGates,
-            BrainSync = brainSync,
-            PrOrchestrator = prOrchestrator,
-            PreResolvedReviewerConfigs = job.ReviewerConfigs,
-            PreResolvedQualityGateConfigs = job.QualityGateConfigs,
+            IssueOps = inputs.IssueOps,
+            AgentExecution = inputs.AgentExecution,
+            QualityGates = inputs.QualityGates,
+            BrainSync = inputs.BrainSync,
+            PrOrchestrator = inputs.PrOrchestrator,
+            PreResolvedReviewerConfigs = inputs.Job.ReviewerConfigs,
+            PreResolvedQualityGateConfigs = inputs.Job.QualityGateConfigs,
             Logger = _logger,
             QualityGateValidator = _qualityGateValidator,
-            ProjectContext = job.ProjectContext,
+            ProjectContext = inputs.Job.ProjectContext,
             // Pre-populate issue data from job (no IssueProvider on agent side)
-            Issue = job.IssueDetail,
-            ParsedIssue = job.ParsedIssue,
-            IssueComments = job.IssueComments
+            Issue = inputs.Job.IssueDetail,
+            ParsedIssue = inputs.Job.ParsedIssue,
+            IssueComments = inputs.Job.IssueComments
         };
     }
 
@@ -833,6 +835,32 @@ public sealed class LocalPipelineExecutor
     {
         var fullPath = Path.Combine(workspacePath, mcpConfigRelativePath);
         McpConfigWriter.WriteConfig(fullPath, mcpServers);
+    }
+
+    /// <summary>
+    /// Bundles the parameters needed by <see cref="CreateStepContext"/> into a single object,
+    /// reducing the method's parameter count from 19 to 1 (plus CancellationToken).
+    /// </summary>
+    internal sealed record PipelineExecutionContext
+    {
+        public required JobAssignmentMessage Job { get; init; }
+        public required PipelineRun Run { get; init; }
+        public required PipelineConfiguration Config { get; init; }
+        public required IRepositoryProvider RepoProvider { get; init; }
+        public required IAgentProvider AgentProvider { get; init; }
+        public IRepositoryProvider? BrainProvider { get; init; }
+        public BrainSyncService? BrainSync { get; init; }
+        public IPipelineProvider? PipelineProvider { get; init; }
+        public required OrchestratorProxy IssueOps { get; init; }
+        public required HubConnection Connection { get; init; }
+        public required PullRequestOrchestrator PrOrchestrator { get; init; }
+        public required AgentPhaseExecutor AgentExecution { get; init; }
+        public required QualityGateExecutor QualityGates { get; init; }
+        public required CancellationTokenSource LocalCts { get; init; }
+        public required PullRequestCreationContext PrContext { get; init; }
+        public required Action<PipelineStep> TransitionTo { get; init; }
+        public required Action<string> EmitOutputLine { get; init; }
+        public required Action<QualityGateReport> ReportQualityGateResult { get; init; }
     }
 
     /// <summary>
