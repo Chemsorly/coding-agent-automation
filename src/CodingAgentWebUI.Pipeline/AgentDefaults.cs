@@ -5,6 +5,14 @@ namespace CodingAgentWebUI.Agent;
 /// </summary>
 public static class AgentDefaults
 {
+    // ── Chat constants ──────────────────────────────────────────────────
+
+    /// <summary>Default workspace path for chat sessions inside agent containers.</summary>
+    public const string ChatWorkspacePath = "/app/workspaces/chat";
+
+    /// <summary>Warm-up prompt sent to establish a KiroCli chat session before the real prompt.</summary>
+    public const string ChatWarmUpPrompt = "hello, how are you?";
+
     // ── CLI paths ────────────────────────────────────────────────────────
 
     /// <summary>Default filesystem path to the Kiro CLI executable inside agent containers.</summary>
