@@ -214,6 +214,64 @@ public class HeartbeatMonitorServiceTests : IDisposable
         _registry.GetByAgentId("agent-1").Should().NotBeNull();
     }
 
+    [Fact]
+    public async Task SweepAsync_DisconnectedWithActiveImplementationRun_SwapsLabelViaIssueProvider()
+    {
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AgentDisconnectGracePeriod = TimeSpan.Zero });
+
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-1";
+        _registry.TransitionStatus("agent-1", AgentStatus.Disconnected);
+        entry.DisconnectedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RunType = PipelineRunType.Implementation
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SweepAsync_DisconnectedWithActiveReviewRun_SwapsLabelViaRepoProvider()
+    {
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AgentDisconnectGracePeriod = TimeSpan.Zero });
+
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-1";
+        _registry.TransitionStatus("agent-1", AgentStatus.Disconnected);
+        entry.DisconnectedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Review PR",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RunType = PipelineRunType.Review
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "rp-1", "org/repo#42", AgentLabels.Error, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private AgentEntry RegisterAgent(string agentId, string connectionId)
     {
         return _registry.Register(new AgentRegistrationMessage
