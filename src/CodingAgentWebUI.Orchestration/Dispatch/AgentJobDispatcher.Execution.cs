@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
