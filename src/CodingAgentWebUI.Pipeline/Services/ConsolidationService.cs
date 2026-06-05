@@ -61,8 +61,7 @@ public sealed class ConsolidationService : IConsolidationService
         {
             try
             {
-                var json = await File.ReadAllTextAsync(file, ct);
-                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
+                var run = await LoadAsync<ConsolidationRun>(file, ct);
                 if (run is null) continue;
 
                 if (run.Status == ConsolidationRunStatus.Running)
@@ -220,8 +219,7 @@ public sealed class ConsolidationService : IConsolidationService
         {
             try
             {
-                var json = await File.ReadAllTextAsync(file, ct);
-                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
+                var run = await LoadAsync<ConsolidationRun>(file, ct);
                 if (run is not null)
                     runs.Add(run);
             }
@@ -276,8 +274,7 @@ public sealed class ConsolidationService : IConsolidationService
 
         try
         {
-            var json = await File.ReadAllTextAsync(filePath, ct);
-            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
+            var run = await LoadAsync<ConsolidationRun>(filePath, ct);
             if (run is null)
             {
                 _logger.Warning("Cannot update consolidation run {RunId}: deserialization returned null", runId);
@@ -330,8 +327,7 @@ public sealed class ConsolidationService : IConsolidationService
 
         try
         {
-            var json = await File.ReadAllTextAsync(filePath, ct);
-            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
+            var run = await LoadAsync<ConsolidationRun>(filePath, ct);
             if (run is null || run.Status != ConsolidationRunStatus.Queued)
                 return false;
 
@@ -372,8 +368,7 @@ public sealed class ConsolidationService : IConsolidationService
 
         try
         {
-            var json = await File.ReadAllTextAsync(filePath, ct);
-            var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
+            var run = await LoadAsync<ConsolidationRun>(filePath, ct);
             if (run is null || run.Status != ConsolidationRunStatus.Queued)
                 return;
 
@@ -401,8 +396,7 @@ public sealed class ConsolidationService : IConsolidationService
         {
             try
             {
-                var json = await File.ReadAllTextAsync(file, ct);
-                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
+                var run = await LoadAsync<ConsolidationRun>(file, ct);
                 if (run is null) continue;
 
                 if (run.Status == ConsolidationRunStatus.Queued)
@@ -434,8 +428,7 @@ public sealed class ConsolidationService : IConsolidationService
 
         try
         {
-            var json = await File.ReadAllTextAsync(_harnessSuggestionsPath, ct);
-            return JsonSerializer.Deserialize<HarnessSuggestions>(json, PipelineJsonOptions.Default);
+            return await LoadAsync<HarnessSuggestions>(_harnessSuggestionsPath, ct);
         }
         catch (Exception ex)
         {
@@ -521,8 +514,7 @@ public sealed class ConsolidationService : IConsolidationService
         {
             try
             {
-                var json = await File.ReadAllTextAsync(file, ct);
-                var historicRun = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
+                var historicRun = await LoadAsync<ConsolidationRun>(file, ct);
                 if (historicRun is not null
                     && historicRun.Type == ConsolidationRunType.HarnessSuggestions
                     && historicRun.Status == ConsolidationRunStatus.Succeeded
@@ -561,6 +553,12 @@ public sealed class ConsolidationService : IConsolidationService
     }
 
     private readonly ConcurrentDictionary<string, string> _feedbackDataCache = new();
+
+    private async Task<T?> LoadAsync<T>(string filePath, CancellationToken ct) where T : class
+    {
+        var json = await File.ReadAllTextAsync(filePath, ct);
+        return JsonSerializer.Deserialize<T>(json, PipelineJsonOptions.Default);
+    }
 
     private async Task PersistRunAsync(ConsolidationRun run, CancellationToken ct)
     {
