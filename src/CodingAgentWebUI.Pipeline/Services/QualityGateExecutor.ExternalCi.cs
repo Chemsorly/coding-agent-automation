@@ -159,6 +159,7 @@ internal partial class QualityGateExecutor
                 }
             }
 
+            // TODO: Duration includes infrastructure retry wait times — consider recording per-attempt duration for better histogram granularity
             PipelineTelemetry.ExternalCiDuration.Record(
                 ciPollStopwatch.Elapsed.TotalSeconds,
                 PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));

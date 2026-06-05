@@ -79,6 +79,10 @@ try
             {
                 Boundaries = new double[] { 30, 60, 120, 300, 600, 900, 1800, 3600 }
             })
+            .AddView("pipeline.step.duration", new ExplicitBucketHistogramConfiguration
+            {
+                Boundaries = new double[] { 5, 15, 30, 60, 120, 300, 600, 900, 1800 }
+            })
             .AddView("quality_gate.duration", new ExplicitBucketHistogramConfiguration
             {
                 Boundaries = new double[] { 5, 15, 30, 60, 120, 300, 600, 900 }

@@ -19,6 +19,7 @@ internal partial class QualityGateExecutor
         var callbacks = context.Callbacks;
         callbacks.TransitionTo(PipelineStep.RunningQualityGates);
 
+        // TODO: Consider checking ct.ThrowIfCancellationRequested() before starting stopwatch to avoid recording near-zero durations on pre-cancelled tokens
         var qgStopwatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
@@ -286,6 +287,7 @@ internal partial class QualityGateExecutor
         while (!report.AllPassed && run.RetryCount < config.MaxRetries)
         {
             run.RetryCount++;
+            // TODO: Consider using BuildTags (run_type + project_id + project_name) for dimensional consistency with duration metrics
             PipelineTelemetry.QualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(run.RunType));
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Add(errorSummary);
