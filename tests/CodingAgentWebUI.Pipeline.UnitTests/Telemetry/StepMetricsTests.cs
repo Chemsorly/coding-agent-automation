@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
@@ -12,8 +13,8 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Telemetry;
 public class StepMetricsTests : IDisposable
 {
     private readonly MeterListener _listener = new();
-    private readonly List<(string Name, double Value, KeyValuePair<string, object?>[] Tags)> _histograms = [];
-    private readonly List<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> _counters = [];
+    private readonly ConcurrentBag<(string Name, double Value, KeyValuePair<string, object?>[] Tags)> _histograms = [];
+    private readonly ConcurrentBag<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> _counters = [];
 
     public StepMetricsTests()
     {
