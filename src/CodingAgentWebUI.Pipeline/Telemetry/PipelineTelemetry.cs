@@ -30,13 +30,13 @@ public static class PipelineTelemetry
         "dispatch.queue.wait_time", "s", "Time jobs wait in queue before pickup");
 
     public static readonly Counter<long> TokensUsed = Meter.CreateCounter<long>(
-        "agent.tokens.used", "{token}", "Total tokens consumed by agent invocations");
+        "agent.tokens.used", "{token}", "LLM tokens consumed by agent calls");
 
     public static readonly Histogram<double> StepDuration = Meter.CreateHistogram<double>(
         "pipeline.step.duration", "s", "Duration of individual pipeline steps");
 
     public static readonly Counter<long> StepCount = Meter.CreateCounter<long>(
-        "pipeline.step.count", "{step}", "Number of pipeline steps executed");
+        "pipeline.step.count", "{step}", "Total pipeline steps executed");
 
     /// <summary>
     /// Builds a <see cref="TagList"/> for per-step metrics including step name, run type, and project context.

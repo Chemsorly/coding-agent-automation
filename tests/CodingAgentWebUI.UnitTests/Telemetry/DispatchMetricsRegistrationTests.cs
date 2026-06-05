@@ -65,7 +65,7 @@ public class DispatchMetricsRegistrationTests : IDisposable
     [Fact]
     public void AgentJobsActive_ReflectsBusyAgentCount()
     {
-        var entry = _registry.Register(new AgentRegistrationMessage
+        _registry.Register(new AgentRegistrationMessage
         {
             AgentId = "agent-1", Hostname = "host", AgentType = "kiro", Labels = ["dotnet"]
         }, "conn-1");
