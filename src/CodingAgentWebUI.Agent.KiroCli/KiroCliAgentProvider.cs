@@ -27,6 +27,9 @@ public partial class KiroCliAgentProvider : IAgentProvider
 
     public AgentProviderType ProviderType => AgentProviderType.KiroCli;
 
+    /// <inheritdoc />
+    public IReadOnlyList<string> SteeringBlacklistPaths { get; } = [".kiro"];
+
     /// <summary>The model configured for this agent provider, or null/auto for default.</summary>
     public string? Model => _model;
 

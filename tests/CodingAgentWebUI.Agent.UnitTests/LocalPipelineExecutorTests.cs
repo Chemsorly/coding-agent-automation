@@ -1116,7 +1116,7 @@ public class LocalPipelineExecutorTests : IDisposable
 
         var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection);
 
-        steps.Should().HaveCount(12);
+        steps.Should().HaveCount(13);
         await connection.DisposeAsync();
     }
 

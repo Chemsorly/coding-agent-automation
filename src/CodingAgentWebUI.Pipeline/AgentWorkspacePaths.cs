@@ -148,4 +148,13 @@ public static class AgentWorkspacePaths
             .Replace(' ', '-').Replace('/', '-').Replace('\\', '-');
         return $".agent/review-findings-{sanitized}.md";
     }
+
+    /// <summary>Kiro CLI steering file for project-level content.</summary>
+    public const string KiroSteeringProjectFilePath = ".kiro/steering/pipeline-project.md";
+
+    /// <summary>Kiro CLI steering file for repository-level content.</summary>
+    public const string KiroSteeringRepoFilePath = ".kiro/steering/pipeline-repo.md";
+
+    /// <summary>OpenCode steering file (AGENTS.md at workspace root).</summary>
+    public const string OpenCodeAgentsFilePath = "AGENTS.md";
 }

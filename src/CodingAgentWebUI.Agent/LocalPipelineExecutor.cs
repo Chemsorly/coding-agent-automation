@@ -195,6 +195,9 @@ public sealed class LocalPipelineExecutor
             if (pipelineProvider is not null)
                 await pipelineProvider.ValidateAsync(ct);
 
+            // Merge provider-specific steering blacklist paths into config
+            config = PipelineConfiguration.ApplyProviderBlacklist(config, agentProvider.SteeringBlacklistPaths);
+
             result = await ExecutePipelineStepsAsync(
                 job, config, repoProvider, agentProvider, brainProvider, pipelineProvider,
                 issueOps, connection, outputBatcher, onStepChanged, ct, additionalRepoProviders);
@@ -481,6 +484,7 @@ public sealed class LocalPipelineExecutor
         {
             new CloneRepositoryStep(),
             new WriteMcpConfigStep(job),
+            new WriteSteeringStep(job),
             new RunEnvironmentSetupStep(job),
             new SyncBrainPreRunStep(),
             new DetectReworkStep(),
@@ -505,6 +509,7 @@ public sealed class LocalPipelineExecutor
         return new IPipelineStep[]
         {
             new CloneRepositoryStep(),
+            new WriteSteeringStep(job),
             new RunEnvironmentSetupStep(job),
             new CreateBranchStep(),
             new SyncBrainPreRunStep(),
@@ -527,6 +532,7 @@ public sealed class LocalPipelineExecutor
         {
             new CloneRepositoryStep(),
             new CloneProjectRepositoriesStep(),
+            new WriteSteeringStep(job),
             new RunEnvironmentSetupStep(job),
             new SyncBrainPreRunStep(),
             new WriteProjectContextStep(),
@@ -551,6 +557,7 @@ public sealed class LocalPipelineExecutor
         {
             new CloneRepositoryStep(),
             new CloneProjectRepositoriesStep(),
+            new WriteSteeringStep(job),
             new RunEnvironmentSetupStep(job),
             new SyncBrainPreRunStep(),
             new WriteProjectContextStep(),

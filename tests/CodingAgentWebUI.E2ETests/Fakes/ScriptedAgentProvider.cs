@@ -14,6 +14,8 @@ public sealed class ScriptedAgentProvider : IAgentProvider
 
     public AgentProviderType ProviderType => AgentProviderType.KiroCli;
 
+    public IReadOnlyList<string> SteeringBlacklistPaths { get; } = [".kiro"];
+
     /// <summary>
     /// When set, ExecuteAsync will await this before proceeding.
     /// Use for cancellation tests or observing intermediate states.

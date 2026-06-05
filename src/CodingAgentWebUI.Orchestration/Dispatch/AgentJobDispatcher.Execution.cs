@@ -119,7 +119,9 @@ public sealed partial class AgentJobDispatcher
                 ReviewerConfigs = resolvedReviewerConfigs,
                 ProjectId = project.Id,
                 ProjectName = project.Name,
-                ProjectSecrets = project.Secrets
+                ProjectSecrets = project.Secrets,
+                ProjectSteeringContent = project.SteeringContent,
+                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId)?.SteeringContent
             };
 
             // Assign the job to the agent in the registry
@@ -299,7 +301,9 @@ public sealed partial class AgentJobDispatcher
                 ReviewPrAuthor = request.PrAuthor,
                 ProjectId = project.Id,
                 ProjectName = project.Name,
-                ProjectSecrets = project.Secrets
+                ProjectSecrets = project.Secrets,
+                ProjectSteeringContent = project.SteeringContent,
+                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == request.RepoProviderId)?.SteeringContent
             };
 
             // Assign the job to the agent in the registry
@@ -498,7 +502,9 @@ public sealed partial class AgentJobDispatcher
                 ProjectId = project.Id,
                 ProjectName = project.Name,
                 ProjectContext = projectContext,
-                ProjectSecrets = project.Secrets
+                ProjectSecrets = project.Secrets,
+                ProjectSteeringContent = project.SteeringContent,
+                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId)?.SteeringContent
             };
 
             // Swap label to agent:in-progress before dispatch so the epic is immediately marked
