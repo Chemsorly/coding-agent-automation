@@ -83,111 +83,94 @@ internal partial class AgentPhaseExecutor
 
                 try
                 {
-                    await AgentStallMonitor.MonitorAsync(context.AgentProvider,
-                        () => context.AgentProvider.EnsureSessionAsync(run.WorkspacePath!, ct),
-                        run, config, "Session warm-up", context.Callbacks.NotifyChange, _logger, ct);
+                    try
+                    {
+                        await AgentStallMonitor.MonitorAsync(context.AgentProvider,
+                            () => context.AgentProvider.EnsureSessionAsync(run.WorkspacePath!, ct),
+                            run, config, "Session warm-up", context.Callbacks.NotifyChange, _logger, ct);
 
-                    var brainContextWrittenForAnalysis = await WriteBrainContextIfNeededAsync(run, ct);
+                        var brainContextWrittenForAnalysis = await WriteBrainContextIfNeededAsync(run, ct);
 
-                    var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, context.Issue, context.ParsedIssue, brainContextWrittenForAnalysis);
-                    _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
+                        var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, context.Issue, context.ParsedIssue, brainContextWrittenForAnalysis);
+                        _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
 
-                    var analysisResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                        context.AgentProvider,
-                        new AgentRequest
+                        var analysisResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+                            context.AgentProvider,
+                            new AgentRequest
+                            {
+                                Prompt = analysisPrompt,
+                                WorkspacePath = run.WorkspacePath!,
+                                Timeout = config.AgentTimeout,
+                                UseResume = true
+                            },
+                            run, config, "Analysis agent", context.Callbacks.NotifyChange, _logger, ct,
+                            line => context.Callbacks.EmitOutputLine(line));
+
+                        run.AccumulateTokenUsage(analysisResult);
+
+                        _logger.Information("Pipeline {RunId} analysis agent completed with exit code {ExitCode}, output lines: {LineCount}",
+                            run.RunId, analysisResult.ExitCode, analysisResult.OutputLines.Count);
+
+                        // Hard gate: analysis.md must exist and be non-trivial
+                        if (!File.Exists(analysisFilePath))
                         {
-                            Prompt = analysisPrompt,
-                            WorkspacePath = run.WorkspacePath!,
-                            Timeout = config.AgentTimeout,
-                            UseResume = true
-                        },
-                        run, config, "Analysis agent", context.Callbacks.NotifyChange, _logger, ct,
-                        line => context.Callbacks.EmitOutputLine(line));
+                            var tailOutput = analysisResult.OutputLines.Count > 0
+                                ? string.Join(Environment.NewLine, analysisResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
+                                : PipelineConstants.NoOutputFallback;
+                            _logger.Warning("Pipeline {RunId} analysis.md not found. Exit code: {ExitCode}, last output:\n{Output}",
+                                run.RunId, analysisResult.ExitCode, tailOutput);
+                            throw new AnalysisIncompleteException("analysis.md not found after agent execution");
+                        }
 
-                    run.AccumulateTokenUsage(analysisResult);
+                        var analysisLength = new FileInfo(analysisFilePath).Length;
+                        if (analysisLength < MinAnalysisLength)
+                            throw new AnalysisIncompleteException($"analysis.md too short ({analysisLength} bytes, minimum {MinAnalysisLength})");
 
-                    _logger.Information("Pipeline {RunId} analysis agent completed with exit code {ExitCode}, output lines: {LineCount}",
-                        run.RunId, analysisResult.ExitCode, analysisResult.OutputLines.Count);
+                        run.AnalysisContent = await File.ReadAllTextAsync(analysisFilePath, ct);
+                        _logger.Information("Pipeline {RunId} read analysis from {AnalysisFilePath}", run.RunId, analysisFilePath);
 
-                    // Hard gate: analysis.md must exist and be non-trivial
-                    if (!File.Exists(analysisFilePath))
-                    {
-                        var tailOutput = analysisResult.OutputLines.Count > 0
-                            ? string.Join(Environment.NewLine, analysisResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
-                            : PipelineConstants.NoOutputFallback;
-                        _logger.Warning("Pipeline {RunId} analysis.md not found. Exit code: {ExitCode}, last output:\n{Output}",
-                            run.RunId, analysisResult.ExitCode, tailOutput);
-                        throw new AnalysisIncompleteException("analysis.md not found after agent execution");
+                        // Hard gate: assessment.json must exist and be valid
+                        if (!File.Exists(assessmentFilePath))
+                        {
+                            var tailOutput = analysisResult.OutputLines.Count > 0
+                                ? string.Join(Environment.NewLine, analysisResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
+                                : PipelineConstants.NoOutputFallback;
+                            _logger.Warning("Pipeline {RunId} analysis-assessment.json not found. Exit code: {ExitCode}, last output:\n{Output}",
+                                run.RunId, analysisResult.ExitCode, tailOutput);
+                        }
+                        assessment = await ReadAssessmentAsync(run, ct);
+
+                        // Success — exit retry loop
+                        break;
                     }
-
-                    var analysisLength = new FileInfo(analysisFilePath).Length;
-                    if (analysisLength < MinAnalysisLength)
-                        throw new AnalysisIncompleteException($"analysis.md too short ({analysisLength} bytes, minimum {MinAnalysisLength})");
-
-                    run.AnalysisContent = await File.ReadAllTextAsync(analysisFilePath, ct);
-                    _logger.Information("Pipeline {RunId} read analysis from {AnalysisFilePath}", run.RunId, analysisFilePath);
-
-                    // Hard gate: assessment.json must exist and be valid
-                    if (!File.Exists(assessmentFilePath))
+                    catch (Exception ex) when (ex is not OperationCanceledException and not AnalysisIncompleteException)
                     {
-                        var tailOutput = analysisResult.OutputLines.Count > 0
-                            ? string.Join(Environment.NewLine, analysisResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
-                            : PipelineConstants.NoOutputFallback;
-                        _logger.Warning("Pipeline {RunId} analysis-assessment.json not found. Exit code: {ExitCode}, last output:\n{Output}",
-                            run.RunId, analysisResult.ExitCode, tailOutput);
+                        throw new AnalysisIncompleteException($"Agent execution failed: {ex.Message}", ex);
                     }
-                    assessment = await ReadAssessmentAsync(run, ct);
-
-                    // Success — exit retry loop
-                    break;
-                }
-                catch (AnalysisIncompleteException ex) when (attempt < maxRetries)
-                {
-                    _logger.Warning(ex, "Pipeline {RunId} analysis attempt {Attempt}/{MaxAttempts} failed, retrying",
-                        run.RunId, attempt + 1, maxRetries + 1);
-                    run.ChatHistory.Enqueue(new ChatEntry
-                    {
-                        Role = ChatRole.System,
-                        Content = $"Analysis attempt {attempt + 1} failed: {ex.Message}. Retrying..."
-                    });
-                    context.Callbacks.NotifyChange();
-                    run.AnalysisContent = null;
-                    continue;
                 }
                 catch (AnalysisIncompleteException ex)
                 {
-                    // Budget exhausted — terminal failure
-                    _logger.Error(ex, "Pipeline {RunId} analysis failed after {Attempts} attempt(s)",
-                        run.RunId, attempt + 1);
-                    // NOTE: [RES-06] Consider using CancellationToken.None here — ct may already be cancelled
-                    return await FailPhaseAsync(run,
-                        $"Analysis failed after {attempt + 1} attempt(s): {ex.Message}",
-                        AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    // NOTE: [RES-06] Consider simplifying by re-throwing as AnalysisIncompleteException
-                    var wrapped = new AnalysisIncompleteException($"Agent execution failed: {ex.Message}", ex);
                     if (attempt < maxRetries)
                     {
-                        _logger.Warning(ex, "Pipeline {RunId} analysis attempt {Attempt}/{MaxAttempts} failed, retrying",
+                        var logException = ex.InnerException ?? ex;
+                        _logger.Warning(logException, "Pipeline {RunId} analysis attempt {Attempt}/{MaxAttempts} failed, retrying",
                             run.RunId, attempt + 1, maxRetries + 1);
                         run.ChatHistory.Enqueue(new ChatEntry
                         {
                             Role = ChatRole.System,
-                            Content = $"Analysis attempt {attempt + 1} failed: {wrapped.Message}. Retrying..."
+                            Content = $"Analysis attempt {attempt + 1} failed: {ex.Message}. Retrying..."
                         });
                         context.Callbacks.NotifyChange();
                         run.AnalysisContent = null;
                         continue;
                     }
 
-                    _logger.Error(ex, "Pipeline {RunId} analysis failed after {Attempts} attempt(s)",
+                    var terminalLogException = ex.InnerException ?? ex;
+                    _logger.Error(terminalLogException, "Pipeline {RunId} analysis failed after {Attempts} attempt(s)",
                         run.RunId, attempt + 1);
-                    // NOTE: [RES-06] Consider using CancellationToken.None here — ct may already be cancelled
                     return await FailPhaseAsync(run,
-                        $"Analysis failed after {attempt + 1} attempt(s): {wrapped.Message}",
-                        AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct);
+                        $"Analysis failed after {attempt + 1} attempt(s): {ex.Message}",
+                        AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, CancellationToken.None);
                 }
             }
 
