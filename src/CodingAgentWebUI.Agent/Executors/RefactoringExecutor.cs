@@ -409,15 +409,14 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         sb.AppendLine(sanitizedDescription);
         sb.AppendLine();
 
-        // TODO: EstimatedEffort, RiskLevel, and Technique should be passed through SanitizeMarkdown() for consistency with other agent-sourced fields
         if (proposal.EstimatedEffort is not null || proposal.RiskLevel is not null || proposal.Technique is not null)
         {
             if (proposal.EstimatedEffort is not null)
-                sb.Append($"**Effort:** {proposal.EstimatedEffort}");
+                sb.Append($"**Effort:** {SanitizeMarkdown(proposal.EstimatedEffort)}");
             if (proposal.RiskLevel is not null)
-                sb.Append($"{(proposal.EstimatedEffort is not null ? " | " : "")}**Risk:** {proposal.RiskLevel}");
+                sb.Append($"{(proposal.EstimatedEffort is not null ? " | " : "")}**Risk:** {SanitizeMarkdown(proposal.RiskLevel)}");
             if (proposal.Technique is not null)
-                sb.Append($"{(proposal.EstimatedEffort is not null || proposal.RiskLevel is not null ? " | " : "")}**Technique:** {proposal.Technique}");
+                sb.Append($"{(proposal.EstimatedEffort is not null || proposal.RiskLevel is not null ? " | " : "")}**Technique:** {SanitizeMarkdown(proposal.Technique)}");
             sb.AppendLine();
             sb.AppendLine();
         }

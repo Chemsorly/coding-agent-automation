@@ -520,6 +520,27 @@ public class RefactoringExecutorTests : IDisposable
     }
 
     [Fact]
+    public void FormatIssueBody_SanitizesMetadataFields()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Test",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            EstimatedEffort = "<script>alert('xss')</script>",
+            RiskLevel = "@admin injection",
+            Technique = "low <!-- hidden -->"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("**Effort:** &lt;script>alert('xss')&lt;/script>");
+        body.Should().Contain("**Risk:** @\u200Badmin injection");
+        body.Should().Contain("**Technique:** low &lt;!-- hidden -->");
+    }
+
+    [Fact]
     public async Task RunGitCommandAsync_NonZeroExitCode_ThrowsWithStderr()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"git-test-{Guid.NewGuid()}");
