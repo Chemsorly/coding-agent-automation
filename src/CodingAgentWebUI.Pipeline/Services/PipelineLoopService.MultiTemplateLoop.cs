@@ -136,6 +136,7 @@ public sealed partial class PipelineLoopService
     /// <summary>
     /// Snapshot record bundling all cycle-immutable state from Steps 1–2.
     /// </summary>
+    // TODO: Use IReadOnlyList<PipelineJobTemplate> for EnabledTemplates/PollableTemplates and IReadOnlyDictionary for TemplateLookup to enforce immutability
     private sealed record CycleSnapshot(
         PipelineConfiguration Config,
         IReadOnlyList<PipelineProject> Projects,
@@ -511,6 +512,7 @@ public sealed partial class PipelineLoopService
         CancellationToken stoppingToken,
         CancellationToken ct)
     {
+        // TODO: Use snapshot.MaxRunsPerCycle instead of config.ClosedLoopMaxRunsPerCycle to avoid dead field in CycleSnapshot
         int remaining = config.ClosedLoopMaxRunsPerCycle > 0 ? config.ClosedLoopMaxRunsPerCycle : int.MaxValue;
 
         // Per-cycle dependency state cache shared across all issue evaluations
@@ -675,6 +677,7 @@ public sealed partial class PipelineLoopService
                             PrBranchName = pr.BranchName,
                             PrTitle = pr.Title,
                             PrDescription = pr.Description,
+                            PrAuthor = pr.Author,
                             PrUrl = pr.Url,
                             PrTargetBranch = pr.TargetBranch,
                             IssueProviderId = template.IssueProviderId,
