@@ -29,6 +29,27 @@ public static class PipelineTelemetry
     public static readonly Histogram<double> QueueWaitTime = Meter.CreateHistogram<double>(
         "dispatch.queue.wait_time", "s", "Time jobs wait in queue before pickup");
 
+    public static readonly Counter<long> TokensUsed = Meter.CreateCounter<long>(
+        "agent.tokens.used", "{token}", "Total tokens consumed by agent invocations");
+
+    public static readonly Histogram<double> StepDuration = Meter.CreateHistogram<double>(
+        "pipeline.step.duration", "s", "Duration of individual pipeline steps");
+
+    public static readonly Counter<long> StepCount = Meter.CreateCounter<long>(
+        "pipeline.step.count", "{step}", "Number of pipeline steps executed");
+
+    /// <summary>
+    /// Builds a <see cref="TagList"/> for per-step metrics including step name, run type, and project context.
+    /// </summary>
+    public static TagList BuildStepTags(string stepName, PipelineRun run) =>
+        new(
+        [
+            new("step_name", stepName),
+            RunTypeTag(run.RunType),
+            ProjectIdTag(run.ProjectId),
+            ProjectNameTag(run.ProjectName)
+        ]);
+
     /// <summary>Creates a run_type tag from the given <see cref="PipelineRunType"/>.</summary>
     public static KeyValuePair<string, object?> RunTypeTag(PipelineRunType runType) =>
         new("run_type", runType.ToString().ToLowerInvariant());
