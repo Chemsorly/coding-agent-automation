@@ -85,25 +85,25 @@ Telemetry is exported via OTLP. The OpenTelemetry SDK reads configuration from s
 | Service | `service.name` | Description |
 |---------|---------------|-------------|
 | Orchestrator | `coding-agent-orchestrator` | Web UI + pipeline orchestration |
-| Agent Worker | `coding-agent-worker` | Agent container executing jobs |
+| Agent Worker (.NET 1) | `coding-agent-worker-dotnet-1` | Kiro .NET agent container |
+| Agent Worker (.NET 2) | `coding-agent-worker-dotnet-2` | Kiro .NET agent container |
+| Agent Worker (Python) | `coding-agent-worker-python` | Kiro Python agent container |
+| Agent Worker (Java) | `coding-agent-worker-java` | Kiro Java agent container |
+| Agent Worker (OpenCode .NET) | `coding-agent-worker-opencode-dotnet` | OpenCode .NET agent container |
+| Agent Worker (OpenCode Python) | `coding-agent-worker-opencode-python` | OpenCode Python agent container |
+| Agent Worker (OpenCode Java) | `coding-agent-worker-opencode-java` | OpenCode Java agent container |
 
 ### Example: Grafana Cloud
 
-```yaml
-# docker-compose.override.yml
-services:
-  webui:
-    environment:
-      - OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-prod-us-east-0.grafana.net/otlp
-      - OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64-encoded-instance-id:token>
-      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL variables are configured in `docker-compose.yml` and sourced from `.env`. To connect to Grafana Cloud, set these values in your `.env` file:
 
-  agent-dotnet-1:
-    environment:
-      - OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-prod-us-east-0.grafana.net/otlp
-      - OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64-encoded-instance-id:token>
-      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+```env
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-prod-us-east-0.grafana.net/otlp
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64-encoded-instance-id:token>
 ```
+
+See `.env.example` for the full template.
 
 ## Verification
 

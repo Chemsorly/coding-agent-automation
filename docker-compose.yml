@@ -21,6 +21,11 @@ services:
       - ./config/pipeline:/app/config/pipeline
     environment:
       - AGENT_API_KEY=${AGENT_API_KEY}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
+      - OTEL_SERVICE_NAME=coding-agent-orchestrator
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 10s
@@ -44,6 +49,11 @@ services:
       - AGENT_LABELS=kiro,dotnet,dotnet10
       - AGENT_API_KEY=${AGENT_API_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-Information}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
+      - OTEL_SERVICE_NAME=coding-agent-worker-dotnet-1
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-1
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 10s
@@ -70,6 +80,11 @@ services:
       - AGENT_LABELS=kiro,dotnet,dotnet10
       - AGENT_API_KEY=${AGENT_API_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-Information}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
+      - OTEL_SERVICE_NAME=coding-agent-worker-dotnet-2
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-2
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 10s
@@ -96,6 +111,11 @@ services:
       - AGENT_LABELS=kiro,python,python312
       - AGENT_API_KEY=${AGENT_API_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-Information}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
+      - OTEL_SERVICE_NAME=coding-agent-worker-python
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-python
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 10s
@@ -122,6 +142,11 @@ services:
       - AGENT_LABELS=kiro,java,java21
       - AGENT_API_KEY=${AGENT_API_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-Information}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
+      - OTEL_SERVICE_NAME=coding-agent-worker-java
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-java
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 10s
@@ -147,6 +172,11 @@ services:
       - AGENT_API_KEY=${AGENT_API_KEY}
       - OPENCODE_CONFIG_CONTENT=${OPENCODE_CONFIG_CONTENT}
       - LOG_LEVEL=${LOG_LEVEL:-Information}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
+      - OTEL_SERVICE_NAME=coding-agent-worker-opencode-dotnet
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-opencode-dotnet
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 10s
@@ -171,6 +201,11 @@ services:
       - AGENT_API_KEY=${AGENT_API_KEY}
       - OPENCODE_CONFIG_CONTENT=${OPENCODE_CONFIG_CONTENT}
       - LOG_LEVEL=${LOG_LEVEL:-Information}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
+      - OTEL_SERVICE_NAME=coding-agent-worker-opencode-python
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-opencode-python
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 10s
@@ -195,6 +230,11 @@ services:
       - AGENT_API_KEY=${AGENT_API_KEY}
       - OPENCODE_CONFIG_CONTENT=${OPENCODE_CONFIG_CONTENT}
       - LOG_LEVEL=${LOG_LEVEL:-Information}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
+      - OTEL_SERVICE_NAME=coding-agent-worker-opencode-java
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-opencode-java
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 10s
