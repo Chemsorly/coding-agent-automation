@@ -673,7 +673,8 @@ public class AgentWorkerServiceTests
             mockHttpClientFactory.Object,
             new Pipeline.Models.PipelineConfiguration(),
             mockQualityGateValidator.Object,
-            mockLogger.Object);
+            mockLogger.Object,
+            "test-agent");
     }
 
     private static LocalConsolidationExecutor CreateMockConsolidationExecutor()

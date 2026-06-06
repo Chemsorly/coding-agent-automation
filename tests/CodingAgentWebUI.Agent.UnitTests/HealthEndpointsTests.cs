@@ -58,7 +58,8 @@ public class HealthEndpointsTests : IAsyncDisposable
             new Mock<IHttpClientFactory>().Object,
             new PipelineConfiguration(),
             mockQualityGateValidator.Object,
-            mockLogger.Object);
+            mockLogger.Object,
+            "test-agent");
 
         var consolidationExecutor = new LocalConsolidationExecutor(
             mockOrchestrator.Object,
