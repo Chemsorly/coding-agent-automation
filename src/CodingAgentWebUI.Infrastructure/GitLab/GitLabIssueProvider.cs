@@ -110,7 +110,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
             "ListComments", ct);
 
         return notes
-            .Where(n => !IsPipelineGeneratedComment(n.Body))
+            .Where(n => !CommentMarkers.IsPipelineGeneratedComment(n.Body))
             .Select(n => new PipelineIssueComment
             {
                 Id = n.NoteId.ToString(),
@@ -430,16 +430,6 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
                 // Label already exists — skip
             }
         }
-    }
-
-    /// <summary>
-    /// Determines whether a comment body is pipeline-generated (should be filtered from listings).
-    /// </summary>
-    private static bool IsPipelineGeneratedComment(string? body)
-    {
-        if (string.IsNullOrEmpty(body)) return false;
-        return body.StartsWith(CommentMarkers.PipelinePrefix, StringComparison.Ordinal)
-            || body.Contains(CommentMarkers.AgentCommentPrefix);
     }
 
     /// <summary>

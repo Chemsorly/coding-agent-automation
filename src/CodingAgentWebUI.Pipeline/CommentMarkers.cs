@@ -32,4 +32,15 @@ public static class CommentMarkers
 
     /// <summary>HTML marker for the PR review comment.</summary>
     public const string PrReview = "<!-- agent:pr-review -->";
+
+    /// <summary>
+    /// Determines whether a comment body is pipeline-generated (should be filtered from listings).
+    /// Checks for <see cref="PipelinePrefix"/> or <see cref="AgentCommentPrefix"/>.
+    /// </summary>
+    public static bool IsPipelineGeneratedComment(string? body)
+    {
+        if (string.IsNullOrEmpty(body)) return false;
+        return body.StartsWith(PipelinePrefix, StringComparison.Ordinal)
+            || body.Contains(AgentCommentPrefix);
+    }
 }

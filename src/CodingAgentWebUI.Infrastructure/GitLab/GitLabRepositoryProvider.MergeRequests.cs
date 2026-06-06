@@ -599,7 +599,7 @@ public partial class GitLabRepositoryProvider
 
             return discussions
                 .SelectMany(d => d.Notes ?? Enumerable.Empty<MergeRequestComment>())
-                .Where(n => !IsPipelineGeneratedComment(n.Body))
+                .Where(n => !CommentMarkers.IsPipelineGeneratedComment(n.Body))
                 .OrderBy(n => n.CreatedAt)
                 .Take(50)
                 .Select(n => new PullRequestReviewComment
@@ -617,16 +617,5 @@ public partial class GitLabRepositoryProvider
             Log.Warning(ex, "Failed to retrieve review comments for MR !{MrIid}", mrIid);
             return Array.Empty<PullRequestReviewComment>();
         }
-    }
-
-    /// <summary>
-    /// Determines whether a comment body is pipeline-generated (should be filtered from listings).
-    /// Checks for <see cref="CommentMarkers.PipelinePrefix"/> or <see cref="CommentMarkers.AgentCommentPrefix"/>.
-    /// </summary>
-    private static bool IsPipelineGeneratedComment(string? body)
-    {
-        if (string.IsNullOrEmpty(body)) return false;
-        return body.StartsWith(CommentMarkers.PipelinePrefix, StringComparison.Ordinal)
-            || body.Contains(CommentMarkers.AgentCommentPrefix);
     }
 }
