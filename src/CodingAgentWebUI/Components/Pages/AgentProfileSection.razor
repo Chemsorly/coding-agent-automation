@@ -396,12 +396,6 @@
             .ToList();
     }
 
-    private static string Truncate(string? value, int maxLength)
-    {
-        if (string.IsNullOrEmpty(value)) return string.Empty;
-        return value.Length <= maxLength ? value : value[..(maxLength - 3)] + "...";
-    }
-
     private class ProfileForm
     {
         public string DisplayName { get; set; } = "";

@@ -46,7 +46,7 @@
                             }
                         </td>
                         <td class="projects-description-cell">
-                            @(Truncate(project.Description, 60))
+                            @(string.IsNullOrEmpty(project.Description) ? "—" : TruncateUnicode(project.Description, 60))
                         </td>
                         <td>@project.TemplateIds.Count</td>
                         <td>
@@ -163,11 +163,5 @@
     private void CancelDelete()
     {
         _confirmingDelete = null;
-    }
-
-    private static string Truncate(string? text, int maxLength)
-    {
-        if (string.IsNullOrEmpty(text)) return "—";
-        return text.Length <= maxLength ? text : text[..maxLength] + "…";
     }
 }

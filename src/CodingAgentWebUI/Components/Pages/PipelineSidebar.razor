@@ -934,10 +934,4 @@
         var elapsed = (Run.CompletedAt ?? DateTime.UtcNow) - Run.StartedAt;
         return elapsed.ToString(@"hh\:mm\:ss");
     }
-
-    private static string Truncate(string? value, int maxLength)
-    {
-        if (string.IsNullOrEmpty(value)) return string.Empty;
-        return value.Length <= maxLength ? value : value[..(maxLength - 3)] + "...";
-    }
 }
