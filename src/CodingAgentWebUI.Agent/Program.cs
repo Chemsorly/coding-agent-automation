@@ -112,18 +112,6 @@ try
     var defaultPipelineConfig = new PipelineConfiguration();
     builder.Services.AddSingleton(defaultPipelineConfig);
 
-    // ── Provider factory (agent-side: no IIssueProvider) ──
-    // NOTE: AgentProviderFactory is constructed per-job in LocalPipelineExecutor with
-    // the OrchestratorProxy for token refresh. This singleton registration is kept for
-    // any code that resolves IProviderFactory directly (without token refresh support).
-    builder.Services.AddSingleton<IProviderFactory>(sp =>
-    {
-        var orchestrator = sp.GetRequiredService<IKiroCliOrchestrator>();
-        var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
-        var pipelineConfig = sp.GetRequiredService<PipelineConfiguration>();
-        return new AgentProviderFactory(orchestrator, httpClientFactory, pipelineConfig);
-    });
-
     // ── Shared pipeline services (IQualityGateValidator, IBrainUpdateService, IAgentPhaseExecutor, IQualityGateExecutor) ──
     builder.Services.AddPipelineServices(Log.Logger);
 
