@@ -354,9 +354,9 @@ public class AgentWorkerServiceTests
 
         var service = CreateServiceWithOrchestrator(mockOrchestrator.Object);
 
-        // Ensure the chat workspace directory exists (production code uses /app/workspaces/chat
+        // Ensure the chat workspace directory exists (production code uses AgentDefaults.ChatWorkspacePath
         // which may not be writable on CI runners)
-        var chatWorkspace = "/app/workspaces/chat";
+        var chatWorkspace = AgentDefaults.ChatWorkspacePath;
         try { Directory.CreateDirectory(chatWorkspace); }
         catch { /* If we can't create it, the test will detect the issue via timeout */ }
 
@@ -383,7 +383,7 @@ public class AgentWorkerServiceTests
             var canCreateDir = Directory.Exists(chatWorkspace);
             if (!canCreateDir)
             {
-                // Cannot test this on platforms where /app/workspaces/chat is not writable
+                // Cannot test this on platforms where the chat workspace is not writable
                 return;
             }
         }
@@ -538,6 +538,116 @@ public class AgentWorkerServiceTests
         // that _activeChatTask was stored
         var chatTask = GetPrivateField<Task?>(service, "_activeChatTask");
         chatTask.Should().NotBeNull("_activeChatTask should be stored for cancel coordination");
+    }
+
+    // ── Characterization Tests: KiroCli warm-up and resume paths ────────
+
+    [Fact]
+    public async Task HandleChatPrompt_KiroCli_WhenNotResume_SendsWarmUpThenActualPrompt()
+    {
+        // Arrange
+        var callOrder = new List<(string prompt, bool useResume)>();
+        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
+        mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Func<string, Task>?>(),
+                It.IsAny<string?>()))
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
+                (prompt, _, useResume, _, _, _) =>
+                {
+                    callOrder.Add((prompt, useResume));
+                    return Task.FromResult(0);
+                });
+
+        var service = CreateServiceWithOrchestrator(mockOrchestrator.Object);
+
+        var chatWorkspace = AgentDefaults.ChatWorkspacePath;
+        try { Directory.CreateDirectory(chatWorkspace); }
+        catch { return; }
+
+        var message = new ChatPromptMessage
+        {
+            SessionId = "session-warmup",
+            Prompt = "Real prompt",
+            UseResume = false
+        };
+
+        // Act
+        var handler = GetPrivateMethod(service, "HandleChatPromptAsync");
+        var task = (Task)handler.Invoke(service, [message])!;
+        await task;
+
+        // Wait for background task
+        var chatTask = GetPrivateField<Task?>(service, "_activeChatTask");
+        if (chatTask is not null)
+            await Task.WhenAny(chatTask, Task.Delay(5000));
+
+        // Assert — warm-up first, then real prompt
+        if (callOrder.Count == 0 && !Directory.Exists(chatWorkspace))
+            return; // Platform cannot create workspace
+
+        callOrder.Should().HaveCount(2);
+        callOrder[0].prompt.Should().Be(AgentDefaults.ChatWarmUpPrompt);
+        callOrder[0].useResume.Should().BeFalse();
+        callOrder[1].prompt.Should().Be("Real prompt");
+        callOrder[1].useResume.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task HandleChatPrompt_KiroCli_WhenResume_SkipsWarmUp()
+    {
+        // Arrange
+        var callOrder = new List<(string prompt, bool useResume)>();
+        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
+        mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Func<string, Task>?>(),
+                It.IsAny<string?>()))
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
+                (prompt, _, useResume, _, _, _) =>
+                {
+                    callOrder.Add((prompt, useResume));
+                    return Task.FromResult(0);
+                });
+
+        var service = CreateServiceWithOrchestrator(mockOrchestrator.Object);
+
+        var chatWorkspace = AgentDefaults.ChatWorkspacePath;
+        try { Directory.CreateDirectory(chatWorkspace); }
+        catch { return; }
+
+        var message = new ChatPromptMessage
+        {
+            SessionId = "session-resume",
+            Prompt = "Follow-up prompt",
+            UseResume = true
+        };
+
+        // Act
+        var handler = GetPrivateMethod(service, "HandleChatPromptAsync");
+        var task = (Task)handler.Invoke(service, [message])!;
+        await task;
+
+        // Wait for background task
+        var chatTask = GetPrivateField<Task?>(service, "_activeChatTask");
+        if (chatTask is not null)
+            await Task.WhenAny(chatTask, Task.Delay(5000));
+
+        // Assert — only one call (the real prompt), no warm-up
+        if (callOrder.Count == 0 && !Directory.Exists(chatWorkspace))
+            return;
+
+        callOrder.Should().HaveCount(1);
+        callOrder[0].prompt.Should().Be("Follow-up prompt");
+        callOrder[0].useResume.Should().BeTrue();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

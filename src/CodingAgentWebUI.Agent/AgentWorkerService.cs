@@ -261,17 +261,7 @@ public sealed class AgentWorkerService : BackgroundService
                     _logger.Error(ex, "Failed to report job completion for {JobId}", message.JobId);
                 }
 
-                lock (_busyLock)
-                {
-                    _activeJobId = null;
-                    _currentStep = null;
-                }
-
-                _jobCts?.Dispose();
-                _jobCts = null;
-
-                // Signal ready for next job
-                await SignalAgentReadyAsync();
+                await ReleaseJobSlotAndSignalReadyAsync();
             }
         });
     }
@@ -333,8 +323,7 @@ public sealed class AgentWorkerService : BackgroundService
 
                 try
                 {
-                    // Write MCP config to the CLI's global settings location
-                    var chatWorkspace = "/app/workspaces/chat";
+                    var chatWorkspace = AgentDefaults.ChatWorkspacePath;
                     Directory.CreateDirectory(chatWorkspace);
 
                     if (!message.UseResume && message.McpServers is { Count: > 0 })
@@ -346,62 +335,11 @@ public sealed class AgentWorkerService : BackgroundService
 
                     if (_isOpenCodeProvider)
                     {
-                        // OpenCode path: use HTTP API via OpenCodeAgentProvider
-                        await using var provider = new OpenCodeAgentProvider(_httpClientFactory, _logger);
-                        await provider.EnsureSessionAsync(chatWorkspace, chatCts.Token);
-
-                        var result = await provider.ExecuteAsync(
-                            new AgentRequest
-                            {
-                                Prompt = message.Prompt,
-                                WorkspacePath = chatWorkspace,
-                                UseResume = message.UseResume,
-                                Timeout = PipelineConstants.DefaultAgentTimeout
-                            },
-                            chatCts.Token,
-                            onOutputLine: async line => await outputBatcher.AddLineAsync(line));
-
-                        exitCode = result.ExitCode;
-
-                        // Send the response text to the UI (HTTP response body contains the final answer)
-                        foreach (var line in result.OutputLines)
-                        {
-                            if (!string.IsNullOrWhiteSpace(line))
-                                await outputBatcher.AddLineAsync(line);
-                        }
-
-                        if (exitCode != ExitCodes.Success)
-                            error = string.Join("\n", result.OutputLines.TakeLast(3));
+                        (exitCode, error) = await ExecuteChatViaOpenCodeAsync(message, chatWorkspace, outputBatcher, chatCts.Token);
                     }
                     else
                     {
-                        // KiroCli path: use process-based orchestrator
-                        // On the first prompt (no --resume), Kiro CLI suppresses response text because
-                        // tool trust isn't established yet. Send a lightweight warm-up prompt first to
-                        // establish the session, then send the real prompt with --resume.
-                        if (!message.UseResume)
-                        {
-                            _logger.Information("Sending warm-up prompt to establish chat session");
-                            await _orchestrator.ExecutePromptAsync(
-                                "hello, how are you?",
-                                chatWorkspace,
-                                useResume: false,
-                                chatCts.Token);
-                        }
-
-                        // Execute the actual user prompt (always with --resume after warm-up)
-                        var exitCode2 = await _orchestrator.ExecutePromptAsync(
-                            message.Prompt,
-                            chatWorkspace,
-                            useResume: true,
-                            chatCts.Token,
-                            onOutputLine: async line =>
-                            {
-                                var clean = KiroCliLib.Core.AnsiStripper.Strip(line);
-                                await outputBatcher.AddLineAsync(clean);
-                            });
-
-                        exitCode = exitCode2;
+                        (exitCode, error) = await ExecuteChatViaKiroCliAsync(message, chatWorkspace, outputBatcher, chatCts.Token);
                     }
                 }
                 catch (OperationCanceledException)
@@ -443,6 +381,70 @@ public sealed class AgentWorkerService : BackgroundService
             // Do NOT send AgentReady — the chat session is still active.
             // The agent will be released when CancelChat is received (End Chat / navigate away).
         });
+    }
+
+    private async Task<(int exitCode, string? error)> ExecuteChatViaOpenCodeAsync(
+        ChatPromptMessage message, string chatWorkspace, OutputBatcher outputBatcher, CancellationToken ct)
+    {
+        await using var provider = new OpenCodeAgentProvider(_httpClientFactory, _logger);
+        await provider.EnsureSessionAsync(chatWorkspace, ct);
+
+        var result = await provider.ExecuteAsync(
+            new AgentRequest
+            {
+                Prompt = message.Prompt,
+                WorkspacePath = chatWorkspace,
+                UseResume = message.UseResume,
+                Timeout = PipelineConstants.DefaultAgentTimeout
+            },
+            ct,
+            onOutputLine: async line => await outputBatcher.AddLineAsync(line));
+
+        var exitCode = result.ExitCode;
+
+        // Send the response text to the UI (HTTP response body contains the final answer)
+        foreach (var line in result.OutputLines)
+        {
+            if (!string.IsNullOrWhiteSpace(line))
+                await outputBatcher.AddLineAsync(line);
+        }
+
+        string? error = exitCode != ExitCodes.Success
+            ? string.Join("\n", result.OutputLines.TakeLast(3))
+            : null;
+
+        return (exitCode, error);
+    }
+
+    private async Task<(int exitCode, string? error)> ExecuteChatViaKiroCliAsync(
+        ChatPromptMessage message, string chatWorkspace, OutputBatcher outputBatcher, CancellationToken ct)
+    {
+        // On the first prompt (no --resume), Kiro CLI suppresses response text because
+        // tool trust isn't established yet. Send a lightweight warm-up prompt first to
+        // establish the session, then send the real prompt with --resume.
+        if (!message.UseResume)
+        {
+            _logger.Information("Sending warm-up prompt to establish chat session");
+            await _orchestrator.ExecutePromptAsync(
+                AgentDefaults.ChatWarmUpPrompt,
+                chatWorkspace,
+                useResume: false,
+                ct);
+        }
+
+        // Execute the actual user prompt (always with --resume after warm-up)
+        var exitCode = await _orchestrator.ExecutePromptAsync(
+            message.Prompt,
+            chatWorkspace,
+            useResume: true,
+            ct,
+            onOutputLine: async line =>
+            {
+                var clean = KiroCliLib.Core.AnsiStripper.Strip(line);
+                await outputBatcher.AddLineAsync(clean);
+            });
+
+        return (exitCode, null);
     }
 
     private async Task HandleCancelChatAsync(string sessionId)
@@ -618,17 +620,7 @@ public sealed class AgentWorkerService : BackgroundService
             }
             finally
             {
-                lock (_busyLock)
-                {
-                    _activeJobId = null;
-                    _currentStep = null;
-                }
-
-                _jobCts?.Dispose();
-                _jobCts = null;
-
-                // Signal ready for next job
-                await SignalAgentReadyAsync();
+                await ReleaseJobSlotAndSignalReadyAsync();
             }
         });
     }
@@ -655,6 +647,20 @@ public sealed class AgentWorkerService : BackgroundService
             busyWith = null;
             return true;
         }
+    }
+
+    private async Task ReleaseJobSlotAndSignalReadyAsync()
+    {
+        lock (_busyLock)
+        {
+            _activeJobId = null;
+            _currentStep = null;
+        }
+
+        _jobCts?.Dispose();
+        _jobCts = null;
+
+        await SignalAgentReadyAsync();
     }
 
     private bool TryAcquireChatSlot(string sessionId, out string? busyWith)
