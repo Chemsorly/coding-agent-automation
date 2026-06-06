@@ -98,7 +98,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
     public async Task ExecuteAsync_InlineEnabled_ProviderSupportsInline_SubmitsReviewSubmissionWithComments()
     {
         var run = BuildRun();
-        run.CodeReviewCriticalCount = 1;
+        run.SetCodeReviewCounts(1, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] src/Service.cs:42 — SQL injection vulnerability";
 
         _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -125,7 +125,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
     public async Task ExecuteAsync_InlineDisabled_SubmitsBodyOnly()
     {
         var run = BuildRun();
-        run.CodeReviewCriticalCount = 1;
+        run.SetCodeReviewCounts(1, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] src/Service.cs:42 — SQL injection vulnerability";
 
         _repoProvider.Setup(r => r.FindExistingReviewCommentAsync(
@@ -150,7 +150,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
     public async Task ExecuteAsync_InlineEnabled_ProviderDoesNotSupportInline_SubmitsBodyOnly()
     {
         var run = BuildRun();
-        run.CodeReviewCriticalCount = 1;
+        run.SetCodeReviewCounts(1, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] src/Service.cs:42 — SQL injection vulnerability";
 
         _repoProvider.Setup(r => r.FindExistingReviewCommentAsync(
@@ -175,7 +175,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
     public async Task ExecuteAsync_AgentHasMarkersButNoLocation_InvokesExecuteFollowUpAsync()
     {
         var run = BuildRun();
-        run.CodeReviewCriticalCount = 1;
+        run.SetCodeReviewCounts(1, 0, 0);
         // Agent output has severity markers but NO file:line reference
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] — General security concern without file reference";
 
@@ -232,7 +232,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
     public async Task ExecuteAsync_SubmissionThrows_RetriesBodyOnly()
     {
         var run = BuildRun();
-        run.CodeReviewCriticalCount = 1;
+        run.SetCodeReviewCounts(1, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] src/Service.cs:42 — SQL injection vulnerability";
 
         _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -266,7 +266,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
     public async Task ExecuteAsync_SubmissionFails_SetsDegradationOnPipelineRun()
     {
         var run = BuildRun();
-        run.CodeReviewCriticalCount = 1;
+        run.SetCodeReviewCounts(1, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] src/Service.cs:42 — SQL injection vulnerability";
 
         _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -299,7 +299,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
     public async Task ExecuteAsync_SupportsInline_DismissCalledBeforeSubmit()
     {
         var run = BuildRun();
-        run.CodeReviewCriticalCount = 1;
+        run.SetCodeReviewCounts(1, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] src/Service.cs:42 — SQL injection vulnerability";
 
         var callOrder = new List<string>();
@@ -332,7 +332,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
     {
         var run = BuildRun();
         run.CodeReviewAgentsRun = new[] { "StyleBot" };
-        run.CodeReviewWarningCount = 1;
+        run.SetCodeReviewCounts(0, 1, 0);
         run.CodeReviewAgentFindings["StyleBot"] = "[WARNING] Naming issues";
 
         // Simulate existing review comment found on first call, then null (collapsed)
@@ -365,7 +365,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
     public async Task ExecuteAsync_AllSubmissionsFail_ReturnsContinue()
     {
         var run = BuildRun();
-        run.CodeReviewCriticalCount = 1;
+        run.SetCodeReviewCounts(1, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] src/Service.cs:42 — SQL injection vulnerability";
 
         _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -398,8 +398,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
     public async Task ExecuteAsync_NonInlineProvider_InlineEnabled_BodyOnlyWithFindingsByLocation()
     {
         var run = BuildRun();
-        run.CodeReviewCriticalCount = 1;
-        run.CodeReviewWarningCount = 1;
+        run.SetCodeReviewCounts(1, 1, 0);
         run.CodeReviewAgentFindings["SecurityBot"] =
             "[CRITICAL] src/Service.cs:42 — SQL injection vulnerability\n[WARNING] src/Controller.cs:10 — Missing validation";
 
@@ -434,7 +433,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
     public async Task ExecuteAsync_SuccessfulInlineSubmission_TracksInlineCommentsPosted()
     {
         var run = BuildRun();
-        run.CodeReviewCriticalCount = 2;
+        run.SetCodeReviewCounts(2, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] =
             "[CRITICAL] src/Service.cs:42 — SQL injection\n[CRITICAL] src/Auth.cs:10 — Missing auth check";
 
@@ -462,7 +461,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
     public async Task ExecuteAsync_GetHeadCommitShaFails_SubmitsWithNullCommitId()
     {
         var run = BuildRun();
-        run.CodeReviewCriticalCount = 1;
+        run.SetCodeReviewCounts(1, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] src/Service.cs:42 — SQL injection vulnerability";
 
         _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -493,7 +492,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
     public async Task ExecuteAsync_ResolvedReviewerConfigsNull_SkipsRetry_SubmitsBodyOnly()
     {
         var run = BuildRun();
-        run.CodeReviewCriticalCount = 1;
+        run.SetCodeReviewCounts(1, 0, 0);
         // Agent output has severity markers but NO file:line reference — candidate for retry
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] — General security concern without file reference";
 

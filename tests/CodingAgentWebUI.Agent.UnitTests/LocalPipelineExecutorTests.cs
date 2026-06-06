@@ -496,9 +496,7 @@ public class LocalPipelineExecutorTests : IDisposable
             StartedAt = DateTime.UtcNow
         };
         run.CodeReviewAgentsRun = ["Security", "Correctness"];
-        run.CodeReviewCriticalCount = 2;
-        run.CodeReviewWarningCount = 5;
-        run.CodeReviewSuggestionCount = 10;
+        run.SetCodeReviewCounts(2, 5, 10);
 
         var payload = LocalPipelineExecutor.BuildFailurePayload(run, "gate failed");
 

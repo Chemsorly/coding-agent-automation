@@ -11,8 +11,7 @@ internal static class JobCompletionMapper
 {
     /// <summary>
     /// Applies all property mappings from <paramref name="payload"/> to <paramref name="run"/>.
-    /// Uses <see cref="Interlocked.Exchange(ref int, int)"/> for the three code review count
-    /// fields to preserve thread-safe update semantics.
+    /// Uses <see cref="PipelineRun.SetCodeReviewCounts"/> for thread-safe update of review counters.
     /// </summary>
     public static void Apply(PipelineRun run, JobCompletionPayload payload)
     {
@@ -35,9 +34,7 @@ internal static class JobCompletionMapper
         run.AnalysisBlockingIssues = payload.AnalysisBlockingIssues;
         run.BlacklistedFilesDetected = payload.BlacklistedFilesDetected;
         run.CodeReviewAgentsRun = payload.CodeReviewAgentsRun;
-        Interlocked.Exchange(ref run.CodeReviewCriticalCount, payload.CodeReviewCriticalCount);
-        Interlocked.Exchange(ref run.CodeReviewWarningCount, payload.CodeReviewWarningCount);
-        Interlocked.Exchange(ref run.CodeReviewSuggestionCount, payload.CodeReviewSuggestionCount);
+        run.SetCodeReviewCounts(payload.CodeReviewCriticalCount, payload.CodeReviewWarningCount, payload.CodeReviewSuggestionCount);
         run.Feedback = payload.Feedback;
         run.TotalTokens = payload.TotalTokens;
         run.TotalCost = payload.TotalCost;

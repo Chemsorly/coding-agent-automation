@@ -205,9 +205,7 @@ internal partial class AgentPhaseExecutor
                     }
 
                     var severityCounts = CodeReview.SeverityParser.Parse(findingsLines);
-                    Interlocked.Add(ref run.CodeReviewCriticalCount, severityCounts.Critical);
-                    Interlocked.Add(ref run.CodeReviewWarningCount, severityCounts.Warning);
-                    Interlocked.Add(ref run.CodeReviewSuggestionCount, severityCounts.Suggestion);
+                    run.AddCodeReviewCounts(severityCounts.Critical, severityCounts.Warning, severityCounts.Suggestion);
                     iterationCriticalCount += severityCounts.Critical;
 
                     if (!string.IsNullOrEmpty(fullReviewText))

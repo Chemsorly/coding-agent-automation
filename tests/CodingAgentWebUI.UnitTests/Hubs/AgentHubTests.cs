@@ -426,4 +426,23 @@ public class AgentHubTests
 
         run.ChatHistory.Count.Should().Be(50);
     }
+
+    [Fact]
+    public void PipelineRun_CodeReviewCounts_IsThreadSafe()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-1",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1"
+        };
+
+        Parallel.For(0, 100, _ => run.AddCodeReviewCounts(1, 2, 3));
+
+        run.CodeReviewCriticalCount.Should().Be(100);
+        run.CodeReviewWarningCount.Should().Be(200);
+        run.CodeReviewSuggestionCount.Should().Be(300);
+    }
 }
