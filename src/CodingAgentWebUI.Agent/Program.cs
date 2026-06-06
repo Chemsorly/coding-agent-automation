@@ -155,7 +155,6 @@ try
         sp.GetRequiredService<PipelineConfiguration>(),
         sp.GetRequiredService<IQualityGateValidator>(),
         Log.Logger,
-        agentId,
         sp.GetRequiredService<IBrainUpdateService>(),
         openIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
         agentIdentity: sp.GetRequiredService<AgentIdentity>()));

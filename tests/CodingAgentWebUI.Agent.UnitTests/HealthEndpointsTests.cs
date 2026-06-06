@@ -59,7 +59,7 @@ public class HealthEndpointsTests : IAsyncDisposable
             new PipelineConfiguration(),
             mockQualityGateValidator.Object,
             mockLogger.Object,
-            "test-agent");
+            agentIdentity: new AgentIdentity("test-agent"));
 
         var consolidationExecutor = new LocalConsolidationExecutor(
             mockOrchestrator.Object,

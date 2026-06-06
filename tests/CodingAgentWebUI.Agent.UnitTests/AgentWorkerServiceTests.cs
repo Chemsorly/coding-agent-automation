@@ -656,7 +656,7 @@ public class AgentWorkerServiceTests
             new Pipeline.Models.PipelineConfiguration(),
             mockQualityGateValidator.Object,
             mockLogger.Object,
-            "test-agent");
+            agentIdentity: new Pipeline.Models.AgentIdentity("test-agent"));
     }
 
     private static LocalConsolidationExecutor CreateMockConsolidationExecutor()
