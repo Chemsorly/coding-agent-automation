@@ -48,6 +48,7 @@ public sealed class LocalPipelineExecutor
     private readonly FeedbackService _feedbackService;
     private readonly PullRequestFinalizationService _finalization;
     private readonly Serilog.ILogger _logger;
+    private readonly string _agentId;
 
     public LocalPipelineExecutor(
         IKiroCliOrchestrator orchestrator,
@@ -55,6 +56,7 @@ public sealed class LocalPipelineExecutor
         PipelineConfiguration defaultPipelineConfig,
         IQualityGateValidator qualityGateValidator,
         Serilog.ILogger logger,
+        string agentId,
         IBrainUpdateService? brainUpdateService = null,
         IPipelineRunHistoryService? historyService = null,
         IOpenIssueContextWriter? openIssueContextWriter = null)
@@ -64,6 +66,7 @@ public sealed class LocalPipelineExecutor
         ArgumentNullException.ThrowIfNull(defaultPipelineConfig);
         ArgumentNullException.ThrowIfNull(qualityGateValidator);
         ArgumentNullException.ThrowIfNull(logger);
+        ArgumentException.ThrowIfNullOrEmpty(agentId);
 
         _orchestrator = orchestrator;
         _httpClientFactory = httpClientFactory;
@@ -75,6 +78,7 @@ public sealed class LocalPipelineExecutor
         _feedbackService = new FeedbackService(logger);
         _finalization = new PullRequestFinalizationService(logger);
         _logger = logger;
+        _agentId = agentId;
     }
 
     /// <summary>
@@ -98,7 +102,7 @@ public sealed class LocalPipelineExecutor
             PipelineTelemetry.ExtractTraceContext(job.TraceContext));
         activity?.SetTag("pipeline.run_id", job.JobId);
         activity?.SetTag("pipeline.issue", job.IssueIdentifier);
-        activity?.SetTag("pipeline.agent_id", Environment.MachineName);
+        activity?.SetTag("pipeline.agent_id", _agentId);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var tags = PipelineTelemetry.BuildTags(job.RunType, job.ProjectId, job.ProjectName);
@@ -270,7 +274,7 @@ public sealed class LocalPipelineExecutor
             PipelineProviderConfigId = job.PipelineProviderConfigId,
             InitiatedBy = job.InitiatedBy,
             LinkedPullRequest = job.LinkedPullRequest,
-            AgentId = Environment.MachineName,
+            AgentId = _agentId,
             RunType = job.RunType,
             ReviewPrBranchName = job.LinkedPullRequest?.BranchName,
             ReviewPrTargetBranch = job.ReviewPrTargetBranch,
