@@ -62,7 +62,7 @@ public partial class GitHubRepositoryProvider
                 "GetAgentPullRequests.ConversationComments", ct);
 
             var allComments = reviewComments
-                .Where(c => !IsPipelineGeneratedComment(c.Body))
+                .Where(c => !CommentMarkers.IsPipelineGeneratedComment(c.Body))
                 .Select(c => new Pipeline.Models.PullRequestReviewComment
                 {
                     Id = c.Id.ToString(),
@@ -72,7 +72,7 @@ public partial class GitHubRepositoryProvider
                     Path = c.Path
                 })
                 .Concat(conversationComments
-                    .Where(c => !IsPipelineGeneratedComment(c.Body))
+                    .Where(c => !CommentMarkers.IsPipelineGeneratedComment(c.Body))
                     .Select(c => new Pipeline.Models.PullRequestReviewComment
                     {
                         Id = c.Id.ToString(),
@@ -97,13 +97,6 @@ public partial class GitHubRepositoryProvider
         }
 
         return results;
-    }
-
-    private static bool IsPipelineGeneratedComment(string? body)
-    {
-        if (string.IsNullOrEmpty(body)) return false;
-        return body.StartsWith(CommentMarkers.PipelinePrefix, StringComparison.Ordinal)
-            || body.Contains(CommentMarkers.AgentCommentPrefix);
     }
 
     public async Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool markReady, CancellationToken ct)
