@@ -173,8 +173,9 @@ Detailed documentation lives in the [`docs/`](docs/) folder. Suggested reading o
 2. [Issue Workflows](docs/github-issue-workflows.md) — Label system, user flows, closed-loop mode
 3. [Label Routing](docs/label-routing.md) — Label hierarchy, agent selection, quality gate configs, setting up new stacks
 4. [Configuration](docs/configuration.md) — Pipeline settings, job templates, MCP server support
-5. [Feedback & Consolidation](docs/feedback-and-consolidation.md) — Agent feedback loops, brain consolidation, refactoring detection
-6. [Observability](docs/observability.md) — Metrics, traces, OTLP configuration, verification
+5. [Pipeline Projects](docs/projects.md) — Multi-repository grouping, project-level configuration
+6. [Feedback & Consolidation](docs/feedback-and-consolidation.md) — Agent feedback loops, brain consolidation, refactoring detection
+7. [Observability](docs/observability.md) — Metrics, traces, OTLP configuration, verification
 
 ## Features
 
@@ -192,6 +193,15 @@ Detailed documentation lives in the [`docs/`](docs/) folder. Suggested reading o
 - **Agent feedback loops** — Structured feedback collected after every run for continuous improvement
 - **Consolidation loops** — Brain pruning, refactoring detection, and harness suggestions
 - **Real-time web UI** — Live output streaming, pipeline step sidebar, agent monitoring
+- **Agent chat** — Interactive agent sessions dispatched to available workers via the web UI
+- **Model selection** — Configurable LLM model per agent provider
+- **Pipeline projects** — Multi-repository grouping with shared configuration and project-level context
+- **MCP server injection** — Agents receive MCP server configs for tool access (written to workspace before execution)
+- **Steering injection** — Pipeline context and conventions written to agent workspaces (`.kiro/steering/` for Kiro, `AGENTS.md` for OpenCode)
+- **Agent health monitoring** — Heartbeat-based liveness detection, stall warnings, automatic reconnection after pod rollover
+- **Token vending** — Orchestrator generates short-lived GitHub installation tokens for agents (private keys never leave the orchestrator)
+- **Baseline health check** — Validates build/tests pass before the agent writes code (catches broken base branches early)
+- **Inline review comments** — Code review findings posted as native inline comments at specific file:line positions in the PR diff
 
 ## Quick Start
 
@@ -385,7 +395,7 @@ Adding a new implementation requires implementing the corresponding interface an
 dotnet test
 
 # Run in Docker (Linux)
-docker run --rm -v "${PWD}:/app" -w /app mcr.microsoft.com/dotnet/sdk:10.0 dotnet test
+docker run --rm -v "${PWD}:/app" -w /app mcr.microsoft.com/dotnet/sdk:10.0.300 dotnet test
 ```
 
 ## Development
