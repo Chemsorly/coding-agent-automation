@@ -152,7 +152,7 @@
                         {
                             <div class="history-card">
                                 <div class="history-info">
-                                    <span class="history-title">#@h.IssueIdentifier @Truncate(h.IssueTitle, 40)</span>
+                                    <span class="history-title">#@h.IssueIdentifier @TruncateUnicode(h.IssueTitle, 40)</span>
                                     <span class="step-badge step-@h.FinalStep.ToString().ToLowerInvariant()">@h.FinalStep</span>
                                     @if (h.InitiatedBy == "loop")
                                     {
@@ -231,7 +231,4 @@
     private Task NotifyRepoChanged() => SelectedRepoProviderIdChanged.InvokeAsync(SelectedRepoProviderId);
     private Task NotifyPipelineChanged() => SelectedPipelineProviderIdChanged.InvokeAsync(SelectedPipelineProviderId);
     private Task NotifyBrainChanged() => SelectedBrainProviderIdChanged.InvokeAsync(SelectedBrainProviderId);
-
-    private static string Truncate(string text, int maxLength) =>
-        text.Length <= maxLength ? text : text[..maxLength] + "…";
 }

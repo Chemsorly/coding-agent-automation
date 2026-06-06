@@ -935,20 +935,6 @@
         return local.ToString("yyyy-MM-dd HH:mm");
     }
 
-    private static string FormatTimeAgo(DateTimeOffset timestamp)
-    {
-        var ago = DateTimeOffset.UtcNow - timestamp;
-        if (ago.TotalSeconds < 60) return $"{(int)ago.TotalSeconds}s ago";
-        if (ago.TotalMinutes < 60) return $"{(int)ago.TotalMinutes}m ago";
-        return $"{(int)ago.TotalHours}h ago";
-    }
-
-    private static string Truncate(string? value, int maxLength)
-    {
-        if (string.IsNullOrEmpty(value)) return string.Empty;
-        return value.Length <= maxLength ? value : value[..(maxLength - 3)] + "...";
-    }
-
     private ProviderConfig? ResolveProvider(string? configId)
     {
         if (string.IsNullOrEmpty(configId)) return null;
