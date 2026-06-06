@@ -696,21 +696,22 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             => svc.RemoveAllAgentLabelsAsync(run, issueIdentifier, ct);
         public Task CreatePullRequest(PipelineRun r, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
-            var ctx = ctxAccessor();
-            svc._activeIssue = ctx?.Issue;
-            svc._activeParsedIssue = ctx?.ParsedIssue;
-            svc._activeIssueComments = ctx?.IssueComments;
+            SyncActiveIssueContext();
             return svc.CreatePullRequestAsync(r, report, isDraft, ct);
         }
         public Task CreateDraftPrIfNotExists(PipelineRun r, CancellationToken ct)
             => svc.CreateDraftPrIfNotExistsAsync(r, ct);
         public Task FinalizePullRequest(PipelineRun r, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
+            SyncActiveIssueContext();
+            return svc.FinalizePullRequestAsync(r, report, isDraft, ct);
+        }
+        private void SyncActiveIssueContext()
+        {
             var ctx = ctxAccessor();
             svc._activeIssue = ctx?.Issue;
             svc._activeParsedIssue = ctx?.ParsedIssue;
             svc._activeIssueComments = ctx?.IssueComments;
-            return svc.FinalizePullRequestAsync(r, report, isDraft, ct);
         }
         public Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
         {
