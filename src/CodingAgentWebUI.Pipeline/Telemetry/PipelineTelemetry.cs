@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using CodingAgentWebUI.Pipeline.Models;
+using OpenTelemetry;
+using OpenTelemetry.Context.Propagation;
 
 namespace CodingAgentWebUI.Pipeline.Telemetry;
 
@@ -82,4 +84,42 @@ public static class PipelineTelemetry
             ProjectIdTag(projectId),
             ProjectNameTag(projectName)
         ]);
+
+    private static readonly TraceContextPropagator TraceContextPropagator = new();
+
+    /// <summary>
+    /// Extracts a parent <see cref="ActivityContext"/> from a W3C trace context dictionary.
+    /// Returns <see langword="default"/> when the dictionary is null or empty,
+    /// causing <see cref="ActivitySource.StartActivity"/> to create a root span.
+    /// </summary>
+    public static ActivityContext ExtractTraceContext(Dictionary<string, string>? traceContext)
+    {
+        if (traceContext is not { Count: > 0 })
+            return default;
+
+        var parentContext = TraceContextPropagator.Extract(
+            default,
+            traceContext,
+            static (c, key) => c.TryGetValue(key, out var val) ? [val] : []);
+        return parentContext.ActivityContext;
+    }
+
+    /// <summary>
+    /// Creates a short-lived <see cref="ActivityKind.Producer"/> span and captures its
+    /// W3C trace context (traceparent + tracestate) into a dictionary suitable for serialization.
+    /// This guarantees a traceparent is always produced regardless of ambient Activity.Current.
+    /// </summary>
+    public static Dictionary<string, string>? CaptureTraceContext(string activityName)
+    {
+        using var activity = ActivitySource.StartActivity(activityName, ActivityKind.Producer);
+        if (activity is null)
+            return null;
+
+        var carrier = new Dictionary<string, string>();
+        TraceContextPropagator.Inject(
+            new PropagationContext(activity.Context, Baggage.Current),
+            carrier,
+            static (c, key, value) => c[key] = value);
+        return carrier.Count > 0 ? carrier : null;
+    }
 }

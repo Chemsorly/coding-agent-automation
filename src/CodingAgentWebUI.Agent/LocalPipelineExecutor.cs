@@ -8,7 +8,6 @@ using CodingAgentWebUI.Pipeline.Services.Steps;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
-using OpenTelemetry.Context.Propagation;
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
@@ -96,7 +95,7 @@ public sealed class LocalPipelineExecutor
         using var activity = PipelineTelemetry.ActivitySource.StartActivity(
             "ExecutePipeline",
             ActivityKind.Consumer,
-            ExtractTraceContext(job.TraceContext));
+            PipelineTelemetry.ExtractTraceContext(job.TraceContext));
         activity?.SetTag("pipeline.run_id", job.JobId);
         activity?.SetTag("pipeline.issue", job.IssueIdentifier);
         activity?.SetTag("pipeline.agent_id", Environment.MachineName);
@@ -884,27 +883,6 @@ public sealed class LocalPipelineExecutor
         public required PullRequestOrchestrator PrOrchestrator { get; init; }
         public required Action<string> EmitOutputLine { get; init; }
     }
-
-    // TODO: ExtractTraceContext is duplicated in LocalConsolidationExecutor. Extract to a shared
-    // static helper in PipelineTelemetry to avoid silent divergence if one copy is fixed without the other.
-    /// <summary>
-    /// Extracts a parent <see cref="ActivityContext"/> from a W3C trace context dictionary.
-    /// Returns <see cref="ActivityContext.default"/> when the dictionary is null or empty,
-    /// causing <see cref="ActivitySource.StartActivity"/> to create a root span.
-    /// </summary>
-    private static ActivityContext ExtractTraceContext(Dictionary<string, string>? traceContext)
-    {
-        if (traceContext is not { Count: > 0 })
-            return default;
-
-        var parentContext = TraceContextPropagator.Extract(
-            default,
-            traceContext,
-            static (c, key) => c.TryGetValue(key, out var val) ? [val] : []);
-        return parentContext.ActivityContext;
-    }
-
-    private static readonly TraceContextPropagator TraceContextPropagator = new();
 
     /// <summary>
     /// Adapts the agent executor's callback methods to <see cref="IPipelineCallbacks"/>.
