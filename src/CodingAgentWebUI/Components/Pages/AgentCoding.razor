@@ -1289,7 +1289,7 @@
 
     private async Task ToggleImplementationEnabled(PipelineJobTemplate template, bool enabled)
     {
-        var idx = _templates.IndexOf(template);
+        var idx = _templates.FindIndex(t => t.Id == template.Id);
         if (idx < 0) return;
         _templates[idx] = template with { ImplementationEnabled = enabled };
         await PersistTemplates();
@@ -1299,7 +1299,7 @@
 
     private async Task ToggleReviewEnabled(PipelineJobTemplate template, bool enabled)
     {
-        var idx = _templates.IndexOf(template);
+        var idx = _templates.FindIndex(t => t.Id == template.Id);
         if (idx < 0) return;
         _templates[idx] = template with { ReviewEnabled = enabled };
         await PersistTemplates();
@@ -1309,7 +1309,7 @@
 
     private async Task ToggleDecompositionEnabled(PipelineJobTemplate template, bool enabled)
     {
-        var idx = _templates.IndexOf(template);
+        var idx = _templates.FindIndex(t => t.Id == template.Id);
         if (idx < 0) return;
         _templates[idx] = template with { DecompositionEnabled = enabled };
         await PersistTemplates();
