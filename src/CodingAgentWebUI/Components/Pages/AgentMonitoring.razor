@@ -96,7 +96,7 @@
                                 <td title="@(run.AgentId ?? "local")">@(run.AgentId ?? "local")</td>
                                 <td>
                                     <span class="monitoring-step monitoring-step-@run.CurrentStep.ToString().ToLowerInvariant()">
-                                        @FormatStep(run.CurrentStep)
+                                        @run.CurrentStep.ToDisplayName()
                                     </span>
                                 </td>
                                 <td>@run.StartedAt.ToLocalTime().ToString("HH:mm:ss")</td>
@@ -487,7 +487,7 @@
                                     <td>@(run.AgentId ?? "local")</td>
                                     <td>
                                         <span class="step-badge step-@run.FinalStep.ToString().ToLowerInvariant()">
-                                            @FormatStep(run.FinalStep)
+                                            @run.FinalStep.ToDisplayName()
                                         </span>
                                     </td>
                                     <td title="@run.StartedAt.ToString("yyyy-MM-dd HH:mm:ss")">@FormatTimestamp(run.StartedAt)</td>
@@ -545,7 +545,7 @@
                     <div><strong>Run Type:</strong> @FormatRunType(_selectedHistoryRun.RunType)</div>
                     <div><strong>Final Step:</strong>
                         <span class="step-badge step-@_selectedHistoryRun.FinalStep.ToString().ToLowerInvariant()">
-                            @FormatStep(_selectedHistoryRun.FinalStep)
+                            @_selectedHistoryRun.FinalStep.ToDisplayName()
                         </span>
                     </div>
                     <div><strong>Duration:</strong> @FormatDuration(_selectedHistoryRun.StartedAt, _selectedHistoryRun.CompletedAt)</div>
@@ -879,35 +879,6 @@
         AgentStatus.Busy => "🟡",
         AgentStatus.Disconnected => "🔴",
         _ => "⚪"
-    };
-
-    private static string FormatStep(PipelineStep step) => step switch
-    {
-        PipelineStep.Created => "Created",
-        PipelineStep.CloningRepository => "Cloning",
-        PipelineStep.RunningEnvironmentSetup => "Env Setup",
-        PipelineStep.CreatingBranch => "Branching",
-        PipelineStep.VerifyingBaseline => "Baseline",
-        PipelineStep.AnalyzingCode => "Analyzing",
-        PipelineStep.ReviewingAnalysis => "Review Analysis",
-        PipelineStep.GeneratingCode => "Generating",
-        PipelineStep.ReviewingCode => "Reviewing",
-        PipelineStep.RunningQualityGates => "Quality Gates",
-        PipelineStep.CreatingPullRequest => "Creating PR",
-        PipelineStep.ExtractingLinkedIssues => "Extracting Issues",
-        PipelineStep.PostingFindings => "Posting Findings",
-        PipelineStep.DownloadingOpenIssues => "Downloading Issues",
-        PipelineStep.ExploringCodebase => "Exploring",
-        PipelineStep.GeneratingPlan => "Generating Plan",
-        PipelineStep.ReviewingPlan => "Reviewing Plan",
-        PipelineStep.PostingPlan => "Posting Plan",
-        PipelineStep.GeneratingSubIssues => "Generating Sub-Issues",
-        PipelineStep.CreatingIssues => "Creating Issues",
-        PipelineStep.PostingSummary => "Posting Summary",
-        PipelineStep.Completed => "Completed",
-        PipelineStep.Failed => "Failed",
-        PipelineStep.Cancelled => "Cancelled",
-        _ => step.ToString()
     };
 
     private static string FormatRunType(PipelineRunType runType) => runType switch
