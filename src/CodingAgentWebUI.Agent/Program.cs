@@ -83,6 +83,14 @@ try
             {
                 Boundaries = new double[] { 5, 15, 30, 60, 120, 300, 600, 900, 1800 }
             })
+            .AddView("quality_gate.duration", new ExplicitBucketHistogramConfiguration
+            {
+                Boundaries = new double[] { 5, 15, 30, 60, 120, 300, 600, 900 }
+            })
+            .AddView("quality_gate.external_ci.duration", new ExplicitBucketHistogramConfiguration
+            {
+                Boundaries = new double[] { 30, 60, 120, 300, 600, 900, 1800, 3600 }
+            })
             .AddOtlpExporter());
 
     // ── KiroCliLib ──

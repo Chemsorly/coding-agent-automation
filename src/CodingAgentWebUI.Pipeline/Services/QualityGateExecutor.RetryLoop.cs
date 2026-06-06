@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Prompts;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -18,6 +19,8 @@ internal partial class QualityGateExecutor
         var callbacks = context.Callbacks;
         callbacks.TransitionTo(PipelineStep.RunningQualityGates);
 
+        // TODO: Consider checking ct.ThrowIfCancellationRequested() before starting stopwatch to avoid recording near-zero durations on pre-cancelled tokens
+        var qgStopwatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             using var linkedCts = context.OrchestratorCts != null
@@ -139,6 +142,12 @@ internal partial class QualityGateExecutor
             callbacks.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
             callbacks.TransitionTo(PipelineStep.Failed);
             callbacks.AddRunToHistory(run);
+        }
+        finally
+        {
+            PipelineTelemetry.QualityGateDuration.Record(
+                qgStopwatch.Elapsed.TotalSeconds,
+                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
         }
     }
 
@@ -278,6 +287,8 @@ internal partial class QualityGateExecutor
         while (!report.AllPassed && run.RetryCount < config.MaxRetries)
         {
             run.RetryCount++;
+            // TODO: Consider using BuildTags (run_type + project_id + project_name) for dimensional consistency with duration metrics
+            PipelineTelemetry.QualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(run.RunType));
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Add(errorSummary);
 
@@ -359,5 +370,20 @@ internal partial class QualityGateExecutor
         _logger.Information("Pipeline {RunId} {Phase}: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, Coverage={CoverageResult}, SecurityScan={SecurityResult}, ExternalCi={ExternalCiResult}",
             run.RunId, phase, report.AllPassed, report.Compilation.Passed, report.Tests.Passed,
             FormatCoverageLogValue(report.Coverage), FormatGateLogValue(report.SecurityScan), FormatGateLogValue(report.ExternalCi));
+
+        EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Compilation, report.Compilation.Passed);
+        EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Tests, report.Tests.Passed);
+        if (report.Coverage is not null)
+            EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Coverage, report.Coverage.Passed);
+        if (report.SecurityScan is not null)
+            EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Security, report.SecurityScan.Passed);
+        if (report.ExternalCi is not null)
+            EmitGateEvaluation(PipelineTelemetry.QualityGateNames.ExternalCi, report.ExternalCi.Passed);
+
+        static void EmitGateEvaluation(string gateName, bool passed)
+        {
+            PipelineTelemetry.QualityGateEvaluations.Add(1,
+                new("gate_name", gateName), new("result", passed ? "pass" : "fail"));
+        }
     }
 }

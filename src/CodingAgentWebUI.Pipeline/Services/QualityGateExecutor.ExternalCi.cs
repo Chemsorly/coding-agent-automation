@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -111,6 +112,7 @@ internal partial class QualityGateExecutor
             var pollSha = commitSha;
 
             callbacks.EmitOutputLine("⏳ Waiting for external CI...");
+            var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
             var ciStatus = await context.PipelineProvider.WaitForCompletionAsync(
                 run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
 
@@ -156,6 +158,11 @@ internal partial class QualityGateExecutor
                         classification = CiFailureClassifier.Classify(ciStatus);
                 }
             }
+
+            // TODO: Duration includes infrastructure retry wait times — consider recording per-attempt duration for better histogram granularity
+            PipelineTelemetry.ExternalCiDuration.Record(
+                ciPollStopwatch.Elapsed.TotalSeconds,
+                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
 
             ciGate = new GateResult
             {
