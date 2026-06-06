@@ -1283,7 +1283,7 @@
         if (LoopService.IsLoopActive)
         {
             _recentlyToggled.Add(template.Id);
-            _ = ClearToggleIndicator(template.Id);
+            _ = ClearRecentlyToggledAfterDelay(template.Id);
         }
     }
 
@@ -1337,14 +1337,6 @@
         {
             _errorMessage = $"Failed to save: {ex.Message}";
         }
-    }
-
-    private async Task ClearToggleIndicator(string templateId)
-    {
-        await Task.Delay(3000);
-        _recentlyToggled.Remove(templateId);
-        try { await InvokeAsync(() => { if (!_disposed) StateHasChanged(); }); }
-        catch (ObjectDisposedException) { }
     }
 
     private async Task ClearSuccessAfterDelay()
