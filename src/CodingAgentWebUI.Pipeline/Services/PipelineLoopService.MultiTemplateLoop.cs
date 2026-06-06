@@ -120,6 +120,7 @@ public sealed partial class PipelineLoopService
             // Step 5: Fair dispatch
             await DispatchFairRoundRobinAsync(
                 snapshot.PollableTemplates, snapshot.FlattenedTemplates, snapshot.Config,
+                snapshot.MaxRunsPerCycle,
                 issueQueues, prQueues, decompositionQueues, projectLevelDecompositionQueues,
                 stoppingToken, ct);
 
@@ -505,6 +506,7 @@ public sealed partial class PipelineLoopService
         List<PipelineJobTemplate> pollableTemplates,
         IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> flattenedTemplates,
         PipelineConfiguration config,
+        int maxRunsPerCycle,
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
         Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
@@ -512,8 +514,7 @@ public sealed partial class PipelineLoopService
         CancellationToken stoppingToken,
         CancellationToken ct)
     {
-        // TODO: Use snapshot.MaxRunsPerCycle instead of config.ClosedLoopMaxRunsPerCycle to avoid dead field in CycleSnapshot
-        int remaining = config.ClosedLoopMaxRunsPerCycle > 0 ? config.ClosedLoopMaxRunsPerCycle : int.MaxValue;
+        int remaining = maxRunsPerCycle > 0 ? maxRunsPerCycle : int.MaxValue;
 
         // Per-cycle dependency state cache shared across all issue evaluations
         var cycleStateCache = new Dictionary<int, bool>();
