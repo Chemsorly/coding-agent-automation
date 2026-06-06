@@ -140,6 +140,9 @@ try
             new OpenCodeHealthMonitor(sp.GetRequiredService<IHttpClientFactory>(), Log.Logger));
     }
 
+    // ── Agent identity (single source of truth for AGENT_ID) ──
+    builder.Services.AddSingleton(new AgentIdentity(agentId));
+
     // ── Hub connection manager ──
     builder.Services.AddSingleton(sp =>
         new HubConnectionManager(orchestratorUrl, agentId, agentApiKey, Log.Logger));
@@ -154,7 +157,8 @@ try
         Log.Logger,
         agentId,
         sp.GetRequiredService<IBrainUpdateService>(),
-        openIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>()));
+        openIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
+        agentIdentity: sp.GetRequiredService<AgentIdentity>()));
 
     // ── Consolidation executor ──
     builder.Services.AddSingleton(sp => new LocalConsolidationExecutor(
@@ -169,6 +173,7 @@ try
         sp.GetRequiredService<LocalConsolidationExecutor>(),
         sp.GetRequiredService<IKiroCliOrchestrator>(),
         sp.GetRequiredService<IHttpClientFactory>(),
+        sp.GetRequiredService<AgentIdentity>(),
         Log.Logger));
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
 

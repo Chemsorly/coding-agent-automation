@@ -29,7 +29,7 @@ public class AgentWorkerServiceTests
         var mockConsolidationExecutor = CreateMockConsolidationExecutor();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
-        var act = () => new AgentWorkerService(null!, mockExecutor, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), mockLogger.Object);
+        var act = () => new AgentWorkerService(null!, mockExecutor, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("hubManager");
     }
 
@@ -41,7 +41,7 @@ public class AgentWorkerServiceTests
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
         var act = () => new AgentWorkerService(
-            CreateTestHubManager(), null!, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), mockLogger.Object);
+            CreateTestHubManager(), null!, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("executor");
     }
 
@@ -50,7 +50,7 @@ public class AgentWorkerServiceTests
     {
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var act = () => new AgentWorkerService(
-            CreateTestHubManager(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), null!);
+            CreateTestHubManager(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), null!);
         act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
     }
 
@@ -97,31 +97,13 @@ public class AgentWorkerServiceTests
             var mockLogger = new Mock<Serilog.ILogger>();
             var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
             var act = () => new AgentWorkerService(
-                CreateTestHubManager(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), mockLogger.Object);
+                CreateTestHubManager(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), mockLogger.Object);
             act.Should().Throw<InvalidOperationException>()
                 .WithMessage("*AGENT_TYPE*");
         }
         finally
         {
             Environment.SetEnvironmentVariable("AGENT_TYPE", originalType ?? "kiro-dotnet");
-        }
-    }
-
-    [Fact]
-    public void Constructor_UsesHostnameWhenAgentIdNotSet()
-    {
-        var originalId = Environment.GetEnvironmentVariable("AGENT_ID");
-        try
-        {
-            Environment.SetEnvironmentVariable("AGENT_ID", null);
-            // Should not throw — falls back to Environment.MachineName
-            var service = CreateService();
-            service.Should().NotBeNull();
-        }
-        finally
-        {
-            if (originalId != null)
-                Environment.SetEnvironmentVariable("AGENT_ID", originalId);
         }
     }
 
@@ -702,6 +684,7 @@ public class AgentWorkerServiceTests
             CreateMockConsolidationExecutor(),
             mockOrchestrator.Object,
             Mock.Of<IHttpClientFactory>(),
+            new AgentIdentity("test-agent"),
             mockLogger.Object);
     }
 
@@ -722,6 +705,7 @@ public class AgentWorkerServiceTests
             CreateMockConsolidationExecutor(),
             orchestrator,
             Mock.Of<IHttpClientFactory>(),
+            new AgentIdentity("test-agent"),
             mockLogger.Object);
     }
 
