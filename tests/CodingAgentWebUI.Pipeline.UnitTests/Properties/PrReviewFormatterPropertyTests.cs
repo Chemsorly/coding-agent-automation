@@ -464,9 +464,7 @@ public class PrReviewFormatterPropertyTests
             CodeReviewAgentsRun = agentNames
         };
 
-        run.CodeReviewCriticalCount = critical;
-        run.CodeReviewWarningCount = warning;
-        run.CodeReviewSuggestionCount = suggestion;
+        run.SetCodeReviewCounts(critical, warning, suggestion);
 
         foreach (var kvp in agentFindings)
         {

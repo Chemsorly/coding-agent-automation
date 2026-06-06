@@ -90,7 +90,7 @@ public class PostReviewFindingsStepTests : IDisposable
             RunType = PipelineRunType.Review,
             CodeReviewAgentsRun = new[] { "SecurityBot" }
         };
-        run.CodeReviewCriticalCount = 1;
+        run.SetCodeReviewCounts(1, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "Found SQL injection";
 
         // Simulate existing review comment found on first call, then null (collapsed)
@@ -124,7 +124,7 @@ public class PostReviewFindingsStepTests : IDisposable
             RunType = PipelineRunType.Review,
             CodeReviewAgentsRun = new[] { "StyleBot" }
         };
-        run.CodeReviewWarningCount = 2;
+        run.SetCodeReviewCounts(0, 2, 0);
         run.CodeReviewAgentFindings["StyleBot"] = "Naming convention issues";
 
         // No existing review found
@@ -157,7 +157,7 @@ public class PostReviewFindingsStepTests : IDisposable
             RunType = PipelineRunType.Review,
             CodeReviewAgentsRun = new[] { "Agent1" }
         };
-        run.CodeReviewSuggestionCount = 1;
+        run.SetCodeReviewCounts(0, 0, 1);
         run.CodeReviewAgentFindings["Agent1"] = "Minor suggestion";
 
         // Simulate API failure
@@ -217,8 +217,7 @@ public class PostReviewFindingsStepTests : IDisposable
             RunType = PipelineRunType.Review,
             CodeReviewAgentsRun = new[] { "SecurityBot", "StyleBot" }
         };
-        run.CodeReviewCriticalCount = 2;
-        run.CodeReviewWarningCount = 1;
+        run.SetCodeReviewCounts(2, 1, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "SQL injection found";
         run.CodeReviewAgentFindings["StyleBot"] = "Naming issues";
 

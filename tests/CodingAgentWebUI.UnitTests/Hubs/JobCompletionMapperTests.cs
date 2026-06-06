@@ -94,9 +94,9 @@ public sealed class JobCompletionMapperTests
 
         JobCompletionMapper.Apply(run, payload);
 
-        Volatile.Read(ref run.CodeReviewCriticalCount).Should().Be(2);
-        Volatile.Read(ref run.CodeReviewWarningCount).Should().Be(5);
-        Volatile.Read(ref run.CodeReviewSuggestionCount).Should().Be(8);
+        run.CodeReviewCriticalCount.Should().Be(2);
+        run.CodeReviewWarningCount.Should().Be(5);
+        run.CodeReviewSuggestionCount.Should().Be(8);
     }
 
     [Fact]

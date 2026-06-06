@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading;
 
 namespace CodingAgentWebUI.Pipeline.Models;
 
@@ -36,14 +37,34 @@ public sealed class PipelineRun
     /// <summary>Total code review iterations configured for this run.</summary>
     public int CodeReviewIterationsTotal { get; set; }
 
-    /// <summary>Number of [CRITICAL] findings detected across all review iterations. Use Interlocked for thread-safe updates.</summary>
-    public int CodeReviewCriticalCount;
+    private int _codeReviewCriticalCount;
+    private int _codeReviewWarningCount;
+    private int _codeReviewSuggestionCount;
 
-    /// <summary>Number of [WARNING] findings detected across all review iterations. Use Interlocked for thread-safe updates.</summary>
-    public int CodeReviewWarningCount;
+    /// <summary>Number of [CRITICAL] findings detected across all review iterations. Thread-safe read via Volatile.Read.</summary>
+    public int CodeReviewCriticalCount => Volatile.Read(ref _codeReviewCriticalCount);
 
-    /// <summary>Number of [SUGGESTION] findings detected across all review iterations. Use Interlocked for thread-safe updates.</summary>
-    public int CodeReviewSuggestionCount;
+    /// <summary>Number of [WARNING] findings detected across all review iterations. Thread-safe read via Volatile.Read.</summary>
+    public int CodeReviewWarningCount => Volatile.Read(ref _codeReviewWarningCount);
+
+    /// <summary>Number of [SUGGESTION] findings detected across all review iterations. Thread-safe read via Volatile.Read.</summary>
+    public int CodeReviewSuggestionCount => Volatile.Read(ref _codeReviewSuggestionCount);
+
+    /// <summary>Atomically adds to the code review severity counters. Use when accumulating counts from concurrent review agents.</summary>
+    public void AddCodeReviewCounts(int critical, int warning, int suggestion)
+    {
+        Interlocked.Add(ref _codeReviewCriticalCount, critical);
+        Interlocked.Add(ref _codeReviewWarningCount, warning);
+        Interlocked.Add(ref _codeReviewSuggestionCount, suggestion);
+    }
+
+    /// <summary>Atomically replaces the code review severity counters. Use when setting absolute values from a completion payload.</summary>
+    public void SetCodeReviewCounts(int critical, int warning, int suggestion)
+    {
+        Interlocked.Exchange(ref _codeReviewCriticalCount, critical);
+        Interlocked.Exchange(ref _codeReviewWarningCount, warning);
+        Interlocked.Exchange(ref _codeReviewSuggestionCount, suggestion);
+    }
 
     /// <summary>Number of inline comments successfully submitted in this review.</summary>
     public int InlineCommentsPosted { get; set; }
