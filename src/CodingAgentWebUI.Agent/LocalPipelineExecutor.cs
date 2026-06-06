@@ -441,13 +441,7 @@ public sealed class LocalPipelineExecutor
     {
         if (context?.InjectedSecrets is not { Count: > 0 })
             return output;
-
-        foreach (var (_, value) in context.InjectedSecrets)
-        {
-            if (value.Length >= 4)
-                output = output.Replace(value, "***");
-        }
-        return output;
+        return SecretMasker.Mask(output, context.InjectedSecrets);
     }
 
     /// <summary>

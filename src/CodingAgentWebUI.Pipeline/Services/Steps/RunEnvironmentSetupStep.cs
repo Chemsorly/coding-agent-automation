@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
@@ -38,7 +39,7 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
 
         foreach (var step in steps)
         {
-            context.Callbacks.EmitOutputLine(MaskSecrets($"🔧 Running setup: {step.Name}", secrets));
+            context.Callbacks.EmitOutputLine(SecretMasker.Mask($"🔧 Running setup: {step.Name}", secrets));
 
             try
             {
@@ -78,7 +79,7 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
                     // Timeout — kill the process tree
                     try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
                     var timeoutMessage = $"Setup step '{step.Name}' timed out after 120 seconds";
-                    await context.FailRunAsync(MaskSecrets(timeoutMessage, secrets), ct);
+                    await context.FailRunAsync(SecretMasker.Mask(timeoutMessage, secrets), ct);
                     return StepResult.Stop;
                 }
 
@@ -87,15 +88,15 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
 
                 // Emit masked output
                 if (!string.IsNullOrWhiteSpace(stdout))
-                    context.Callbacks.EmitOutputLine(MaskSecrets(stdout.TrimEnd(), secrets));
+                    context.Callbacks.EmitOutputLine(SecretMasker.Mask(stdout.TrimEnd(), secrets));
                 if (!string.IsNullOrWhiteSpace(stderr))
-                    context.Callbacks.EmitOutputLine(MaskSecrets(stderr.TrimEnd(), secrets));
+                    context.Callbacks.EmitOutputLine(SecretMasker.Mask(stderr.TrimEnd(), secrets));
 
                 if (process.ExitCode != 0)
                 {
                     var truncatedStderr = stderr.Length > 500 ? stderr[..500] : stderr;
                     var failureMessage = $"Setup step '{step.Name}' failed with exit code {process.ExitCode}: {truncatedStderr}";
-                    await context.FailRunAsync(MaskSecrets(failureMessage, secrets), ct);
+                    await context.FailRunAsync(SecretMasker.Mask(failureMessage, secrets), ct);
                     return StepResult.Stop;
                 }
             }
@@ -106,26 +107,12 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
             catch (Exception ex)
             {
                 var failureMessage = $"Setup step '{step.Name}' threw an exception: {ex.Message}";
-                await context.FailRunAsync(MaskSecrets(failureMessage, secrets), ct);
+                await context.FailRunAsync(SecretMasker.Mask(failureMessage, secrets), ct);
                 return StepResult.Stop;
             }
         }
 
         context.Callbacks.EmitOutputLine($"✅ Environment setup complete ({steps.Count} steps)");
         return StepResult.Continue;
-    }
-
-    /// <summary>
-    /// Masks known secret values in output text. Values shorter than 4 characters are not masked
-    /// to avoid excessive false-positive redaction.
-    /// </summary>
-    private static string MaskSecrets(string output, Dictionary<string, string> secrets)
-    {
-        foreach (var (_, value) in secrets)
-        {
-            if (value.Length >= 4)
-                output = output.Replace(value, "***");
-        }
-        return output;
     }
 }
