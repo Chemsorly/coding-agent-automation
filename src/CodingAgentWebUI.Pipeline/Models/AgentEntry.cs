@@ -34,6 +34,9 @@ public sealed record AgentEntry
     /// <summary>Active job ID when status is Busy, null when Idle or Disconnected without a job.</summary>
     public string? ActiveJobId { get; set; }
 
+    /// <summary>Active chat session ID when the agent is processing a chat prompt, null otherwise.</summary>
+    public string? ActiveChatSessionId { get; set; }
+
     public required DateTimeOffset RegisteredAt { get; init; }
 
     /// <summary>Updated on each heartbeat received from the agent.</summary>
