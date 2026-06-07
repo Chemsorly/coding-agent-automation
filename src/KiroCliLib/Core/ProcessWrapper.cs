@@ -56,6 +56,9 @@ public class ProcessWrapper : IProcessWrapper
         var promptFile = Path.Combine(agentDir, $"prompt-input-{promptId}.md");
         await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
 
+        if (!File.Exists(promptFile))
+            _logger.Warning("Prompt file {PromptFile} does not exist after write — potential filesystem issue", promptFile);
+
         // The @path syntax expands file contents inline before sending (per Kiro docs).
         // Use explicit relative path (@./path) to avoid prompt name collision.
         var inlinePrompt = $"@.agent/prompt-input-{promptId}.md";
