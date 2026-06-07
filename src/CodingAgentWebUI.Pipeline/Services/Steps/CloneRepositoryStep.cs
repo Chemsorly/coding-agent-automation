@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
@@ -11,6 +12,13 @@ internal sealed class CloneRepositoryStep : IPipelineStep
 
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("CloneRepository");
+        activity?.SetTag("pipeline.run_id", context.Run.RunId);
+        activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        activity?.SetTag("pipeline.run_type", context.Run.RunType.ToString());
+        activity?.SetTag("pipeline.repository", context.Run.RepositoryName);
+        PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
+
         var workspacePath = Path.Combine(context.Config.WorkspaceBaseDirectory, context.Run.RunId);
         Directory.CreateDirectory(workspacePath);
         context.Run.WorkspacePath = workspacePath;

@@ -38,11 +38,16 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | Span Name | Tags | Emitter |
 |-----------|------|---------|
 | `ExecutePipeline` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.final_step`, `pipeline.agent_id`* | Top-level span wrapping the full pipeline execution |
-| `CreatePullRequest` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR creation step |
+| `CloneRepository` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.repository` | Repository clone into workspace |
+| `CreateBranch` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.branch_name` | Branch creation or checkout |
+| `SyncBrainPreRun` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.brain_sync.skipped` | Brain repository sync (pre-run) |
+| `RunEnvironmentSetup` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Environment setup commands |
+| `CloneProjectRepositories` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Additional project repo clones |
 | `AnalyzeIssue` | `pipeline.run_id`, `pipeline.issue`, `pipeline.analysis.continue` | Issue analysis (confidence gate) |
 | `GenerateCode` | `pipeline.run_id`, `pipeline.issue`, `pipeline.is_rework` | Code generation / rework |
 | `RunQualityGates` | `pipeline.run_id`, `pipeline.issue` | Quality gate execution |
 | `ReviewCode` | `pipeline.run_id`, `pipeline.issue` | Multi-agent code review |
+| `CreatePullRequest` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR creation step |
 | `PostReviewFindings` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting review findings to PR |
 | `ExtractLinkedIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Extracting linked issues from PR |
 | `Decomposition` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Sub-issue generation (Phase 2) |
@@ -62,6 +67,9 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `pipeline.run_type` | `Implementation`, `Review`, `Decomposition` | Run type (**PascalCase** — differs from metric tags) |
 | `pipeline.final_step` | step name or `Cancelled` | Last step reached before completion |
 | `pipeline.agent_id` | hostname | Agent container hostname (agent-side only) |
+| `pipeline.repository` | string | Repository name (on `CloneRepository` span) |
+| `pipeline.branch_name` | string | Branch name created or checked out (on `CreateBranch` span) |
+| `pipeline.brain_sync.skipped` | `true`/`false` | Whether brain sync was skipped due to missing provider (on `SyncBrainPreRun` span) |
 | `pipeline.analysis.continue` | `true`/`false` | Whether analysis passed the confidence gate |
 | `pipeline.is_rework` | `true`/`false` | Whether this is a rework run (linked PR exists) |
 | `pipeline.pr.is_draft` | `true`/`false` | Whether the PR was created as a draft |
@@ -169,4 +177,3 @@ ExecutePipeline
 The following instrumentation is planned for future implementation:
 
 - **PipelineLoopService metrics** — Counters for poll cycles, issues found, dispatch decisions, and backoff events
-- **Shared infrastructure step tracing** — Spans for brain sync, workspace setup, and git operations that are currently untraced

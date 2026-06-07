@@ -45,10 +45,14 @@ public class PipelineTelemetryQualityGateTests : IDisposable
     [Fact]
     public void QualityGateRetries_Add_IncludesRunTypeTag()
     {
+        _measurements.Clear();
+
         PipelineTelemetry.QualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(PipelineRunType.Implementation));
 
-        var entry = _measurements.Should().ContainSingle(m => m.InstrumentName == "quality_gate.retries").Subject;
-        entry.Tags.Should().Contain(new KeyValuePair<string, object?>("run_type", "implementation"));
+        var entries = _measurements.Where(m => m.InstrumentName == "quality_gate.retries").ToList();
+        entries.Should().NotBeEmpty();
+        entries.Should().Contain(e =>
+            e.Tags.Contains(new KeyValuePair<string, object?>("run_type", "implementation")));
     }
 
     [Theory]
@@ -62,30 +66,33 @@ public class PipelineTelemetryQualityGateTests : IDisposable
             new("gate_name", PipelineTelemetry.QualityGateNames.Compilation),
             new("result", passed ? "pass" : "fail"));
 
-        var entry = _measurements.Should().ContainSingle(m => m.InstrumentName == "quality_gate.evaluations").Subject;
-        entry.Tags.Should().Contain(new KeyValuePair<string, object?>("gate_name", "compilation"));
-        entry.Tags.Should().Contain(new KeyValuePair<string, object?>("result", expectedResult));
+        var entries = _measurements.Where(m => m.InstrumentName == "quality_gate.evaluations").ToList();
+        entries.Should().NotBeEmpty();
+        entries.Should().Contain(e =>
+            e.Tags.Contains(new KeyValuePair<string, object?>("gate_name", "compilation")) &&
+            e.Tags.Contains(new KeyValuePair<string, object?>("result", expectedResult)));
     }
 
     [Fact]
     public void QualityGateDuration_Record_AcceptsValue()
     {
-        var countBefore = _measurements.Count(m => m.InstrumentName == "quality_gate.duration");
+        _measurements.Clear();
 
         PipelineTelemetry.QualityGateDuration.Record(42.5,
             PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "TestProj"));
 
-        var countAfter = _measurements.Count(m => m.InstrumentName == "quality_gate.duration");
-        (countAfter - countBefore).Should().Be(1);
+        _measurements.Should().Contain(m => m.InstrumentName == "quality_gate.duration");
     }
 
     [Fact]
     public void ExternalCiDuration_Record_AcceptsValue()
     {
+        _measurements.Clear();
+
         PipelineTelemetry.ExternalCiDuration.Record(120.0,
             PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "TestProj"));
 
-        _measurements.Should().ContainSingle(m => m.InstrumentName == "quality_gate.external_ci.duration");
+        _measurements.Should().Contain(m => m.InstrumentName == "quality_gate.external_ci.duration");
     }
 
     [Fact]

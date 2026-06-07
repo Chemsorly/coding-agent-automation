@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
@@ -16,6 +17,12 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
 
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("RunEnvironmentSetup");
+        activity?.SetTag("pipeline.run_id", context.Run.RunId);
+        activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        activity?.SetTag("pipeline.run_type", context.Run.RunType.ToString());
+        PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
+
         if (!OperatingSystem.IsLinux())
         {
             context.Logger.Debug("Environment setup steps skipped (non-Linux orchestrator)");
