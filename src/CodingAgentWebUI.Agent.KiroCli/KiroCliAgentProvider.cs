@@ -28,7 +28,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
     public AgentProviderType ProviderType => AgentProviderType.KiroCli;
 
     /// <inheritdoc />
-    public bool SupportsParallelExecution => false;
+    public bool SupportsParallelExecution => true;
 
     /// <inheritdoc />
     public IReadOnlyList<string> SteeringBlacklistPaths { get; } = [".kiro"];
@@ -97,31 +97,62 @@ public partial class KiroCliAgentProvider : IAgentProvider
 
         var outputLines = new List<string>();
 
-        return await TimeoutHelper.ExecuteWithTimeoutAsync(
-            request.Timeout, ct,
-            async linkedCt =>
-            {
-                var exitCode = await _orchestrator.ExecutePromptAsync(
-                    request.Prompt,
-                    request.WorkspacePath,
-                    useResume: request.UseResume,
-                    linkedCt,
-                    onOutputLine: line =>
-                    {
-                        var clean = AnsiStripper.Strip(line);
-                        outputLines.Add(clean);
-                        onOutputLine?.Invoke(clean);
-                        return Task.CompletedTask;
-                    },
-                    resumeSessionId: request.ResumeSessionId);
+        // For isolated (non-resume) calls, create an ephemeral orchestrator with its own
+        // process slot. This enables concurrent execution — each parallel review agent gets
+        // its own kiro-cli process without conflicting on the shared _orchestrator's single
+        // _activeProcess field. Resume calls must use the shared orchestrator to maintain
+        // session continuity.
+        var isIsolatedCall = !request.UseResume && request.ResumeSessionId is null;
+        var orchestrator = isIsolatedCall ? CreateEphemeralOrchestrator() : _orchestrator;
 
-                return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };
-            },
-            () =>
-            {
-                _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
-                return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly() });
-            });
+        try
+        {
+            return await TimeoutHelper.ExecuteWithTimeoutAsync(
+                request.Timeout, ct,
+                async linkedCt =>
+                {
+                    var exitCode = await orchestrator.ExecutePromptAsync(
+                        request.Prompt,
+                        request.WorkspacePath,
+                        useResume: request.UseResume,
+                        linkedCt,
+                        onOutputLine: line =>
+                        {
+                            var clean = AnsiStripper.Strip(line);
+                            outputLines.Add(clean);
+                            onOutputLine?.Invoke(clean);
+                            return Task.CompletedTask;
+                        },
+                        resumeSessionId: request.ResumeSessionId);
+
+                    return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };
+                },
+                () =>
+                {
+                    _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
+                    return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly() });
+                });
+        }
+        finally
+        {
+            if (isIsolatedCall && orchestrator is IDisposable disposable)
+                disposable.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Creates a lightweight orchestrator instance with its own process slot.
+    /// Used for isolated (non-resume) calls to enable parallel execution.
+    /// </summary>
+    private IKiroCliOrchestrator CreateEphemeralOrchestrator()
+    {
+        var config = new KiroCliLib.Configuration.Configuration
+        {
+            KiroCliPath = _executablePath,
+            UseWsl = OperatingSystem.IsWindows()
+        };
+        _logger.Debug("Creating ephemeral orchestrator (path={KiroCliPath}, wsl={UseWsl})", _executablePath, config.UseWsl);
+        return new KiroCliOrchestrator(config, callbackHandler: null, _logger);
     }
 
     /// <inheritdoc />

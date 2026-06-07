@@ -70,10 +70,13 @@ public class PipelineTelemetryQualityGateTests : IDisposable
     [Fact]
     public void QualityGateDuration_Record_AcceptsValue()
     {
+        var countBefore = _measurements.Count(m => m.InstrumentName == "quality_gate.duration");
+
         PipelineTelemetry.QualityGateDuration.Record(42.5,
             PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "TestProj"));
 
-        _measurements.Should().ContainSingle(m => m.InstrumentName == "quality_gate.duration");
+        var countAfter = _measurements.Count(m => m.InstrumentName == "quality_gate.duration");
+        (countAfter - countBefore).Should().Be(1);
     }
 
     [Fact]

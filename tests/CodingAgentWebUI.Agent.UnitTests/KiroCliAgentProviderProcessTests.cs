@@ -264,6 +264,7 @@ public class KiroCliAgentProviderProcessTests
         {
             Prompt = "test",
             WorkspacePath = "/ws",
+            UseResume = true, // Use shared orchestrator so mock handles cancellation
             Timeout = TimeSpan.FromSeconds(30) // Long timeout — not the cause of cancellation
         };
 

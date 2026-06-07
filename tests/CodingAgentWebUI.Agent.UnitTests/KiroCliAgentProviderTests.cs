@@ -127,22 +127,17 @@ public class KiroCliAgentProviderTests
     // --- ExecuteAsync tests ---
 
     [Fact]
-    public async Task ExecuteAsync_DefaultUseResume_CallsOrchestratorWithUseResumeFalse()
+    public async Task ExecuteAsync_DefaultUseResume_UsesEphemeralOrchestrator()
     {
-        _mockOrchestrator
-            .Setup(o => o.ExecutePromptAsync(
-                "test prompt", "/workspace", false,
-                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
-            .ReturnsAsync(0);
-
+        // When UseResume=false (default), an ephemeral orchestrator is used for parallel safety.
+        // The shared orchestrator should NOT be called.
         var request = new AgentRequest { Prompt = "test prompt", WorkspacePath = "/workspace" };
         var result = await _provider.ExecuteAsync(request, CancellationToken.None);
 
-        result.ExitCode.Should().Be(0);
-        result.Success.Should().BeTrue();
+        // Ephemeral orchestrator runs independently — shared mock not invoked
         _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
-            "test prompt", "/workspace", false,
-            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Once);
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]
@@ -197,7 +192,7 @@ public class KiroCliAgentProviderTests
             .ReturnsAsync(0);
 
         var externalLines = new List<string>();
-        var request = new AgentRequest { Prompt = "test", WorkspacePath = "/ws" };
+        var request = new AgentRequest { Prompt = "test", WorkspacePath = "/ws", UseResume = true };
         var result = await _provider.ExecuteAsync(request, CancellationToken.None, line => externalLines.Add(line));
 
         result.OutputLines.Should().BeEquivalentTo(["line 1", "line 2", "line 3"]);
@@ -213,7 +208,7 @@ public class KiroCliAgentProviderTests
                 It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
             .ReturnsAsync(1);
 
-        var request = new AgentRequest { Prompt = "fail", WorkspacePath = "/ws" };
+        var request = new AgentRequest { Prompt = "fail", WorkspacePath = "/ws", UseResume = true };
         var result = await _provider.ExecuteAsync(request, CancellationToken.None);
 
         result.ExitCode.Should().Be(1);
@@ -317,7 +312,8 @@ public class KiroCliAgentProviderTests
         {
             Prompt = "slow prompt",
             WorkspacePath = "/ws",
-            Timeout = TimeSpan.FromMilliseconds(50)
+            Timeout = TimeSpan.FromMilliseconds(50),
+            UseResume = true // Use shared orchestrator path so mock handles the call
         };
 
         var result = await _provider.ExecuteAsync(request, CancellationToken.None);
@@ -345,7 +341,7 @@ public class KiroCliAgentProviderTests
             .ReturnsAsync(0);
 
         var externalLines = new List<string>();
-        var request = new AgentRequest { Prompt = "test", WorkspacePath = "/ws" };
+        var request = new AgentRequest { Prompt = "test", WorkspacePath = "/ws", UseResume = true };
         var result = await _provider.ExecuteAsync(request, CancellationToken.None, line => externalLines.Add(line));
 
         result.OutputLines.Should().BeEquivalentTo(["Error: something failed", "Success", "plain text no ansi"]);

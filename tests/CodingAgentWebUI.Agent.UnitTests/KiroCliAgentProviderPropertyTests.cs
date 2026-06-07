@@ -49,7 +49,8 @@ public class KiroCliAgentProviderPropertyTests
         var request = new AgentRequest
         {
             Prompt = "test",
-            WorkspacePath = Path.GetTempPath()
+            WorkspacePath = Path.GetTempPath(),
+            UseResume = true // Use shared orchestrator path so the mock captures output
         };
 
         // Act
@@ -133,11 +134,15 @@ public class KiroCliAgentProviderPropertyTests
                 (_, _, resume, _, _, _) => capturedUseResume = resume)
             .ReturnsAsync(0);
 
+        // When UseResume=false and no ResumeSessionId, the provider uses an ephemeral orchestrator
+        // (for parallel execution safety), so the shared mock won't be called.
+        // Only verify forwarding for the shared orchestrator path (UseResume=true or with ResumeSessionId).
         var request = new AgentRequest
         {
             Prompt = "test prompt",
             WorkspacePath = Path.GetTempPath(),
-            UseResume = useResume
+            UseResume = useResume,
+            ResumeSessionId = useResume ? null : "session-for-test" // ensure shared orchestrator is used
         };
 
         // Act
@@ -178,7 +183,8 @@ public class KiroCliAgentProviderPropertyTests
         var request = new AgentRequest
         {
             Prompt = "test",
-            WorkspacePath = Path.GetTempPath()
+            WorkspacePath = Path.GetTempPath(),
+            UseResume = true // Use shared orchestrator so mock captures output
         };
 
         // Act
