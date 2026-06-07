@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using CodingAgentWebUI.Pipeline;
@@ -5,6 +6,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Services.Prompts;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Agent.Executors;
 
@@ -58,25 +60,52 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             Directory.CreateDirectory(workspacePath);
             Logger.Information("Cloning code repo for refactoring detection run {RunId} into {Workspace}",
                 job.JobId, workspacePath);
-            await repoProvider.CloneAsync(workspacePath, ct);
 
-            // 2. Optionally clone brain repo for architectural context
-            if (brainProvider is not null)
+            using (var cloneActivity = PipelineTelemetry.ActivitySource.StartActivity("RefactoringDetection.Clone"))
             {
-                var brainPath = Path.Combine(workspacePath, ".brain");
+                cloneActivity?.SetTag("pipeline.run_id", job.JobId);
                 try
                 {
-                    await brainProvider.CloneAsync(brainPath, ct);
-                    Logger.Information("Brain repo cloned for architectural context in run {RunId}", job.JobId);
+                    await repoProvider.CloneAsync(workspacePath, ct);
+
+                    // 2. Optionally clone brain repo for architectural context
+                    if (brainProvider is not null)
+                    {
+                        var brainPath = Path.Combine(workspacePath, ".brain");
+                        try
+                        {
+                            await brainProvider.CloneAsync(brainPath, ct);
+                            Logger.Information("Brain repo cloned for architectural context in run {RunId}", job.JobId);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            Logger.Warning(ex, "Failed to clone brain repo for context in run {RunId}, continuing without it", job.JobId);
+                        }
+                    }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    Logger.Warning(ex, "Failed to clone brain repo for context in run {RunId}, continuing without it", job.JobId);
+                    cloneActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    cloneActivity?.AddException(ex);
+                    throw;
                 }
             }
 
             // 3. Hotspot analysis — run git log to identify frequently-changed files
-            await WriteHotspotAnalysisAsync(workspacePath, job.PipelineConfiguration.HotspotAnalysisLookback, ct);
+            using (var hotspotActivity = PipelineTelemetry.ActivitySource.StartActivity("RefactoringDetection.HotspotAnalysis"))
+            {
+                hotspotActivity?.SetTag("pipeline.run_id", job.JobId);
+                try
+                {
+                    await WriteHotspotAnalysisAsync(workspacePath, job.PipelineConfiguration.HotspotAnalysisLookback, ct);
+                }
+                catch (Exception ex)
+                {
+                    hotspotActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    hotspotActivity?.AddException(ex);
+                    throw;
+                }
+            }
 
             // 3.5. Query open issues for deduplication context
             string? issueContext = null;
@@ -129,16 +158,31 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 
             // 5. Execute agent
             Logger.Information("Executing refactoring detection agent for run {RunId}", job.JobId);
-            var (agentResult, failure) = await ExecuteAgentAndCheckAsync(
-                agentProvider,
-                new AgentRequest
+            AgentResult agentResult;
+            ConsolidationJobResult? failure;
+            using (var agentActivity = PipelineTelemetry.ActivitySource.StartActivity("RefactoringDetection.AgentExecution"))
+            {
+                agentActivity?.SetTag("pipeline.run_id", job.JobId);
+                try
                 {
-                    Prompt = prompt,
-                    WorkspacePath = workspacePath,
-                    Timeout = job.PipelineConfiguration.AgentTimeout
-                },
-                job.JobId,
-                ct);
+                    (agentResult, failure) = await ExecuteAgentAndCheckAsync(
+                        agentProvider,
+                        new AgentRequest
+                        {
+                            Prompt = prompt,
+                            WorkspacePath = workspacePath,
+                            Timeout = job.PipelineConfiguration.AgentTimeout
+                        },
+                        job.JobId,
+                        ct);
+                }
+                catch (Exception ex)
+                {
+                    agentActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    agentActivity?.AddException(ex);
+                    throw;
+                }
+            }
 
             if (failure is not null) return failure;
 
@@ -165,20 +209,34 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             }
 
             // 7. Adversarial review (if enabled and proposals non-empty)
-            var reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
-                agentProvider,
-                workspacePath,
-                ConsolidationPromptBuilder.BuildRefactoringReviewPrompt(),
-                ConsolidationPromptBuilder.BuildRefactoringRefinementPrompt(),
-                AgentWorkspacePaths.RefactoringReviewFilePath,
-                new AdversarialReviewConfig
+            AdversarialReviewResult reviewResult;
+            using (var reviewActivity = PipelineTelemetry.ActivitySource.StartActivity("RefactoringDetection.AdversarialReview"))
+            {
+                reviewActivity?.SetTag("pipeline.run_id", job.JobId);
+                try
                 {
-                    Enabled = job.PipelineConfiguration.RefactoringReviewEnabled,
-                    AgentTimeout = job.PipelineConfiguration.AgentTimeout
-                },
-                onOutputLine,
-                Logger,
-                ct);
+                    reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
+                        agentProvider,
+                        workspacePath,
+                        ConsolidationPromptBuilder.BuildRefactoringReviewPrompt(),
+                        ConsolidationPromptBuilder.BuildRefactoringRefinementPrompt(),
+                        AgentWorkspacePaths.RefactoringReviewFilePath,
+                        new AdversarialReviewConfig
+                        {
+                            Enabled = job.PipelineConfiguration.RefactoringReviewEnabled,
+                            AgentTimeout = job.PipelineConfiguration.AgentTimeout
+                        },
+                        onOutputLine,
+                        Logger,
+                        ct);
+                }
+                catch (Exception ex)
+                {
+                    reviewActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    reviewActivity?.AddException(ex);
+                    throw;
+                }
+            }
 
             // If refinement was triggered, re-read and re-parse proposals
             if (reviewResult.RefinementTriggered)
@@ -198,7 +256,22 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             }
 
             // 8. Create GitHub issues (capped at MaxRefactoringProposals)
-            var createdIssues = await CreateIssuesAsync(proposals, issueProvider, job.PipelineConfiguration.MaxRefactoringProposals, ct);
+            IReadOnlyList<CreatedIssueInfo> createdIssues;
+            using (var issuesActivity = PipelineTelemetry.ActivitySource.StartActivity("RefactoringDetection.CreateIssues"))
+            {
+                issuesActivity?.SetTag("pipeline.run_id", job.JobId);
+                issuesActivity?.SetTag("pipeline.proposal_count", proposals.Count);
+                try
+                {
+                    createdIssues = await CreateIssuesAsync(proposals, issueProvider, job.PipelineConfiguration.MaxRefactoringProposals, ct);
+                }
+                catch (Exception ex)
+                {
+                    issuesActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    issuesActivity?.AddException(ex);
+                    throw;
+                }
+            }
 
             // 9. Return summary — distinguish between "no proposals" and "proposals found but issues failed"
             var summary = FormatRefactoringSummary(createdIssues, proposals.Count);

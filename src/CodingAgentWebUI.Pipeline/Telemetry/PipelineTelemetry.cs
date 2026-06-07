@@ -47,32 +47,20 @@ public static class PipelineTelemetry
     public static readonly Histogram<double> QueueWaitTime = Meter.CreateHistogram<double>(
         "dispatch.queue.wait_time", "s", "Time a job spent waiting in the dispatch queue");
 
-    // Token vending metrics
-    public static readonly Counter<long> TokenVendingFailures = Meter.CreateCounter<long>(
-        "token_vending.failures", "{failure}", "Token vending failures");
-    public static readonly Histogram<double> TokenVendingDuration = Meter.CreateHistogram<double>(
-        "token_vending.duration", "s", "Duration of token vending operations");
+    public static readonly Counter<long> AgentJobsReceived = Meter.CreateCounter<long>(
+        "agent.jobs.received", "{job}", "Jobs received by agent workers");
+    public static readonly Counter<long> AgentJobsRejected = Meter.CreateCounter<long>(
+        "agent.jobs.rejected", "{job}", "Jobs rejected by agent workers");
+    public static readonly Counter<long> AgentHeartbeatFailures = Meter.CreateCounter<long>(
+        "agent.heartbeat.failures", "{failure}", "Agent heartbeat failures");
+    public static readonly Counter<long> AgentReconnections = Meter.CreateCounter<long>(
+        "agent.reconnections", "{reconnection}", "Agent reconnection events");
 
-    // Loop metrics
-    public static readonly Counter<long> LoopPolls = Meter.CreateCounter<long>(
-        "pipeline.loop.polls", "{poll}", "Pipeline loop poll attempts");
-    public static readonly Counter<long> LoopIssuesFound = Meter.CreateCounter<long>(
-        "pipeline.loop.issues_found", "{issue}", "Issues found per poll cycle");
-    public static readonly Counter<long> LoopDispatchDecisions = Meter.CreateCounter<long>(
-        "pipeline.loop.dispatch_decisions", "{decision}", "Dispatch decisions made by the loop");
-    public static readonly Counter<long> LoopBackoffEvents = Meter.CreateCounter<long>(
-        "pipeline.loop.backoff_events", "{event}", "Backoff escalations due to poll failures");
-    public static readonly Counter<long> LoopCircuitBreakerTrips = Meter.CreateCounter<long>(
-        "pipeline.loop.circuit_breaker_trips", "{trip}", "Circuit breaker trip events");
-
-    internal static class LoopDecisions
+    internal static class AgentRejectionReasons
     {
-        public const string Dispatched = "dispatched";
-        public const string SkippedAlreadyProcessing = "skipped_already_processing";
-        public const string SkippedDependencyBlocked = "skipped_dependency_blocked";
-        public const string SkippedNoAgent = "skipped_no_agent";
-        public const string SkippedMaxRuns = "skipped_max_runs";
-        public const string SkippedFilteredByLabel = "skipped_filtered_by_label";
+        public const string Busy = "busy";
+        public const string ShuttingDown = "shutting_down";
+        public const string Unknown = "unknown";
     }
 
     internal static class QualityGateNames
@@ -128,23 +116,6 @@ public static class PipelineTelemetry
             ProjectIdTag(projectId),
             ProjectNameTag(projectName)
         ]);
-
-    /// <summary>
-    /// Records an error on the given <see cref="Activity"/>. For graceful cancellation
-    /// (token-cancelled <see cref="OperationCanceledException"/>), sets a cancelled tag
-    /// without error status. For all other exceptions, sets error status and records the exception.
-    /// </summary>
-    public static void RecordError(this Activity? activity, Exception ex, CancellationToken ct = default)
-    {
-        if (activity is null) return;
-        if (ex is OperationCanceledException && ct.IsCancellationRequested)
-        {
-            activity.SetTag("pipeline.cancelled", true);
-            return;
-        }
-        activity.SetStatus(ActivityStatusCode.Error, ex.Message);
-        activity.AddException(ex);
-    }
 
     private static readonly TraceContextPropagator TraceContextPropagator = new();
 

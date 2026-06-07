@@ -14,21 +14,17 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `pipeline.jobs.completed` | Counter | — | `run_type` | Incremented when a job completes successfully |
 | `pipeline.jobs.failed` | Counter | — | `run_type` | Incremented when a job fails |
 | `pipeline.jobs.duration` | Histogram | seconds | `run_type` | Duration of the entire pipeline job |
-| `pipeline.loop.polls` | Counter | — | `result` | Incremented on each poll cycle (`success` or `failure`) |
-| `pipeline.loop.issues_found` | Counter | — | — | Incremented by the number of issues/PRs/epics discovered per poll cycle |
-| `pipeline.loop.dispatch_decisions` | Counter | — | `decision` | Incremented for each dispatch decision made by the loop |
-| `pipeline.loop.backoff_events` | Counter | — | — | Incremented when a template poll failure triggers backoff escalation |
-| `pipeline.loop.circuit_breaker_trips` | Counter | — | — | Incremented when the circuit breaker trips (all templates failing) |
-| `token_vending.failures` | Counter | — | — | Token vending operation failures |
-| `token_vending.duration` | Histogram | seconds | — | Duration of token vending operations |
+| `agent.jobs.received` | Counter | — | — | Jobs received by agent workers |
+| `agent.jobs.rejected` | Counter | — | `reason` | Jobs rejected by agent workers |
+| `agent.heartbeat.failures` | Counter | — | — | Agent heartbeat send failures |
+| `agent.reconnections` | Counter | — | — | Agent reconnection events |
 
 ### Tag Schema
 
 | Tag | Values | Description |
 |-----|--------|-------------|
 | `run_type` | `implementation`, `review`, `decomposition` | Pipeline run type (lowercased) |
-| `result` | `success`, `failure` | Poll cycle outcome |
-| `decision` | `dispatched`, `skipped_already_processing`, `skipped_dependency_blocked`, `skipped_no_agent`, `skipped_max_runs`, `skipped_filtered_by_label` | Dispatch decision reason |
+| `reason` | `busy`, `shutting_down`, `unknown` | Agent job rejection reason |
 
 ### Histogram Bucket Boundaries
 
@@ -47,15 +43,16 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | Span Name | Tags | Emitter |
 |-----------|------|---------|
 | `ExecutePipeline` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.final_step`, `pipeline.agent_id`* | Top-level span wrapping the full pipeline execution |
-| `CreatePullRequest` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR creation step |
-| `FinalizePullRequest` | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR finalization (when existing draft PR is promoted) |
+| `CloneRepository` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.repository` | Repository clone into workspace |
+| `CreateBranch` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.branch_name` | Branch creation or checkout |
+| `SyncBrainPreRun` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.brain_sync.skipped` | Brain repository sync (pre-run) |
+| `RunEnvironmentSetup` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Environment setup commands |
+| `CloneProjectRepositories` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Additional project repo clones |
 | `AnalyzeIssue` | `pipeline.run_id`, `pipeline.issue`, `pipeline.analysis.continue` | Issue analysis (confidence gate) |
 | `GenerateCode` | `pipeline.run_id`, `pipeline.issue`, `pipeline.is_rework` | Code generation / rework |
 | `RunQualityGates` | `pipeline.run_id`, `pipeline.issue` | Quality gate execution |
-| `QualityGate.Compilation` | `gate_name` | Compilation command execution (child of RunQualityGates) |
-| `QualityGate.Tests` | `gate_name` | Test command execution (child of RunQualityGates) |
-| `QualityGate.Coverage` | `gate_name` | Coverage report parsing (child of RunQualityGates) |
 | `ReviewCode` | `pipeline.run_id`, `pipeline.issue` | Multi-agent code review |
+| `CreatePullRequest` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR creation step |
 | `PostReviewFindings` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting review findings to PR |
 | `ExtractLinkedIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Extracting linked issues from PR |
 | `Decomposition` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Sub-issue generation (Phase 2) |
@@ -63,12 +60,22 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `PostDecompositionPlan` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting decomposition plan comment |
 | `PostDecompositionSummary` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting creation summary comment |
 | `CreateSubIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Creating sub-issues on GitHub |
-| `Reflection` | `pipeline.run_id` | Post-PR reflection prompt (child of FinalizePullRequest) |
-| `BrainSyncPostRun` | `pipeline.run_id` | Brain repository sync after run (child of FinalizePullRequest) |
-| `FeedbackCollection` | `pipeline.run_id` | Structured feedback collection (child of FinalizePullRequest) |
-| `DrainCycle` | `jobs_dispatched` | Single drain cycle in JobQueueDrainService (root span) |
-| `Hub.ReportJobCompleted` | `job_id`, `success` | Hub business logic for job completion |
-| `TokenVending.GenerateToken` | — | Token generation HTTP call |
+| `Agent.ReceiveJob` | `job_id`, `run_type` | Agent job receipt and acceptance/rejection decision |
+| `Agent.ReportCompletion` | `job_id`, `success` | Reporting job completion to orchestrator |
+| `BrainConsolidation.Clone` | `pipeline.run_id` | Brain repo clone during consolidation |
+| `BrainConsolidation.AgentExecution` | `pipeline.run_id` | Main agent LLM call for brain consolidation |
+| `BrainConsolidation.DiffGeneration` | `pipeline.run_id` | Diff summary agent call (LLM execution) |
+| `BrainConsolidation.AdversarialReview` | `pipeline.run_id` | Adversarial review of brain consolidation |
+| `BrainConsolidation.Commit` | `pipeline.run_id` | Committing brain consolidation changes |
+| `BrainConsolidation.Push` | `pipeline.run_id` | Pushing brain consolidation changes |
+| `RefactoringDetection.Clone` | `pipeline.run_id` | Code repo clone for refactoring detection |
+| `RefactoringDetection.HotspotAnalysis` | `pipeline.run_id` | Git hotspot analysis |
+| `RefactoringDetection.AgentExecution` | `pipeline.run_id` | Main agent LLM call for refactoring detection |
+| `RefactoringDetection.AdversarialReview` | `pipeline.run_id` | Adversarial review of refactoring proposals |
+| `RefactoringDetection.CreateIssues` | `pipeline.run_id`, `pipeline.proposal_count` | Creating GitHub issues for proposals |
+| `HarnessSuggestion.AgentExecution` | `pipeline.run_id` | Main agent LLM call for harness suggestions |
+| `HarnessSuggestion.WriteToFile` | `pipeline.run_id` | Write-to-file agent call (LLM execution) |
+| `HarnessSuggestion.AdversarialReview` | `pipeline.run_id` | Adversarial review of harness suggestions |
 
 \* `pipeline.agent_id` is only set on the agent-side `ExecutePipeline` span (set to the container hostname).
 
@@ -81,6 +88,9 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `pipeline.run_type` | `Implementation`, `Review`, `Decomposition` | Run type (**PascalCase** — differs from metric tags) |
 | `pipeline.final_step` | step name or `Cancelled` | Last step reached before completion |
 | `pipeline.agent_id` | hostname | Agent container hostname (agent-side only) |
+| `pipeline.repository` | string | Repository name (on `CloneRepository` span) |
+| `pipeline.branch_name` | string | Branch name created or checked out (on `CreateBranch` span) |
+| `pipeline.brain_sync.skipped` | `true`/`false` | Whether brain sync was skipped due to missing provider (on `SyncBrainPreRun` span) |
 | `pipeline.analysis.continue` | `true`/`false` | Whether analysis passed the confidence gate |
 | `pipeline.is_rework` | `true`/`false` | Whether this is a rework run (linked PR exists) |
 | `pipeline.pr.is_draft` | `true`/`false` | Whether the PR was created as a draft |
@@ -162,14 +172,8 @@ ExecutePipeline
 ├── AnalyzeIssue
 ├── GenerateCode
 ├── RunQualityGates
-│   ├── QualityGate.Compilation
-│   ├── QualityGate.Tests
-│   ├── QualityGate.Coverage
 │   └── ReviewCode
-└── FinalizePullRequest
-    ├── Reflection
-    ├── BrainSyncPostRun
-    └── FeedbackCollection
+└── CreatePullRequest
 ```
 
 For a review run:
@@ -189,21 +193,40 @@ ExecutePipeline
     └── PostDecompositionPlan
 ```
 
-### Resilience Retry Events
+For a brain consolidation run:
 
-All resilience pipelines (`ResiliencePipelineFactory` and `TokenVendingService` internal pipeline) emit `ActivityEvent("retry")` on each retry attempt, attached to whatever parent span is active. Event tags:
+```
+ExecuteConsolidation
+├── BrainConsolidation.Clone
+├── BrainConsolidation.AgentExecution
+├── BrainConsolidation.DiffGeneration
+├── BrainConsolidation.AdversarialReview
+├── BrainConsolidation.Commit
+└── BrainConsolidation.Push
+```
 
-| Tag | Description |
-|-----|-------------|
-| `attempt` | Retry attempt number (1-based) |
-| `exception_type` | Exception type name that triggered the retry |
+For a refactoring detection run:
 
-### Background Service Spans
+```
+ExecuteConsolidation
+├── RefactoringDetection.Clone
+├── RefactoringDetection.HotspotAnalysis
+├── RefactoringDetection.AgentExecution
+├── RefactoringDetection.AdversarialReview
+└── RefactoringDetection.CreateIssues
+```
 
-`DrainCycle` spans are root spans (no parent) because `JobQueueDrainService` runs as a `BackgroundService` with no ambient `Activity.Current`. They appear as independent traces in observability backends.
+For a harness suggestion run:
+
+```
+ExecuteConsolidation
+├── HarnessSuggestion.AgentExecution
+├── HarnessSuggestion.WriteToFile
+└── HarnessSuggestion.AdversarialReview
+```
 
 ## Planned
 
 The following instrumentation is planned for future implementation:
 
-- **Shared infrastructure step tracing** — Spans for brain sync, workspace setup, and git operations that are currently untraced
+- **PipelineLoopService metrics** — Counters for poll cycles, issues found, dispatch decisions, and backoff events
