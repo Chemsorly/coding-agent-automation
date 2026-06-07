@@ -126,7 +126,7 @@ KiroCliLib/
 │   ├── FileSystemMonitor.cs    — Before/after workspace snapshot comparison
 │   ├── CallbackHandler.cs      — Event registration and invocation with error isolation
 │   ├── AnsiStripper.cs         — Strips ANSI escape codes from output
-│   └── KiroCliExitCodes.cs     — Well-known exit code constants
+│   └── ExitCodes.cs             — Well-known exit code constants
 └── Models/
     ├── KiroState.cs            — Execution state enum (9 states)
     ├── CallbackContext.cs      — Context passed to callbacks
@@ -164,9 +164,9 @@ ExecutePromptAsync(prompt, workspace, useResume, ct)
 
 | Code | Constant | Meaning |
 |------|----------|---------|
-| 0 | `KiroCliExitCodes.Success` | Prompt completed successfully |
-| 1 | `KiroCliExitCodes.GeneralFailure` | Unspecified error |
-| 130 | `KiroCliExitCodes.Cancelled` | Execution was cancelled (SIGINT) |
+| 0 | `ExitCodes.Success` | Prompt completed successfully |
+| 1 | `ExitCodes.GeneralFailure` | Unspecified error |
+| 130 | `ExitCodes.Cancelled` | Execution was cancelled (SIGINT) |
 
 ## Execution States
 
