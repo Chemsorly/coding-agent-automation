@@ -14,12 +14,19 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `pipeline.jobs.completed` | Counter | — | `run_type` | Incremented when a job completes successfully |
 | `pipeline.jobs.failed` | Counter | — | `run_type` | Incremented when a job fails |
 | `pipeline.jobs.duration` | Histogram | seconds | `run_type` | Duration of the entire pipeline job |
+| `pipeline.loop.polls` | Counter | — | `result` | Incremented on each poll cycle (`success` or `failure`) |
+| `pipeline.loop.issues_found` | Counter | — | — | Incremented by the number of issues/PRs/epics discovered per poll cycle |
+| `pipeline.loop.dispatch_decisions` | Counter | — | `decision` | Incremented for each dispatch decision made by the loop |
+| `pipeline.loop.backoff_events` | Counter | — | — | Incremented when a template poll failure triggers backoff escalation |
+| `pipeline.loop.circuit_breaker_trips` | Counter | — | — | Incremented when the circuit breaker trips (all templates failing) |
 
 ### Tag Schema
 
 | Tag | Values | Description |
 |-----|--------|-------------|
 | `run_type` | `implementation`, `review`, `decomposition` | Pipeline run type (lowercased) |
+| `result` | `success`, `failure` | Poll cycle outcome |
+| `decision` | `dispatched`, `skipped_already_processing`, `skipped_dependency_blocked`, `skipped_no_agent`, `skipped_max_runs`, `skipped_filtered_by_label` | Dispatch decision reason |
 
 ### Histogram Bucket Boundaries
 
@@ -38,16 +45,11 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | Span Name | Tags | Emitter |
 |-----------|------|---------|
 | `ExecutePipeline` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.final_step`, `pipeline.agent_id`* | Top-level span wrapping the full pipeline execution |
-| `CloneRepository` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.repository` | Repository clone into workspace |
-| `CreateBranch` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.branch_name` | Branch creation or checkout |
-| `SyncBrainPreRun` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.brain_sync.skipped` | Brain repository sync (pre-run) |
-| `RunEnvironmentSetup` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Environment setup commands |
-| `CloneProjectRepositories` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Additional project repo clones |
+| `CreatePullRequest` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR creation step |
 | `AnalyzeIssue` | `pipeline.run_id`, `pipeline.issue`, `pipeline.analysis.continue` | Issue analysis (confidence gate) |
 | `GenerateCode` | `pipeline.run_id`, `pipeline.issue`, `pipeline.is_rework` | Code generation / rework |
 | `RunQualityGates` | `pipeline.run_id`, `pipeline.issue` | Quality gate execution |
 | `ReviewCode` | `pipeline.run_id`, `pipeline.issue` | Multi-agent code review |
-| `CreatePullRequest` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR creation step |
 | `PostReviewFindings` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting review findings to PR |
 | `ExtractLinkedIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Extracting linked issues from PR |
 | `Decomposition` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Sub-issue generation (Phase 2) |
@@ -67,9 +69,6 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `pipeline.run_type` | `Implementation`, `Review`, `Decomposition` | Run type (**PascalCase** — differs from metric tags) |
 | `pipeline.final_step` | step name or `Cancelled` | Last step reached before completion |
 | `pipeline.agent_id` | hostname | Agent container hostname (agent-side only) |
-| `pipeline.repository` | string | Repository name (on `CloneRepository` span) |
-| `pipeline.branch_name` | string | Branch name created or checked out (on `CreateBranch` span) |
-| `pipeline.brain_sync.skipped` | `true`/`false` | Whether brain sync was skipped due to missing provider (on `SyncBrainPreRun` span) |
 | `pipeline.analysis.continue` | `true`/`false` | Whether analysis passed the confidence gate |
 | `pipeline.is_rework` | `true`/`false` | Whether this is a rework run (linked PR exists) |
 | `pipeline.pr.is_draft` | `true`/`false` | Whether the PR was created as a draft |
@@ -176,4 +175,4 @@ ExecutePipeline
 
 The following instrumentation is planned for future implementation:
 
-- **PipelineLoopService metrics** — Counters for poll cycles, issues found, dispatch decisions, and backoff events
+- **Shared infrastructure step tracing** — Spans for brain sync, workspace setup, and git operations that are currently untraced

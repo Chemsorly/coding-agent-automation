@@ -47,6 +47,28 @@ public static class PipelineTelemetry
     public static readonly Histogram<double> QueueWaitTime = Meter.CreateHistogram<double>(
         "dispatch.queue.wait_time", "s", "Time a job spent waiting in the dispatch queue");
 
+    // Loop metrics
+    public static readonly Counter<long> LoopPolls = Meter.CreateCounter<long>(
+        "pipeline.loop.polls", "{poll}", "Pipeline loop poll attempts");
+    public static readonly Counter<long> LoopIssuesFound = Meter.CreateCounter<long>(
+        "pipeline.loop.issues_found", "{issue}", "Issues found per poll cycle");
+    public static readonly Counter<long> LoopDispatchDecisions = Meter.CreateCounter<long>(
+        "pipeline.loop.dispatch_decisions", "{decision}", "Dispatch decisions made by the loop");
+    public static readonly Counter<long> LoopBackoffEvents = Meter.CreateCounter<long>(
+        "pipeline.loop.backoff_events", "{event}", "Backoff escalations due to poll failures");
+    public static readonly Counter<long> LoopCircuitBreakerTrips = Meter.CreateCounter<long>(
+        "pipeline.loop.circuit_breaker_trips", "{trip}", "Circuit breaker trip events");
+
+    internal static class LoopDecisions
+    {
+        public const string Dispatched = "dispatched";
+        public const string SkippedAlreadyProcessing = "skipped_already_processing";
+        public const string SkippedDependencyBlocked = "skipped_dependency_blocked";
+        public const string SkippedNoAgent = "skipped_no_agent";
+        public const string SkippedMaxRuns = "skipped_max_runs";
+        public const string SkippedFilteredByLabel = "skipped_filtered_by_label";
+    }
+
     internal static class QualityGateNames
     {
         public const string Compilation = "compilation";
