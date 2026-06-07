@@ -1107,7 +1107,7 @@ public class LocalPipelineExecutorTests : IDisposable
     // DisposeAsync is skipped. Use 'await using' declarations for reliable cleanup.
 
     [Fact]
-    public async Task BuildAgentStepPipeline_Returns12Steps()
+    public async Task BuildAgentStepPipeline_Returns13Steps()
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
