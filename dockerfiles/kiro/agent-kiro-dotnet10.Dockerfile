@@ -55,10 +55,7 @@ RUN mkdir -p /home/ubuntu/.local/bin /home/ubuntu/.kiro && \
 # Install Kiro CLI as non-root user
 USER ubuntu
 ENV PATH="/home/ubuntu/.local/bin:${PATH}"
-# Pinned — 2.1.x has a subagent deadlock in --no-interactive mode
-# (parent agent hangs indefinitely after dispatching parallel subagents, 2/3 runs affected)
-# Tested: 2.1.0 and 2.1.1 both reproduce. Falling back to 2.0.1.
-ARG KIRO_CLI_VERSION=2.0.1
+ARG KIRO_CLI_VERSION=2.6.0
 RUN KIRO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") && \
     curl --proto '=https' --tlsv1.2 -sSf \
         "https://desktop-release.q.us-east-1.amazonaws.com/${KIRO_CLI_VERSION}/kirocli-${KIRO_ARCH}-linux.zip" \
