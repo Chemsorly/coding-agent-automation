@@ -29,42 +29,28 @@ public sealed partial class AgentJobDispatcher
             return false;
         }
 
-        // Resolve required labels for agent matching
-        var config = await _configStore.LoadPipelineConfigAsync(ct);
-        var repoConfig = await _configStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
-        var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
-
-        // Try to find an idle agent
-        var agent = _dispatcher.SelectAgent(requiredLabels);
-
-        if (agent != null)
-        {
-            // Agent available — dispatch immediately
-            return await DispatchToAgentAsync(
+        return await TryDispatchCoreAsync(
+            issueIdentifier,
+            repoProviderId,
+            (agent, requiredLabels, token) => DispatchToAgentAsync(
                 agent, issueIdentifier, issueProviderId, repoProviderId,
-                brainProviderId, pipelineProviderId, initiatedBy, requiredLabels, ct,
-                project: project);
-        }
-
-        // No idle agent — enqueue for later dispatch
-        var enqueued = _dispatcher.EnqueueJob(new PendingJob
-        {
-            IssueIdentifier = issueIdentifier,
-            IssueTitle = issueTitle,
-            IssueProviderId = issueProviderId,
-            RepoProviderId = repoProviderId,
-            BrainProviderId = brainProviderId,
-            PipelineProviderId = pipelineProviderId,
-            EnqueuedAt = DateTimeOffset.UtcNow,
-            InitiatedBy = initiatedBy,
-            RequiredLabels = requiredLabels,
-            Project = project
-        });
-
-        if (enqueued)
-            _logger.Information("Issue {IssueIdentifier} enqueued for dispatch (no idle agents)", issueIdentifier);
-
-        return enqueued;
+                brainProviderId, pipelineProviderId, initiatedBy, requiredLabels, token,
+                project: project),
+            requiredLabels => new PendingJob
+            {
+                IssueIdentifier = issueIdentifier,
+                IssueTitle = issueTitle,
+                IssueProviderId = issueProviderId,
+                RepoProviderId = repoProviderId,
+                BrainProviderId = brainProviderId,
+                PipelineProviderId = pipelineProviderId,
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = initiatedBy,
+                RequiredLabels = requiredLabels,
+                Project = project
+            },
+            "Issue {Identifier} enqueued for dispatch (no idle agents)",
+            ct);
     }
 
     /// <inheritdoc />
@@ -79,46 +65,32 @@ public sealed partial class AgentJobDispatcher
             return false;
         }
 
-        // Resolve required labels for agent matching
-        var config = await _configStore.LoadPipelineConfigAsync(ct);
-        var repoConfig = await _configStore.GetProviderConfigByIdAsync(request.RepoProviderId, ProviderKind.Repository, ct);
-        var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
-
-        // Try to find an idle agent
-        var agent = _dispatcher.SelectAgent(requiredLabels);
-
-        if (agent != null)
-        {
-            // Agent available — dispatch immediately
-            return await DispatchReviewToAgentAsync(
-                agent, request, requiredLabels, ct, project: project);
-        }
-
-        // No idle agent — enqueue for later dispatch
-        var enqueued = _dispatcher.EnqueueJob(new PendingJob
-        {
-            IssueIdentifier = request.PrIdentifier,
-            IssueTitle = request.PrTitle,
-            IssueProviderId = request.IssueProviderId,
-            RepoProviderId = request.RepoProviderId,
-            BrainProviderId = request.BrainProviderId,
-            PipelineProviderId = null,
-            EnqueuedAt = DateTimeOffset.UtcNow,
-            InitiatedBy = request.InitiatedBy,
-            RequiredLabels = requiredLabels,
-            RunType = PipelineRunType.Review,
-            PrBranchName = request.PrBranchName,
-            PrDescription = request.PrDescription,
-            PrAuthor = request.PrAuthor,
-            PrUrl = request.PrUrl,
-            PrTargetBranch = request.PrTargetBranch,
-            Project = project
-        });
-
-        if (enqueued)
-            _logger.Information("PR review {PrIdentifier} enqueued for dispatch (no idle agents)", request.PrIdentifier);
-
-        return enqueued;
+        return await TryDispatchCoreAsync(
+            request.PrIdentifier,
+            request.RepoProviderId,
+            (agent, requiredLabels, token) => DispatchReviewToAgentAsync(
+                agent, request, requiredLabels, token, project: project),
+            requiredLabels => new PendingJob
+            {
+                IssueIdentifier = request.PrIdentifier,
+                IssueTitle = request.PrTitle,
+                IssueProviderId = request.IssueProviderId,
+                RepoProviderId = request.RepoProviderId,
+                BrainProviderId = request.BrainProviderId,
+                PipelineProviderId = null,
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = request.InitiatedBy,
+                RequiredLabels = requiredLabels,
+                RunType = PipelineRunType.Review,
+                PrBranchName = request.PrBranchName,
+                PrDescription = request.PrDescription,
+                PrAuthor = request.PrAuthor,
+                PrUrl = request.PrUrl,
+                PrTargetBranch = request.PrTargetBranch,
+                Project = project
+            },
+            "PR review {Identifier} enqueued for dispatch (no idle agents)",
+            ct);
     }
 
     /// <inheritdoc />
@@ -150,45 +122,57 @@ public sealed partial class AgentJobDispatcher
             return false;
         }
 
-        // Resolve required labels for agent matching
+        return await TryDispatchCoreAsync(
+            epicIdentifier,
+            repoProviderId,
+            (agent, requiredLabels, token) => DispatchDecompositionToAgentAsync(
+                agent, epicIdentifier, epicTitle, phaseType,
+                issueProviderId, repoProviderId, brainProviderId,
+                initiatedBy, requiredLabels, token,
+                decompositionSource: decompositionSource,
+                project: project),
+            requiredLabels => new PendingJob
+            {
+                IssueIdentifier = epicIdentifier,
+                IssueTitle = epicTitle,
+                IssueProviderId = issueProviderId,
+                RepoProviderId = repoProviderId,
+                BrainProviderId = brainProviderId,
+                PipelineProviderId = null,
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = initiatedBy,
+                RequiredLabels = requiredLabels,
+                RunType = phaseType,
+                DecompositionSource = decompositionSource,
+                Project = project
+            },
+            "Decomposition for {Identifier} enqueued for dispatch (no idle agents)",
+            ct);
+    }
+
+    private async Task<bool> TryDispatchCoreAsync(
+        string identifier,
+        string repoProviderId,
+        Func<AgentEntry, IReadOnlyList<string>, CancellationToken, Task<bool>> dispatchToAgent,
+        Func<IReadOnlyList<string>, PendingJob> buildPendingJob,
+        string logMessageTemplate,
+        CancellationToken ct)
+    {
         var config = await _configStore.LoadPipelineConfigAsync(ct);
-        var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == repoProviderId);
+        var repoConfig = await _configStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
         var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
 
-        // Try to find an idle agent
         var agent = _dispatcher.SelectAgent(requiredLabels);
 
         if (agent != null)
         {
-            // Agent available — dispatch immediately
-            return await DispatchDecompositionToAgentAsync(
-                agent, epicIdentifier, epicTitle, phaseType,
-                issueProviderId, repoProviderId, brainProviderId,
-                initiatedBy, requiredLabels, ct,
-                decompositionSource: decompositionSource,
-                project: project);
+            return await dispatchToAgent(agent, requiredLabels, ct);
         }
 
-        // No idle agent — enqueue for later dispatch
-        var enqueued = _dispatcher.EnqueueJob(new PendingJob
-        {
-            IssueIdentifier = epicIdentifier,
-            IssueTitle = epicTitle,
-            IssueProviderId = issueProviderId,
-            RepoProviderId = repoProviderId,
-            BrainProviderId = brainProviderId,
-            PipelineProviderId = null,
-            EnqueuedAt = DateTimeOffset.UtcNow,
-            InitiatedBy = initiatedBy,
-            RequiredLabels = requiredLabels,
-            RunType = phaseType,
-            DecompositionSource = decompositionSource,
-            Project = project
-        });
+        var enqueued = _dispatcher.EnqueueJob(buildPendingJob(requiredLabels));
 
         if (enqueued)
-            _logger.Information("Decomposition {Phase} for epic {EpicIdentifier} enqueued for dispatch (no idle agents)", phaseType, epicIdentifier);
+            _logger.Information(logMessageTemplate, identifier);
 
         return enqueued;
     }
