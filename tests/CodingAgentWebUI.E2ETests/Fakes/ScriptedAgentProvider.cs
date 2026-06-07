@@ -14,6 +14,8 @@ public sealed class ScriptedAgentProvider : IAgentProvider
 
     public AgentProviderType ProviderType => AgentProviderType.KiroCli;
 
+    public bool SupportsParallelExecution => false;
+
     public IReadOnlyList<string> SteeringBlacklistPaths { get; } = [".kiro"];
 
     /// <summary>

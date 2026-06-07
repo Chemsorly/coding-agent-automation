@@ -128,6 +128,22 @@ internal partial class AgentPhaseExecutor
             _logger.Warning(ex, "Pipeline {RunId} failed to write issue context file, review agents may lack issue context", run.RunId);
         }
 
+        // Determine if parallel execution is possible:
+        // - Isolated mode (no session sharing)
+        // - Multiple agents (no point parallelizing 1 agent)
+        // - Provider supports concurrent execution (SupportsParallelExecution)
+        var isolated = config.CodeReview.ReviewIsolation == ReviewIsolation.Isolated;
+        var useParallel = isolated
+                          && agents.Count > 1
+                          && context.AgentProvider.SupportsParallelExecution;
+
+        if (useParallel)
+        {
+            _logger.Information(
+                "Pipeline {RunId} parallel review enabled for {AgentCount} agents (provider={ProviderType})",
+                run.RunId, agents.Count, context.AgentProvider.ProviderType);
+        }
+
         for (var i = 0; i < maxIterations; i++)
         {
             run.CodeReviewIterationInProgress = i + 1;
@@ -135,12 +151,14 @@ internal partial class AgentPhaseExecutor
             _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
                 run.RunId, i + 1, maxIterations);
 
-            context.Callbacks.EmitOutputLine($"🔍 Starting code review iteration {i + 1}/{maxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
+            context.Callbacks.EmitOutputLine(useParallel
+                ? $"🔍 Starting code review iteration {i + 1}/{maxIterations} — parallel (agents: {string.Join(", ", agents.Select(a => a.Name))})"
+                : $"🔍 Starting code review iteration {i + 1}/{maxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
 
             run.ChatHistory.Enqueue(new ChatEntry
             {
                 Role = ChatRole.System,
-                Content = $"Code review iteration {i + 1}/{config.CodeReview.MaxIterations} starting..."
+                Content = $"Code review iteration {i + 1}/{config.CodeReview.MaxIterations} starting{(useParallel ? " (parallel)" : "")}..."
             });
             context.Callbacks.NotifyChange();
 
@@ -150,87 +168,17 @@ internal partial class AgentPhaseExecutor
 
             try
             {
-                for (var a = 0; a < agents.Count; a++)
+                if (useParallel)
                 {
-                    var agent = agents[a];
-                    _logger.Information("Pipeline {RunId} iteration {Iteration}: running review agent '{AgentName}' ({AgentIndex}/{AgentCount})",
-                        run.RunId, i + 1, agent.Name, a + 1, agents.Count);
-
-                    run.ChatHistory.Enqueue(new ChatEntry
-                    {
-                        Role = ChatRole.System,
-                        Content = $"Review agent '{agent.Name}' ({a + 1}/{agents.Count}) starting..."
-                    });
-                    context.Callbacks.NotifyChange();
-
-                    var agentFindingsRelativePath = AgentWorkspacePaths.GetReviewFindingsFilePath(agent.Name);
-                    var findingsFilePath = Path.Combine(run.WorkspacePath!, agentFindingsRelativePath);
-                    if (File.Exists(findingsFilePath))
-                        File.Delete(findingsFilePath);
-
-                    var isolated = config.CodeReview.ReviewIsolation == ReviewIsolation.Isolated;
-                    var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue, agentFindingsRelativePath, isolated: isolated, inlineCommentsEnabled: config.CodeReview.InlineComments.Enabled);
-                    _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, i + 1, agent.Name, reviewPrompt);
-
-                    var reviewResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                        context.AgentProvider,
-                        new AgentRequest
-                        {
-                            Prompt = reviewPrompt,
-                            WorkspacePath = run.WorkspacePath!,
-                            Timeout = config.AgentTimeout,
-                            UseResume = !isolated
-                        },
-                        run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,
-                        line => context.Callbacks.EmitOutputLine(line));
-
-                    run.AccumulateTokenUsage(reviewResult);
-                    agentsRun.Add(agent.Name);
-
-                    string fullReviewText;
-                    IReadOnlyList<string> findingsLines;
-                    if (File.Exists(findingsFilePath))
-                    {
-                        fullReviewText = await File.ReadAllTextAsync(findingsFilePath, ct);
-                        findingsLines = fullReviewText.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-                        _logger.Information("Pipeline {RunId} review agent '{AgentName}' wrote findings to {FindingsFile} ({Length} chars)",
-                            run.RunId, agent.Name, findingsFilePath, fullReviewText.Length);
-                    }
-                    else
-                    {
-                        _logger.Warning("Pipeline {RunId} review agent '{AgentName}' did not write findings file at {FindingsFile}",
-                            run.RunId, agent.Name, findingsFilePath);
-                        fullReviewText = "";
-                        findingsLines = Array.Empty<string>();
-                    }
-
-                    var severityCounts = CodeReview.SeverityParser.Parse(findingsLines);
-                    run.AddCodeReviewCounts(severityCounts.Critical, severityCounts.Warning, severityCounts.Suggestion);
-                    iterationCriticalCount += severityCounts.Critical;
-
-                    if (!string.IsNullOrEmpty(fullReviewText))
-                    {
-                        if (iterationFindings.Length > 0)
-                            iterationFindings.AppendLine($"--- Agent: {agent.Name} ---");
-                        iterationFindings.AppendLine(fullReviewText);
-                        run.CodeReviewAgentFindings[agent.Name] = fullReviewText;
-                    }
-
-                    _logger.Information(
-                        "Pipeline {RunId} review agent '{AgentName}' (iteration {Iteration}) completed with exit code {ExitCode}. " +
-                        "CodeReviewFindings: {Critical} critical, {Warning} warning, {Suggestion} suggestion",
-                        run.RunId, agent.Name, i + 1, reviewResult.ExitCode,
-                        severityCounts.Critical, severityCounts.Warning, severityCounts.Suggestion);
-
-                    run.ChatHistory.Enqueue(new ChatEntry
-                    {
-                        Role = ChatRole.Agent,
-                        Content = $"[Code review {i + 1}/{config.CodeReview.MaxIterations} — {agent.Name}] " +
-                                  (reviewResult.OutputLines.Count > 0
-                                      ? string.Join(Environment.NewLine, reviewResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
-                                      : PipelineConstants.NoOutputFallback)
-                    });
-                    context.Callbacks.NotifyChange();
+                    iterationCriticalCount = await ExecuteReviewAgentsParallelAsync(
+                        context, agents, i, isolated,
+                        iterationFindings, agentsRun, ct);
+                }
+                else
+                {
+                    iterationCriticalCount = await ExecuteReviewAgentsSequentialAsync(
+                        context, agents, i, isolated,
+                        iterationFindings, agentsRun, ct);
                 }
 
                 run.CodeReviewAgentsRun = agentsRun;
@@ -294,6 +242,246 @@ internal partial class AgentPhaseExecutor
         }
 
         run.CodeReviewIterationInProgress = 0;
+    }
+
+    /// <summary>
+    /// Executes review agents sequentially (original behavior).
+    /// Used for Kiro CLI or when parallel review is disabled.
+    /// Returns the number of critical findings in this iteration.
+    /// </summary>
+    private async Task<int> ExecuteReviewAgentsSequentialAsync(
+        AgentPhaseContext context,
+        IReadOnlyList<ReviewAgentConfig> agents,
+        int iterationIndex,
+        bool isolated,
+        System.Text.StringBuilder iterationFindings,
+        List<string> agentsRun,
+        CancellationToken ct)
+    {
+        var run = context.Run;
+        var config = context.Config;
+        var criticalCount = 0;
+
+        for (var a = 0; a < agents.Count; a++)
+        {
+            var agent = agents[a];
+            _logger.Information("Pipeline {RunId} iteration {Iteration}: running review agent '{AgentName}' ({AgentIndex}/{AgentCount})",
+                run.RunId, iterationIndex + 1, agent.Name, a + 1, agents.Count);
+
+            run.ChatHistory.Enqueue(new ChatEntry
+            {
+                Role = ChatRole.System,
+                Content = $"Review agent '{agent.Name}' ({a + 1}/{agents.Count}) starting..."
+            });
+            context.Callbacks.NotifyChange();
+
+            var result = await ExecuteSingleReviewAgentAsync(context, agent, iterationIndex, isolated, ct);
+            agentsRun.Add(agent.Name);
+
+            run.AccumulateTokenUsage(result.AgentResult);
+            run.AddCodeReviewCounts(result.Severity.Critical, result.Severity.Warning, result.Severity.Suggestion);
+            criticalCount += result.Severity.Critical;
+
+            if (!string.IsNullOrEmpty(result.FindingsText))
+            {
+                if (iterationFindings.Length > 0)
+                    iterationFindings.AppendLine($"--- Agent: {agent.Name} ---");
+                iterationFindings.AppendLine(result.FindingsText);
+                run.CodeReviewAgentFindings[agent.Name] = result.FindingsText;
+            }
+
+            _logger.Information(
+                "Pipeline {RunId} review agent '{AgentName}' (iteration {Iteration}) completed with exit code {ExitCode}. " +
+                "CodeReviewFindings: {Critical} critical, {Warning} warning, {Suggestion} suggestion",
+                run.RunId, agent.Name, iterationIndex + 1, result.AgentResult.ExitCode,
+                result.Severity.Critical, result.Severity.Warning, result.Severity.Suggestion);
+
+            run.ChatHistory.Enqueue(new ChatEntry
+            {
+                Role = ChatRole.Agent,
+                Content = $"[Code review {iterationIndex + 1}/{config.CodeReview.MaxIterations} — {agent.Name}] " +
+                          (result.AgentResult.OutputLines.Count > 0
+                              ? string.Join(Environment.NewLine, result.AgentResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
+                              : PipelineConstants.NoOutputFallback)
+            });
+            context.Callbacks.NotifyChange();
+        }
+
+        return criticalCount;
+    }
+
+    /// <summary>
+    /// Executes review agents in parallel (OpenCode only).
+    /// Each agent runs in its own fresh session since UseResume=false creates
+    /// independent server-side sessions via the OpenCode HTTP API.
+    /// Returns the number of critical findings in this iteration.
+    /// </summary>
+    private async Task<int> ExecuteReviewAgentsParallelAsync(
+        AgentPhaseContext context,
+        IReadOnlyList<ReviewAgentConfig> agents,
+        int iterationIndex,
+        bool isolated,
+        System.Text.StringBuilder iterationFindings,
+        List<string> agentsRun,
+        CancellationToken ct)
+    {
+        var run = context.Run;
+        var config = context.Config;
+
+        context.Callbacks.EmitOutputLine($"⚡ Running {agents.Count} review agents in parallel...");
+
+        // Launch all agents concurrently
+        var tasks = agents.Select(agent => ExecuteSingleReviewAgentSafeAsync(context, agent, iterationIndex, isolated, ct)).ToList();
+        var results = await Task.WhenAll(tasks);
+
+        // Merge results sequentially (deterministic ordering by agent index)
+        var localCriticalCount = 0;
+        for (var a = 0; a < agents.Count; a++)
+        {
+            var agent = agents[a];
+            var result = results[a];
+
+            agentsRun.Add(agent.Name);
+
+            if (result.Failed)
+            {
+                _logger.Warning("Pipeline {RunId} parallel review agent '{AgentName}' failed: {Error}",
+                    run.RunId, agent.Name, result.Error);
+                run.ChatHistory.Enqueue(new ChatEntry
+                {
+                    Role = ChatRole.System,
+                    Content = $"Review agent '{agent.Name}' failed: {result.Error}"
+                });
+                continue;
+            }
+
+            run.AccumulateTokenUsage(result.AgentResult);
+            run.AddCodeReviewCounts(result.Severity.Critical, result.Severity.Warning, result.Severity.Suggestion);
+            localCriticalCount += result.Severity.Critical;
+
+            if (!string.IsNullOrEmpty(result.FindingsText))
+            {
+                if (iterationFindings.Length > 0)
+                    iterationFindings.AppendLine($"--- Agent: {agent.Name} ---");
+                iterationFindings.AppendLine(result.FindingsText);
+                run.CodeReviewAgentFindings[agent.Name] = result.FindingsText;
+            }
+
+            _logger.Information(
+                "Pipeline {RunId} parallel review agent '{AgentName}' (iteration {Iteration}) completed with exit code {ExitCode}. " +
+                "CodeReviewFindings: {Critical} critical, {Warning} warning, {Suggestion} suggestion",
+                run.RunId, agent.Name, iterationIndex + 1, result.AgentResult.ExitCode,
+                result.Severity.Critical, result.Severity.Warning, result.Severity.Suggestion);
+
+            run.ChatHistory.Enqueue(new ChatEntry
+            {
+                Role = ChatRole.Agent,
+                Content = $"[Code review {iterationIndex + 1}/{config.CodeReview.MaxIterations} — {agent.Name}] " +
+                          (result.AgentResult.OutputLines.Count > 0
+                              ? string.Join(Environment.NewLine, result.AgentResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
+                              : PipelineConstants.NoOutputFallback)
+            });
+        }
+
+        context.Callbacks.NotifyChange();
+
+        return localCriticalCount;
+    }
+
+    /// <summary>
+    /// Wraps <see cref="ExecuteSingleReviewAgentAsync"/> with exception handling for parallel execution.
+    /// Returns a failed result instead of throwing, so one agent failure doesn't cancel others.
+    /// </summary>
+    private async Task<ReviewAgentResult> ExecuteSingleReviewAgentSafeAsync(
+        AgentPhaseContext context, ReviewAgentConfig agent, int iterationIndex, bool isolated, CancellationToken ct)
+    {
+        try
+        {
+            return await ExecuteSingleReviewAgentAsync(context, agent, iterationIndex, isolated, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // Propagate cancellation — all parallel tasks should stop
+        }
+        catch (Exception ex)
+        {
+            return ReviewAgentResult.Failure(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Executes a single review agent and returns its result.
+    /// Shared by both sequential and parallel paths.
+    /// </summary>
+    private async Task<ReviewAgentResult> ExecuteSingleReviewAgentAsync(
+        AgentPhaseContext context, ReviewAgentConfig agent, int iterationIndex, bool isolated, CancellationToken ct)
+    {
+        var run = context.Run;
+        var config = context.Config;
+
+        var agentFindingsRelativePath = AgentWorkspacePaths.GetReviewFindingsFilePath(agent.Name);
+        var findingsFilePath = Path.Combine(run.WorkspacePath!, agentFindingsRelativePath);
+        if (File.Exists(findingsFilePath))
+            File.Delete(findingsFilePath);
+
+        var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue, agentFindingsRelativePath, isolated: isolated, inlineCommentsEnabled: config.CodeReview.InlineComments.Enabled);
+        _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, iterationIndex + 1, agent.Name, reviewPrompt);
+
+        var reviewResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+            context.AgentProvider,
+            new AgentRequest
+            {
+                Prompt = reviewPrompt,
+                WorkspacePath = run.WorkspacePath!,
+                Timeout = config.AgentTimeout,
+                UseResume = !isolated
+            },
+            run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,
+            line => context.Callbacks.EmitOutputLine($"[{agent.Name}] {line}"));
+
+        string findingsText;
+        IReadOnlyList<string> findingsLines;
+        if (File.Exists(findingsFilePath))
+        {
+            findingsText = await File.ReadAllTextAsync(findingsFilePath, ct);
+            findingsLines = findingsText.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            _logger.Information("Pipeline {RunId} review agent '{AgentName}' wrote findings to {FindingsFile} ({Length} chars)",
+                run.RunId, agent.Name, findingsFilePath, findingsText.Length);
+        }
+        else
+        {
+            _logger.Warning("Pipeline {RunId} review agent '{AgentName}' did not write findings file at {FindingsFile}",
+                run.RunId, agent.Name, findingsFilePath);
+            findingsText = "";
+            findingsLines = Array.Empty<string>();
+        }
+
+        var severityCounts = CodeReview.SeverityParser.Parse(findingsLines);
+
+        return new ReviewAgentResult
+        {
+            AgentResult = reviewResult,
+            FindingsText = findingsText,
+            Severity = severityCounts
+        };
+    }
+
+    /// <summary>Result of a single review agent execution.</summary>
+    private sealed class ReviewAgentResult
+    {
+        public required AgentResult AgentResult { get; init; }
+        public required string FindingsText { get; init; }
+        public required SeverityCounts Severity { get; init; }
+        public string? Error { get; init; }
+        public bool Failed => Error is not null;
+
+        public static ReviewAgentResult Failure(string error) => new()
+        {
+            AgentResult = new AgentResult { ExitCode = -1, OutputLines = [] },
+            FindingsText = "",
+            Severity = new SeverityCounts(0, 0, 0),
+            Error = error
+        };
     }
 
     /// <summary>

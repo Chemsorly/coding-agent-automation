@@ -10,6 +10,14 @@ public interface IAgentProvider : IAsyncDisposable
     AgentHealthStatus GetHealthStatus();
 
     /// <summary>
+    /// Whether this provider supports concurrent <see cref="ExecuteAsync"/> calls.
+    /// When true, the review step can run multiple agents in parallel via Task.WhenAll.
+    /// Providers with process-level session constraints (e.g., Kiro CLI's SQLite DB)
+    /// return false and fall back to sequential execution.
+    /// </summary>
+    bool SupportsParallelExecution { get; }
+
+    /// <summary>
     /// Provider-specific paths that should be excluded from commits when steering files are written.
     /// Merged with config.BlacklistedPaths at commit time.
     /// </summary>
