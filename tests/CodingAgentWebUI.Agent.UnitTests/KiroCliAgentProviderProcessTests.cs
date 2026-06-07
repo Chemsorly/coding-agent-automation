@@ -18,8 +18,8 @@ public class KiroCliAgentProviderProcessTests
     private readonly Mock<Serilog.ILogger> _mockLogger = new();
     private readonly Mock<IProcessStarter> _mockProcessStarter = new();
 
-    private KiroCliAgentProvider CreateProvider(string? model = null) =>
-        new(_mockOrchestrator.Object, _mockLogger.Object, model, "/usr/bin/fake", _mockProcessStarter.Object);
+    private KiroCliAgentProvider CreateProvider(string? model = null, AgentEffortLevel effort = AgentEffortLevel.Auto) =>
+        new(_mockOrchestrator.Object, _mockLogger.Object, model, "/usr/bin/fake", effort, _mockProcessStarter.Object);
 
     /// <summary>Starts a real process with controlled stdout, stderr, and exit code (cross-platform).</summary>
     private static Process StartShellProcess(string stdout = "", string stderr = "", int exitCode = 0)

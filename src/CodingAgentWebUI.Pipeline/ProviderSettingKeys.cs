@@ -37,6 +37,9 @@ public static class ProviderSettingKeys
     /// <summary>Model name/identifier for the agent (e.g., "claude-sonnet-4").</summary>
     public const string Model = "model";
 
+    /// <summary>Effort level for the agent (e.g., "low", "medium", "high", "xhigh", "max").</summary>
+    public const string Effort = "effort";
+
     /// <summary>Path to the agent CLI executable.</summary>
     public const string ExecutablePath = "executablePath";
 

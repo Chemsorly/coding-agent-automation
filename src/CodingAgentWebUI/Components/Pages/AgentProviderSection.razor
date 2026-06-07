@@ -20,7 +20,7 @@
                 <div class="provider-info">
                     <strong>@p.DisplayName</strong>
                     <span class="provider-type">@p.ProviderType</span>
-                    <span class="provider-detail">@p.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, "") · @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Timeout, "30"))min · model: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto"))</span>
+                    <span class="provider-detail">@p.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, "") · @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Timeout, "30"))min · model: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto")) · effort: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Effort, "auto"))</span>
                 </div>
                 <div class="provider-actions">
                     <button class="btn-edit" @onclick="() => EditProvider(p)">Edit</button>
@@ -105,6 +105,21 @@
                         }
                     </span>
                 </div>
+                @if (_form.ProviderType == "KiroCli")
+                {
+                    <div class="form-group">
+                        <label>Effort</label>
+                        <select @bind="_form.Effort">
+                            <option value="auto">auto — Use CLI default</option>
+                            <option value="low">low — Fast, concise responses</option>
+                            <option value="medium">medium — Balanced reasoning</option>
+                            <option value="high">high — Thorough analysis</option>
+                            <option value="xhigh">xhigh — Extended reasoning</option>
+                            <option value="max">max — Maximum depth</option>
+                        </select>
+                        <span class="form-hint">Controls how much reasoning the model applies. Higher effort = deeper analysis but slower and more expensive.</span>
+                    </div>
+                }
                 <div class="form-buttons">
                     <button class="btn-save" @onclick="SaveProvider">Save</button>
                     <button class="btn-cancel" @onclick="() => _showForm = false">Cancel</button>
@@ -190,7 +205,8 @@
             BaseUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseUrl, AgentDefaults.OpenCodeBaseUrl),
             TimeoutMinutes = int.TryParse(p.Settings.GetValueOrDefault(ProviderSettingKeys.Timeout, "30"), out var t) ? t : 30,
             AgentName = p.Settings.GetValueOrDefault(ProviderSettingKeys.AgentName, ""),
-            Model = p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto")
+            Model = p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto"),
+            Effort = p.Settings.GetValueOrDefault(ProviderSettingKeys.Effort, "auto")
         };
         _availableModels.Clear();
         _showForm = true;
@@ -222,6 +238,8 @@
         {
             settings[ProviderSettingKeys.ExecutablePath] = _form.ExecutablePath;
             settings[ProviderSettingKeys.AgentName] = _form.AgentName;
+            var effort = string.IsNullOrWhiteSpace(_form.Effort) ? "auto" : _form.Effort.Trim();
+            settings[ProviderSettingKeys.Effort] = effort;
         }
         else
         {
@@ -297,6 +315,7 @@
         public int TimeoutMinutes { get; set; } = 30;
         public string AgentName { get; set; } = "default";
         public string Model { get; set; } = "auto";
+        public string Effort { get; set; } = "auto";
     }
 
     public async ValueTask DisposeAsync()
