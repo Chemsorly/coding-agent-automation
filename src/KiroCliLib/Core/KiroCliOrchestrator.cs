@@ -10,11 +10,11 @@ namespace KiroCliLib.Core;
 public class KiroCliOrchestrator : IKiroCliOrchestrator
 {
     private readonly Configuration.Configuration _config;
-    private readonly CallbackHandler _callbackHandler;
+    private readonly CallbackHandler? _callbackHandler;
     private readonly ILogger _logger;
     private readonly Func<IProcessWrapper> _processWrapperFactory;
-    private readonly Func<IOutputParser> _outputParserFactory;
-    private readonly Func<IFileSystemMonitor> _fileSystemMonitorFactory;
+    private readonly Func<IOutputParser>? _outputParserFactory;
+    private readonly Func<IFileSystemMonitor>? _fileSystemMonitorFactory;
     private volatile IProcessWrapper? _activeProcess;
     private bool _disposed;
 
@@ -56,25 +56,22 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
     /// Creates a new orchestrator with explicit component factories for testability.
     /// </summary>
     /// <param name="config">The configuration for the CLI.</param>
-    /// <param name="callbackHandler">The callback handler for state notifications.</param>
+    /// <param name="callbackHandler">The callback handler for state notifications. When null, output parsing, filesystem monitoring, and callback invocations are skipped.</param>
     /// <param name="logger">The logger instance.</param>
     /// <param name="processWrapperFactory">Factory to create <see cref="IProcessWrapper"/> instances.</param>
-    /// <param name="outputParserFactory">Factory to create <see cref="IOutputParser"/> instances.</param>
-    /// <param name="fileSystemMonitorFactory">Factory to create <see cref="IFileSystemMonitor"/> instances.</param>
+    /// <param name="outputParserFactory">Factory to create <see cref="IOutputParser"/> instances. Only used when callbackHandler is non-null.</param>
+    /// <param name="fileSystemMonitorFactory">Factory to create <see cref="IFileSystemMonitor"/> instances. Only used when callbackHandler is non-null.</param>
     public KiroCliOrchestrator(
         Configuration.Configuration config,
-        CallbackHandler callbackHandler,
+        CallbackHandler? callbackHandler,
         ILogger logger,
         Func<IProcessWrapper> processWrapperFactory,
-        Func<IOutputParser> outputParserFactory,
-        Func<IFileSystemMonitor> fileSystemMonitorFactory)
+        Func<IOutputParser>? outputParserFactory = null,
+        Func<IFileSystemMonitor>? fileSystemMonitorFactory = null)
     {
         ArgumentNullException.ThrowIfNull(config);
-        ArgumentNullException.ThrowIfNull(callbackHandler);
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(processWrapperFactory);
-        ArgumentNullException.ThrowIfNull(outputParserFactory);
-        ArgumentNullException.ThrowIfNull(fileSystemMonitorFactory);
         _config = config;
         _callbackHandler = callbackHandler;
         _logger = logger;
@@ -87,14 +84,14 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
     /// Creates a new orchestrator with default concrete component implementations.
     /// Retained for backward compatibility.
     /// </summary>
-    public KiroCliOrchestrator(Configuration.Configuration config, CallbackHandler callbackHandler, ILogger logger)
+    public KiroCliOrchestrator(Configuration.Configuration config, CallbackHandler? callbackHandler, ILogger logger)
         : this(
             config,
             callbackHandler,
             logger,
             () => new ProcessWrapper(config, logger),
-            () => new OutputParser(),
-            () => new FileSystemMonitor())
+            callbackHandler != null ? () => new OutputParser() : null,
+            callbackHandler != null ? () => new FileSystemMonitor() : null)
     {
     }
 
@@ -121,8 +118,8 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
         using (processWrapper as IDisposable)
         {
             _activeProcess = processWrapper;
-            var outputParser = _outputParserFactory();
-            var fileSystemMonitor = _fileSystemMonitorFactory();
+            var outputParser = _callbackHandler != null ? _outputParserFactory?.Invoke() : null;
+            var fileSystemMonitor = _callbackHandler != null ? _fileSystemMonitorFactory?.Invoke() : null;
 
             var channel = onOutputLine != null
                 ? System.Threading.Channels.Channel.CreateUnbounded<string>(new System.Threading.Channels.UnboundedChannelOptions { SingleReader = true, SingleWriter = true })
@@ -131,21 +128,27 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
             processWrapper.OutputReceived += (_, line) =>
             {
                 _logger.Information("Kiro: {Line}", AnsiStripper.Strip(line));
-                outputParser.ProcessLine(line);
+                outputParser?.ProcessLine(line);
                 channel?.Writer.TryWrite(line);
             };
-            processWrapper.ErrorReceived += (_, line) => { _logger.Debug("Kiro (stderr): {Line}", AnsiStripper.Strip(line)); outputParser.ProcessLine(line); };
-            outputParser.StateChanged += (_, newState) =>
+            processWrapper.ErrorReceived += (_, line) => { _logger.Debug("Kiro (stderr): {Line}", AnsiStripper.Strip(line)); outputParser?.ProcessLine(line); };
+            if (outputParser != null && _callbackHandler != null)
             {
-                _logger.Debug("State changed to: {State}", newState);
-                _callbackHandler.Invoke(newState, new CallbackContext { State = newState, TestResults = outputParser.TestResults });
-            };
+                outputParser.StateChanged += (_, newState) =>
+                {
+                    _logger.Debug("State changed to: {State}", newState);
+                    _callbackHandler.Invoke(newState, new CallbackContext { State = newState, TestResults = outputParser.TestResults });
+                };
+            }
 
             try
             {
-                IReadOnlyList<FileSnapshot> beforeSnapshot;
-                try { beforeSnapshot = fileSystemMonitor.ScanWorkspace(workspaceDirectory); }
-                catch (Exception ex) { _logger.Warning(ex, "Failed to scan workspace before execution"); beforeSnapshot = Array.Empty<FileSnapshot>(); }
+                IReadOnlyList<FileSnapshot> beforeSnapshot = Array.Empty<FileSnapshot>();
+                if (fileSystemMonitor != null)
+                {
+                    try { beforeSnapshot = fileSystemMonitor.ScanWorkspace(workspaceDirectory); }
+                    catch (Exception ex) { _logger.Warning(ex, "Failed to scan workspace before execution"); }
+                }
 
                 // Start a background task to drain the channel and invoke the async callback
                 Task? drainTask = null;
@@ -167,35 +170,41 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
                 if (drainTask != null)
                     await drainTask;
 
-                IReadOnlyList<FileChange> fileChanges;
-                try
+                if (_callbackHandler != null)
                 {
-                    var afterSnapshot = fileSystemMonitor.ScanWorkspace(workspaceDirectory);
-                    fileChanges = fileSystemMonitor.CompareSnapshots(beforeSnapshot, afterSnapshot);
-                }
-                catch (Exception ex) { _logger.Warning(ex, "Failed to scan workspace after execution"); fileChanges = Array.Empty<FileChange>(); }
+                    IReadOnlyList<FileChange> fileChanges = Array.Empty<FileChange>();
+                    if (fileSystemMonitor != null)
+                    {
+                        try
+                        {
+                            var afterSnapshot = fileSystemMonitor.ScanWorkspace(workspaceDirectory);
+                            fileChanges = fileSystemMonitor.CompareSnapshots(beforeSnapshot, afterSnapshot);
+                        }
+                        catch (Exception ex) { _logger.Warning(ex, "Failed to scan workspace after execution"); }
+                    }
 
-                _callbackHandler.Invoke(KiroState.Completed, new CallbackContext
-                {
-                    State = KiroState.Completed,
-                    Message = fileChanges.Count > 0 ? $"{fileChanges.Count} file(s) changed" : "Execution completed successfully",
-                    Files = fileChanges.Select(fc => fc.Path).ToList(),
-                    FileChanges = fileChanges,
-                    TestResults = outputParser.TestResults,
-                    ExitCode = exitCode
-                });
+                    _callbackHandler.Invoke(KiroState.Completed, new CallbackContext
+                    {
+                        State = KiroState.Completed,
+                        Message = fileChanges.Count > 0 ? $"{fileChanges.Count} file(s) changed" : "Execution completed successfully",
+                        Files = fileChanges.Select(fc => fc.Path).ToList(),
+                        FileChanges = fileChanges,
+                        TestResults = outputParser?.TestResults,
+                        ExitCode = exitCode
+                    });
+                }
                 return exitCode;
             }
             catch (OperationCanceledException ex)
             {
                 _logger.Information(ex, "Kiro CLI execution was cancelled");
-                _callbackHandler.Invoke(KiroState.Error, new CallbackContext { State = KiroState.Error, Message = "Execution was cancelled" });
+                _callbackHandler?.Invoke(KiroState.Error, new CallbackContext { State = KiroState.Error, Message = "Execution was cancelled" });
                 return KiroCliExitCodes.Cancelled;
             }
             catch (Exception ex)
             {
                 _logger.Error(ex, "Kiro CLI execution failed");
-                _callbackHandler.Invoke(KiroState.Error, new CallbackContext { State = KiroState.Error, Message = $"Execution failed: {ex.Message}" });
+                _callbackHandler?.Invoke(KiroState.Error, new CallbackContext { State = KiroState.Error, Message = $"Execution failed: {ex.Message}" });
                 return KiroCliExitCodes.GeneralFailure;
             }
             finally
