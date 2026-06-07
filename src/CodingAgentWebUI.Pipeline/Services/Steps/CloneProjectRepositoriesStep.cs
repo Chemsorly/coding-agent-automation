@@ -30,6 +30,12 @@ internal sealed class CloneProjectRepositoriesStep : IPipelineStep
 
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("CloneProjectRepositories");
+        activity?.SetTag("pipeline.run_id", context.Run.RunId);
+        activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        activity?.SetTag("pipeline.run_type", context.Run.RunType.ToString());
+        PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
+
         // Skip if not cross-repo decomposition
         if (context.ProjectContext is null || context.AdditionalRepoProviders is null || context.AdditionalRepoProviders.Count == 0)
             return StepResult.Continue;

@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
@@ -11,8 +12,17 @@ internal sealed class SyncBrainPreRunStep : IPipelineStep
 
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("SyncBrainPreRun");
+        activity?.SetTag("pipeline.run_id", context.Run.RunId);
+        activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        activity?.SetTag("pipeline.run_type", context.Run.RunType.ToString());
+        PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
+
         if (context.BrainProvider is null || context.BrainSync is null)
+        {
+            activity?.SetTag("pipeline.brain_sync.skipped", true);
             return StepResult.Continue;
+        }
 
         context.Callbacks.TransitionTo(PipelineStep.SyncingBrainRepoPreRun);
         await context.TryNonCriticalAsync(
