@@ -584,7 +584,14 @@ public sealed class AgentWorkerService : BackgroundService
         {
             _logger.Warning("Rejecting consolidation job {JobId} — agent is busy with {ActiveJobId}",
                 message.JobId, busyWith);
-            // TODO: Send rejection notification to orchestrator (requires verifying orchestrator handles consolidation job rejections)
+            try
+            {
+                await _hubManager.Connection.InvokeAsync("JobRejected", message.JobId, "Agent is busy");
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to notify orchestrator of consolidation job rejection {JobId}", message.JobId);
+            }
             return;
         }
 
