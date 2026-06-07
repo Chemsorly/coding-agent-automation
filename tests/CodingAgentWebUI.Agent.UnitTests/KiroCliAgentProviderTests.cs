@@ -131,8 +131,17 @@ public class KiroCliAgentProviderTests
     {
         // When UseResume=false (default), an ephemeral orchestrator is used for parallel safety.
         // The shared orchestrator should NOT be called.
+        // The ephemeral orchestrator may fail (no kiro-cli installed in test env) — that's fine,
+        // we're only verifying the routing decision (shared mock must NOT be invoked).
         var request = new AgentRequest { Prompt = "test prompt", WorkspacePath = "/workspace" };
-        var result = await _provider.ExecuteAsync(request, CancellationToken.None);
+        try
+        {
+            await _provider.ExecuteAsync(request, CancellationToken.None);
+        }
+        catch (InvalidOperationException)
+        {
+            // Expected in CI: ephemeral orchestrator can't find kiro-cli binary
+        }
 
         // Ephemeral orchestrator runs independently — shared mock not invoked
         _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
