@@ -17,7 +17,7 @@ public static class PipelineConstants
     public const int MaxBranchNameLength = 100;
 
     /// <summary>Maximum character length for a comment body in the PR description before truncation.</summary>
-    public const int MaxCommentLength = 200;
+    public const int MaxCommentLength = 2000;
 
     /// <summary>Minimum length in bytes for analysis.md to be considered valid.</summary>
     public const int MinAnalysisLength = 100;
