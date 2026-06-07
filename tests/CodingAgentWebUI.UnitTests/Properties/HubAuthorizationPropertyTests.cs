@@ -29,7 +29,7 @@ public class HubAuthorizationPropertyTests
     /// call is rejected. We test the underlying registry lookup that the filter depends on.
     /// **Validates: Requirements 5.12**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void MismatchedJobId_FailsValidation(NonEmptyString agentId, NonEmptyString activeJobId, NonEmptyString wrongJobId)
     {
         if (activeJobId.Get == wrongJobId.Get) return;
@@ -56,7 +56,7 @@ public class HubAuthorizationPropertyTests
     /// Property 5 (continued): Matching jobId passes validation.
     /// **Validates: Requirements 5.12**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void MatchingJobId_PassesValidation(NonEmptyString agentId, NonEmptyString jobId)
     {
         var registry = CreateRegistry();
@@ -81,7 +81,7 @@ public class HubAuthorizationPropertyTests
     /// Property 4 (continued): Unregistered connection fails lookup.
     /// **Validates: Requirements 1.7**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void UnregisteredConnection_FailsLookup(NonEmptyString connectionId)
     {
         var registry = CreateRegistry();

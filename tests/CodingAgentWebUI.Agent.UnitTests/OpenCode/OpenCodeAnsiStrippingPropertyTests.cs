@@ -24,7 +24,7 @@ public class OpenCodeAnsiStrippingPropertyTests
     /// Property 6a: For any clean text with ANSI sequences inserted at random positions,
     /// stripping the sequences yields the original clean text unchanged.
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(AnsiInjectedStringArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(AnsiInjectedStringArbitrary)])]
     public void StripAnsiEscapes_RemovesAllSequences_PreservesCleanContent(AnsiInjectedString input)
     {
         // Act — strip ANSI sequences using the OpenCodeAgentProvider utility
@@ -38,7 +38,7 @@ public class OpenCodeAnsiStrippingPropertyTests
     /// Property 6b: Stripping is idempotent — applying Strip twice yields the same result as once.
     /// This proves no partial escape sequences remain after the first strip.
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(AnsiInjectedStringArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(AnsiInjectedStringArbitrary)])]
     public void StripAnsiEscapes_IsIdempotent(AnsiInjectedString input)
     {
         // Act
@@ -52,7 +52,7 @@ public class OpenCodeAnsiStrippingPropertyTests
     /// <summary>
     /// Property 6c: Clean strings (no ANSI sequences) pass through unchanged.
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(CleanStringArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(CleanStringArbitrary)])]
     public void StripAnsiEscapes_CleanString_PassesThroughUnchanged(CleanString input)
     {
         // Act

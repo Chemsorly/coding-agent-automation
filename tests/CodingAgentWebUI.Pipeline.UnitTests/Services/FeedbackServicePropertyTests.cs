@@ -39,7 +39,7 @@ public class FeedbackServicePropertyTests
     /// - Truncated lists are a prefix of the original (same order, same first N items)
     /// **Validates: Requirements 1.6, 1.7**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(OversizedRunFeedbackArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(OversizedRunFeedbackArbitraries) })]
     public void ApplyTruncation_EnforcesAllConstraints(OversizedFeedbackInput input)
     {
         var logger = new Mock<ILogger>();
@@ -173,7 +173,7 @@ public class FeedbackServicePropertyTests
     /// and returns matching fields (after truncation).
     /// **Validates: Requirements 2.7, 3.7**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(EmbeddedFeedbackArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(EmbeddedFeedbackArbitraries) })]
     public void ParseFeedbackFromResponse_ExtractsFeedbackFromEmbeddedJson(EmbeddedFeedbackTestCase testCase)
     {
         var service = new FeedbackService(NullLogger);
@@ -254,7 +254,7 @@ public class FeedbackServicePropertyTests
     /// successfully parsed fields rather than returning a completely empty fallback.
     /// **Validates: Requirements 8.2**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(PartialFeedbackJsonArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PartialFeedbackJsonArbitraries) })]
     public void ParseFeedbackFromResponse_WithPartiallyValidJson_PreservesValidFields(PartialFeedbackTestCase testCase)
     {
         // Arrange

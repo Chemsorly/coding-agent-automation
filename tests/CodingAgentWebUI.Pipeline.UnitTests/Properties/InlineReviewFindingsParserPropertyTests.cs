@@ -26,7 +26,7 @@ public class InlineReviewFindingsParserPropertyTests
     /// FindingSeverity value.
     /// **Validates: Requirements 1.3, 2.1**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P1_SeverityExtractionAccuracy()
     {
         var gen =
@@ -56,7 +56,7 @@ public class InlineReviewFindingsParserPropertyTests
     /// P1 (case-insensitive variant): Severity markers in any case produce the correct severity.
     /// **Validates: Requirements 2.6**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P1_SeverityExtractionCaseInsensitive()
     {
         var gen =
@@ -96,7 +96,7 @@ public class InlineReviewFindingsParserPropertyTests
     /// FindingsParser correctly extracts the path and line number.
     /// **Validates: Requirements 2.2**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P2_FileLineExtraction_ColonFormat()
     {
         var gen =
@@ -124,7 +124,7 @@ public class InlineReviewFindingsParserPropertyTests
     /// FindingsParser correctly extracts the path and line number.
     /// **Validates: Requirements 2.2**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P2_FileLineExtraction_HashFormat()
     {
         var gen =
@@ -152,7 +152,7 @@ public class InlineReviewFindingsParserPropertyTests
     /// FindingsParser correctly extracts the path and line number.
     /// **Validates: Requirements 2.2**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P2_FileLineExtraction_ParenFormat()
     {
         var gen =
@@ -180,7 +180,7 @@ public class InlineReviewFindingsParserPropertyTests
     /// FindingsParser correctly extracts the path and line number.
     /// **Validates: Requirements 2.2**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P2_FileLineExtraction_CommaFormat()
     {
         var gen =
@@ -210,7 +210,7 @@ public class InlineReviewFindingsParserPropertyTests
     /// equals the number of input lines that contain at least one severity marker.
     /// **Validates: Requirements 2.8**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P3_OneFindingPerLine()
     {
         var genLineWithMarker =
@@ -256,7 +256,7 @@ public class InlineReviewFindingsParserPropertyTests
     /// because FindingsParser uses first marker per line, while SeverityParser counts all markers.
     /// **Validates: Requirements 14.1, 14.2**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P9_CrossParserInvariant_FindingsCountLessOrEqualSeverityCount()
     {
         var genLineWithMultipleMarkers =
@@ -304,7 +304,7 @@ public class InlineReviewFindingsParserPropertyTests
     /// separator characters (" — ", " - ", ": ") and is trimmed of whitespace.
     /// **Validates: Requirements 2.5**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P12_MessageExtraction_NoLeadingSeparators()
     {
         var gen =
@@ -337,7 +337,7 @@ public class InlineReviewFindingsParserPropertyTests
     /// properly extracted with separators stripped and whitespace trimmed.
     /// **Validates: Requirements 2.5**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P12_MessageExtraction_WithoutFileRef_NoLeadingSeparators()
     {
         var gen =

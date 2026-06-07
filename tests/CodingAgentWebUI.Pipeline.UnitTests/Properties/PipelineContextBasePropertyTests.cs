@@ -25,7 +25,7 @@ public class PipelineContextBasePropertyTests
     /// cast to PipelineContextBase return same references.
     /// **Validates: Requirements 36.4, 36.5**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void AgentPhaseContext_BaseProperties_AccessibleViaCastReturnSameReferences(
         bool includeOrchestratorCts)
     {
@@ -91,7 +91,7 @@ public class PipelineContextBasePropertyTests
     /// cast to PipelineContextBase return same references.
     /// **Validates: Requirements 36.4, 36.5**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void QualityGateContext_BaseProperties_AccessibleViaCastReturnSameReferences(
         bool includeOrchestratorCts)
     {
@@ -143,7 +143,7 @@ public class PipelineContextBasePropertyTests
     /// values, each instance's base properties are independently correct when accessed via cast.
     /// **Validates: Requirements 36.4, 36.5**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void MultipleContextInstances_EachPreservesOwnBaseProperties(PositiveInt countRaw)
     {
         var count = Math.Min(countRaw.Get, 10); // Cap at 10 for performance

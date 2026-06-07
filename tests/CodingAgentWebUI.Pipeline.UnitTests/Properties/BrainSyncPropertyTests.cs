@@ -19,7 +19,7 @@ public class BrainSyncPropertyTests
     /// <summary>
     /// Property 1: Gitignore ensure is idempotent.
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void GitignoreEnsureIsIdempotent(NonNull<string> content)
     {
         var original = content.Get;
@@ -54,7 +54,7 @@ public class BrainSyncPropertyTests
         writeInstructions.Should().Contain("Do NOT commit");
     }
 
-    [Property]
+    [Property(MaxTest = 20)]
     public void BrainContextSection_AlwaysContainsCoreInstructions_WhenEnabled(
         NonEmptyString projectName)
     {

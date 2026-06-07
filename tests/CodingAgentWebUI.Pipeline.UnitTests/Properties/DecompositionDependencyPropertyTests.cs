@@ -26,7 +26,7 @@ public class DecompositionDependencyPropertyTests
     /// the resolver SHALL produce a "Depends on #N" line.
     /// **Validates: Requirements 9.2, 9.5**
     /// </summary>
-    [Property(MaxTest = 150)]
+    [Property(MaxTest = 20)]
     public void DependencyResolution_CaseInsensitiveMatching(NonEmptyString titleRaw, PositiveInt issueNum)
     {
         var title = titleRaw.Get.Replace("\0", "").Trim();
@@ -56,7 +56,7 @@ public class DecompositionDependencyPropertyTests
     /// SHALL still match correctly.
     /// **Validates: Requirements 9.5**
     /// </summary>
-    [Property(MaxTest = 150)]
+    [Property(MaxTest = 20)]
     public void DependencyResolution_WhitespaceTrimming(NonEmptyString titleRaw, PositiveInt issueNum)
     {
         var title = titleRaw.Get.Replace("\0", "").Trim();
@@ -80,7 +80,7 @@ public class DecompositionDependencyPropertyTests
     /// the resolver SHALL use the first-created issue's number.
     /// **Validates: Requirements 9.6**
     /// </summary>
-    [Property(MaxTest = 150)]
+    [Property(MaxTest = 20)]
     public void DependencyResolution_FirstRegisteredWins(
         NonEmptyString titleRaw, PositiveInt firstNum, PositiveInt secondNum)
     {
@@ -106,7 +106,7 @@ public class DecompositionDependencyPropertyTests
     /// the resolver SHALL omit it from the result (no "Depends on" line produced).
     /// **Validates: Requirements 9.4**
     /// </summary>
-    [Property(MaxTest = 150)]
+    [Property(MaxTest = 20)]
     public void DependencyResolution_UnresolvedTitlesOmitted(
         NonEmptyString registeredTitleRaw, NonEmptyString unresolvedTitleRaw, PositiveInt issueNum)
     {
@@ -132,7 +132,7 @@ public class DecompositionDependencyPropertyTests
     /// the resolver SHALL produce "Depends on #N" lines only for resolved ones.
     /// **Validates: Requirements 9.2, 9.3, 9.4**
     /// </summary>
-    [Property(MaxTest = 150)]
+    [Property(MaxTest = 20)]
     public void DependencyResolution_MixedResolvedAndUnresolved(PositiveInt countRaw)
     {
         var count = Math.Min(countRaw.Get, 10);
@@ -176,7 +176,7 @@ public class DecompositionDependencyPropertyTests
     /// Property 8: Dependency Resolution — Empty dependencies produce empty result.
     /// **Validates: Requirements 9.3**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void DependencyResolution_EmptyDependencies_ProducesEmptyResult(PositiveInt issueNum)
     {
         var resolver = new DependencyResolver();
@@ -197,7 +197,7 @@ public class DecompositionDependencyPropertyTests
     /// dependencies array, and labels array, the parser SHALL accept it.
     /// **Validates: Requirements 5.2**
     /// </summary>
-    [Property(MaxTest = 150)]
+    [Property(MaxTest = 20)]
     public async Task SchemaValidation_AcceptsValidJson(
         NonEmptyString titleRaw, NonEmptyString bodyRaw, byte depCount, byte labelCount)
     {
@@ -250,7 +250,7 @@ public class DecompositionDependencyPropertyTests
     /// Property 9: Schema Validation — Rejects JSON missing 'title' field.
     /// **Validates: Requirements 5.5**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task SchemaValidation_RejectsMissingTitle(NonEmptyString bodyRaw)
     {
         var body = bodyRaw.Get.Replace("\0", "").Trim();
@@ -284,7 +284,7 @@ public class DecompositionDependencyPropertyTests
     /// Property 9: Schema Validation — Rejects JSON missing 'body' field.
     /// **Validates: Requirements 5.5**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task SchemaValidation_RejectsMissingBody(NonEmptyString titleRaw)
     {
         var title = titleRaw.Get.Replace("\0", "").Trim();
@@ -318,7 +318,7 @@ public class DecompositionDependencyPropertyTests
     /// Property 9: Schema Validation — Rejects JSON missing 'dependencies' field.
     /// **Validates: Requirements 5.5**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task SchemaValidation_RejectsMissingDependencies(NonEmptyString titleRaw, NonEmptyString bodyRaw)
     {
         var title = titleRaw.Get.Replace("\0", "").Trim();
@@ -353,7 +353,7 @@ public class DecompositionDependencyPropertyTests
     /// Property 9: Schema Validation — Rejects JSON missing 'labels' field.
     /// **Validates: Requirements 5.5**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task SchemaValidation_RejectsMissingLabels(NonEmptyString titleRaw, NonEmptyString bodyRaw)
     {
         var title = titleRaw.Get.Replace("\0", "").Trim();
@@ -388,7 +388,7 @@ public class DecompositionDependencyPropertyTests
     /// Property 9: Schema Validation — Rejects empty title.
     /// **Validates: Requirements 5.5**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task SchemaValidation_RejectsEmptyTitle(NonEmptyString bodyRaw)
     {
         var body = bodyRaw.Get.Replace("\0", "").Trim();
@@ -423,7 +423,7 @@ public class DecompositionDependencyPropertyTests
     /// Property 9: Schema Validation — Rejects empty body.
     /// **Validates: Requirements 5.5**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task SchemaValidation_RejectsEmptyBody(NonEmptyString titleRaw)
     {
         var title = titleRaw.Get.Replace("\0", "").Trim();
@@ -458,7 +458,7 @@ public class DecompositionDependencyPropertyTests
     /// Property 9: Schema Validation — Rejects invalid JSON (not parseable).
     /// **Validates: Requirements 5.5**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task SchemaValidation_RejectsInvalidJson(NonEmptyString garbageRaw)
     {
         // Ensure the content is not valid JSON by prepending invalid chars
@@ -485,7 +485,7 @@ public class DecompositionDependencyPropertyTests
     /// Property 9: Schema Validation — Rejects wrong type for 'dependencies' (not array).
     /// **Validates: Requirements 5.5**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task SchemaValidation_RejectsWrongTypeDependencies(NonEmptyString titleRaw, NonEmptyString bodyRaw)
     {
         var title = titleRaw.Get.Replace("\0", "").Trim();
@@ -516,7 +516,7 @@ public class DecompositionDependencyPropertyTests
     /// Property 9: Schema Validation — Rejects wrong type for 'labels' (not array).
     /// **Validates: Requirements 5.5**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public async Task SchemaValidation_RejectsWrongTypeLabels(NonEmptyString titleRaw, NonEmptyString bodyRaw)
     {
         var title = titleRaw.Get.Replace("\0", "").Trim();

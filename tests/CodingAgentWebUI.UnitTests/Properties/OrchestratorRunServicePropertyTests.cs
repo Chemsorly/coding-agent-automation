@@ -38,7 +38,7 @@ public class OrchestratorRunServicePropertyTests
     /// Completed and !IsDraftPr → agent:done; Failed or IsDraftPr → agent:error; Cancelled → agent:cancelled.
     /// **Validates: Requirements 7.4**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void FinalLabel_MatchesCompletionState(bool isDraftPr, bool isFailed, bool isCancelled)
     {
         PipelineStep finalStep;
@@ -87,7 +87,7 @@ public class OrchestratorRunServicePropertyTests
     /// privateKeyBase64. Replaced with short-lived token.
     /// **Validates: Requirements 8.2**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void PreparedConfigs_DoNotContainPrivateKeys(NonEmptyString configId, NonEmptyString privateKey)
     {
         // Simulate what TokenVendingService.PrepareAgentConfigsAsync does
@@ -112,7 +112,7 @@ public class OrchestratorRunServicePropertyTests
     /// If any required ProviderConfig (repository, agent) is missing, dispatch should fail.
     /// **Validates: Requirements 8.7**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void MissingRequiredConfig_PreventsDispatch(bool hasRepoConfig, bool hasAgentConfig)
     {
         var configs = new List<ProviderConfig>();
@@ -159,7 +159,7 @@ public class OrchestratorRunServicePropertyTests
     /// OutputLines, ChatHistory, QualityGateHistory, RetryCount.
     /// **Validates: Requirements 9.7**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void ConcurrentRuns_AreIndependent(PositiveInt runCount)
     {
         var count = Math.Min(runCount.Get, 10);

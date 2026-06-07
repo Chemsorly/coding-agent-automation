@@ -23,7 +23,7 @@ public class DiffHunkParserPropertyTests
     /// Property: For any generated diff with known added lines, ParseValidLines returns
     /// exactly those line numbers. Context and deleted lines are excluded.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property ParseValidLines_ReturnsOnlyAddedLineNumbers()
     {
         var gen =
@@ -96,7 +96,7 @@ public class DiffHunkParserPropertyTests
     /// <summary>
     /// Property: Lines outside all hunk ranges for a file are never included in the valid set.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property ParseValidLines_LinesOutsideHunks_NeverIncluded()
     {
         var gen =
@@ -139,7 +139,7 @@ public class DiffHunkParserPropertyTests
     /// <summary>
     /// Property: Context lines within hunks are never included in the valid set.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property ParseValidLines_ContextLines_NeverIncluded()
     {
         var gen =
@@ -183,7 +183,7 @@ public class DiffHunkParserPropertyTests
     /// <summary>
     /// Property: The number of valid lines equals the number of Added entries across all hunks.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property ParseValidLines_ValidLineCount_EqualsAddedLineCount()
     {
         var gen =

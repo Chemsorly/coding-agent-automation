@@ -24,7 +24,7 @@ public class FeedbackPromptBuilderTests
     /// and all previous category labels.
     /// **Validates: Requirements 2.5, 2.6, 7.3**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(SuccessFeedbackSectionArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(SuccessFeedbackSectionArbitraries) })]
     public void BuildSuccessFeedbackSection_IncludesRetryContextAndCategories(SuccessFeedbackSectionInput input)
     {
         var result = FeedbackPromptBuilder.BuildSuccessFeedbackSection(

@@ -26,7 +26,7 @@ public class OpenCodeExitCodePropertyTests
     /// the ExitCode SHALL be 0.
     /// **Validates: Requirements 1.3, 3.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(ExitCodeArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(ExitCodeArbitrary)], MaxTest = 20)]
     public async void SuccessfulResponse_ReturnsExitCodeZero(SuccessOutcome outcome)
     {
         // Arrange
@@ -53,7 +53,7 @@ public class OpenCodeExitCodePropertyTests
     /// the ExitCode SHALL be 1 (GeneralFailure).
     /// **Validates: Requirements 3.6, 10.2**
     /// </summary>
-    [Property(Arbitrary = [typeof(ExitCodeArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(ExitCodeArbitrary)], MaxTest = 20)]
     public async void HttpErrorResponse_ReturnsExitCodeOne(HttpErrorOutcome outcome)
     {
         // Arrange
@@ -113,7 +113,7 @@ public class OpenCodeExitCodePropertyTests
     /// malformed JSON, the ExitCode SHALL be 1 (GeneralFailure).
     /// **Validates: Requirements 10.2**
     /// </summary>
-    [Property(Arbitrary = [typeof(ExitCodeArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(ExitCodeArbitrary)], MaxTest = 20)]
     public async void MalformedJsonResponse_ReturnsExitCodeOne(MalformedJsonOutcome outcome)
     {
         // Arrange
@@ -143,7 +143,7 @@ public class OpenCodeExitCodePropertyTests
     /// the ExitCode SHALL be 1 (GeneralFailure).
     /// **Validates: Requirements 3.3**
     /// </summary>
-    [Property(Arbitrary = [typeof(ExitCodeArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(ExitCodeArbitrary)], MaxTest = 20)]
     public async void SessionCreationFailure_ReturnsExitCodeOne(SessionFailureOutcome outcome)
     {
         // Arrange

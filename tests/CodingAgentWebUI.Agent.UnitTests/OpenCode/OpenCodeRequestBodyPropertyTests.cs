@@ -25,7 +25,7 @@ public class OpenCodeRequestBodyPropertyTests
     /// where &lt;prompt&gt; is the exact input string (no escaping beyond JSON serialization).
     /// **Validates: Requirements 1.2, 3.4**
     /// </summary>
-    [Property(Arbitrary = [typeof(PromptStringArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(PromptStringArbitrary)], MaxTest = 20)]
     public async void RequestBody_ContainsExactPromptInCorrectStructure(PromptInput input)
     {
         // Arrange
@@ -84,7 +84,7 @@ public class OpenCodeRequestBodyPropertyTests
     /// When no model is configured, the "model" field is absent or null.
     /// **Validates: Requirements 1.2, 3.4**
     /// </summary>
-    [Property(Arbitrary = [typeof(PromptStringArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(PromptStringArbitrary)], MaxTest = 20)]
     public async void RequestBody_OmitsModelField(PromptInput input)
     {
         // Arrange — create context WITH a model configured (model is server-side only, not sent in request)

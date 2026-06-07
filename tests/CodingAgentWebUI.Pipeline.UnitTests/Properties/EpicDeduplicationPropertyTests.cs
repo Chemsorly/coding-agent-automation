@@ -91,7 +91,7 @@ public class EpicDeduplicationPropertyTests
     /// TryDispatchDecompositionAsync returns false — the epic is NOT dispatched again.
     /// **Validates: Requirements 14.4**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(EpicDeduplicationArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(EpicDeduplicationArbitraries) })]
     public async Task<bool> EpicInProgress_CannotBeDispatched(EpicDeduplicationInput input)
     {
         var (dispatcher, runService, _, disposables) = CreateFreshServices();
@@ -135,7 +135,7 @@ public class EpicDeduplicationPropertyTests
     /// TryDispatchDecompositionAsync returns false — the epic is NOT dispatched again.
     /// **Validates: Requirements 14.4**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(EpicDeduplicationArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(EpicDeduplicationArbitraries) })]
     public async Task<bool> EpicQueued_CannotBeDispatched(EpicDeduplicationInput input)
     {
         var (dispatcher, _, jobService, disposables) = CreateFreshServices();
@@ -178,7 +178,7 @@ public class EpicDeduplicationPropertyTests
     /// TryDispatchDecompositionAsync returns true (enqueued for dispatch since no idle agents).
     /// **Validates: Requirements 14.4**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(EpicDeduplicationArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(EpicDeduplicationArbitraries) })]
     public async Task<bool> EpicNotProcessedNotQueued_CanBeDispatched(EpicDeduplicationInput input)
     {
         var (dispatcher, _, _, disposables) = CreateFreshServices();

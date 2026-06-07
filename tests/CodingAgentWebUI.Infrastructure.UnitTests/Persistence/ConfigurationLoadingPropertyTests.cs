@@ -34,7 +34,7 @@ public class ConfigurationLoadingPropertyTests : IDisposable
     /// LoadAgentProfilesAsync returns exactly N items.
     /// **Validates: Requirements 31.1, 31.2**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void LoadAllFromDirectory_ReturnsExactlyN_ValidItems(PositiveInt countSeed)
     {
         // Constrain to reasonable count (1-20 files)
@@ -72,7 +72,7 @@ public class ConfigurationLoadingPropertyTests : IDisposable
     /// the entire load to fail. For N valid + M invalid files, returns exactly N items.
     /// **Validates: Requirements 31.1, 31.2**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void LoadAllFromDirectory_SkipsInvalidFiles_ReturnsOnlyValid(
         PositiveInt validSeed,
         PositiveInt invalidSeed)

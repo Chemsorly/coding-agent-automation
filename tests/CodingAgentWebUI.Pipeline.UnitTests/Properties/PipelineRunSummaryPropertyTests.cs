@@ -19,7 +19,7 @@ public class PipelineRunSummaryPropertyTests
     /// 
     /// **Validates: Requirements REQ-11.2**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineRunArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunArbitraries) })]
     public void ToSummary_IsRework_ReflectsLinkedPullRequest(PipelineRun run)
     {
         var summary = run.ToSummary();

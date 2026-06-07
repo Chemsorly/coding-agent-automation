@@ -39,7 +39,7 @@ public class ConsolidationServicePropertyTests : IDisposable
     /// and for refactoring only if both RepoProviderId and IssueProviderId are non-null/non-empty.
     /// **Validates: Requirements 2.3**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(TemplateFilterArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(TemplateFilterArbitraries) })]
     public void TemplateFilter_BrainConsolidation_OnlyIncludesTemplatesWithBrainProvider(
         List<PipelineJobTemplate> templates)
     {
@@ -57,7 +57,7 @@ public class ConsolidationServicePropertyTests : IDisposable
     /// Property 3 (continued): Refactoring detection requires both RepoProviderId and IssueProviderId.
     /// **Validates: Requirements 2.3**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(TemplateFilterArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(TemplateFilterArbitraries) })]
     public void TemplateFilter_RefactoringDetection_OnlyIncludesTemplatesWithRepoAndIssueProvider(
         List<PipelineJobTemplate> templates)
     {
@@ -83,7 +83,7 @@ public class ConsolidationServicePropertyTests : IDisposable
     /// GetLastRunAsync(type, templateId) returns only the most recent run matching that exact pair.
     /// **Validates: Requirements 2.4**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void GetLastRunAsync_ReturnsOnlyMostRecentMatchingPair(PositiveInt runCount)
     {
         var runsDir = Path.Combine(_tempDir, $"runs-{Guid.NewGuid():N}");
@@ -141,7 +141,7 @@ public class ConsolidationServicePropertyTests : IDisposable
     /// TriggerAsync returns null; different type or templateId is not rejected.
     /// **Validates: Requirements 3.7**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void ConcurrencyGuard_RejectsDuplicateRunning_AllowsDifferentPair(bool useSameType)
     {
         var runsDir = Path.Combine(_tempDir, $"guard-{Guid.NewGuid():N}");

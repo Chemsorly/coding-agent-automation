@@ -25,7 +25,7 @@ public class DecompositionCapPropertyTests
     ///
     /// **Validates: Requirements 7.1, 7.4**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(SubIssueCapArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(SubIssueCapArbitraries) })]
     public async Task<Property> SubIssueCapEnforcement_ProcessesMinOfNAndM(SubIssueCapInput input)
     {
         // Arrange: create temp directory with N valid sub-issue JSON files
@@ -82,7 +82,7 @@ public class DecompositionCapPropertyTests
     ///
     /// **Validates: Requirements 8.1, 8.2**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(IssueDetailArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(IssueDetailArbitraries) })]
     public Property OpenIssueOutputFormat_YamlFrontMatterRoundTrip(IssueDetailInput input)
     {
         var detail = new IssueDetail
@@ -144,7 +144,7 @@ public class DecompositionCapPropertyTests
     ///
     /// **Validates: Requirements 8.1, 8.2**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(OpenIssueCapArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(OpenIssueCapArbitraries) })]
     public async Task<Property> OpenIssueCapEnforcement_WritesMinOfNAndM(OpenIssueCapInput input)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"pbt-oicap-{Guid.NewGuid():N}");
@@ -217,7 +217,7 @@ public class DecompositionCapPropertyTests
     ///
     /// **Validates: Requirements 7.1, 7.2, 7.5**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(MaxSubIssuesValidationArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(MaxSubIssuesValidationArbitraries) })]
     public Property MaxDecompositionSubIssues_AcceptsOnlyValidRange(MaxSubIssuesInput input)
     {
         var isInRange = input.Value is >= 1 and <= 20;

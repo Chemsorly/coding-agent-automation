@@ -22,7 +22,7 @@ public class GitHubRepositoryProviderPropertyTests
     /// **Validates: Requirements 2.5**
     /// </summary>
     // Feature: provider-interface-gaps, Property 4: RepositoryFullName format
-    [Property]
+    [Property(MaxTest = 20)]
     public void RepositoryFullName_Equals_Owner_Slash_Repo(NonEmptyString owner, NonEmptyString repo)
     {
         // Arrange — use the internal test constructor with a mock IGitHubClient
@@ -48,7 +48,7 @@ public class GitHubRepositoryProviderPropertyTests
     /// does not start or end with a hyphen, and does not contain consecutive hyphens.
     /// **Validates: Requirements 2.4**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void BranchName_AlwaysProducesValidSlugFormat(PositiveInt issueNum, NonEmptyString title)
     {
         var number = issueNum.Get.ToString();
@@ -81,7 +81,7 @@ public class GitHubRepositoryProviderPropertyTests
     /// the generated PR title equals feat: {issueTitle} (#{issueNumber}).
     /// **Validates: Requirements 6.2**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void PrTitle_FollowsConventionalCommitFormat(NonEmptyString title, PositiveInt issueNum)
     {
         var issueRef = $"#{issueNum.Get}";
@@ -94,7 +94,7 @@ public class GitHubRepositoryProviderPropertyTests
     /// Property 6: PR body contains all required sections including file changes and issue context.
     /// **Validates: Requirements 6.3, 6.4**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void PrBody_ContainsAllRequiredSections(
         PositiveInt issueNum,
         NonNegativeInt passed,

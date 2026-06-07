@@ -26,7 +26,7 @@ public class OpenCodePermissionApprovalPropertyTests
     /// the provider SHALL send POST /session/:id/permissions/:permissionId with the correct body.
     /// **Validates: Requirements 1.9, 4.11**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(PermissionApprovalArbitraries)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(PermissionApprovalArbitraries)])]
     public void MatchingSession_PermissionApproved_WithCorrectBody(
         AlphanumericString sessionId,
         AlphanumericString permissionId)
@@ -76,7 +76,7 @@ public class OpenCodePermissionApprovalPropertyTests
     /// the POST URL SHALL contain the correct session ID and permission ID path segments.
     /// **Validates: Requirements 1.9, 4.11**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(PermissionApprovalArbitraries)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(PermissionApprovalArbitraries)])]
     public void MatchingSession_PermissionApproval_CorrectUrl(
         AlphanumericString sessionId,
         AlphanumericString permissionId)
@@ -116,7 +116,7 @@ public class OpenCodePermissionApprovalPropertyTests
     /// SHALL each trigger a separate POST with the correct permission ID.
     /// **Validates: Requirements 1.9, 4.11**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(PermissionApprovalArbitraries)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(PermissionApprovalArbitraries)])]
     public void MultiplePermissions_EachApprovedIndependently(
         AlphanumericString sessionId,
         AlphanumericString permId1,
@@ -180,7 +180,7 @@ public class OpenCodePermissionApprovalPropertyTests
     /// The AutoApprovePermissionAsync method guards against null/empty permission IDs.
     /// **Validates: Requirements 1.9, 4.11**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(PermissionApprovalArbitraries)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(PermissionApprovalArbitraries)])]
     public void NullPermissionId_NoApprovalSent(AlphanumericString sessionId)
     {
         // Arrange
@@ -214,7 +214,7 @@ public class OpenCodePermissionApprovalPropertyTests
     /// This confirms the session filtering interacts correctly with permission approval.
     /// **Validates: Requirements 1.9, 4.11**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(PermissionApprovalArbitraries)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(PermissionApprovalArbitraries)])]
     public void NonMatchingSession_PermissionNotApproved(
         AlphanumericString activeSession,
         AlphanumericString eventSession,

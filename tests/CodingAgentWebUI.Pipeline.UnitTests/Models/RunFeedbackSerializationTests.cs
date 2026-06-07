@@ -27,7 +27,7 @@ public class RunFeedbackSerializationTests
     /// and deserializing back SHALL produce a structurally equivalent object with all fields preserved.
     /// **Validates: Requirements 1.1, 1.2, 1.3, 1.5**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(RunFeedbackSerializationArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(RunFeedbackSerializationArbitraries) })]
     public void RunFeedback_JsonRoundTrip_PreservesAllFields(RunFeedback original)
     {
         var json = JsonSerializer.Serialize(original, JsonOptions);

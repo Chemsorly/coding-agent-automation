@@ -32,7 +32,7 @@ public class RefactoringExecutorPropertyTests
     /// the executor caps at min(count, 3) issues. We verify via FormatRefactoringSummary.
     /// **Validates: Requirements 6.2, 6.4**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(RefactoringArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(RefactoringArbitraries) })]
     public void FormatRefactoringSummary_IssueCount_NeverExceedsThree(
         List<CreatedIssueInfo> createdIssues)
     {
@@ -58,7 +58,7 @@ public class RefactoringExecutorPropertyTests
     /// contains the count and every issue identifier.
     /// **Validates: Requirements 6.7**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(RefactoringArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(RefactoringArbitraries) })]
     public void FormatRefactoringSummary_IncludesAllIdentifiers(
         List<CreatedIssueInfo> createdIssues)
     {

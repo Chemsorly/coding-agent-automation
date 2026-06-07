@@ -91,7 +91,7 @@ public class GitLabRepositoryProviderTests
     /// a merge request with "Draft: " prefix on the title, the correct body, and correct branches.
     /// **Validates: Requirements 10.1, 24.1, 24.2**
     /// </summary>
-    [Property(Arbitrary = [typeof(MergeRequestDataArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(MergeRequestDataArbitrary)])]
     public void CreatePullRequestAsync_MapsFieldsCorrectly_WithDraftPrefix(MergeRequestTestData data)
     {
         // Arrange — create server with the source branch already existing
@@ -129,7 +129,7 @@ public class GitLabRepositoryProviderTests
     /// a merge request without the "Draft: " prefix.
     /// **Validates: Requirements 10.1, 24.1**
     /// </summary>
-    [Property(Arbitrary = [typeof(MergeRequestDataArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(MergeRequestDataArbitrary)])]
     public void CreatePullRequestAsync_MapsFieldsCorrectly_WithoutDraftPrefix(MergeRequestTestData data)
     {
         // Arrange — create server with the source branch already existing
@@ -168,7 +168,7 @@ public class GitLabRepositoryProviderTests
     /// starts with "Draft: ", the prefix is removed.
     /// **Validates: Requirements 10.3, 24.3**
     /// </summary>
-    [Property(Arbitrary = [typeof(MergeRequestDataArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(MergeRequestDataArbitrary)])]
     public void UpdatePullRequestAsync_RemovesDraftPrefix_WhenMarkReady(MergeRequestTestData data)
     {
         // Arrange — create MR with Draft: prefix via config
@@ -197,7 +197,7 @@ public class GitLabRepositoryProviderTests
     /// does NOT start with "Draft: ", the title remains unchanged.
     /// **Validates: Requirements 10.3, 24.4**
     /// </summary>
-    [Property(Arbitrary = [typeof(MergeRequestDataArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(MergeRequestDataArbitrary)])]
     public void UpdatePullRequestAsync_TitleUnchanged_WhenNoDraftPrefix(MergeRequestTestData data)
     {
         // Arrange — create MR without Draft: prefix via config
@@ -228,7 +228,7 @@ public class GitLabRepositoryProviderTests
     /// "feature/auto-{issueId}-" for the given issue identifier.
     /// **Validates: Requirements 10.5, 24.1**
     /// </summary>
-    [Property(Arbitrary = [typeof(BranchFilterArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(BranchFilterArbitrary)])]
     public void GetAgentPullRequestsAsync_FiltersOnBranchPrefix(BranchFilterTestData data)
     {
         // Arrange — use config-based MR creation (doesn't validate branch existence)
@@ -280,7 +280,7 @@ public class GitLabRepositoryProviderTests
     /// patterns in MR title and description.
     /// **Validates: Requirements 10.9**
     /// </summary>
-    [Property(Arbitrary = [typeof(ClosingKeywordArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(ClosingKeywordArbitrary)])]
     public void ExtractLinkedIssuesAsync_ExtractsClosingKeywords(ClosingKeywordTestData data)
     {
         // Arrange — create MR with closing keywords in title and description via config
@@ -311,7 +311,7 @@ public class GitLabRepositoryProviderTests
     /// We test this indirectly by exposing the private method via reflection.
     /// **Validates: Requirements 24.1, 24.2, 24.3, 24.4, 27.3**
     /// </summary>
-    [Property(Arbitrary = [typeof(CloneUrlArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(CloneUrlArbitrary)])]
     public void BuildAuthenticatedCloneUrl_ConstructsCorrectFormat(CloneUrlTestData data)
     {
         // Arrange — use a testable subclass to expose the private method

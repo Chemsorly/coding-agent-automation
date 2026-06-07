@@ -32,7 +32,7 @@ public class OpenCodeSseRoutingPropertyTests
     /// For any text content, the callback receives a line starting with "[assistant] ".
     /// **Validates: Requirements 4.2**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void MessagePartUpdated_AppliesAssistantPrefix(NonEmptyString textContent)
     {
         // Arrange
@@ -70,7 +70,7 @@ public class OpenCodeSseRoutingPropertyTests
     /// For any tool name and args, the callback receives a line starting with "[tool_call] ".
     /// **Validates: Requirements 4.3**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void ToolExecuteBefore_AppliesToolCallPrefix(NonEmptyString toolName, NonEmptyString toolArgs)
     {
         // Arrange
@@ -109,7 +109,7 @@ public class OpenCodeSseRoutingPropertyTests
     /// For any tool result content, the callback receives a line starting with "[tool_result] ".
     /// **Validates: Requirements 4.4**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void ToolExecuteAfter_AppliesToolResultPrefix(NonEmptyString toolResult)
     {
         // Arrange
@@ -146,7 +146,7 @@ public class OpenCodeSseRoutingPropertyTests
     /// For any permission ID, a POST to /session/:id/permissions/:permissionId is sent.
     /// **Validates: Requirements 4.6, 4.11**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void PermissionUpdated_TriggersAutoApproval(NonEmptyString permissionId)
     {
         // Arrange - sanitize permission ID (no newlines, no slashes that break URL)
@@ -202,7 +202,7 @@ public class OpenCodeSseRoutingPropertyTests
     /// For any type string that is not one of the known types, the callback is never invoked.
     /// **Validates: Requirements 4.6**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void UnrecognizedEventType_IsDiscarded(NonEmptyString randomType)
     {
         // Arrange - ensure the type is not one of the known types

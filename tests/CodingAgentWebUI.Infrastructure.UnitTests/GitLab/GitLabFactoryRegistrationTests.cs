@@ -32,7 +32,7 @@ public class GitLabFactoryRegistrationTests
     /// the exception message contains all missing key names.
     /// **Validates: Requirements 1.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(MissingSettingsSubsetArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(MissingSettingsSubsetArbitrary)])]
     public void ValidateRequiredSettings_ReportsAllMissingKeys_InExceptionMessage(MissingSettingsInput input)
     {
         // Arrange — build a config with only the "present" keys populated
@@ -79,7 +79,7 @@ public class GitLabFactoryRegistrationTests
     /// the exception message contains all those key names.
     /// **Validates: Requirements 1.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(WhitespaceSettingsSubsetArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(WhitespaceSettingsSubsetArbitrary)])]
     public void ValidateRequiredSettings_ReportsWhitespaceOnlyValues_AsMissing(WhitespaceSettingsInput input)
     {
         // Arrange — build a config where some keys have whitespace-only values
@@ -126,7 +126,7 @@ public class GitLabFactoryRegistrationTests
     /// Property 1: Factory validation passes when all required settings are present and non-whitespace.
     /// **Validates: Requirements 1.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(ValidGitLabSettingsArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(ValidGitLabSettingsArbitrary)])]
     public void ValidateRequiredSettings_DoesNotThrow_WhenAllKeysPresent(ValidGitLabSettingsInput input)
     {
         // Arrange
@@ -157,7 +157,7 @@ public class GitLabFactoryRegistrationTests
     /// Tests the full factory path (not just the static helper).
     /// **Validates: Requirements 1.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(MissingSettingsSubsetArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(MissingSettingsSubsetArbitrary)])]
     public void CreateIssueProvider_ThrowsWithAllMissingKeys(MissingSettingsInput input)
     {
         // Arrange

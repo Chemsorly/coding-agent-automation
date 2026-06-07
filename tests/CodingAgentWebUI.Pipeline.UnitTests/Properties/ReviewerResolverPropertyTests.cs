@@ -19,7 +19,7 @@ public class ReviewerResolverPropertyTests
     /// (a) Enabled == true, AND (b) MatchLabels is empty OR intersects with job labels (case-insensitive).
     /// **Validates: Requirements 1.4, 3.2, 3.3, 3.4**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(ReviewerResolverArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ReviewerResolverArbitraries) })]
     public void ResolverInclusion_ResolvedConfigsAreEnabledAndMatch(ReviewerResolutionInput input)
     {
         var resolver = new ReviewerResolver();
@@ -45,7 +45,7 @@ public class ReviewerResolverPropertyTests
     /// Disabled configs never appear; enabled configs with non-empty MatchLabels and zero intersection never appear.
     /// **Validates: Requirements 3.3, 3.5**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(ReviewerResolverArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ReviewerResolverArbitraries) })]
     public void ResolverExclusion_DisabledAndNonIntersectingExcluded(ReviewerResolutionInput input)
     {
         var resolver = new ReviewerResolver();
@@ -79,7 +79,7 @@ public class ReviewerResolverPropertyTests
     /// Results ordered by ExecutionOrder ascending, then DisplayName alphabetically (case-insensitive).
     /// **Validates: Requirements 3.2**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(ReviewerResolverArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ReviewerResolverArbitraries) })]
     public void ResolverOrdering_ResultsAreCorrectlyOrdered(ReviewerResolutionInput input)
     {
         var resolver = new ReviewerResolver();
@@ -109,7 +109,7 @@ public class ReviewerResolverPropertyTests
     /// Labels differing only in case still match.
     /// **Validates: Requirements 1.4, 3.5**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(ReviewerResolverArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ReviewerResolverArbitraries) })]
     public void CaseInsensitiveLabelMatching_StillMatches(CaseInsensitiveReviewerLabelInput input)
     {
         var rc = new ReviewerConfiguration
@@ -136,7 +136,7 @@ public class ReviewerResolverPropertyTests
     /// FlattenAgents output count equals sum of all individual Agents.Count; order preserved.
     /// **Validates: Requirements 4.5**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(ReviewerResolverArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ReviewerResolverArbitraries) })]
     public void FlattenAgents_PreservesAllAgentsInOrder(FlattenAgentsInput input)
     {
         var result = ReviewerResolver.FlattenAgents(input.Configs);

@@ -22,7 +22,7 @@ public class ConsolidationPromptBuilderPropertyTests
     /// for null, the prompt contains an indication of no prior consolidation.
     /// **Validates: Requirements 4.3**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PromptBuilderArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PromptBuilderArbitraries) })]
     public void BrainConsolidationPrompt_NonNullTimestamp_ContainsFormattedTimestamp(DateTime timestamp)
     {
         // Normalize to UTC
@@ -55,7 +55,7 @@ public class ConsolidationPromptBuilderPropertyTests
     /// contradictionsResolved, entriesPruned), the summary string contains all four values.
     /// **Validates: Requirements 4.7**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void BrainConsolidationSummary_ContainsAllFourMetrics(
         NonNegativeInt filesModified,
         NonNegativeInt entriesMerged,

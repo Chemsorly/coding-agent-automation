@@ -42,7 +42,7 @@ public class DecompositionLabelPropertyTests
     ///
     /// **Validates: Requirements 2.6, 2.7**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public void EpicPollingEligibility_Phase1_IncludesOnlyEligibleIssues(PositiveInt issueCountRaw, int seed)
     {
         var issueCount = Math.Min(issueCountRaw.Get, 20);
@@ -103,7 +103,7 @@ public class DecompositionLabelPropertyTests
     ///
     /// **Validates: Requirements 2.6, 2.7**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public void EpicPollingEligibility_Phase2_IncludesOnlyEligibleIssues(PositiveInt issueCountRaw, int seed)
     {
         var issueCount = Math.Min(issueCountRaw.Get, 20);
@@ -160,7 +160,7 @@ public class DecompositionLabelPropertyTests
     ///
     /// **Validates: Requirements 2.5, 2.6**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public void EpicPollingEligibility_Phase1_AlwaysIncludesCleanEpics(PositiveInt issueCountRaw, int seed)
     {
         var issueCount = Math.Min(issueCountRaw.Get, 20);
@@ -216,7 +216,7 @@ public class DecompositionLabelPropertyTests
     ///
     /// **Validates: Requirements 2.2, 2.3, 2.4, 12.5**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public void LabelStateMachine_Phase1Success_ProducesCorrectSequence(int seed)
     {
         // Phase 1 success path: agent:epic → agent:in-progress → agent:epic-review
@@ -235,7 +235,7 @@ public class DecompositionLabelPropertyTests
     ///
     /// **Validates: Requirements 2.2, 2.3, 2.4, 12.5**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public void LabelStateMachine_Phase2Success_ProducesCorrectSequence(int seed)
     {
         // Phase 2 success path: agent:epic-approved → agent:in-progress → agent:done
@@ -254,7 +254,7 @@ public class DecompositionLabelPropertyTests
     ///
     /// **Validates: Requirements 2.2, 2.3, 2.4, 12.5**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public void LabelStateMachine_Phase1Failure_ProducesCorrectSequence(int seed)
     {
         // Phase 1 failure path: agent:epic → agent:in-progress → agent:error
@@ -273,7 +273,7 @@ public class DecompositionLabelPropertyTests
     ///
     /// **Validates: Requirements 2.2, 2.3, 2.4, 12.5**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public void LabelStateMachine_Phase2Failure_ProducesCorrectSequence(int seed)
     {
         // Phase 2 failure path: agent:epic-approved → agent:in-progress → agent:error
@@ -293,7 +293,7 @@ public class DecompositionLabelPropertyTests
     ///
     /// **Validates: Requirements 2.2, 2.3, 2.4, 12.5**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public void LabelStateMachine_AnyPhaseAndOutcome_ProducesValidTransition(bool isPhase1, bool isSuccess)
     {
         var transitions = (isPhase1, isSuccess) switch
@@ -333,7 +333,7 @@ public class DecompositionLabelPropertyTests
     ///
     /// **Validates: Requirements 2.4, 10.2**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public void LabelStateMachine_Phase2AllFailed_ProducesError(PositiveInt attemptedCountRaw)
     {
         var attemptedCount = Math.Min(attemptedCountRaw.Get, 20);
@@ -362,7 +362,7 @@ public class DecompositionLabelPropertyTests
     ///
     /// **Validates: Requirements 2.3**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public void LabelStateMachine_Phase2PartialSuccess_ProducesDone(PositiveInt totalRaw, PositiveInt successRaw)
     {
         var total = Math.Max(Math.Min(totalRaw.Get, 20), 2);

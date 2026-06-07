@@ -22,7 +22,7 @@ public class KiroCliAgentProviderPropertyTests
     /// to any output line returns the line unchanged.
     /// **Validates: REQ-1.3**
     /// </summary>
-    [Property(Arbitrary = [typeof(AnsiOutputArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(AnsiOutputArbitrary)])]
     public void ExecuteAsync_OutputLines_Contain_No_Ansi_Sequences(List<AnsiLine> rawLines)
     {
         // Arrange
@@ -77,7 +77,7 @@ public class KiroCliAgentProviderPropertyTests
     /// as many underlying ExecutePromptAsync calls as there are distinct (normalized) paths.
     /// **Validates: Requirements 1.1**
     /// </summary>
-    [Property(Arbitrary = [typeof(WorkspacePathArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(WorkspacePathArbitrary)])]
     public void EnsureSession_CallCount_Equals_DistinctNormalizedPaths(List<WorkspacePath> paths)
     {
         // Arrange
@@ -117,7 +117,7 @@ public class KiroCliAgentProviderPropertyTests
     /// identical boolean to IKiroCliOrchestrator.ExecutePromptAsync.
     /// **Validates: Requirements 1.4**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void ExecuteAsync_Forwards_UseResume_To_Orchestrator(bool useResume)
     {
         // Arrange

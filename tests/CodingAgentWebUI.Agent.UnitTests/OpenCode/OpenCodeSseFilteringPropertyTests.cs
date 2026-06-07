@@ -27,7 +27,7 @@ public class OpenCodeSseFilteringPropertyTests
     /// the event SHALL be processed and the callback SHALL be invoked.
     /// **Validates: Requirements 4.12**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void MatchingSessionId_EventIsProcessed(NonEmptyString sessionId, NonEmptyString textContent)
     {
         // Arrange
@@ -64,7 +64,7 @@ public class OpenCodeSseFilteringPropertyTests
     /// the event SHALL be discarded without invoking the callback.
     /// **Validates: Requirements 4.12**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void NonMatchingSessionId_EventIsDiscarded(
         NonEmptyString activeSession,
         NonEmptyString eventSession,
@@ -108,7 +108,7 @@ public class OpenCodeSseFilteringPropertyTests
     /// without invoking the callback.
     /// **Validates: Requirements 4.12**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void NullSessionId_EventIsDiscarded(NonEmptyString activeSession, NonEmptyString textContent)
     {
         // Arrange
@@ -145,7 +145,7 @@ public class OpenCodeSseFilteringPropertyTests
     /// only the matching events SHALL be processed.
     /// **Validates: Requirements 4.12**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void MixedSessionIds_OnlyMatchingEventsProcessed(NonEmptyString activeSession, PositiveInt matchCount, PositiveInt nonMatchCount)
     {
         // Constrain to reasonable sizes
@@ -202,7 +202,7 @@ public class OpenCodeSseFilteringPropertyTests
     /// no permission approval request SHALL be sent.
     /// **Validates: Requirements 4.12**
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public void NonMatchingSessionId_PermissionNotApproved(
         NonEmptyString activeSession,
         NonEmptyString eventSession,

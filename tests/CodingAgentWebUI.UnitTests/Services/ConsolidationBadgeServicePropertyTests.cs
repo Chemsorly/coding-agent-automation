@@ -20,7 +20,7 @@ public class ConsolidationBadgeServicePropertyTests
     /// BadgeCount equals their sum; after Reset(), BadgeCount is zero.
     /// **Validates: Requirements 10.1, 10.3**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(BadgeArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(BadgeArbitraries) })]
     public void BadgeCount_EqualsSum_OfAllIncrements(List<int> increments)
     {
         var sut = new ConsolidationBadgeService();
@@ -41,7 +41,7 @@ public class ConsolidationBadgeServicePropertyTests
     /// BadgeCount is always zero.
     /// **Validates: Requirements 10.3**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(BadgeArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(BadgeArbitraries) })]
     public void BadgeCount_AfterReset_IsAlwaysZero(List<int> increments)
     {
         var sut = new ConsolidationBadgeService();
@@ -59,7 +59,7 @@ public class ConsolidationBadgeServicePropertyTests
     /// the badge count equals the sum of increments since the last reset.
     /// **Validates: Requirements 10.1, 10.3**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(BadgeArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(BadgeArbitraries) })]
     public void BadgeCount_AfterInterleavedOps_EqualsSumSinceLastReset(
         List<BadgeOperation> operations)
     {

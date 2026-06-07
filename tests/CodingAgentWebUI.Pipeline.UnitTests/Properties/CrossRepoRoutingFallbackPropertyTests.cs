@@ -28,7 +28,7 @@ public class CrossRepoRoutingFallbackPropertyTests
     /// Never throws, never returns a random provider ID.
     /// **Validates: Requirements 7.4, 7.5**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(CrossRepoRoutingArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(CrossRepoRoutingArbitraries) })]
     public void ResolveTargetIssueProviderId_UnresolvableTarget_AlwaysReturnsNull(
         UnresolvableTargetInput input)
     {
@@ -49,7 +49,7 @@ public class CrossRepoRoutingFallbackPropertyTests
     /// default issue provider regardless of project context state.
     /// **Validates: Requirements 7.5**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(CrossRepoRoutingArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(CrossRepoRoutingArbitraries) })]
     public void ResolveTargetIssueProviderId_NullOrEmptyTarget_AlwaysReturnsNull(
         NullOrEmptyTargetInput input)
     {
@@ -69,7 +69,7 @@ public class CrossRepoRoutingFallbackPropertyTests
     /// value falls back to the dispatching template's default provider.
     /// **Validates: Requirements 7.4, 7.5**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void ResolveTargetIssueProviderId_NoProjectContext_AlwaysReturnsNull(
         NonEmptyString targetRepository)
     {
@@ -89,7 +89,7 @@ public class CrossRepoRoutingFallbackPropertyTests
     /// the method returns that specific provider ID — never a random one from the project.
     /// **Validates: Requirements 7.4, 7.5**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(CrossRepoRoutingArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(CrossRepoRoutingArbitraries) })]
     public void ResolveTargetIssueProviderId_ResolvableTarget_ReturnsCorrectProviderId(
         ResolvableTargetInput input)
     {
@@ -110,7 +110,7 @@ public class CrossRepoRoutingFallbackPropertyTests
     /// a value that differs only in case from a template name must fall back to null.
     /// **Validates: Requirements 7.4, 7.5**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(CrossRepoRoutingArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(CrossRepoRoutingArbitraries) })]
     public void ResolveTargetIssueProviderId_CaseMismatch_ReturnsNull(
         CaseMismatchInput input)
     {

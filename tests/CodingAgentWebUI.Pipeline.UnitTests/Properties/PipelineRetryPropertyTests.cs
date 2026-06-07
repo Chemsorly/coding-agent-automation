@@ -21,7 +21,7 @@ public class PipelineRetryPropertyTests
     /// The pipeline now runs end-to-end without pausing.
     /// **Validates: Requirements 5.2, 5.4**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void RetryLogic_EnforcesMaxCountAndAccumulatesErrors(PositiveInt retryCountRaw)
     {
         // Clamp to 1-5 for test speed

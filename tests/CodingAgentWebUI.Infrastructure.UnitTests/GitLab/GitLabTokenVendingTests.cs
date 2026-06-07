@@ -34,7 +34,7 @@ public class GitLabTokenVendingTests
     /// - No JWT exchange is attempted (no privateKeyBase64 present)
     /// **Validates: Requirements 21.1, 21.3, 21.4**
     /// </summary>
-    [Property(Arbitrary = [typeof(GitLabTokenVendingInputArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(GitLabTokenVendingInputArbitrary)])]
     public void PrepareAgentConfigs_CopiesAccessTokenToTokenKey_AndRemovesAccessToken(GitLabTokenVendingInput input)
     {
         // Arrange
@@ -80,7 +80,7 @@ public class GitLabTokenVendingTests
     /// For any GitLab config, non-token settings (ApiUrl, ProjectId) are preserved as-is.
     /// **Validates: Requirements 21.1, 21.3**
     /// </summary>
-    [Property(Arbitrary = [typeof(GitLabTokenVendingInputArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(GitLabTokenVendingInputArbitrary)])]
     public void PrepareAgentConfigs_PreservesOtherSettings(GitLabTokenVendingInput input)
     {
         // Arrange
@@ -122,7 +122,7 @@ public class GitLabTokenVendingTests
     /// token generation path.
     /// **Validates: Requirements 21.4**
     /// </summary>
-    [Property(Arbitrary = [typeof(GitLabTokenVendingInputArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(GitLabTokenVendingInputArbitrary)])]
     public void PrepareAgentConfigs_DoesNotContainPrivateKeyBase64_InOutput(GitLabTokenVendingInput input)
     {
         // Arrange

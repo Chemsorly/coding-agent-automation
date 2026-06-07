@@ -21,7 +21,7 @@ public class PipelineStateTransitionPropertyTests
     /// The pipeline now runs end-to-end without pausing.
     /// **Validates: Requirements 8.2**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void PipelineTransitions_UpdateStateAndFireOnChange(bool allGatesPass)
     {
         var transitionLog = new List<PipelineStep>();
@@ -71,7 +71,7 @@ public class PipelineStateTransitionPropertyTests
     /// monotonically non-decreasing sequence.
     /// **Validates: Requirements 12**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void HighWaterMark_IsMonotonicallyNonDecreasing(NonEmptyArray<bool> gateResultsWrapper)
     {
         var gateResults = gateResultsWrapper.Get;

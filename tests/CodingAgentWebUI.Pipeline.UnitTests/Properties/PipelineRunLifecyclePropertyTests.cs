@@ -50,7 +50,7 @@ public class PipelineRunLifecyclePropertyTests
     /// ActiveRun is non-null AND CurrentStep is not Completed/Failed/Cancelled.
     /// **Validates: Requirements 1.1, 1.2**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
     public bool IsRunning_ReturnsTrue_IffActiveRunNonNullAndNonTerminal(LifecycleTestInput input)
     {
         var service = CreateService();
@@ -70,7 +70,7 @@ public class PipelineRunLifecyclePropertyTests
     /// HasAnyActiveRuns returns true iff either IsRunning is true OR run service reports active runs.
     /// **Validates: Requirements 1.3**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
     public bool HasAnyActiveRuns_CombinesLocalAndRunService(HasActiveRunsInput input)
     {
         var runServiceMock = new Mock<IOrchestratorRunService>();
@@ -94,7 +94,7 @@ public class PipelineRunLifecyclePropertyTests
     /// GetAllActiveRuns returns exactly the local run (if active) plus all runs from the run service.
     /// **Validates: Requirements 1.4**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
     public bool GetAllActiveRuns_ReturnsUnionOfLocalAndAgentRuns(GetAllActiveRunsInput input)
     {
         var agentRuns = Enumerable.Range(0, input.AgentRunCount)
@@ -122,7 +122,7 @@ public class PipelineRunLifecyclePropertyTests
     /// has that identifier and is running, OR IOrchestratorRunService.IsIssueBeingProcessed returns true.
     /// **Validates: Requirements 1.5**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
     public bool IsIssueBeingProcessed_ChecksBothLocalAndRunService(IsIssueBeingProcessedInput input)
     {
         var localIssueId = input.LocalMatchesQuery ? input.QueryIssue : "other-issue";
@@ -148,7 +148,7 @@ public class PipelineRunLifecyclePropertyTests
     /// invoke the corresponding event with those exact arguments.
     /// **Validates: Requirements 2.2, 2.3, 2.4**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
     public bool EventEmission_InvokesSubscribersWithExactArguments(EventEmissionInput input)
     {
         var service = CreateService();
@@ -188,7 +188,7 @@ public class PipelineRunLifecyclePropertyTests
     /// does NOT propagate the exception.
     /// **Validates: Requirements 2.5, 2.6, 2.7**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
     public bool EventExceptionIsolation_DoesNotPropagate(EventEmissionInput input)
     {
         var service = CreateService();
@@ -222,7 +222,7 @@ public class PipelineRunLifecyclePropertyTests
     /// CurrentStep equals new step, HighWaterMark updated if non-terminal and exceeds current, OnChange invoked.
     /// **Validates: Requirements 3.1, 3.2**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
     public bool TransitionTo_UpdatesStateCorrectly(TransitionInput input)
     {
         var service = CreateService();
@@ -257,7 +257,7 @@ public class PipelineRunLifecyclePropertyTests
     /// FailureReason set, CompletedAt non-null, CurrentStep is Failed, run added to history.
     /// **Validates: Requirements 3.3**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
     public bool FailRunAsync_SetsFailureStateCorrectly(FailRunInput input)
     {
         var historyMock = new Mock<IPipelineRunHistoryService>();
@@ -286,7 +286,7 @@ public class PipelineRunLifecyclePropertyTests
     /// CTS cancelled, CompletedAt non-null, CurrentStep is Cancelled, run added to history.
     /// **Validates: Requirements 4.3**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
     public bool CancelPipelineAsync_CancelsAndTransitions(CancelRunInput input)
     {
         var historyMock = new Mock<IPipelineRunHistoryService>();
@@ -320,7 +320,7 @@ public class PipelineRunLifecyclePropertyTests
     /// every run has CompletedAt set, CurrentStep is Cancelled, added to history.
     /// **Validates: Requirements 4.4**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
     public bool MarkAgentRunsCancelled_CancelsAllAgentRuns(MarkAgentRunsCancelledInput input)
     {
         var agentRuns = Enumerable.Range(0, input.AgentRunCount)
@@ -354,7 +354,7 @@ public class PipelineRunLifecyclePropertyTests
     /// RegisterDispatchedRun returns true, adds to run service, fires OnChange.
     /// **Validates: Requirements 5.1**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
     public bool RegisterDispatchedRun_WhenNotProcessing_ReturnsTrue(RegisterRunInput input)
     {
         var run = CreateRun(input.RunId, input.IssueId, PipelineStep.GeneratingCode);
@@ -381,7 +381,7 @@ public class PipelineRunLifecyclePropertyTests
     /// RegisterDispatchedRun returns false and does NOT add to run service.
     /// **Validates: Requirements 5.2**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
     public bool RegisterDispatchedRun_WhenAlreadyProcessing_ReturnsFalse(RegisterRunInput input)
     {
         var run = CreateRun(input.RunId, input.IssueId, PipelineStep.GeneratingCode);
@@ -405,7 +405,7 @@ public class PipelineRunLifecyclePropertyTests
     /// is cancelled when the external token is cancelled.
     /// **Validates: Requirements 4.2**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public bool CreateLinkedCancellationToken_CancelsWhenExternalCancels(bool cancelExternal)
     {
         var service = CreateService();

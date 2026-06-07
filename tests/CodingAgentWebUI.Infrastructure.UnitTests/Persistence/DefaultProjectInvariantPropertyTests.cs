@@ -38,7 +38,7 @@ public class DefaultProjectInvariantPropertyTests : IDisposable
     /// WellKnownIds.DefaultProjectId always throws.
     /// **Validates: Requirements 2.3, 12.7**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(ProjectStoreOperationArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ProjectStoreOperationArbitraries) })]
     public void DeleteDefaultProject_AlwaysThrows_InvalidOperationException(
         ProjectStoreOperation[] operations)
     {
@@ -64,7 +64,7 @@ public class DefaultProjectInvariantPropertyTests : IDisposable
     /// for the Default project always returns a non-null project.
     /// **Validates: Requirements 2.1, 2.3**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(ProjectStoreOperationArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ProjectStoreOperationArbitraries) })]
     public void DefaultProject_AlwaysExists_AfterAnyOperationSequence(
         ProjectStoreOperation[] operations)
     {

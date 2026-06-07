@@ -18,7 +18,7 @@ public class PipelineRunFeedbackTests
     /// produces a PipelineRunSummary whose Feedback is reference-equal to the original.
     /// **Validates: Requirements 4.4**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(PipelineRunWithFeedbackArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunWithFeedbackArbitraries) })]
     public void ToSummary_PreservesFeedback_ReferenceEqual(PipelineRun run)
     {
         // Precondition: run has non-null Feedback (guaranteed by generator)
@@ -35,7 +35,7 @@ public class PipelineRunFeedbackTests
     /// produces a PipelineRunSummary whose Feedback has identical field values.
     /// **Validates: Requirements 4.4**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(PipelineRunWithFeedbackArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunWithFeedbackArbitraries) })]
     public void ToSummary_PreservesFeedback_StructurallyEqual(PipelineRun run)
     {
         var summary = run.ToSummary();

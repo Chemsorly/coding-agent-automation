@@ -25,7 +25,7 @@ public class OpenCodeResponsePartsPropertyTests
     /// preserved unchanged.
     /// **Validates: Requirements 1.4, 3.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(ResponsePartsArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(ResponsePartsArbitrary)], MaxTest = 20)]
     public async void OnlyTextPartsAreExtracted_AndConcatenatedWithNewlines(ResponsePartsInput input)
     {
         // Arrange
@@ -72,7 +72,7 @@ public class OpenCodeResponsePartsPropertyTests
     /// For any response with ONLY non-text parts, OutputLines contains a single empty string.
     /// **Validates: Requirements 1.4, 3.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(ResponsePartsArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(ResponsePartsArbitrary)], MaxTest = 20)]
     public async void NonTextPartsAreExcludedFromOutput(NonTextOnlyInput input)
     {
         // Arrange

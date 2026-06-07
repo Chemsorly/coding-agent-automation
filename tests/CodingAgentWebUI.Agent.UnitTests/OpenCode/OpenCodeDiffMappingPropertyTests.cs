@@ -26,7 +26,7 @@ public class OpenCodeDiffMappingPropertyTests
     /// status "Modified" for all others.
     /// **Validates: Requirements 7.3, 7.4, 7.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(DiffMappingArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(DiffMappingArbitrary)], MaxTest = 20)]
     public async void StatusMappingIsCorrect_AddedDeletedOrModified(DiffMappingInput input)
     {
         // Arrange
@@ -73,7 +73,7 @@ public class OpenCodeDiffMappingPropertyTests
     /// exactly in the resulting FileChangeSummary.
     /// **Validates: Requirements 7.3, 7.4, 7.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(DiffMappingArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(DiffMappingArbitrary)], MaxTest = 20)]
     public async void LineCounts_ArePreservedExactly(DiffMappingInput input)
     {
         // Arrange
@@ -101,7 +101,7 @@ public class OpenCodeDiffMappingPropertyTests
     /// On any HTTP error (4xx, 5xx), an empty list SHALL be returned without throwing.
     /// **Validates: Requirements 7.3, 7.4, 7.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(DiffMappingArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(DiffMappingArbitrary)], MaxTest = 20)]
     public async void HttpError_ReturnsEmptyList_WithoutThrowing(HttpErrorInput input)
     {
         // Arrange

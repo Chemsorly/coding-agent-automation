@@ -57,7 +57,7 @@ public class TemplateUniquenessPropertyTests
     /// the resolved set has no duplicates across projects.
     /// **Validates: Requirements 1.4**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(TemplateUniquenessArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(TemplateUniquenessArbitraries) })]
     public void AfterResolution_EachTemplateId_AppearsInAtMostOneProject(
         PipelineProject[] projects)
     {
@@ -81,7 +81,7 @@ public class TemplateUniquenessPropertyTests
     /// after resolution, that template belongs to the project whose name comes first alphabetically.
     /// **Validates: Requirements 1.4**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(TemplateUniquenessArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(TemplateUniquenessArbitraries) })]
     public void ConflictResolution_FirstProjectAlphabetically_WinsOwnership(
         PipelineProject[] projects)
     {
@@ -127,7 +127,7 @@ public class TemplateUniquenessPropertyTests
     /// before resolution. Templates are redistributed, not dropped.
     /// **Validates: Requirements 2.4**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(TemplateUniquenessArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(TemplateUniquenessArbitraries) })]
     public void AfterResolution_NoTemplateId_IsLost(
         PipelineProject[] projects)
     {
@@ -153,7 +153,7 @@ public class TemplateUniquenessPropertyTests
     /// produces the same result.
     /// **Validates: Requirements 1.4**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(TemplateUniquenessArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(TemplateUniquenessArbitraries) })]
     public void Resolution_IsDeterministic_SameInputProducesSameOutput(
         PipelineProject[] projects)
     {

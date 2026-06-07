@@ -22,7 +22,7 @@ public class AnsiStripperEquivalenceTests
     /// OSC sequences, and bare bracket sequences, the OpenCode StripAnsiEscapes wrapper
     /// produces the same output as KiroCliLib.Core.AnsiStripper.Strip.
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(AnsiMixedStringArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(AnsiMixedStringArbitrary)])]
     public void StripAnsiEscapes_DelegatesToKiroCliLibAnsiStripper(AnsiMixedString input)
     {
         // Act

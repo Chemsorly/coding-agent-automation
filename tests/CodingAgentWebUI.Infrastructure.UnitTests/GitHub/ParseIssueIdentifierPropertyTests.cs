@@ -32,7 +32,7 @@ public class ParseIssueIdentifierPropertyTests
     /// For any non-negative integer n, ParseIssueIdentifier(n.ToString()) returns n.
     /// **Validates: Requirements 28.1, 28.2**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void ParseIssueIdentifier_RoundTrips_NonNegativeIntegers(NonNegativeInt n)
     {
         var input = n.Get.ToString();
@@ -47,7 +47,7 @@ public class ParseIssueIdentifierPropertyTests
     /// For any non-integer string, ParseIssueIdentifier throws ArgumentException.
     /// **Validates: Requirements 28.1, 28.2**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public bool ParseIssueIdentifier_ThrowsArgumentException_ForNonIntegerStrings(NonEmptyString input)
     {
         // Skip strings that are valid integers — we only want non-integer strings

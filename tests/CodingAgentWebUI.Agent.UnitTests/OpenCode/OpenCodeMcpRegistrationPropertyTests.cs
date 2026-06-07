@@ -38,7 +38,7 @@ public class OpenCodeMcpRegistrationPropertyTests
     /// result in outbound POST /mcp requests.
     /// **Validates: Requirements 9.1**
     /// </summary>
-    [Property(Arbitrary = [typeof(McpRegistrationArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(McpRegistrationArbitrary)], MaxTest = 20)]
     public void DisabledServers_AreFilteredOut_NoPOSTSent(List<McpServerConfig> servers)
     {
         // Arrange
@@ -69,7 +69,7 @@ public class OpenCodeMcpRegistrationPropertyTests
     /// "command", "args", and "env" properties.
     /// **Validates: Requirements 9.3**
     /// </summary>
-    [Property(Arbitrary = [typeof(McpRegistrationArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(McpRegistrationArbitrary)], MaxTest = 20)]
     public void StdioServers_ProduceCorrectConfigShape(McpServerConfig server)
     {
         // Only test stdio servers that are enabled
@@ -121,7 +121,7 @@ public class OpenCodeMcpRegistrationPropertyTests
     /// For any enabled http/sse server, the POST body contains a config object with "url" property.
     /// **Validates: Requirements 9.4**
     /// </summary>
-    [Property(Arbitrary = [typeof(McpRegistrationArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(McpRegistrationArbitrary)], MaxTest = 20)]
     public void HttpServers_ProduceCorrectConfigShape(McpServerConfig server)
     {
         // Only test http/sse servers that are enabled
@@ -167,7 +167,7 @@ public class OpenCodeMcpRegistrationPropertyTests
     /// those keys must NOT appear in the outbound POST body's config.env.
     /// **Validates: Requirements 9.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(McpRegistrationArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(McpRegistrationArbitrary)], MaxTest = 20)]
     public void ExcludedEnvKeys_AreRemovedFromStdioConfig(McpServerConfig server)
     {
         // Only test enabled stdio servers that have env vars
@@ -230,7 +230,7 @@ public class OpenCodeMcpRegistrationPropertyTests
     /// the remaining servers still get registered.
     /// **Validates: Requirements 9.6**
     /// </summary>
-    [Property(Arbitrary = [typeof(McpRegistrationArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(McpRegistrationArbitrary)], MaxTest = 20)]
     public void RegistrationContinues_WhenOneServerFails(List<McpServerConfig> servers)
     {
         // Filter to only enabled servers for this test

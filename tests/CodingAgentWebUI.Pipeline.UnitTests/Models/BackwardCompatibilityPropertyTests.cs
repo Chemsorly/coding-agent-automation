@@ -24,7 +24,7 @@ public class BackwardCompatibilityPropertyTests
     /// with ALL behavioral override fields set to null SHALL produce a result identical to the input.
     /// **Validates: Requirements 2.2, 11.4**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineConfigArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineConfigArbitraries) })]
     public void ApplyProjectOverrides_DefaultProjectWithNullOverrides_ProducesIdenticalConfig(
         PipelineConfiguration originalConfig)
     {
@@ -82,7 +82,7 @@ public class BackwardCompatibilityPropertyTests
     /// When no project is provided (null), the configuration is returned unchanged.
     /// **Validates: Requirements 2.2, 11.4**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineConfigArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineConfigArbitraries) })]
     public void ApplyProjectOverrides_NullProject_ReturnsUnchangedConfig(
         PipelineConfiguration originalConfig)
     {

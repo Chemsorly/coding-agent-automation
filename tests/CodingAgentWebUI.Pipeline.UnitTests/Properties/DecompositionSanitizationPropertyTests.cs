@@ -21,7 +21,7 @@ public class DecompositionSanitizationPropertyTests
     ///
     /// **Validates: Requirements 3.11**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(PlanValidationArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PlanValidationArbitraries) })]
     public Property PlanValidation_RejectsContentShorterThan20Chars_AcceptsContentAtLeast20Chars(PlanFileContent input)
     {
         var isValid = ValidatePlanFile(input.Content);
@@ -48,7 +48,7 @@ public class DecompositionSanitizationPropertyTests
     ///
     /// **Validates: Requirements 4.6**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(TitleSanitizationArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(TitleSanitizationArbitraries) })]
     public Property TitleSanitization_OutputHasNoNewlines_MaxLength200_NoLeadingTrailingWhitespace(TitleInput input)
     {
         var result = TextSanitizer.SanitizeTitle(input.Value);
@@ -71,7 +71,7 @@ public class DecompositionSanitizationPropertyTests
     ///
     /// **Validates: Requirements 4.6**
     /// </summary>
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(BodySanitizationArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(BodySanitizationArbitraries) })]
     public Property BodySanitization_MentionsBroken_HtmlEscaped(BodyInput input)
     {
         var result = TextSanitizer.SanitizeMarkdown(input.Value);

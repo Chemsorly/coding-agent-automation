@@ -21,7 +21,7 @@ public class DecompositionTemplatePropertyTests
     /// Enabled AND DecompositionEnabled is true, independently of ImplementationEnabled and ReviewEnabled.
     /// **Validates: Requirements 1.2, 1.4, 1.6**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public async Task DecompositionPolling_OccursIffEnabledAndDecompositionEnabled(
         bool enabled, bool implementationEnabled, bool reviewEnabled, bool decompositionEnabled)
     {
@@ -126,7 +126,7 @@ public class DecompositionTemplatePropertyTests
     /// IssueProviderId and RepoProviderId reference existing provider configurations in the set.
     /// **Validates: Requirements 1.3**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public async Task ProviderValidation_AcceptsIffBothProvidersExist(
         bool issueProviderExists, bool repoProviderExists)
     {

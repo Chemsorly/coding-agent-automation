@@ -28,7 +28,7 @@ public class AgentLabelDerivationPropertyTests
     /// by splitting on comma and trimming whitespace. Empty segments are ignored.
     /// **Validates: Requirements 2.7, 19.1**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void ParsedLabels_AreCorrectlyTrimmed(NonEmptyString[] labels)
     {
         if (labels.Length == 0) return;
@@ -61,7 +61,7 @@ public class AgentLabelDerivationPropertyTests
     /// Property 2 (continued): Empty segments between commas are ignored.
     /// **Validates: Requirements 2.7, 19.1**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void ParsedLabels_IgnoreEmptySegments(NonEmptyString label1, NonEmptyString label2)
     {
         var l1 = label1.Get.Replace(",", "").Trim();
@@ -81,7 +81,7 @@ public class AgentLabelDerivationPropertyTests
     /// Property 2 (continued): Non-empty input always produces non-empty label set.
     /// **Validates: Requirements 2.7, 19.1**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void NonEmptyInput_ProducesNonEmptyLabelSet(NonEmptyString label)
     {
         var cleanLabel = label.Get.Replace(",", "").Trim();

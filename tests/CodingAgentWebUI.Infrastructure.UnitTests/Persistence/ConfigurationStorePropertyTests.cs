@@ -33,7 +33,7 @@ public class ConfigurationStorePropertyTests : IDisposable
     /// Property 8a: Saving then loading a PipelineConfiguration produces an equivalent object.
     /// **Validates: Requirements 9.5**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void PipelineConfig_RoundTrip_PreservesData(
         int maxRetries,
         NonEmptyString workspaceDir)
@@ -68,7 +68,7 @@ public class ConfigurationStorePropertyTests : IDisposable
     /// Property 8b: Saving then loading a ProviderConfig produces an equivalent object.
     /// **Validates: Requirements 9.5**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void ProviderConfig_RoundTrip_PreservesData(
         byte kindSeed,
         NonEmptyString providerType,

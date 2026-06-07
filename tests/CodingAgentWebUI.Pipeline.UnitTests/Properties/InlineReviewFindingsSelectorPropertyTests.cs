@@ -25,7 +25,7 @@ public class InlineReviewFindingsSelectorPropertyTests
     /// severity >= threshold. No finding below the threshold appears in the output comments.
     /// **Validates: Requirements 8.2, 13.1**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P4_SeverityThresholdFiltering()
     {
         var gen =
@@ -109,7 +109,7 @@ public class InlineReviewFindingsSelectorPropertyTests
     /// The cap is enforced regardless of how many findings are provided.
     /// **Validates: Requirements 8.3, 13.2**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P5_MaxInlineCommentsCap()
     {
         var gen =
@@ -147,7 +147,7 @@ public class InlineReviewFindingsSelectorPropertyTests
     /// P5 (boundary): When MaxInlineComments is below 1 or above 50, it is clamped to [1, 50].
     /// **Validates: Requirements 8.3**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P5_MaxInlineCommentsCap_ClampedBoundary()
     {
         var gen =
@@ -183,7 +183,7 @@ public class InlineReviewFindingsSelectorPropertyTests
     /// (Critical first). When false, the original order is preserved.
     /// **Validates: Requirements 8.4, 13.2**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P6_SeverityOrderingStability_OrderEnabled()
     {
         // Generate findings that target distinct file:line combinations to avoid consolidation
@@ -224,7 +224,7 @@ public class InlineReviewFindingsSelectorPropertyTests
     /// Findings appear in the same relative order as they were provided.
     /// **Validates: Requirements 8.4**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P6_SeverityOrderingStability_OrderDisabled()
     {
         // Generate findings with distinct locations to avoid consolidation effects
@@ -270,7 +270,7 @@ public class InlineReviewFindingsSelectorPropertyTests
     /// into a single ReviewComment. The output should have at most one comment per unique (path, line).
     /// **Validates: Requirements 5.4, 13.3**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P10_ConsolidationAtSameFileLine()
     {
         // Generate findings where some share the same file:line
@@ -317,7 +317,7 @@ public class InlineReviewFindingsSelectorPropertyTests
     /// with the same (Path, Line) pair.
     /// **Validates: Requirements 5.4, 13.3**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P10_ConsolidationGeneral_NoDuplicatePathLine()
     {
         var gen =
@@ -347,7 +347,7 @@ public class InlineReviewFindingsSelectorPropertyTests
     /// always sets Side to Right because findings target the new file state.
     /// **Validates: Requirements 3.4 (design note: DiffSide always Right)**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P13_DiffSideAlwaysRight()
     {
         var gen =

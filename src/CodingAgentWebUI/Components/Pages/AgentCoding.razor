@@ -26,66 +26,69 @@
         <h1>Agent Coding</h1>
     </header>
 
-    @if (LoopService.IsLoopActive)
-    {
-        <div class="agent-summary-bar loop-status-bar">
-            <span class="loop-status-text">@LoopService.StatusMessage</span>
-            <button class="btn-cancel loop-stop-btn" @onclick="StopLoop">⏹ Stop Loop</button>
-        </div>
-    }
+    @* ═══ Overlay toast stack (top-right, doesn't push content) ═══ *@
+    <div class="agent-toast-stack">
+        @if (LoopService.IsLoopActive && !_hideLoopToast)
+        {
+            <div class="agent-summary-bar loop-status-bar">
+                <span class="loop-status-text">@LoopService.StatusMessage</span>
+                <button class="btn-cancel loop-stop-btn" @onclick="StopLoop">⏹ Stop Loop</button>
+            </div>
+        }
 
-    @if (LoopService.IsCircuitBroken)
-    {
-        <div class="agent-summary-bar" style="background: var(--bg-error); color: var(--error); border-color: var(--error);">
-            @LoopService.StatusMessage
-            <span style="margin-left: 1rem;">
-                <button class="btn-save" @onclick="ResumeLoop" style="margin-right: 0.5rem;">Resume</button>
-                <button class="btn-cancel" @onclick="StopLoop">Stop</button>
-            </span>
-        </div>
-    }
+        @if (LoopService.IsCircuitBroken)
+        {
+            <div class="agent-summary-bar" style="background: var(--bg-error); color: var(--error); border-color: var(--error);">
+                @LoopService.StatusMessage
+                <span style="margin-left: 1rem;">
+                    <button class="btn-save" @onclick="ResumeLoop" style="margin-right: 0.5rem;">Resume</button>
+                    <button class="btn-cancel" @onclick="StopLoop">Stop</button>
+                </span>
+            </div>
+        }
 
-    @if (!string.IsNullOrEmpty(_successMessage))
-    {
-        <div class="settings-status status-success">@_successMessage</div>
-    }
+        @if (!string.IsNullOrEmpty(_successMessage))
+        {
+            <div class="settings-status status-success">@_successMessage</div>
+        }
 
-    @if (!string.IsNullOrEmpty(_errorMessage))
-    {
-        <div class="settings-status status-error">@_errorMessage</div>
-    }
+        @if (!string.IsNullOrEmpty(_errorMessage))
+        {
+            <div class="settings-status status-error">@_errorMessage</div>
+        }
 
-    @* Multi-agent run summary bar *@
-    @{
-        var agentRuns = RunService.GetActiveRuns();
-        var agentCount = Registry.GetAllAgents().Count;
-        var queueLength = Dispatcher.QueueLength;
-        var implRunCount = agentRuns.Count(r => r.RunType == PipelineRunType.Implementation);
-        var reviewRunCount = agentRuns.Count(r => r.RunType == PipelineRunType.Review);
-    }
-    @if (_showAgentSummary && (agentRuns.Count > 0 || queueLength > 0))
-    {
-        <div class="agent-summary-bar">
-            <span>
-                🤖 @agentCount agent(s) registered ·
-                @agentRuns.Count agent run(s) active
-                @if (implRunCount > 0 && reviewRunCount > 0)
-                {
-                    <text> (🔨@implRunCount impl · 🔍@reviewRunCount review)</text>
-                }
-                else if (reviewRunCount > 0)
-                {
-                    <text> (🔍@reviewRunCount review)</text>
-                }
-                @if (queueLength > 0)
-                {
-                    <text> · @queueLength job(s) queued</text>
-                }
-                · <a href="/agent-monitoring" style="color: var(--accent-light);">View Dashboard →</a>
-            </span>
-            <button class="agent-summary-dismiss" @onclick="DismissAgentSummary" title="Dismiss">✕</button>
-        </div>
-    }
+        @* Multi-agent run summary bar *@
+        @{
+            var agentRuns = RunService.GetActiveRuns();
+            var agentCount = Registry.GetAllAgents().Count;
+            var queueLength = Dispatcher.QueueLength;
+            var implRunCount = agentRuns.Count(r => r.RunType == PipelineRunType.Implementation);
+            var reviewRunCount = agentRuns.Count(r => r.RunType == PipelineRunType.Review);
+        }
+        @if (_showAgentSummary && (agentRuns.Count > 0 || queueLength > 0))
+        {
+            <div class="agent-summary-bar">
+                <span>
+                    🤖 @agentCount agent(s) registered ·
+                    @agentRuns.Count agent run(s) active
+                    @if (implRunCount > 0 && reviewRunCount > 0)
+                    {
+                        <text> (🔨@implRunCount impl · 🔍@reviewRunCount review)</text>
+                    }
+                    else if (reviewRunCount > 0)
+                    {
+                        <text> (🔍@reviewRunCount review)</text>
+                    }
+                    @if (queueLength > 0)
+                    {
+                        <text> · @queueLength job(s) queued</text>
+                    }
+                    · <a href="/agent-monitoring" style="color: var(--accent-light);">View Dashboard →</a>
+                </span>
+                <button class="agent-summary-dismiss" @onclick="DismissAgentSummary" title="Dismiss">✕</button>
+            </div>
+        }
+    </div>
 
     @{
         var activeRun = PipelineService.ActiveRun;
@@ -972,6 +975,8 @@
     private string? _errorMessage;
     private string? _successMessage;
     private bool _showAgentSummary = true;
+    private bool _hideLoopToast;
+    private string? _lastLoopStatus;
     private bool _showCompletionOnly;
     private string? _lastRunId;
     private bool _disposed;
@@ -1357,6 +1362,21 @@
     private void DismissAgentSummary()
     {
         _showAgentSummary = false;
+    }
+
+    private async Task AutoDismissLoopToast()
+    {
+        await Task.Delay(5000);
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                if (_disposed) return;
+                _hideLoopToast = true;
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
     }
 
     // ── Loop Controls ──
@@ -1891,6 +1911,21 @@
 
                 if (run is { CurrentStep: PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled })
                     _showCompletionOnly = true;
+
+                // Auto-dismiss loop toast when cycle completes
+                var currentStatus = LoopService.StatusMessage;
+                if (currentStatus != _lastLoopStatus)
+                {
+                    _lastLoopStatus = currentStatus;
+                    if (currentStatus.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _ = AutoDismissLoopToast();
+                    }
+                    else
+                    {
+                        _hideLoopToast = false;
+                    }
+                }
 
                 StateHasChanged();
                 try

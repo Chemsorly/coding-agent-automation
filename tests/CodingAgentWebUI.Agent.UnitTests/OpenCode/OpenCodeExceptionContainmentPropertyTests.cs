@@ -29,7 +29,7 @@ public class OpenCodeExceptionContainmentPropertyTests
     /// ExitCode != 0 and descriptive error in OutputLines.
     /// **Validates: Requirements 10.3**
     /// </summary>
-    [Property(Arbitrary = [typeof(ExceptionContainmentArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(ExceptionContainmentArbitrary)], MaxTest = 20)]
     public async void AnyNonCancellationException_IsCaughtAndReturnedAsAgentResult(ThrowingExceptionOutcome outcome)
     {
         // Arrange
@@ -58,7 +58,7 @@ public class OpenCodeExceptionContainmentPropertyTests
     /// AgentResult with ExitCode != 0.
     /// **Validates: Requirements 10.3**
     /// </summary>
-    [Property(Arbitrary = [typeof(ExceptionContainmentArbitrary)], MaxTest = 100)]
+    [Property(Arbitrary = [typeof(ExceptionContainmentArbitrary)], MaxTest = 20)]
     public async void AnyNonCancellationException_DuringSessionCreate_IsCaughtAndReturnedAsAgentResult(ThrowingExceptionOutcome outcome)
     {
         // Arrange

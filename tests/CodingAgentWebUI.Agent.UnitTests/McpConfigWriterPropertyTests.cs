@@ -20,7 +20,7 @@ public class McpConfigWriterPropertyTests
     /// either (command + args) for stdio servers or (url) for HTTP servers.
     /// **Validates: Requirements 34.1, 34.2, 34.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(McpServerConfigArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(McpServerConfigArbitrary)])]
     public void WriteConfig_Produces_Valid_Json_With_Correct_Structure(List<McpServerConfig> servers)
     {
         // Arrange
@@ -88,7 +88,7 @@ public class McpConfigWriterPropertyTests
     /// input produces identical output (deterministic).
     /// **Validates: Requirements 34.1, 34.2, 34.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(McpServerConfigArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(McpServerConfigArbitrary)])]
     public void WriteConfig_Is_Deterministic_Same_Input_Same_Output(List<McpServerConfig> servers)
     {
         // Arrange

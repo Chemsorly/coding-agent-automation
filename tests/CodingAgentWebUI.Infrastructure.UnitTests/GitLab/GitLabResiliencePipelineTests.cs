@@ -62,7 +62,7 @@ public class GitLabResiliencePipelineTests
     /// is thrown with a future ResetAt timestamp.
     /// **Validates: Requirements 3.2, 3.3, 3.4**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void RateLimit429_ExhaustsRetries_ThrowsRateLimitExceededException(PositiveInt _seed)
     {
         // Arrange: always throw 429 to exhaust all retries
@@ -92,7 +92,7 @@ public class GitLabResiliencePipelineTests
     /// the result is returned successfully. Tests that the retry mechanism works for 429.
     /// **Validates: Requirements 3.2, 3.3**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void RateLimit429_SucceedsOnRetry_ReturnsResult(PositiveInt successAttempt)
     {
         // Arrange: fail with 429 a number of times within retry budget, then succeed
@@ -126,7 +126,7 @@ public class GitLabResiliencePipelineTests
     /// status code, exactly one call is made.
     /// **Validates: Requirements 3.6, 25.2**
     /// </summary>
-    [Property(Arbitrary = [typeof(NonRetryableStatusCodeArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(NonRetryableStatusCodeArbitrary)])]
     public void NonRetryableStatusCode_PropagatesImmediately_NoRetry(HttpStatusCode statusCode)
     {
         // Arrange

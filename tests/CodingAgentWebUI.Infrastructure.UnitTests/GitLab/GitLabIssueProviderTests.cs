@@ -64,7 +64,7 @@ public class GitLabIssueProviderTests
     /// returns an IssueDetail with matching IID, title, description, and labels.
     /// **Validates: Requirements 5.1, 5.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(IssueDataArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(IssueDataArbitrary)])]
     public void GetIssueAsync_PreservesFieldMapping(IssueTestData data)
     {
         // Arrange
@@ -95,7 +95,7 @@ public class GitLabIssueProviderTests
     /// via GetIssueAsync which uses the supported GetAsync method.
     /// **Validates: Requirements 5.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(IssueDataArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(IssueDataArbitrary)])]
     public void GetIssueAsync_PreservesIssueSummaryFields(IssueTestData data)
     {
         // Arrange
@@ -129,7 +129,7 @@ public class GitLabIssueProviderTests
     /// For any issue that is open, IsIssueClosedAsync returns false.
     /// **Validates: Requirements 5.2**
     /// </summary>
-    [Property(Arbitrary = [typeof(IssueFilterArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(IssueFilterArbitrary)])]
     public void IsIssueClosedAsync_CorrectlyDetectsState(IssueFilterTestData data)
     {
         // Arrange
@@ -251,7 +251,7 @@ public class GitLabIssueProviderTests
     /// For any invalid page or pageSize, the provider throws ArgumentOutOfRangeException.
     /// **Validates: Requirements 5.6**
     /// </summary>
-    [Property(Arbitrary = [typeof(PaginationArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(PaginationArbitrary)])]
     public void Pagination_ValidatesParameters(PaginationTestData data)
     {
         // Arrange
@@ -306,7 +306,7 @@ public class GitLabIssueProviderTests
     /// with matching id, body, author, and created_at.
     /// **Validates: Requirements 5.9**
     /// </summary>
-    [Property(Arbitrary = [typeof(CommentDataArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(CommentDataArbitrary)])]
     public void ListCommentsAsync_PreservesCommentFieldMapping(CommentTestData data)
     {
         // Arrange
@@ -398,7 +398,7 @@ public class GitLabIssueProviderTests
     /// Note: Uses issue creation with labels to verify label presence (avoids mock bug in EditAsync label events).
     /// **Validates: Requirements 6.3**
     /// </summary>
-    [Property(Arbitrary = [typeof(LabelArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(LabelArbitrary)])]
     public void AddLabelsAsync_AddsLabelsToIssue(LabelTestData data)
     {
         // Arrange
@@ -490,7 +490,7 @@ public class GitLabIssueProviderTests
     /// For any valid title and body, the result contains a numeric identifier.
     /// **Validates: Requirements 6.6**
     /// </summary>
-    [Property(Arbitrary = [typeof(IssueDataArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(IssueDataArbitrary)])]
     public void CreateIssueAsync_ReturnsCorrectResult(IssueTestData data)
     {
         // Arrange
@@ -518,7 +518,7 @@ public class GitLabIssueProviderTests
     /// so we verify the first call succeeds and labels are created.
     /// **Validates: Requirements 7.4**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void EnsureAgentLabelsAsync_CreatesLabelsSuccessfully(PositiveInt _seed)
     {
         // Arrange

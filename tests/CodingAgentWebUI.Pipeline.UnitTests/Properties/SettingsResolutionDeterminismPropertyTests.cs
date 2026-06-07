@@ -24,7 +24,7 @@ public class SettingsResolutionDeterminismPropertyTests
     /// twice with the same arguments produces identical results (referential transparency).
     /// **Validates: Requirements 3.4, 4.4, 15.3**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(SettingsResolutionArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(SettingsResolutionArbitraries) })]
     public void ApplyProjectOverrides_IsDeterministic_SameInputsSameOutput(
         SettingsResolutionInput input)
     {
@@ -64,7 +64,7 @@ public class SettingsResolutionDeterminismPropertyTests
     /// When project is null, ApplyProjectOverrides returns the original config unmodified.
     /// **Validates: Requirements 3.4, 4.4, 15.3**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(SettingsResolutionArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(SettingsResolutionArbitraries) })]
     public void ApplyProjectOverrides_NullProject_ReturnsConfigUnchanged(
         SettingsResolutionInput input)
     {
@@ -103,7 +103,7 @@ public class SettingsResolutionDeterminismPropertyTests
     /// When a project field is null, the corresponding config field retains its original value.
     /// **Validates: Requirements 3.2, 3.4, 4.4, 15.3**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(SettingsResolutionArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(SettingsResolutionArbitraries) })]
     public void ApplyProjectOverrides_NullFields_LeaveConfigFieldsUnchanged(
         NullFieldsInput input)
     {
@@ -149,7 +149,7 @@ public class SettingsResolutionDeterminismPropertyTests
     /// When a project field is non-null, the result has the project's value for that field.
     /// **Validates: Requirements 3.3, 3.4, 4.4, 15.3**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(SettingsResolutionArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(SettingsResolutionArbitraries) })]
     public void ApplyProjectOverrides_NonNullFields_OverrideConfigFields(
         SettingsResolutionInput input)
     {

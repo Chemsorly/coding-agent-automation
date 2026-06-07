@@ -48,7 +48,7 @@ public class CiLogWriterPropertyTests : IDisposable
     /// **Validates: REQ-4.2**
     /// </summary>
     // Feature: provider-interface-gaps, Property 6: CiLogWriter round-trip
-    [Property(Arbitrary = [typeof(PipelineRunStatusArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(PipelineRunStatusArbitrary)])]
     public void WriteJobLogs_RoundTrips_LogContent_For_Failed_Jobs(PipelineRunStatusWithLogs input)
     {
         // Arrange

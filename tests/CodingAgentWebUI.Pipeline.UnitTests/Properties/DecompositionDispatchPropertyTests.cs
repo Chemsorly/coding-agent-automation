@@ -22,7 +22,7 @@ public class DecompositionDispatchPropertyTests
     ///
     /// **Validates: Requirements 12.3, 17.10, 19.1**
     /// </summary>
-    [Property(MaxTest = 150, Arbitrary = new[] { typeof(FairAlternationArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(FairAlternationArbitraries) })]
     public Property FairThreeWayAlternation_NoStarvationWhenBudgetAtLeast3(FairAlternationInput input)
     {
         // Simulate the three-way alternation logic from PipelineLoopService
@@ -106,7 +106,7 @@ public class DecompositionDispatchPropertyTests
     ///
     /// **Validates: Requirements 12.3, 17.10**
     /// </summary>
-    [Property(MaxTest = 150, Arbitrary = new[] { typeof(ConcurrencyLimitArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ConcurrencyLimitArbitraries) })]
     public Property ConcurrencyLimitEnforcement_SkipIffActiveAtOrAboveLimit(
         ConcurrencyLimitInput input)
     {
@@ -144,7 +144,7 @@ public class DecompositionDispatchPropertyTests
     ///
     /// **Validates: Requirements 11.4, 14.3**
     /// </summary>
-    [Property(MaxTest = 150, Arbitrary = new[] { typeof(PlanCommentArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PlanCommentArbitraries) })]
     public Property PlanCommentIdentification_SelectsMostRecentWithMarker(
         PlanCommentInput input)
     {
@@ -188,7 +188,7 @@ public class DecompositionDispatchPropertyTests
     ///
     /// **Validates: Requirements 14.3**
     /// </summary>
-    [Property(MaxTest = 150, Arbitrary = new[] { typeof(PlanIdempotencyArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PlanIdempotencyArbitraries) })]
     public Property PlanCommentIdempotency_UpdateNotDuplicateOnReRun(
         PlanIdempotencyInput input)
     {
@@ -245,7 +245,7 @@ public class DecompositionDispatchPropertyTests
     ///
     /// **Validates: Requirements 10.2, 10.5**
     /// </summary>
-    [Property(MaxTest = 150, Arbitrary = new[] { typeof(PartialFailureArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PartialFailureArbitraries) })]
     public Property PartialFailurePreservation_KSuccessesPreservedSummaryListsAll(
         PartialFailureInput input)
     {

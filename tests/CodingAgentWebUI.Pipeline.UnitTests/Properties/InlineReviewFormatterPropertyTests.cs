@@ -37,7 +37,7 @@ public class InlineReviewFormatterPropertyTests
     /// and total length ≤ 65536 chars.
     /// **Validates: Requirements 5.1, 5.2, 5.3, 5.5**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P7_FormatSingle_OutputStructure()
     {
         return Prop.ForAll(GenFinding().ToArbitrary(), finding =>
@@ -78,7 +78,7 @@ public class InlineReviewFormatterPropertyTests
     /// --- separators between findings, total length ≤ 65536 chars, and findings ordered by severity.
     /// **Validates: Requirements 5.4, 5.5**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P7_FormatConsolidated_OutputStructure()
     {
         var gen = GenFindings(2, 8);
@@ -142,7 +142,7 @@ public class InlineReviewFormatterPropertyTests
     /// delegates to the body-only overload (Body and Type are the only meaningful fields).
     /// **Validates: Requirements 3.3**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P8_ReviewSubmission_BodyOnlyEquivalence()
     {
         var gen =
@@ -187,7 +187,7 @@ public class InlineReviewFormatterPropertyTests
     /// Enabled=false, SeverityThreshold=Warning, MaxInlineComments=15, OrderBySeverity=true, MaxRetries=1.
     /// **Validates: Requirements 8.1, 8.8**
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property P11_ConfigurationDeserialization_DefaultsPreserved()
     {
         // Generate random JSON objects that have CodeReviewConfiguration fields

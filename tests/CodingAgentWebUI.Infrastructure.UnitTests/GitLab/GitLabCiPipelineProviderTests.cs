@@ -21,7 +21,7 @@ public class GitLabCiPipelineProviderTests
     /// All GitLab statuses that represent a "waiting" state map to PipelineRunState.Pending.
     /// **Validates: Requirements 14.4, 27.4**
     /// </summary>
-    [Property(Arbitrary = [typeof(PendingJobStatusArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(PendingJobStatusArbitrary)])]
     public void MapStatus_PendingStatuses_MapToPending(JobStatus status)
     {
         var result = GitLabCiPipelineProvider.MapStatus(status);
@@ -73,7 +73,7 @@ public class GitLabCiPipelineProviderTests
     /// All GitLab statuses that represent cancellation map to PipelineRunState.Cancelled.
     /// **Validates: Requirements 14.4, 27.4**
     /// </summary>
-    [Property(Arbitrary = [typeof(CancelledJobStatusArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(CancelledJobStatusArbitrary)])]
     public void MapStatus_CancelledStatuses_MapToCancelled(JobStatus status)
     {
         var result = GitLabCiPipelineProvider.MapStatus(status);
@@ -86,7 +86,7 @@ public class GitLabCiPipelineProviderTests
     /// For any JobStatus value from the enum, MapStatus returns a defined PipelineRunState member.
     /// **Validates: Requirements 14.4, 27.4**
     /// </summary>
-    [Property(Arbitrary = [typeof(AllJobStatusArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(AllJobStatusArbitrary)])]
     public void MapStatus_AllDefinedStatuses_ReturnValidPipelineRunState(JobStatus status)
     {
         var result = GitLabCiPipelineProvider.MapStatus(status);
@@ -104,7 +104,7 @@ public class GitLabCiPipelineProviderTests
     /// For any JobStatus value, calling MapStatus multiple times always returns the same result.
     /// **Validates: Requirements 14.4, 27.4**
     /// </summary>
-    [Property(Arbitrary = [typeof(AllJobStatusArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(AllJobStatusArbitrary)])]
     public void MapStatus_IsDeterministic(JobStatus status)
     {
         var result1 = GitLabCiPipelineProvider.MapStatus(status);

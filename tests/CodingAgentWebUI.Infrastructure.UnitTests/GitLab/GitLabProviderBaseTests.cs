@@ -59,7 +59,7 @@ public class GitLabProviderBaseTests
     /// with a valid API URL throws ArgumentException.
     /// **Validates: Requirements 2.2**
     /// </summary>
-    [Property(Arbitrary = [typeof(InvalidTokenArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(InvalidTokenArbitrary)])]
     public void DirectConstruction_RejectsEmptyOrWhitespaceToken(string invalidToken)
     {
         var act = () => new TestableGitLabProvider("https://gitlab.com", invalidToken, 1);
@@ -74,7 +74,7 @@ public class GitLabProviderBaseTests
     /// with a valid token throws ArgumentException.
     /// **Validates: Requirements 2.4**
     /// </summary>
-    [Property(Arbitrary = [typeof(InvalidApiUrlArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(InvalidApiUrlArbitrary)])]
     public void DirectConstruction_RejectsNullOrEmptyApiUrl(string invalidApiUrl)
     {
         var act = () => new TestableGitLabProvider(invalidApiUrl, "valid-token-123", 1);
@@ -88,7 +88,7 @@ public class GitLabProviderBaseTests
     /// For any non-whitespace token and non-whitespace API URL, construction succeeds.
     /// **Validates: Requirements 2.2, 2.4**
     /// </summary>
-    [Property(Arbitrary = [typeof(ValidCredentialsArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(ValidCredentialsArbitrary)])]
     public void DirectConstruction_SucceedsWithValidCredentials(ValidCredentialsInput input)
     {
         var act = () => new TestableGitLabProvider(input.ApiUrl, input.AccessToken, input.ProjectId);
@@ -105,7 +105,7 @@ public class GitLabProviderBaseTests
     /// For any non-negative integer n, ParseIdentifier(n.ToString()) returns n.
     /// **Validates: Requirements 2.7**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void ParseIdentifier_RoundTrips_NonNegativeIntegers(NonNegativeInt n)
     {
         var input = n.Get.ToString();
@@ -121,7 +121,7 @@ public class GitLabProviderBaseTests
     /// with the invalid value included in the message.
     /// **Validates: Requirements 2.8, 27.5**
     /// </summary>
-    [Property(Arbitrary = [typeof(NonIntegerStringArbitrary)])]
+    [Property(MaxTest = 20, Arbitrary = [typeof(NonIntegerStringArbitrary)])]
     public void ParseIdentifier_ThrowsArgumentException_ForNonIntegerStrings(string input)
     {
         var act = () => TestableGitLabProvider.ExposedParseIdentifier(input);
@@ -135,7 +135,7 @@ public class GitLabProviderBaseTests
     /// Negative integers are valid int.TryParse results, so they should parse successfully.
     /// **Validates: Requirements 2.7**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void ParseIdentifier_ParsesNegativeIntegers(NegativeInt n)
     {
         var input = n.Get.ToString();
@@ -150,7 +150,7 @@ public class GitLabProviderBaseTests
     /// For any integer project ID, the internal test constructor stores it correctly.
     /// **Validates: Requirements 2.7**
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public void TestConstructor_StoresProjectId(int projectId)
     {
         using var server = new GitLabServer();

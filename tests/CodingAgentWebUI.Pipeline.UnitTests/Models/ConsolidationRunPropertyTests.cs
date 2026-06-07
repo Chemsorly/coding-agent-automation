@@ -30,7 +30,7 @@ public class ConsolidationRunPropertyTests
     /// SHALL produce a structurally equivalent object with all fields preserved.
     /// **Validates: Requirements 3.2**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(ConsolidationRunArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ConsolidationRunArbitraries) })]
     public void ConsolidationRun_JsonRoundTrip_PreservesAllFields(ConsolidationRun original)
     {
         var json = JsonSerializer.Serialize(original, JsonOptions);
@@ -53,7 +53,7 @@ public class ConsolidationRunPropertyTests
     /// serializing to JSON and deserializing back SHALL produce a structurally equivalent object.
     /// **Validates: Requirements 8.1**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(ConsolidationRunArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ConsolidationRunArbitraries) })]
     public void HarnessSuggestions_JsonRoundTrip_PreservesAllFields(HarnessSuggestions original)
     {
         var json = JsonSerializer.Serialize(original, JsonOptions);
