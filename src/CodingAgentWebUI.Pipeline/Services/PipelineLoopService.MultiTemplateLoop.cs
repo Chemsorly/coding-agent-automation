@@ -137,14 +137,13 @@ public sealed partial class PipelineLoopService
     /// <summary>
     /// Snapshot record bundling all cycle-immutable state from Steps 1–2.
     /// </summary>
-    // TODO: Use IReadOnlyList<PipelineJobTemplate> for EnabledTemplates/PollableTemplates and IReadOnlyDictionary for TemplateLookup to enforce immutability
     private sealed record CycleSnapshot(
         PipelineConfiguration Config,
         IReadOnlyList<PipelineProject> Projects,
         IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> FlattenedTemplates,
-        List<PipelineJobTemplate> EnabledTemplates,
-        List<PipelineJobTemplate> PollableTemplates,
-        Dictionary<string, PipelineJobTemplate> TemplateLookup,
+        IReadOnlyList<PipelineJobTemplate> EnabledTemplates,
+        IReadOnlyList<PipelineJobTemplate> PollableTemplates,
+        IReadOnlyDictionary<string, PipelineJobTemplate> TemplateLookup,
         TimeSpan PollInterval,
         int MaxRunsPerCycle,
         int MaxConsecutiveFailures,
@@ -213,15 +212,15 @@ public sealed partial class PipelineLoopService
         }
 
         return new CycleSnapshot(
-            config, projects, flattenedTemplates, enabledTemplates, pollableTemplates,
-            templateLookup, pollInterval, maxRunsPerCycle, maxConsecutiveFailures, maxPagesToFetch);
+            config, projects, flattenedTemplates, enabledTemplates.AsReadOnly(), pollableTemplates.AsReadOnly(),
+            templateLookup.AsReadOnly(), pollInterval, maxRunsPerCycle, maxConsecutiveFailures, maxPagesToFetch);
     }
 
     /// <summary>
     /// Step 3: Polls once per pollable template for issues, PRs, and decomposition candidates.
     /// </summary>
     private async Task<(Dictionary<string, List<IssueSummary>> IssueQueues, Dictionary<string, List<PullRequestSummary>> PrQueues, Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> DecompositionQueues)>
-        PollTemplateQueuesAsync(List<PipelineJobTemplate> pollableTemplates, int maxPagesToFetch, CancellationToken ct)
+        PollTemplateQueuesAsync(IReadOnlyList<PipelineJobTemplate> pollableTemplates, int maxPagesToFetch, CancellationToken ct)
     {
         var issueQueues = new Dictionary<string, List<IssueSummary>>();
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
@@ -408,7 +407,7 @@ public sealed partial class PipelineLoopService
     private async Task<Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>>
         PollProjectLevelEpicsAsync(
             IReadOnlyList<PipelineProject> projects,
-            Dictionary<string, PipelineJobTemplate> templateLookup,
+            IReadOnlyDictionary<string, PipelineJobTemplate> templateLookup,
             int maxPagesToFetch,
             CancellationToken ct)
     {
@@ -470,7 +469,7 @@ public sealed partial class PipelineLoopService
     /// Returns true if the circuit breaker tripped (caller should continue to next cycle).
     /// </summary>
     private async Task<bool> CheckCircuitBreakerAsync(
-        List<PipelineJobTemplate> enabledTemplates,
+        IReadOnlyList<PipelineJobTemplate> enabledTemplates,
         int maxConsecutiveFailures,
         CancellationToken ct)
     {
@@ -503,7 +502,7 @@ public sealed partial class PipelineLoopService
     /// ensure all three queue types get fair access to the budget.
     /// </summary>
     private async Task DispatchFairRoundRobinAsync(
-        List<PipelineJobTemplate> pollableTemplates,
+        IReadOnlyList<PipelineJobTemplate> pollableTemplates,
         IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> flattenedTemplates,
         PipelineConfiguration config,
         int maxRunsPerCycle,
@@ -883,7 +882,7 @@ public sealed partial class PipelineLoopService
     /// </summary>
     /// <returns>Whether any dispatch was attempted (progress) and how many items were consumed.</returns>
     private async Task<(bool madeProgress, int consumed)> DispatchRoundAsync(
-        List<PipelineJobTemplate> pollableTemplates,
+        IReadOnlyList<PipelineJobTemplate> pollableTemplates,
         Func<PipelineJobTemplate, CancellationToken, Task<DispatchAttemptResult>> tryDispatchOne,
         int remainingBudget,
         CancellationToken stoppingToken,
@@ -937,7 +936,7 @@ public sealed partial class PipelineLoopService
     /// Used by the fair alternation logic to determine which queues have work available.
     /// </summary>
     private static bool HasEligible<T>(
-        List<PipelineJobTemplate> pollableTemplates,
+        IReadOnlyList<PipelineJobTemplate> pollableTemplates,
         Dictionary<string, List<T>> queues,
         Func<PipelineJobTemplate, bool> isEnabledForTemplate)
     {
@@ -1166,7 +1165,7 @@ public sealed partial class PipelineLoopService
     /// </summary>
     private static PipelineJobTemplate? SelectDecompositionTemplate(
         PipelineProject project,
-        Dictionary<string, PipelineJobTemplate> templateLookup)
+        IReadOnlyDictionary<string, PipelineJobTemplate> templateLookup)
     {
         foreach (var templateId in project.TemplateIds)
         {

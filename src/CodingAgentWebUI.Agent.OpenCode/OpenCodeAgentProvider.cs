@@ -5,6 +5,7 @@ using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using KiroCliLib.Core;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Agent.OpenCode;

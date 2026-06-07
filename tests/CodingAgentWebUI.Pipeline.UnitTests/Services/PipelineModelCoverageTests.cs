@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using KiroCliLib.Core;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 

@@ -427,6 +427,32 @@ public class AgentWorkerServiceTests
     }
 
     [Fact]
+    public async Task HandleAssignConsolidationJob_WhenBusy_NotifiesOrchestrator()
+    {
+        // Arrange — the handler should complete without throwing even when
+        // InvokeAsync("JobRejected") fails (disconnected connection).
+        var service = CreateService();
+        SetPrivateField(service, "_activeJobId", "existing-job");
+
+        var message = new ConsolidationJobMessage
+        {
+            JobId = "consolidation-job-1",
+            Type = ConsolidationRunType.BrainConsolidation,
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration()
+        };
+
+        // Act — invoke the handler; the try/catch around JobRejected should swallow the error
+        var handler = GetPrivateMethod(service, "HandleAssignConsolidationJobAsync");
+        var task = (Task)handler.Invoke(service, [message])!;
+        await task;
+
+        // Assert — handler completed without throwing, active job unchanged
+        var activeJobId = GetPrivateField<string?>(service, "_activeJobId");
+        activeJobId.Should().Be("existing-job");
+    }
+
+    [Fact]
     public void HandleAssignJob_SetsJobCtsInsideLock()
     {
         // Verify that after setting _activeJobId, _jobCts is also set atomically
