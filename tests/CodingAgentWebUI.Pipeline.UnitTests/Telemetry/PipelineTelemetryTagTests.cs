@@ -43,6 +43,7 @@ public class PipelineTelemetryTagTests : IDisposable
     [InlineData(PipelineRunType.Decomposition, "decomposition")]
     public void JobsDispatched_Add_IncludesRunTypeTag(PipelineRunType runType, string expected)
     {
+        _capturedTags.Clear();
         PipelineTelemetry.JobsDispatched.Add(1, PipelineTelemetry.RunTypeTag(runType));
 
         _capturedTags.Should().Contain(new KeyValuePair<string, object?>("run_type", expected));
@@ -53,6 +54,7 @@ public class PipelineTelemetryTagTests : IDisposable
     {
         var tags = PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-123", "MyProject");
 
+        _capturedTags.Clear();
         PipelineTelemetry.JobsDispatched.Add(1, tags);
 
         _capturedTags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_id", "proj-123"));
