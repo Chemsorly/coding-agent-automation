@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.CodeReview;
 using CodingAgentWebUI.Pipeline.CodeReview.Models;
 using CodingAgentWebUI.Pipeline.Models;
@@ -70,6 +71,7 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            Activity.Current?.RecordError(ex);
             // Outer non-fatal handler: catches double-failures and any unexpected exceptions.
             // The step NEVER throws — all failures are non-fatal.
             context.Logger.Warning(ex, "Failed to post review findings to PR #{PrNumber}", prNumber);

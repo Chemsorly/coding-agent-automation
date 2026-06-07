@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -108,6 +109,7 @@ internal sealed class DecompositionStep : IPipelineStep
         }
         catch (Exception ex)
         {
+            Activity.Current?.RecordError(ex);
             var reason = $"Decomposition agent execution failed: {ex.Message}";
             logger.Warning(ex, "Pipeline {RunId} decomposition agent failed", run.RunId);
             context.Callbacks.EmitOutputLine($"❌ {reason}");

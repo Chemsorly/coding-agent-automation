@@ -86,6 +86,7 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
                     // Timeout — kill the process tree
                     try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
                     var timeoutMessage = $"Setup step '{step.Name}' timed out after 120 seconds";
+                    Activity.Current?.SetStatus(ActivityStatusCode.Error, timeoutMessage);
                     await context.FailRunAsync(SecretMasker.Mask(timeoutMessage, secrets), ct);
                     return StepResult.Stop;
                 }
@@ -113,6 +114,8 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
             }
             catch (Exception ex)
             {
+                // TODO: Exception recorded to telemetry is not passed through SecretMasker — may leak injected secrets to trace storage.
+                Activity.Current?.RecordError(ex);
                 var failureMessage = $"Setup step '{step.Name}' threw an exception: {ex.Message}";
                 await context.FailRunAsync(SecretMasker.Mask(failureMessage, secrets), ct);
                 return StepResult.Stop;

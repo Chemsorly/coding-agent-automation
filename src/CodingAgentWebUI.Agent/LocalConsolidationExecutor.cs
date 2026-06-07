@@ -101,6 +101,7 @@ public sealed class LocalConsolidationExecutor
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            activity?.SetTag("pipeline.cancelled", true);
             result = new ConsolidationJobResult
             {
                 JobId = job.JobId,
@@ -110,6 +111,8 @@ public sealed class LocalConsolidationExecutor
         }
         catch (Exception ex)
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
             _logger.Error(ex, "Consolidation job {JobId} failed with unhandled error", job.JobId);
             result = new ConsolidationJobResult
             {

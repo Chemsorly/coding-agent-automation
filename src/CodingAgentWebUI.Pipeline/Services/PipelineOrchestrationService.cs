@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -348,6 +349,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             sw.Stop();
             PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, tags);
             PipelineTelemetry.JobsFailed.Add(1, tags);
+            activity?.SetTag("pipeline.cancelled", true);
             activity?.SetTag("pipeline.final_step", "Cancelled");
 
             if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
@@ -359,6 +361,16 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 _lifecycle.TransitionTo(run, PipelineStep.Cancelled);
                 _lifecycle.AddRunToHistory(run);
             }
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            PipelineTelemetry.JobsFailed.Add(1, tags);
+            // TODO: Also call activity?.AddException(ex) to record exception details on the parent span
+            // for cases where the exception isn't caught by a child span (e.g., between step executions).
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            throw;
         }
     }
 
@@ -463,7 +475,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             await HandlePrCreationResultAsync(run, prUrl, isDraft, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
-        { _logger.Error(ex, "Pipeline {RunId} failed to create pull request", run.RunId); await FailRunAsync(run, $"PR creation failed: {ex.Message}"); }
+        // TODO: Add activity?.AddException(ex) to record exception details — this is the innermost span and swallows the exception.
+        { activity?.SetStatus(ActivityStatusCode.Error, ex.Message); _logger.Error(ex, "Pipeline {RunId} failed to create pull request", run.RunId); await FailRunAsync(run, $"PR creation failed: {ex.Message}"); }
     }
     private Task UpdateFileChangeStatsAsync(PipelineRun run)
         => _prOrchestrator.UpdateFileChangeStatsAsync(run, _providerManager.ActiveRepoProvider!);
@@ -514,7 +527,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             await HandlePrCreationResultAsync(run, prUrl, isDraft, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
-        { _logger.Error(ex, "Pipeline {RunId} failed to finalize pull request", run.RunId); await FailRunAsync(run, $"PR finalization failed: {ex.Message}"); }
+        // TODO: Add activity?.AddException(ex) to record exception details — this is the innermost span and swallows the exception.
+        { activity?.SetStatus(ActivityStatusCode.Error, ex.Message); _logger.Error(ex, "Pipeline {RunId} failed to finalize pull request", run.RunId); await FailRunAsync(run, $"PR finalization failed: {ex.Message}"); }
     }
 
     private async Task HandlePrCreationResultAsync(PipelineRun run, string? prUrl, bool isDraft, CancellationToken ct)

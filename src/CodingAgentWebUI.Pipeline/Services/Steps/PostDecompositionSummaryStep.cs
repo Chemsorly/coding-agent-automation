@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 
@@ -44,6 +45,7 @@ internal sealed class PostDecompositionSummaryStep : IPipelineStep
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            Activity.Current?.RecordError(ex);
             context.Logger.Error(ex, "Failed to post decomposition summary comment on issue {IssueId}, proceeding with label swap",
                 context.Run.IssueIdentifier);
         }
@@ -56,6 +58,7 @@ internal sealed class PostDecompositionSummaryStep : IPipelineStep
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            Activity.Current?.RecordError(ex);
             context.Logger.Error(ex, "Failed to swap label to {Label} on issue {IssueId}, run will complete without label transition",
                 targetLabel, context.Run.IssueIdentifier);
         }

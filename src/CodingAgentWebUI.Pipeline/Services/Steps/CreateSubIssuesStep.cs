@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 
@@ -211,6 +212,7 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
                 // If this was the last attempt, fall through to failure
                 if (attempt == MaxRetryAttempts - 1)
                 {
+                    Activity.Current?.RecordError(ex);
                     context.Logger.Warning(
                         "Exhausted retries for issue '{Title}': {Error}",
                         proposal.Title, ex.Message);
@@ -228,6 +230,7 @@ internal sealed class CreateSubIssuesStep : IPipelineStep
             }
             catch (Exception ex)
             {
+                Activity.Current?.RecordError(ex);
                 // Non-transient error — skip immediately without retry
                 context.Logger.Warning(
                     ex,

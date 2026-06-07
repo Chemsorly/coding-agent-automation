@@ -209,7 +209,16 @@ public sealed class LocalPipelineExecutor
                 issueOps, connection, outputBatcher, onStepChanged, ct, additionalRepoProviders);
 
             activity?.SetTag("pipeline.final_step", result.FinalStep.ToString());
+            // TODO: Distinguish Cancelled from Failed — graceful cancellation should set pipeline.cancelled=true tag
+            // and leave status as Unset instead of setting Error status (per amended OTel conventions).
+            if (result.FinalStep != PipelineStep.Completed)
+                activity?.SetStatus(ActivityStatusCode.Error, result.FinalStep.ToString());
             return result;
+        }
+        catch (Exception ex)
+        {
+            activity?.RecordError(ex, ct);
+            throw;
         }
         finally
         {
@@ -651,65 +660,73 @@ public sealed class LocalPipelineExecutor
         activity?.SetTag("pipeline.pr.is_draft", isDraft);
         PipelineTelemetry.SetProjectTags(activity, run.ProjectId, run.ProjectName);
 
-        // NOTE: QualityGateExecutor already transitions to PreparingForPullRequest
-        // during its cleanup phase, so we skip that transition here to avoid duplicates.
-
-        await ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, PipelineStep.CreatingPullRequest, ct);
-
-        if (run.LinkedPullRequest is not null)
+        try
         {
-            run.PullRequestUrl = run.LinkedPullRequest.Url;
-            run.PullRequestNumber = run.LinkedPullRequest.Number.ToString();
-        }
+            // NOTE: QualityGateExecutor already transitions to PreparingForPullRequest
+            // during its cleanup phase, so we skip that transition here to avoid duplicates.
 
-        var prUrl = await context.PrOrchestrator.CreatePullRequestAsync(
-            run, report, isDraft, context.RepoProvider, context.Job.IssueDetail, context.Job.IssueComments, context.Config, ct,
-            context.EmitOutputLine, isRework: run.LinkedPullRequest is not null);
+            await ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, PipelineStep.CreatingPullRequest, ct);
 
-        if (prUrl is null && context.Config.BlacklistMode == BlacklistMode.Fail && run.BlacklistedFilesDetected.Count > 0)
-        {
-            run.FailureReason = $"Blacklisted files detected: {string.Join(", ", run.BlacklistedFilesDetected)}";
+            if (run.LinkedPullRequest is not null)
+            {
+                run.PullRequestUrl = run.LinkedPullRequest.Url;
+                run.PullRequestNumber = run.LinkedPullRequest.Number.ToString();
+            }
+
+            var prUrl = await context.PrOrchestrator.CreatePullRequestAsync(
+                run, report, isDraft, context.RepoProvider, context.Job.IssueDetail, context.Job.IssueComments, context.Config, ct,
+                context.EmitOutputLine, isRework: run.LinkedPullRequest is not null);
+
+            if (prUrl is null && context.Config.BlacklistMode == BlacklistMode.Fail && run.BlacklistedFilesDetected.Count > 0)
+            {
+                run.FailureReason = $"Blacklisted files detected: {string.Join(", ", run.BlacklistedFilesDetected)}";
+                run.CompletedAt = DateTime.UtcNow;
+                run.CurrentStep = PipelineStep.Failed;
+                return;
+            }
+
+            if (prUrl is null)
+            {
+                run.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";
+                run.CompletedAt = DateTime.UtcNow;
+                run.CurrentStep = PipelineStep.Failed;
+                return;
+            }
+
+            var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
+            if (isDraft)
+            {
+                run.FailureReason = "Quality gates failed after max retries; draft PR created.";
+            }
+            // Label swap (agent:done / agent:error) is handled by the orchestrator in ReportJobCompleted.
+
+            // ── Reflection + brain post-run sync ──
+            if (!isDraft && context.BrainProvider is not null && context.BrainSync is not null && !context.Config.BrainReadOnly)
+            {
+                await ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, PipelineStep.ReflectingOnRun, ct);
+
+                await _finalization.RunReflectionAsync(run, context.AgentProvider, context.Config, context.EmitOutputLine, ct);
+
+                await ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, PipelineStep.SyncingBrainRepoPostRun, ct);
+
+                await _finalization.SyncBrainPostRunAsync(run, context.BrainSync, context.BrainProvider, context.Config, context.EmitOutputLine, ct);
+            }
+
+            // ── Feedback collection: separate agent call, runs regardless of brain provider ──
+            if (!isDraft)
+            {
+                await _finalization.CollectFeedbackAsync(run, context.AgentProvider, _feedbackService, _historyService, context.EmitOutputLine, ct);
+            }
+
             run.CompletedAt = DateTime.UtcNow;
-            run.CurrentStep = PipelineStep.Failed;
-            return;
+            run.CurrentStep = finalStep;
+            run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
         }
-
-        if (prUrl is null)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            run.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";
-            run.CompletedAt = DateTime.UtcNow;
-            run.CurrentStep = PipelineStep.Failed;
-            return;
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            throw;
         }
-
-        var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
-        if (isDraft)
-        {
-            run.FailureReason = "Quality gates failed after max retries; draft PR created.";
-        }
-        // Label swap (agent:done / agent:error) is handled by the orchestrator in ReportJobCompleted.
-
-        // ── Reflection + brain post-run sync ──
-        if (!isDraft && context.BrainProvider is not null && context.BrainSync is not null && !context.Config.BrainReadOnly)
-        {
-            await ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, PipelineStep.ReflectingOnRun, ct);
-
-            await _finalization.RunReflectionAsync(run, context.AgentProvider, context.Config, context.EmitOutputLine, ct);
-
-            await ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, PipelineStep.SyncingBrainRepoPostRun, ct);
-
-            await _finalization.SyncBrainPostRunAsync(run, context.BrainSync, context.BrainProvider, context.Config, context.EmitOutputLine, ct);
-        }
-
-        // ── Feedback collection: separate agent call, runs regardless of brain provider ──
-        if (!isDraft)
-        {
-            await _finalization.CollectFeedbackAsync(run, context.AgentProvider, _feedbackService, _historyService, context.EmitOutputLine, ct);
-        }
-
-        run.CompletedAt = DateTime.UtcNow;
-        run.CurrentStep = finalStep;
-        run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
     }
 
     /// <summary>
