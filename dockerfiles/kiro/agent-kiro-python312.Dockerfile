@@ -45,6 +45,7 @@ RUN apt-get update && \
         python3-venv \
         nodejs \
         npm \
+        libasound2t64 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /home/ubuntu/.local/bin /home/ubuntu/.kiro && \

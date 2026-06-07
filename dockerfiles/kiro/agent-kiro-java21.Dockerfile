@@ -44,6 +44,7 @@ RUN apt-get update && \
         maven \
         nodejs \
         npm \
+        libasound2t64 \
     && rm -rf /var/lib/apt/lists/*
 
 # JAVA_HOME varies by architecture — set dynamically via symlink
