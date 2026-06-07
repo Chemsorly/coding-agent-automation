@@ -29,6 +29,9 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     public AgentProviderType ProviderType => AgentProviderType.OpenCode;
 
     /// <inheritdoc />
+    public bool SupportsParallelExecution => true;
+
+    /// <inheritdoc />
     public IReadOnlyList<string> SteeringBlacklistPaths { get; } = ["AGENTS.md"];
 
     public OpenCodeAgentProvider(

@@ -10,6 +10,14 @@ public interface IAgentProvider : IAsyncDisposable
     AgentHealthStatus GetHealthStatus();
 
     /// <summary>
+    /// Whether this provider supports concurrent <see cref="ExecuteAsync"/> calls
+    /// when each request uses <c>UseResume = false</c> (isolated sessions).
+    /// Providers achieve this differently: OpenCode uses independent HTTP sessions,
+    /// Kiro CLI creates ephemeral process instances per call.
+    /// </summary>
+    bool SupportsParallelExecution { get; }
+
+    /// <summary>
     /// Provider-specific paths that should be excluded from commits when steering files are written.
     /// Merged with config.BlacklistedPaths at commit time.
     /// </summary>

@@ -188,7 +188,7 @@ public class GitHubRepositoryProviderTests
     [Fact]
     public void GeneratePrBody_TruncatesLongComments()
     {
-        var longBody = new string('x', 300);
+        var longBody = new string('x', 2500);
         var comments = new List<IssueComment>
         {
             new() { Id = "1", Body = longBody, Author = "alice", CreatedAt = DateTime.UtcNow },

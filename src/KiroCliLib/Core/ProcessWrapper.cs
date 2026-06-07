@@ -48,14 +48,20 @@ public class ProcessWrapper : IProcessWrapper
         // See: https://kiro.dev/docs/cli/chat/file-references/
         // This avoids shell argument escaping issues with complex prompts containing
         // quotes, newlines, backticks, and JSON that cause exit code 2 (argument parse error).
+        // Use a unique filename per invocation to prevent race conditions when multiple
+        // processes run concurrently (parallel review agents in the same workspace).
         var agentDir = Path.Combine(workspaceDirectory, ".agent");
         Directory.CreateDirectory(agentDir);
-        var promptFile = Path.Combine(agentDir, "prompt-input.md");
+        var promptId = Guid.NewGuid().ToString("N")[..8];
+        var promptFile = Path.Combine(agentDir, $"prompt-input-{promptId}.md");
         await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
+
+        if (!File.Exists(promptFile))
+            _logger.Warning("Prompt file {PromptFile} does not exist after write — potential filesystem issue", promptFile);
 
         // The @path syntax expands file contents inline before sending (per Kiro docs).
         // Use explicit relative path (@./path) to avoid prompt name collision.
-        var inlinePrompt = "@.agent/prompt-input.md";
+        var inlinePrompt = $"@.agent/prompt-input-{promptId}.md";
         var resumeFlag = resumeSessionId is not null
             ? $"--resume-id {resumeSessionId}"
             : useResume ? "--resume" : null;

@@ -513,6 +513,7 @@ public sealed class LocalPipelineExecutor
             new RunEnvironmentSetupStep(job),
             new SyncBrainPreRunStep(),
             new DetectReworkStep(),
+            new WritePrConversationContextStep(),
             new CreateBranchStep(),
             new VerifyBaselineStep(),
             new AnalyzeCodeStep(),

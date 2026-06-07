@@ -18,6 +18,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
     private readonly IKiroCliOrchestrator _orchestrator;
     private readonly ILogger _logger;
     private readonly string? _model;
+    private readonly AgentEffortLevel _effort;
     private readonly string _executablePath;
     private readonly IProcessStarter _processStarter;
     private readonly HashSet<string> _establishedSessions = new(StringComparer.OrdinalIgnoreCase);
@@ -28,23 +29,30 @@ public partial class KiroCliAgentProvider : IAgentProvider
     public AgentProviderType ProviderType => AgentProviderType.KiroCli;
 
     /// <inheritdoc />
+    public bool SupportsParallelExecution => true;
+
+    /// <inheritdoc />
     public IReadOnlyList<string> SteeringBlacklistPaths { get; } = [".kiro"];
 
     /// <summary>The model configured for this agent provider, or null/auto for default.</summary>
     public string? Model => _model;
 
-    public KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger = null, string? model = null, string executablePath = AgentDefaults.KiroCliPath)
-        : this(orchestrator, logger, model, executablePath, null)
+    /// <summary>The effort level configured for this agent provider.</summary>
+    public AgentEffortLevel Effort => _effort;
+
+    public KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger = null, string? model = null, string executablePath = AgentDefaults.KiroCliPath, AgentEffortLevel effort = AgentEffortLevel.Auto)
+        : this(orchestrator, logger, model, executablePath, effort, null)
     {
     }
 
-    internal KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger, string? model, string executablePath, IProcessStarter? processStarter)
+    internal KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger, string? model, string executablePath, AgentEffortLevel effort, IProcessStarter? processStarter)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(executablePath);
         _orchestrator = orchestrator;
         _logger = logger ?? Log.Logger;
         _model = model;
+        _effort = effort;
         _executablePath = executablePath;
         _processStarter = processStarter ?? new DefaultProcessStarter();
     }
@@ -61,6 +69,9 @@ public partial class KiroCliAgentProvider : IAgentProvider
 
         // Set model before first invocation if a specific model is configured
         await ApplyModelSettingAsync(ct);
+
+        // Set effort level before first invocation if a specific effort is configured
+        await ApplyEffortSettingAsync(ct);
 
         try
         {
@@ -94,31 +105,62 @@ public partial class KiroCliAgentProvider : IAgentProvider
 
         var outputLines = new List<string>();
 
-        return await TimeoutHelper.ExecuteWithTimeoutAsync(
-            request.Timeout, ct,
-            async linkedCt =>
-            {
-                var exitCode = await _orchestrator.ExecutePromptAsync(
-                    request.Prompt,
-                    request.WorkspacePath,
-                    useResume: request.UseResume,
-                    linkedCt,
-                    onOutputLine: line =>
-                    {
-                        var clean = AnsiStripper.Strip(line);
-                        outputLines.Add(clean);
-                        onOutputLine?.Invoke(clean);
-                        return Task.CompletedTask;
-                    },
-                    resumeSessionId: request.ResumeSessionId);
+        // For isolated (non-resume) calls, create an ephemeral orchestrator with its own
+        // process slot. This enables concurrent execution — each parallel review agent gets
+        // its own kiro-cli process without conflicting on the shared _orchestrator's single
+        // _activeProcess field. Resume calls must use the shared orchestrator to maintain
+        // session continuity.
+        var isIsolatedCall = !request.UseResume && request.ResumeSessionId is null;
+        var orchestrator = isIsolatedCall ? CreateEphemeralOrchestrator() : _orchestrator;
 
-                return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };
-            },
-            () =>
-            {
-                _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
-                return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly() });
-            });
+        try
+        {
+            return await TimeoutHelper.ExecuteWithTimeoutAsync(
+                request.Timeout, ct,
+                async linkedCt =>
+                {
+                    var exitCode = await orchestrator.ExecutePromptAsync(
+                        request.Prompt,
+                        request.WorkspacePath,
+                        useResume: request.UseResume,
+                        linkedCt,
+                        onOutputLine: line =>
+                        {
+                            var clean = AnsiStripper.Strip(line);
+                            outputLines.Add(clean);
+                            onOutputLine?.Invoke(clean);
+                            return Task.CompletedTask;
+                        },
+                        resumeSessionId: request.ResumeSessionId);
+
+                    return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };
+                },
+                () =>
+                {
+                    _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
+                    return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly() });
+                });
+        }
+        finally
+        {
+            if (isIsolatedCall && orchestrator is IDisposable disposable)
+                disposable.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Creates a lightweight orchestrator instance with its own process slot.
+    /// Used for isolated (non-resume) calls to enable parallel execution.
+    /// </summary>
+    private IKiroCliOrchestrator CreateEphemeralOrchestrator()
+    {
+        var config = new KiroCliLib.Configuration.Configuration
+        {
+            KiroCliPath = _executablePath,
+            UseWsl = OperatingSystem.IsWindows()
+        };
+        _logger.Debug("Creating ephemeral orchestrator (path={KiroCliPath}, wsl={UseWsl})", _executablePath, config.UseWsl);
+        return new KiroCliOrchestrator(config, callbackHandler: null, _logger);
     }
 
     /// <inheritdoc />
@@ -250,6 +292,40 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// <summary>Pattern for valid model names: alphanumeric, dots, hyphens, underscores.</summary>
     [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9._-]+$")]
     private static partial System.Text.RegularExpressions.Regex ModelNamePattern();
+
+    /// <summary>
+    /// Runs <c>kiro-cli settings chat.effort "{level}"</c> if a specific (non-auto) effort is configured.
+    /// </summary>
+    internal async Task ApplyEffortSettingAsync(CancellationToken ct)
+    {
+        var cliValue = _effort.ToCliValue();
+        if (cliValue is null)
+            return;
+
+        _logger.Information("Setting Kiro CLI effort to {Effort}", cliValue);
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = _executablePath,
+            Arguments = $"settings chat.effort \"{cliValue}\"",
+            RedirectStandardOutput = false,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = _processStarter.Start(psi);
+        if (process == null)
+        {
+            _logger.Warning("Failed to start kiro-cli settings process for effort");
+            return;
+        }
+
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct);
+        var stderr = await stderrTask;
+        if (process.ExitCode != 0)
+            _logger.Warning("kiro-cli settings (effort) exited with code {ExitCode}: {Error}", process.ExitCode, stderr);
+    }
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()

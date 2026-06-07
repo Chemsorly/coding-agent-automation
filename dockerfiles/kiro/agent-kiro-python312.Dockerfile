@@ -45,6 +45,7 @@ RUN apt-get update && \
         python3-venv \
         nodejs \
         npm \
+        libasound2t64 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /home/ubuntu/.local/bin /home/ubuntu/.kiro && \
@@ -53,7 +54,7 @@ RUN mkdir -p /home/ubuntu/.local/bin /home/ubuntu/.kiro && \
 USER ubuntu
 ENV PATH="/home/ubuntu/.local/bin:${PATH}"
 
-ARG KIRO_CLI_VERSION=2.0.1
+ARG KIRO_CLI_VERSION=2.6.0
 RUN KIRO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") && \
     curl --proto '=https' --tlsv1.2 -sSf \
         "https://desktop-release.q.us-east-1.amazonaws.com/${KIRO_CLI_VERSION}/kirocli-${KIRO_ARCH}-linux.zip" \

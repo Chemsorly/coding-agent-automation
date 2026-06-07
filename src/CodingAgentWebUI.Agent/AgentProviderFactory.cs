@@ -120,7 +120,8 @@ public sealed class AgentProviderFactory : IProviderFactory
     {
         var model = config.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
         var executablePath = config.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, AgentDefaults.KiroCliPath);
-        return new KiroCliAgentProvider(_orchestrator, Serilog.Log.Logger, model, executablePath);
+        var effort = AgentEffortLevelExtensions.ParseEffort(config.Settings.GetValueOrDefault(ProviderSettingKeys.Effort));
+        return new KiroCliAgentProvider(_orchestrator, Serilog.Log.Logger, model, executablePath, effort);
     }
 
     private OpenCodeAgentProvider CreateOpenCodeAgentProvider(ProviderConfig config)
