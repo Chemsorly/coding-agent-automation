@@ -129,6 +129,26 @@ public class AgentApiKeyAuthHandlerTests
         }
     }
 
+    [Fact]
+    public void ResolveApiKey_GeneratedKey_LogsTruncatedPrefix()
+    {
+        var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
+        try
+        {
+            Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
+
+            AgentApiKeyAuthHandler.ResolveApiKey(_mockLogger.Object);
+
+            _mockLogger.Verify(l => l.Warning(
+                It.Is<string>(msg => msg.Contains("{ApiKeyPrefix}") && msg.Contains("set AGENT_API_KEY env var for production")),
+                It.Is<string>(prefix => prefix.Length == 8)));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AGENT_API_KEY", originalKey);
+        }
+    }
+
     // ── HandleAuthenticateAsync (via integration-style test) ────────────
 
     [Fact]
