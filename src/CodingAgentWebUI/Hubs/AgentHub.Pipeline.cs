@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Registry;
@@ -5,7 +6,9 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.AspNetCore.SignalR;
+using OpenTelemetry.Trace;
 
 namespace CodingAgentWebUI.Hubs;
 
@@ -59,6 +62,9 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(payload);
 
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("Hub.ReportJobCompleted");
+        activity?.SetTag("job_id", jobId);
+
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         var run = _facade.GetRun(jobId);
 
@@ -66,6 +72,8 @@ public sealed partial class AgentHub
         {
             // Update run with completion data
             JobCompletionMapper.Apply(run, payload);
+
+            activity?.SetTag("success", payload.FinalStep == PipelineStep.Completed);
 
             // Persist to history and remove from active runs
             _facade.AddRunToHistory(run);

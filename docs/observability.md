@@ -19,6 +19,8 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `pipeline.loop.dispatch_decisions` | Counter | — | `decision` | Incremented for each dispatch decision made by the loop |
 | `pipeline.loop.backoff_events` | Counter | — | — | Incremented when a template poll failure triggers backoff escalation |
 | `pipeline.loop.circuit_breaker_trips` | Counter | — | — | Incremented when the circuit breaker trips (all templates failing) |
+| `token_vending.failures` | Counter | — | — | Token vending operation failures |
+| `token_vending.duration` | Histogram | seconds | — | Duration of token vending operations |
 
 ### Tag Schema
 
@@ -46,9 +48,13 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 |-----------|------|---------|
 | `ExecutePipeline` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.final_step`, `pipeline.agent_id`* | Top-level span wrapping the full pipeline execution |
 | `CreatePullRequest` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR creation step |
+| `FinalizePullRequest` | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR finalization (when existing draft PR is promoted) |
 | `AnalyzeIssue` | `pipeline.run_id`, `pipeline.issue`, `pipeline.analysis.continue` | Issue analysis (confidence gate) |
 | `GenerateCode` | `pipeline.run_id`, `pipeline.issue`, `pipeline.is_rework` | Code generation / rework |
 | `RunQualityGates` | `pipeline.run_id`, `pipeline.issue` | Quality gate execution |
+| `QualityGate.Compilation` | `gate_name` | Compilation command execution (child of RunQualityGates) |
+| `QualityGate.Tests` | `gate_name` | Test command execution (child of RunQualityGates) |
+| `QualityGate.Coverage` | `gate_name` | Coverage report parsing (child of RunQualityGates) |
 | `ReviewCode` | `pipeline.run_id`, `pipeline.issue` | Multi-agent code review |
 | `PostReviewFindings` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting review findings to PR |
 | `ExtractLinkedIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Extracting linked issues from PR |
@@ -57,6 +63,12 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `PostDecompositionPlan` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting decomposition plan comment |
 | `PostDecompositionSummary` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting creation summary comment |
 | `CreateSubIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Creating sub-issues on GitHub |
+| `Reflection` | `pipeline.run_id` | Post-PR reflection prompt (child of FinalizePullRequest) |
+| `BrainSyncPostRun` | `pipeline.run_id` | Brain repository sync after run (child of FinalizePullRequest) |
+| `FeedbackCollection` | `pipeline.run_id` | Structured feedback collection (child of FinalizePullRequest) |
+| `DrainCycle` | `jobs_dispatched` | Single drain cycle in JobQueueDrainService (root span) |
+| `Hub.ReportJobCompleted` | `job_id`, `success` | Hub business logic for job completion |
+| `TokenVending.GenerateToken` | — | Token generation HTTP call |
 
 \* `pipeline.agent_id` is only set on the agent-side `ExecutePipeline` span (set to the container hostname).
 
@@ -150,8 +162,14 @@ ExecutePipeline
 ├── AnalyzeIssue
 ├── GenerateCode
 ├── RunQualityGates
+│   ├── QualityGate.Compilation
+│   ├── QualityGate.Tests
+│   ├── QualityGate.Coverage
 │   └── ReviewCode
-└── CreatePullRequest
+└── FinalizePullRequest
+    ├── Reflection
+    ├── BrainSyncPostRun
+    └── FeedbackCollection
 ```
 
 For a review run:
@@ -170,6 +188,19 @@ ExecutePipeline
 └── DecompositionAnalysis
     └── PostDecompositionPlan
 ```
+
+### Resilience Retry Events
+
+All resilience pipelines (`ResiliencePipelineFactory` and `TokenVendingService` internal pipeline) emit `ActivityEvent("retry")` on each retry attempt, attached to whatever parent span is active. Event tags:
+
+| Tag | Description |
+|-----|-------------|
+| `attempt` | Retry attempt number (1-based) |
+| `exception_type` | Exception type name that triggered the retry |
+
+### Background Service Spans
+
+`DrainCycle` spans are root spans (no parent) because `JobQueueDrainService` runs as a `BackgroundService` with no ambient `Activity.Current`. They appear as independent traces in observability backends.
 
 ## Planned
 

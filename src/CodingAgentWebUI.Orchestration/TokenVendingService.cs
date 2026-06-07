@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text;
@@ -5,6 +6,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
+using OpenTelemetry.Trace;
 using Polly;
 using Polly.Retry;
 using Serilog;
@@ -56,6 +59,11 @@ public sealed partial class TokenVendingService : ITokenVendingService
                     .Handle<TaskCanceledException>(ex => ex.InnerException is TimeoutException),
                 OnRetry = args =>
                 {
+                    Activity.Current?.AddEvent(new ActivityEvent("retry", tags: new ActivityTagsCollection
+                    {
+                        { "attempt", args.AttemptNumber + 1 },
+                        { "exception_type", args.Outcome.Exception?.GetType().Name ?? "unknown" }
+                    }));
                     logger.Warning(
                         "{Operation} retry {Attempt}/{MaxAttempts} after {Exception}",
                         "GenerateAgentToken",
@@ -86,7 +94,11 @@ public sealed partial class TokenVendingService : ITokenVendingService
     {
         ArgumentNullException.ThrowIfNull(repoConfig);
 
-        var settings = repoConfig.Settings;
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("TokenVending.GenerateToken");
+
+        try
+        {
+            var settings = repoConfig.Settings;
 
         if (!settings.TryGetValue(ProviderSettingKeys.PrivateKeyBase64, out var privateKeyBase64) || string.IsNullOrWhiteSpace(privateKeyBase64))
             throw new InvalidOperationException("Repository config is missing 'privateKeyBase64' setting");
@@ -153,7 +165,15 @@ public sealed partial class TokenVendingService : ITokenVendingService
             "Generated scoped agent token for installation {InstallationId}, expires at {ExpiresAt}",
             installationId, expiresAt);
 
-        return (tokenResponse.Token, expiresAt);
+            return (tokenResponse.Token, expiresAt);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            PipelineTelemetry.TokenVendingFailures.Add(1);
+            throw;
+        }
     }
 
     /// <summary>
