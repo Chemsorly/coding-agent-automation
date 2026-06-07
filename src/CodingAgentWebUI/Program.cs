@@ -90,26 +90,6 @@ builder.Services.AddOpenTelemetry()
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
         .AddMeter(PipelineTelemetry.SourceName)
-        .AddView("pipeline.jobs.duration", new ExplicitBucketHistogramConfiguration
-        {
-            Boundaries = new double[] { 30, 60, 120, 300, 600, 900, 1800, 3600 }
-        })
-        .AddView("pipeline.step.duration", new ExplicitBucketHistogramConfiguration
-        {
-            Boundaries = new double[] { 5, 15, 30, 60, 120, 300, 600, 900, 1800 }
-        })
-        .AddView("quality_gate.duration", new ExplicitBucketHistogramConfiguration
-        {
-            Boundaries = new double[] { 5, 15, 30, 60, 120, 300, 600, 900 }
-        })
-        .AddView("quality_gate.external_ci.duration", new ExplicitBucketHistogramConfiguration
-        {
-            Boundaries = new double[] { 30, 60, 120, 300, 600, 900, 1800, 3600 }
-        })
-        .AddView("dispatch.queue.wait_time", new ExplicitBucketHistogramConfiguration
-        {
-            Boundaries = new double[] { 1, 5, 10, 30, 60, 120, 300, 600 }
-        })
         .AddOtlpExporter());
 
 var app = builder.Build();
