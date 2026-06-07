@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
@@ -11,12 +12,22 @@ internal sealed class CreateBranchStep : IPipelineStep
 
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("CreateBranch");
+        activity?.SetTag("pipeline.run_id", context.Run.RunId);
+        activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        activity?.SetTag("pipeline.run_type", context.Run.RunType.ToString());
+        PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
+
         context.Callbacks.TransitionTo(PipelineStep.CreatingBranch);
 
+        StepResult result;
         if (context.Run.LinkedPullRequest is not null)
-            return await CheckoutAndMergeAsync(context, ct);
+            result = await CheckoutAndMergeAsync(context, ct);
+        else
+            result = await CreateNewBranchAsync(context, ct);
 
-        return await CreateNewBranchAsync(context, ct);
+        activity?.SetTag("pipeline.branch_name", context.Run.BranchName);
+        return result;
     }
 
     private static async Task<StepResult> CheckoutAndMergeAsync(PipelineStepContext context, CancellationToken ct)
