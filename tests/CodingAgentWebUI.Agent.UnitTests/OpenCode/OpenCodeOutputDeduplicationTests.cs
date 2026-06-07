@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Pipeline.Models;
+using KiroCliLib.Core;
 
 namespace CodingAgentWebUI.Agent.UnitTests.OpenCode;
 

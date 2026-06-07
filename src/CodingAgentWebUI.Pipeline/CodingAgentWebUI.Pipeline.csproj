@@ -35,6 +35,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CodingAgentWebUI.Pipeline.CodeReview\CodingAgentWebUI.Pipeline.CodeReview.csproj" />
+    <ProjectReference Include="..\KiroCliLib\KiroCliLib.csproj" />
   </ItemGroup>
 
 </Project>

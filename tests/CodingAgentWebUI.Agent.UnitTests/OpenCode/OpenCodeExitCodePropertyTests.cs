@@ -7,6 +7,7 @@ using FsCheck.Xunit;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Agent;
+using KiroCliLib.Core;
 
 namespace CodingAgentWebUI.Agent.UnitTests.OpenCode;
 

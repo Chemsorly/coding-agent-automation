@@ -4,6 +4,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.TestUtilities;
+using KiroCliLib.Core;
 using CodingAgentWebUI.Pipeline; // TODO: Redundant — namespace is implicitly accessible from child namespace CodingAgentWebUI.Pipeline.UnitTests
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
