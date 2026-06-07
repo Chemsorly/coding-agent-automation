@@ -10,10 +10,10 @@ public interface IAgentProvider : IAsyncDisposable
     AgentHealthStatus GetHealthStatus();
 
     /// <summary>
-    /// Whether this provider supports concurrent <see cref="ExecuteAsync"/> calls.
-    /// When true, the review step can run multiple agents in parallel via Task.WhenAll.
-    /// Providers with process-level session constraints (e.g., Kiro CLI's SQLite DB)
-    /// return false and fall back to sequential execution.
+    /// Whether this provider supports concurrent <see cref="ExecuteAsync"/> calls
+    /// when each request uses <c>UseResume = false</c> (isolated sessions).
+    /// Providers achieve this differently: OpenCode uses independent HTTP sessions,
+    /// Kiro CLI creates ephemeral process instances per call.
     /// </summary>
     bool SupportsParallelExecution { get; }
 

@@ -328,11 +328,23 @@ internal partial class AgentPhaseExecutor
         var run = context.Run;
         var config = context.Config;
 
+        _logger.Information(
+            "Pipeline {RunId} iteration {Iteration}: launching {AgentCount} review agents in parallel (provider={ProviderType})",
+            run.RunId, iterationIndex + 1, agents.Count, context.AgentProvider.ProviderType);
         context.Callbacks.EmitOutputLine($"⚡ Running {agents.Count} review agents in parallel...");
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
 
         // Launch all agents concurrently
         var tasks = agents.Select(agent => ExecuteSingleReviewAgentSafeAsync(context, agent, iterationIndex, isolated, ct)).ToList();
         var results = await Task.WhenAll(tasks);
+
+        sw.Stop();
+        var successCount = results.Count(r => !r.Failed);
+        var failedCount = results.Count(r => r.Failed);
+        _logger.Information(
+            "Pipeline {RunId} iteration {Iteration}: parallel review completed in {Duration}s — {SuccessCount} succeeded, {FailedCount} failed",
+            run.RunId, iterationIndex + 1, sw.Elapsed.TotalSeconds.ToString("F1"), successCount, failedCount);
 
         // Merge results sequentially (deterministic ordering by agent index)
         var localCriticalCount = 0;
@@ -405,6 +417,8 @@ internal partial class AgentPhaseExecutor
         }
         catch (Exception ex)
         {
+            _logger.Warning(ex, "Pipeline {RunId} parallel review agent '{AgentName}' threw exception",
+                context.Run.RunId, agent.Name);
             return ReviewAgentResult.Failure(ex.Message);
         }
     }
@@ -418,6 +432,9 @@ internal partial class AgentPhaseExecutor
     {
         var run = context.Run;
         var config = context.Config;
+
+        _logger.Information("Pipeline {RunId} iteration {Iteration}: starting review agent '{AgentName}' (isolated={Isolated})",
+            run.RunId, iterationIndex + 1, agent.Name, isolated);
 
         var agentFindingsRelativePath = AgentWorkspacePaths.GetReviewFindingsFilePath(agent.Name);
         var findingsFilePath = Path.Combine(run.WorkspacePath!, agentFindingsRelativePath);

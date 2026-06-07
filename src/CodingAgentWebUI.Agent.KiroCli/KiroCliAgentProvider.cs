@@ -21,6 +21,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
     private readonly string _executablePath;
     private readonly IProcessStarter _processStarter;
     private readonly HashSet<string> _establishedSessions = new(StringComparer.OrdinalIgnoreCase);
+    private long _lastOutputTimeTicks; // Interlocked — tracks output across all orchestrators (shared + ephemeral)
 
     internal const string WarmUpPrompt =
         "Briefly describe the project structure of this workspace. Do not make any changes.";
@@ -84,11 +85,26 @@ public partial class KiroCliAgentProvider : IAgentProvider
 
     public AgentHealthStatus GetHealthStatus() => new()
     {
-        IsExecuting = _orchestrator.IsExecuting,
+        IsExecuting = _orchestrator.IsExecuting || Interlocked.Read(ref _lastOutputTimeTicks) != 0,
         ProcessId = _orchestrator.ActiveProcessId,
         IsProcessAlive = _orchestrator.IsActiveProcessAlive,
-        LastOutputTime = _orchestrator.LastOutputTime
+        LastOutputTime = GetLastOutputTime()
     };
+
+    private DateTime? GetLastOutputTime()
+    {
+        // Return the most recent output time across shared + ephemeral orchestrators.
+        // Ephemeral orchestrators update _lastOutputTimeTicks via the onOutputLine callback.
+        var providerTicks = Interlocked.Read(ref _lastOutputTimeTicks);
+        var orchestratorTime = _orchestrator.LastOutputTime;
+
+        if (providerTicks == 0) return orchestratorTime;
+        if (orchestratorTime is null) return new DateTime(providerTicks, DateTimeKind.Utc);
+
+        return orchestratorTime.Value.Ticks > providerTicks
+            ? orchestratorTime
+            : new DateTime(providerTicks, DateTimeKind.Utc);
+    }
 
     public async Task<AgentResult> ExecuteAsync(
         AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null)
@@ -120,6 +136,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
                         {
                             var clean = AnsiStripper.Strip(line);
                             outputLines.Add(clean);
+                            Interlocked.Exchange(ref _lastOutputTimeTicks, DateTime.UtcNow.Ticks);
                             onOutputLine?.Invoke(clean);
                             return Task.CompletedTask;
                         },
@@ -152,6 +169,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
             KiroCliPath = _executablePath,
             UseWsl = OperatingSystem.IsWindows()
         };
+        _logger.Debug("Creating ephemeral orchestrator (path={KiroCliPath}, wsl={UseWsl})", _executablePath, config.UseWsl);
         return new KiroCliOrchestrator(config, callbackHandler: null, _logger);
     }
 
