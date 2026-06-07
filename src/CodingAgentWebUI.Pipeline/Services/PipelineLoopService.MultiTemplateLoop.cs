@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -99,7 +100,12 @@ public sealed partial class PipelineLoopService
         {
             // Step 1–2: Snapshot config and reconcile provider caches
             var snapshot = await SnapshotAndReconcileAsync(ct);
-            if (snapshot is null) { await DelayOrStop(TimeSpan.FromSeconds(5), ct); continue; }
+            if (snapshot is null)
+            {
+                PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", "failure"));
+                await DelayOrStop(TimeSpan.FromSeconds(5), ct);
+                continue;
+            }
 
             // Step 3: Poll per-template queues (issues + PRs + decomposition)
             var (issueQueues, prQueues, decompositionQueues) = await PollTemplateQueuesAsync(
@@ -112,6 +118,16 @@ public sealed partial class PipelineLoopService
                 snapshot.Projects, snapshot.TemplateLookup, snapshot.MaxPagesToFetch, ct);
 
             if (_stopRequested || ct.IsCancellationRequested) break;
+
+            // Emit cycle-level poll metrics
+            // TODO: totalItemsFound does not include projectLevelDecompositionQueues — issues_found under-reports when project-level epics are found
+            var totalItemsFound = issueQueues.Values.Sum(q => q.Count)
+                + prQueues.Values.Sum(q => q.Count)
+                + decompositionQueues.Values.Sum(q => q.Count);
+            // TODO: LoopPolls emits "success" even when individual template polls failed (caught per-template). Consider emitting "failure" when all templates failed within the cycle.
+            PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", "success"));
+            if (totalItemsFound > 0)
+                PipelineTelemetry.LoopIssuesFound.Add(totalItemsFound);
 
             // Step 4: Circuit breaker
             if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.MaxConsecutiveFailures, ct))
@@ -380,6 +396,7 @@ public sealed partial class PipelineLoopService
                     ConsecutiveFailures = prevStatus.ConsecutiveFailures + 1,
                     IsCurrentlyPolling = false
                 };
+                PipelineTelemetry.LoopBackoffEvents.Add(1);
                 ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues);
             }
             catch (Exception ex)
@@ -393,6 +410,7 @@ public sealed partial class PipelineLoopService
                     ConsecutiveFailures = prevStatus.ConsecutiveFailures + 1,
                     IsCurrentlyPolling = false
                 };
+                PipelineTelemetry.LoopBackoffEvents.Add(1);
                 ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues);
             }
         }
@@ -484,6 +502,7 @@ public sealed partial class PipelineLoopService
         if (!allFailing) return false;
 
         IsCircuitBroken = true;
+        PipelineTelemetry.LoopCircuitBreakerTrips.Add(1);
         StatusMessage = $"⚠️ Loop paused — all {enabledTemplates.Count} templates failing.";
         NotifyChange();
         _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures",
@@ -576,11 +595,20 @@ public sealed partial class PipelineLoopService
                         queue.RemoveAt(0);
 
                         if (candidate.Labels.Contains(AgentLabels.Error) || candidate.Labels.Contains(AgentLabels.NeedsRefinement))
+                        {
+                            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedFilteredByLabel));
                             continue;
+                        }
                         if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
+                        {
+                            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
+                        }
                         if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier))
+                        {
+                            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
+                        }
 
                         if (_dependencyChecker != null)
                         {
@@ -597,6 +625,7 @@ public sealed partial class PipelineLoopService
                             {
                                 _logger.Information("Issue #{Identifier} blocked by open issues: {BlockedBy}. Skipping dispatch.",
                                     candidate.Identifier, depResult.BlockedBy);
+                                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedDependencyBlocked));
                                 continue;
                             }
                         }
@@ -628,6 +657,9 @@ public sealed partial class PipelineLoopService
                         _logger.Information("Dispatched issue #{Issue} from template '{Template}'",
                             issue.Identifier, template.Name);
 
+                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
+                        dispatched ? PipelineTelemetry.LoopDecisions.Dispatched : PipelineTelemetry.LoopDecisions.SkippedNoAgent));
+
                     return new DispatchAttemptResult(dispatched);
                 }, remaining, stoppingToken, ct);
                 issueMadeProgress = progress;
@@ -655,11 +687,20 @@ public sealed partial class PipelineLoopService
                             candidate.Labels.Contains(AgentLabels.InProgress) ||
                             candidate.Labels.Contains(AgentLabels.Done) ||
                             candidate.Labels.Contains(AgentLabels.Cancelled))
+                        {
+                            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedFilteredByLabel));
                             continue;
+                        }
                         if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
+                        {
+                            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
+                        }
                         if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier))
+                        {
+                            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
+                        }
 
                         pr = candidate;
                         break;
@@ -693,6 +734,9 @@ public sealed partial class PipelineLoopService
                         _logger.Information("Dispatched PR #{PrIdentifier} review from template '{Template}'",
                             pr.Identifier, template.Name);
 
+                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
+                        dispatched ? PipelineTelemetry.LoopDecisions.Dispatched : PipelineTelemetry.LoopDecisions.SkippedNoAgent));
+
                     return new DispatchAttemptResult(dispatched);
                 }, remaining, stoppingToken, ct);
                 prMadeProgress = progress;
@@ -725,9 +769,15 @@ public sealed partial class PipelineLoopService
                         queue.RemoveAt(0);
 
                         if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier))
+                        {
+                            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
+                        }
                         if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier))
+                        {
+                            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
+                        }
 
                         epic = candidate;
                         break;
@@ -760,6 +810,9 @@ public sealed partial class PipelineLoopService
                             epicItem.Issue.Identifier, epicItem.Phase, template.Name);
                     }
 
+                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
+                        dispatched ? PipelineTelemetry.LoopDecisions.Dispatched : PipelineTelemetry.LoopDecisions.SkippedNoAgent));
+
                     return new DispatchAttemptResult(dispatched);
                 }, remaining, stoppingToken, ct);
                 decompMadeProgress = progress;
@@ -788,9 +841,15 @@ public sealed partial class PipelineLoopService
                         // Deduplication: skip if already being processed or queued
                         // (may have been picked up by template-level polling of the same issue)
                         if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier))
+                        {
+                            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
+                        }
                         if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier))
+                        {
+                            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
+                        }
 
                         var phaseLabel = candidate.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
 
@@ -820,6 +879,9 @@ public sealed partial class PipelineLoopService
                                 _logger.Information("Dispatched project-level epic #{EpicIdentifier} ({Phase}) via template '{Template}'",
                                     candidate.Issue.Identifier, candidate.Phase, candidate.Template.Name);
                             }
+
+                            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
+                                dispatched ? PipelineTelemetry.LoopDecisions.Dispatched : PipelineTelemetry.LoopDecisions.SkippedNoAgent));
                         }
                         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
                         catch (Exception ex)
@@ -844,6 +906,18 @@ public sealed partial class PipelineLoopService
 
             // Advance to next turn for fair alternation
             currentTurn = (currentTurn + 1) % 3;
+        }
+
+        // Emit skipped_max_runs for items remaining in queues after budget exhaustion
+        // TODO: Remaining queue items may include items that would have been skipped for other reasons (label, already processing, dependency) — this may overcount skipped_max_runs
+        if (remaining <= 0)
+        {
+            var remainingItems = issueQueues.Values.Sum(q => q.Count)
+                + prQueues.Values.Sum(q => q.Count)
+                + decompositionQueues.Values.Sum(q => q.Count)
+                + projectLevelDecompositionQueues.Values.Sum(q => q.Count);
+            if (remainingItems > 0)
+                PipelineTelemetry.LoopDispatchDecisions.Add(remainingItems, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedMaxRuns));
         }
     }
 
