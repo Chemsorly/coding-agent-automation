@@ -10,7 +10,6 @@ using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Configuration;
 using KiroCliLib.Core;
-using KiroCliLib.Models;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -104,8 +103,7 @@ try
     builder.Services.AddSingleton<IKiroCliOrchestrator>(sp =>
     {
         var cfg = sp.GetRequiredService<Configuration>();
-        var callbackHandler = new CallbackHandler(Log.Logger);
-        return new KiroCliOrchestrator(cfg, callbackHandler, Log.Logger);
+        return new KiroCliOrchestrator(cfg, callbackHandler: null, Log.Logger);
     });
 
     // ── Pipeline configuration (will be overridden per-job, but needed for factory construction) ──

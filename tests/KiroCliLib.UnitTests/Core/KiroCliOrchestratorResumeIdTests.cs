@@ -18,12 +18,9 @@ public class KiroCliOrchestratorResumeIdTests
 
         var config = new global::KiroCliLib.Configuration.Configuration();
         var logger = new Mock<ILogger>().Object;
-        var callbackHandler = new CallbackHandler(logger);
         _orchestrator = new KiroCliOrchestrator(
-            config, callbackHandler, logger,
-            () => _mockProcess.Object,
-            () => new OutputParser(),
-            () => new Mock<IFileSystemMonitor>().Object);
+            config, callbackHandler: null, logger,
+            () => _mockProcess.Object);
     }
 
     [Fact]
