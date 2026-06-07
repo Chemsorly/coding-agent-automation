@@ -128,7 +128,7 @@ public class WriteMcpConfigStepTests : IDisposable
             new() { Name = "test-server", Type = "stdio", Command = "node" }
         };
         var job = CreateJobWithMcpServers(servers);
-        var step = new WriteMcpConfigStep(job);
+        var step = new WriteMcpConfigStep(job, _mockLogger.Object);
         var context = CreateTestContext(_tempDir);
 
         // Act
@@ -137,7 +137,7 @@ public class WriteMcpConfigStepTests : IDisposable
         // Assert — graceful degradation: returns Continue despite IOException
         result.Should().Be(StepResult.Continue);
         _mockLogger.Verify(
-            l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>()),
+            l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>(), It.IsAny<string>()),
             Times.Once);
     }
 

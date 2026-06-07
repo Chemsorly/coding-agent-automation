@@ -2,6 +2,8 @@ using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Services.Steps;
+using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Agent;
 
@@ -16,10 +18,12 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
     public string StepName => "RunEnvironmentSetup";
 
     private readonly JobAssignmentMessage _job;
+    private readonly ILogger _logger;
 
-    public RunEnvironmentSetupStep(JobAssignmentMessage job)
+    public RunEnvironmentSetupStep(JobAssignmentMessage job, ILogger? logger = null)
     {
         _job = job;
+        _logger = logger ?? Log.Logger;
     }
 
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
@@ -51,6 +55,9 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
             context.InjectedSecretKeys = injectedKeys;
             context.InjectedSecrets = effectiveSecrets;
 
+            _logger.Information("Pipeline {RunId} injected {Count} environment secrets (keys: {Keys})",
+                context.Run.RunId, injectedKeys.Count, string.Join(", ", injectedKeys));
+
             var keyList = string.Join(", ", injectedKeys);
             context.Callbacks.EmitOutputLine(
                 SecretMasker.Mask($"🔐 Injected {injectedKeys.Count} environment secrets (keys: {keyList})", effectiveSecrets));
@@ -58,6 +65,8 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
             if (supersededKeys.Count > 0)
             {
                 var supersededList = string.Join(", ", supersededKeys);
+                _logger.Information("Pipeline {RunId} repo-level secrets superseded project-level for keys: {SupersededKeys}",
+                    context.Run.RunId, supersededList);
                 context.Callbacks.EmitOutputLine(
                     $"⚠️ Repo-level secrets superseded project-level for keys: {supersededList}");
             }
@@ -65,8 +74,12 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
 
         var steps = repoConfig?.SetupSteps ?? [];
 
+        _logger.Information("Pipeline {RunId} executing {StepCount} setup steps", context.Run.RunId, steps.Count);
+
         foreach (var step in steps)
         {
+            _logger.Information("Pipeline {RunId} running setup step '{StepName}': {Command}",
+                context.Run.RunId, step.Name, step.Command);
             context.Callbacks.EmitOutputLine(SecretMasker.Mask($"🔧 Running setup: {step.Name}", effectiveSecrets));
 
             try
@@ -107,6 +120,8 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
                     // Timeout — kill the process tree
                     try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
                     var timeoutMessage = $"Setup step '{step.Name}' timed out after 120 seconds";
+                    _logger.Error("Pipeline {RunId} setup step '{StepName}' timed out after 120s (command: {Command})",
+                        context.Run.RunId, step.Name, step.Command);
                     await context.FailRunAsync(SecretMasker.Mask(timeoutMessage, effectiveSecrets), ct);
                     return StepResult.Stop;
                 }
@@ -124,9 +139,14 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
                 {
                     var truncatedStderr = stderr.Length > 500 ? stderr[..500] : stderr;
                     var failureMessage = $"Setup step '{step.Name}' failed with exit code {process.ExitCode}: {truncatedStderr}";
+                    _logger.Error("Pipeline {RunId} setup step '{StepName}' failed with exit code {ExitCode} (command: {Command}): {Stderr}",
+                        context.Run.RunId, step.Name, process.ExitCode, step.Command, truncatedStderr.Trim());
                     await context.FailRunAsync(SecretMasker.Mask(failureMessage, effectiveSecrets), ct);
                     return StepResult.Stop;
                 }
+
+                _logger.Information("Pipeline {RunId} setup step '{StepName}' completed successfully (exit code 0)",
+                    context.Run.RunId, step.Name);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -135,11 +155,15 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
             catch (Exception ex)
             {
                 var failureMessage = $"Setup step '{step.Name}' threw an exception: {ex.Message}";
+                _logger.Error(ex, "Pipeline {RunId} setup step '{StepName}' threw an exception (command: {Command})",
+                    context.Run.RunId, step.Name, step.Command);
                 await context.FailRunAsync(SecretMasker.Mask(failureMessage, effectiveSecrets), ct);
                 return StepResult.Stop;
             }
         }
 
+        _logger.Information("Pipeline {RunId} environment setup complete ({StepCount} steps executed successfully)",
+            context.Run.RunId, steps.Count);
         context.Callbacks.EmitOutputLine($"✅ Environment setup complete ({steps.Count} steps)");
         return StepResult.Continue;
     }

@@ -113,7 +113,7 @@
                         </details>
                         <details class="setup-steps-section">
                             <summary class="setup-steps-section-header">⚙️ Setup Steps (@_form.SetupSteps.Count)</summary>
-                            <div class="setup-steps-section-body">
+                            <div class="setup-steps-section-body"><span class="form-hint">Each step runs as a full shell command via <code>/bin/bash -c</code> after clone. The name is a label for logs only.</span>
                                 @for (var i = 0; i < _form.SetupSteps.Count; i++)
                                 {
                                     var index = i;
@@ -125,7 +125,7 @@
                                                    class="setup-step-name-input"
                                                    value="@step.Name"
                                                    @onchange="e => UpdateSetupStepName(index, e.Value?.ToString() ?? string.Empty)"
-                                                   placeholder="Step name (e.g. Configure NuGet feed)" />
+                                                   placeholder="Label (e.g. Restore dependencies)" />
                                             <div class="setup-step-actions">
                                                 <button type="button" class="btn-icon" title="Move up" disabled="@(index == 0)" @onclick="() => MoveSetupStepUp(index)">↑</button>
                                                 <button type="button" class="btn-icon" title="Move down" disabled="@(index == _form.SetupSteps.Count - 1)" @onclick="() => MoveSetupStepDown(index)">↓</button>
@@ -135,7 +135,7 @@
                                         <textarea class="setup-step-command-input"
                                                   rows="2"
                                                   @onchange="e => UpdateSetupStepCommand(index, e.Value?.ToString() ?? string.Empty)"
-                                                  placeholder="Shell command (e.g. dotnet nuget add source ...)">@step.Command</textarea>
+                                                  placeholder="Full shell command (e.g. dotnet restore, npm install)">@step.Command</textarea>
                                         @if (!string.IsNullOrEmpty(step.ValidationError))
                                         {
                                             <div class="setup-step-validation-error">@step.ValidationError</div>
@@ -242,7 +242,7 @@
                         </details>
                         <details class="setup-steps-section">
                             <summary class="setup-steps-section-header">⚙️ Setup Steps (@_form.SetupSteps.Count)</summary>
-                            <div class="setup-steps-section-body">
+                            <div class="setup-steps-section-body"><span class="form-hint">Each step runs as a full shell command via <code>/bin/bash -c</code> after clone. The name is a label for logs only.</span>
                                 @for (var i = 0; i < _form.SetupSteps.Count; i++)
                                 {
                                     var index = i;
@@ -254,7 +254,7 @@
                                                    class="setup-step-name-input"
                                                    value="@step.Name"
                                                    @onchange="e => UpdateSetupStepName(index, e.Value?.ToString() ?? string.Empty)"
-                                                   placeholder="Step name (e.g. Configure NuGet feed)" />
+                                                   placeholder="Label (e.g. Restore dependencies)" />
                                             <div class="setup-step-actions">
                                                 <button type="button" class="btn-icon" title="Move up" disabled="@(index == 0)" @onclick="() => MoveSetupStepUp(index)">↑</button>
                                                 <button type="button" class="btn-icon" title="Move down" disabled="@(index == _form.SetupSteps.Count - 1)" @onclick="() => MoveSetupStepDown(index)">↓</button>
@@ -264,7 +264,7 @@
                                         <textarea class="setup-step-command-input"
                                                   rows="2"
                                                   @onchange="e => UpdateSetupStepCommand(index, e.Value?.ToString() ?? string.Empty)"
-                                                  placeholder="Shell command (e.g. dotnet nuget add source ...)">@step.Command</textarea>
+                                                  placeholder="Full shell command (e.g. dotnet restore, npm install)">@step.Command</textarea>
                                         @if (!string.IsNullOrEmpty(step.ValidationError))
                                         {
                                             <div class="setup-step-validation-error">@step.ValidationError</div>

@@ -3,6 +3,8 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Steps;
+using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Agent;
 
@@ -20,18 +22,23 @@ internal sealed class WriteSteeringStep : IPipelineStep
         RegexOptions.Singleline | RegexOptions.Multiline | RegexOptions.Compiled);
 
     private readonly JobAssignmentMessage _job;
+    private readonly ILogger _logger;
 
     public string StepName => "WriteSteering";
 
-    public WriteSteeringStep(JobAssignmentMessage job)
+    public WriteSteeringStep(JobAssignmentMessage job, ILogger? logger = null)
     {
         _job = job;
+        _logger = logger ?? Log.Logger;
     }
 
     public Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(_job.ProjectSteeringContent) && string.IsNullOrEmpty(_job.RepoSteeringContent))
+        {
+            _logger.Debug("Pipeline {RunId} no steering content configured, skipping", context.Run.RunId);
             return Task.FromResult(StepResult.Continue);
+        }
 
         try
         {
@@ -44,7 +51,8 @@ internal sealed class WriteSteeringStep : IPipelineStep
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            context.Logger.Warning(ex, "Failed to write steering files to workspace, continuing without them");
+            _logger.Warning(ex, "Pipeline {RunId} failed to write steering files to workspace, continuing without them",
+                context.Run.RunId);
         }
 
         return Task.FromResult(StepResult.Continue);
@@ -71,6 +79,9 @@ internal sealed class WriteSteeringStep : IPipelineStep
             written.Add("repo");
         }
 
+        _logger.Information("Pipeline {RunId} wrote steering files ({Sources}) to .kiro/steering/ ({ProjectLength} + {RepoLength} chars)",
+            context.Run.RunId, string.Join("+", written),
+            _job.ProjectSteeringContent?.Length ?? 0, _job.RepoSteeringContent?.Length ?? 0);
         context.Callbacks.EmitOutputLine($"📋 Wrote pipeline steering ({string.Join("+", written)}) to .kiro/steering/");
     }
 
@@ -91,6 +102,8 @@ internal sealed class WriteSteeringStep : IPipelineStep
             : block + "\n" + existingContent;
 
         File.WriteAllText(agentsPath, combined);
+        _logger.Information("Pipeline {RunId} wrote steering to AGENTS.md ({ProjectLength} + {RepoLength} chars)",
+            context.Run.RunId, _job.ProjectSteeringContent?.Length ?? 0, _job.RepoSteeringContent?.Length ?? 0);
         context.Callbacks.EmitOutputLine("📋 Wrote pipeline steering to AGENTS.md");
     }
 
