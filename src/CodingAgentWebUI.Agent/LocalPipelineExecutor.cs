@@ -47,8 +47,8 @@ public sealed class LocalPipelineExecutor
     private readonly IOpenIssueContextWriter _openIssueContextWriter;
     private readonly FeedbackService _feedbackService;
     private readonly PullRequestFinalizationService _finalization;
+    private readonly AgentIdentity _agentIdentity;
     private readonly Serilog.ILogger _logger;
-    private readonly string _agentId;
 
     public LocalPipelineExecutor(
         IKiroCliOrchestrator orchestrator,
@@ -56,17 +56,16 @@ public sealed class LocalPipelineExecutor
         PipelineConfiguration defaultPipelineConfig,
         IQualityGateValidator qualityGateValidator,
         Serilog.ILogger logger,
-        string agentId,
         IBrainUpdateService? brainUpdateService = null,
         IPipelineRunHistoryService? historyService = null,
-        IOpenIssueContextWriter? openIssueContextWriter = null)
+        IOpenIssueContextWriter? openIssueContextWriter = null,
+        AgentIdentity? agentIdentity = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(defaultPipelineConfig);
         ArgumentNullException.ThrowIfNull(qualityGateValidator);
         ArgumentNullException.ThrowIfNull(logger);
-        ArgumentException.ThrowIfNullOrEmpty(agentId);
 
         _orchestrator = orchestrator;
         _httpClientFactory = httpClientFactory;
@@ -77,8 +76,8 @@ public sealed class LocalPipelineExecutor
         _openIssueContextWriter = openIssueContextWriter ?? new OpenIssueContextWriter(logger);
         _feedbackService = new FeedbackService(logger);
         _finalization = new PullRequestFinalizationService(logger);
+        _agentIdentity = agentIdentity ?? new AgentIdentity(Environment.MachineName);
         _logger = logger;
-        _agentId = agentId;
     }
 
     /// <summary>
@@ -102,7 +101,7 @@ public sealed class LocalPipelineExecutor
             PipelineTelemetry.ExtractTraceContext(job.TraceContext));
         activity?.SetTag("pipeline.run_id", job.JobId);
         activity?.SetTag("pipeline.issue", job.IssueIdentifier);
-        activity?.SetTag("pipeline.agent_id", _agentId);
+        activity?.SetTag("pipeline.agent_id", _agentIdentity.Id);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var tags = PipelineTelemetry.BuildTags(job.RunType, job.ProjectId, job.ProjectName);
@@ -274,7 +273,7 @@ public sealed class LocalPipelineExecutor
             PipelineProviderConfigId = job.PipelineProviderConfigId,
             InitiatedBy = job.InitiatedBy,
             LinkedPullRequest = job.LinkedPullRequest,
-            AgentId = _agentId,
+            AgentId = _agentIdentity.Id,
             RunType = job.RunType,
             ReviewPrBranchName = job.LinkedPullRequest?.BranchName,
             ReviewPrTargetBranch = job.ReviewPrTargetBranch,
@@ -441,7 +440,13 @@ public sealed class LocalPipelineExecutor
     {
         if (context?.InjectedSecrets is not { Count: > 0 })
             return output;
-        return SecretMasker.Mask(output, context.InjectedSecrets);
+
+        foreach (var (_, value) in context.InjectedSecrets)
+        {
+            if (value.Length >= 4)
+                output = output.Replace(value, "***");
+        }
+        return output;
     }
 
     /// <summary>

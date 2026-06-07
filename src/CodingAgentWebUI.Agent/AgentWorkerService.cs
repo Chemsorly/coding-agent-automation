@@ -68,6 +68,7 @@ public sealed class AgentWorkerService : BackgroundService
         LocalConsolidationExecutor consolidationExecutor,
         IKiroCliOrchestrator orchestrator,
         IHttpClientFactory httpClientFactory,
+        AgentIdentity agentIdentity,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(hubManager);
@@ -75,6 +76,7 @@ public sealed class AgentWorkerService : BackgroundService
         ArgumentNullException.ThrowIfNull(consolidationExecutor);
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
+        ArgumentNullException.ThrowIfNull(agentIdentity);
         ArgumentNullException.ThrowIfNull(logger);
 
         _hubManager = hubManager;
@@ -87,8 +89,7 @@ public sealed class AgentWorkerService : BackgroundService
         _isOpenCodeProvider = (Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "")
             .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase);
 
-        _agentId = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentId)
-            ?? Environment.MachineName;
+        _agentId = agentIdentity.Id;
         _agentType = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentType)
             ?? throw new InvalidOperationException("AGENT_TYPE environment variable is required");
 
