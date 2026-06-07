@@ -174,11 +174,6 @@ app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()
     .DisableAntiforgery();
 
-// Startup migration: ensure projects exist (creates Default project on first run)
-var projectStore = app.Services.GetRequiredService<IProjectStore>();
-var pipelineConfigStore = app.Services.GetRequiredService<IPipelineConfigStore>();
-await ProjectMigrationService.MigrateToProjectsAsync(projectStore, pipelineConfigStore, CancellationToken.None);
-
 // Clean up orphaned consolidation runs from previous sessions
 var consolidationService = app.Services.GetRequiredService<IConsolidationService>();
 await consolidationService.CleanupOrphanedRunsAsync(CancellationToken.None);

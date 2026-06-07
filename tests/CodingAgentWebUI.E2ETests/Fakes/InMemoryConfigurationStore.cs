@@ -172,9 +172,8 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
             return Task.FromResult<IReadOnlyList<PipelineProject>>(_projects.ToList());
 
         // Auto-generate a Default project containing all template IDs from PipelineJobTemplates.
-        // This mirrors production behavior where ProjectMigrationService creates a Default project
-        // referencing all templates. Without this, the Consolidation page (and ConsolidationService)
-        // would use the pre-migration fallback path which may not match the code paths under test.
+        // This ensures E2E tests exercise the project-based code paths rather than the
+        // pre-migration fallback path (projects.Count == 0) in ConsolidationService.
         var templateIds = _pipelineConfig.PipelineJobTemplates.Select(t => t.Id).ToList();
         if (templateIds.Count == 0)
             return Task.FromResult<IReadOnlyList<PipelineProject>>(Array.Empty<PipelineProject>());
