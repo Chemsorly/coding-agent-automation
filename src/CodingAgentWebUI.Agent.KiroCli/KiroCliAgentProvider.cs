@@ -21,7 +21,6 @@ public partial class KiroCliAgentProvider : IAgentProvider
     private readonly string _executablePath;
     private readonly IProcessStarter _processStarter;
     private readonly HashSet<string> _establishedSessions = new(StringComparer.OrdinalIgnoreCase);
-    private long _lastOutputTimeTicks; // Interlocked — tracks output across all orchestrators (shared + ephemeral)
 
     internal const string WarmUpPrompt =
         "Briefly describe the project structure of this workspace. Do not make any changes.";
@@ -29,7 +28,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
     public AgentProviderType ProviderType => AgentProviderType.KiroCli;
 
     /// <inheritdoc />
-    public bool SupportsParallelExecution => true;
+    public bool SupportsParallelExecution => false;
 
     /// <inheritdoc />
     public IReadOnlyList<string> SteeringBlacklistPaths { get; } = [".kiro"];
@@ -85,26 +84,11 @@ public partial class KiroCliAgentProvider : IAgentProvider
 
     public AgentHealthStatus GetHealthStatus() => new()
     {
-        IsExecuting = _orchestrator.IsExecuting || Interlocked.Read(ref _lastOutputTimeTicks) != 0,
+        IsExecuting = _orchestrator.IsExecuting,
         ProcessId = _orchestrator.ActiveProcessId,
         IsProcessAlive = _orchestrator.IsActiveProcessAlive,
-        LastOutputTime = GetLastOutputTime()
+        LastOutputTime = _orchestrator.LastOutputTime
     };
-
-    private DateTime? GetLastOutputTime()
-    {
-        // Return the most recent output time across shared + ephemeral orchestrators.
-        // Ephemeral orchestrators update _lastOutputTimeTicks via the onOutputLine callback.
-        var providerTicks = Interlocked.Read(ref _lastOutputTimeTicks);
-        var orchestratorTime = _orchestrator.LastOutputTime;
-
-        if (providerTicks == 0) return orchestratorTime;
-        if (orchestratorTime is null) return new DateTime(providerTicks, DateTimeKind.Utc);
-
-        return orchestratorTime.Value.Ticks > providerTicks
-            ? orchestratorTime
-            : new DateTime(providerTicks, DateTimeKind.Utc);
-    }
 
     public async Task<AgentResult> ExecuteAsync(
         AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null)
@@ -113,64 +97,31 @@ public partial class KiroCliAgentProvider : IAgentProvider
 
         var outputLines = new List<string>();
 
-        // For isolated (non-resume) calls, create an ephemeral orchestrator with its own
-        // process slot. This enables concurrent execution — each parallel review agent gets
-        // its own kiro-cli process without conflicting on the shared _orchestrator's single
-        // _activeProcess field. Resume calls must use the shared orchestrator to maintain
-        // session continuity.
-        var isIsolatedCall = !request.UseResume && request.ResumeSessionId is null;
-        var orchestrator = isIsolatedCall ? CreateEphemeralOrchestrator() : _orchestrator;
+        return await TimeoutHelper.ExecuteWithTimeoutAsync(
+            request.Timeout, ct,
+            async linkedCt =>
+            {
+                var exitCode = await _orchestrator.ExecutePromptAsync(
+                    request.Prompt,
+                    request.WorkspacePath,
+                    useResume: request.UseResume,
+                    linkedCt,
+                    onOutputLine: line =>
+                    {
+                        var clean = AnsiStripper.Strip(line);
+                        outputLines.Add(clean);
+                        onOutputLine?.Invoke(clean);
+                        return Task.CompletedTask;
+                    },
+                    resumeSessionId: request.ResumeSessionId);
 
-        try
-        {
-            return await TimeoutHelper.ExecuteWithTimeoutAsync(
-                request.Timeout, ct,
-                async linkedCt =>
-                {
-                    var exitCode = await orchestrator.ExecutePromptAsync(
-                        request.Prompt,
-                        request.WorkspacePath,
-                        useResume: request.UseResume,
-                        linkedCt,
-                        onOutputLine: line =>
-                        {
-                            var clean = AnsiStripper.Strip(line);
-                            outputLines.Add(clean);
-                            Interlocked.Exchange(ref _lastOutputTimeTicks, DateTime.UtcNow.Ticks);
-                            onOutputLine?.Invoke(clean);
-                            return Task.CompletedTask;
-                        },
-                        resumeSessionId: request.ResumeSessionId);
-
-                    return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };
-                },
-                () =>
-                {
-                    _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
-                    return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly() });
-                });
-        }
-        finally
-        {
-            // Dispose ephemeral orchestrators to clean up process resources
-            if (isIsolatedCall && orchestrator is IDisposable disposable)
-                disposable.Dispose();
-        }
-    }
-
-    /// <summary>
-    /// Creates a lightweight orchestrator instance with its own process slot.
-    /// Used for isolated (non-resume) calls to enable parallel execution.
-    /// </summary>
-    private IKiroCliOrchestrator CreateEphemeralOrchestrator()
-    {
-        var config = new KiroCliLib.Configuration.Configuration
-        {
-            KiroCliPath = _executablePath,
-            UseWsl = OperatingSystem.IsWindows()
-        };
-        _logger.Debug("Creating ephemeral orchestrator (path={KiroCliPath}, wsl={UseWsl})", _executablePath, config.UseWsl);
-        return new KiroCliOrchestrator(config, callbackHandler: null, _logger);
+                return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };
+            },
+            () =>
+            {
+                _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
+                return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly() });
+            });
     }
 
     /// <inheritdoc />

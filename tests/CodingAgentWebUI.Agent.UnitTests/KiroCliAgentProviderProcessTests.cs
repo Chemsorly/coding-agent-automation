@@ -10,6 +10,7 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 
 /// <summary>
 /// Tests for process-spawning methods in KiroCliAgentProvider via IProcessStarter abstraction.
+/// These tests spawn real /bin/sh processes and only run on Linux/macOS (CI environment).
 /// </summary>
 public class KiroCliAgentProviderProcessTests
 {
@@ -20,22 +21,44 @@ public class KiroCliAgentProviderProcessTests
     private KiroCliAgentProvider CreateProvider(string? model = null) =>
         new(_mockOrchestrator.Object, _mockLogger.Object, model, "/usr/bin/fake", _mockProcessStarter.Object);
 
-    /// <summary>Starts a real /bin/sh process with controlled stdout, stderr, and exit code.</summary>
+    /// <summary>Starts a real process with controlled stdout, stderr, and exit code (cross-platform).</summary>
     private static Process StartShellProcess(string stdout = "", string stderr = "", int exitCode = 0)
     {
-        // Use printf with octal/hex to avoid shell quoting issues
-        var stdoutB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(stdout));
-        var stderrB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(stderr));
-        var script = $"printf '%s' \"$(echo {stdoutB64} | base64 -d)\"; printf '%s' \"$(echo {stderrB64} | base64 -d)\" >&2; exit {exitCode}";
-        var psi = new ProcessStartInfo
+        ProcessStartInfo psi;
+        if (OperatingSystem.IsWindows())
         {
-            FileName = "/bin/sh",
-            ArgumentList = { "-c", script },
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
+            // On Windows, write stdout/stderr to temp files and type them to avoid cmd.exe escaping issues
+            var stdoutFile = Path.GetTempFileName();
+            var stderrFile = Path.GetTempFileName();
+            File.WriteAllText(stdoutFile, stdout);
+            File.WriteAllText(stderrFile, stderr);
+            var script = $"type \"{stdoutFile}\" & type \"{stderrFile}\" 1>&2 & del \"{stdoutFile}\" & del \"{stderrFile}\" & exit /b {exitCode}";
+            psi = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c \"{script}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+        }
+        else
+        {
+            // On Linux/macOS, use /bin/sh with base64 encoding to avoid quoting issues
+            var stdoutB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(stdout));
+            var stderrB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(stderr));
+            var script = $"printf '%s' \"$(echo {stdoutB64} | base64 -d)\"; printf '%s' \"$(echo {stderrB64} | base64 -d)\" >&2; exit {exitCode}";
+            psi = new ProcessStartInfo
+            {
+                FileName = "/bin/sh",
+                ArgumentList = { "-c", script },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+        }
         return Process.Start(psi)!;
     }
 

@@ -14,7 +14,7 @@ namespace CodingAgentWebUI.UnitTests.Telemetry;
 public class QueueWaitTimeMetricsTests : IDisposable
 {
     private readonly MeterListener _listener = new();
-    private readonly List<double> _recordedWaitTimes = [];
+    private readonly System.Collections.Concurrent.ConcurrentBag<double> _recordedWaitTimes = [];
     private readonly AgentRegistryService _registry;
     private readonly JobDispatcherService _dispatcher;
     private readonly JobQueueDrainService _drainService;
@@ -93,8 +93,11 @@ public class QueueWaitTimeMetricsTests : IDisposable
             Labels = ["dotnet"]
         }, "conn-1");
 
+        // Capture count before drain to isolate from parallel test pollution via static Meter
+        var countBefore = _recordedWaitTimes.Count;
+
         await _drainService.DrainAsync(CancellationToken.None);
 
-        _recordedWaitTimes.Should().BeEmpty();
+        _recordedWaitTimes.Count.Should().Be(countBefore);
     }
 }
