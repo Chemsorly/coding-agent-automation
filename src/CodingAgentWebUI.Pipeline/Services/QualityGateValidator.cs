@@ -3,7 +3,9 @@ using System.Globalization;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Parsers;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Core;
+using OpenTelemetry.Trace;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -206,32 +208,44 @@ public class QualityGateValidator : IQualityGateValidator
         if (string.IsNullOrWhiteSpace(qgc.CompilationCommand))
             return null;
 
-        var arguments = qgc.CompilationArguments != null
-            ? string.Join(" ", qgc.CompilationArguments)
-            : string.Empty;
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("QualityGate.Compilation");
+        activity?.SetTag("gate_name", "compilation");
 
-        var (exitCode, stdout, stderr) = await RunProcessAsync(
-            qgc.CompilationCommand, arguments, workspacePath, ct);
-
-        WriteGateOutput(workspacePath, $"{qgc.DisplayName}-compilation", stdout, stderr);
-
-        string details;
-        if (exitCode == ExitCodes.Success)
+        try
         {
-            details = "Build succeeded";
+            var arguments = qgc.CompilationArguments != null
+                ? string.Join(" ", qgc.CompilationArguments)
+                : string.Empty;
+
+            var (exitCode, stdout, stderr) = await RunProcessAsync(
+                qgc.CompilationCommand, arguments, workspacePath, ct);
+
+            WriteGateOutput(workspacePath, $"{qgc.DisplayName}-compilation", stdout, stderr);
+
+            string details;
+            if (exitCode == ExitCodes.Success)
+            {
+                details = "Build succeeded";
+            }
+            else
+            {
+                var (errors, warnings) = ParseBuildErrorCounts(stdout + "\n" + stderr);
+                details = $"Build failed with exit code {exitCode}. {errors} error(s), {warnings} warning(s).";
+            }
+
+            return new GateResult
+            {
+                GateName = "Compilation",
+                Passed = exitCode == ExitCodes.Success,
+                Details = details
+            };
         }
-        else
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            var (errors, warnings) = ParseBuildErrorCounts(stdout + "\n" + stderr);
-            details = $"Build failed with exit code {exitCode}. {errors} error(s), {warnings} warning(s).";
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            throw;
         }
-
-        return new GateResult
-        {
-            GateName = "Compilation",
-            Passed = exitCode == ExitCodes.Success,
-            Details = details
-        };
     }
 
     /// <summary>
@@ -245,6 +259,9 @@ public class QualityGateValidator : IQualityGateValidator
     {
         if (string.IsNullOrWhiteSpace(qgc.TestCommand))
             return null;
+
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("QualityGate.Tests");
+        activity?.SetTag("gate_name", "tests");
 
         var arguments = qgc.TestArguments != null
             ? string.Join(" ", qgc.TestArguments)
@@ -461,6 +478,9 @@ public class QualityGateValidator : IQualityGateValidator
     /// </summary>
     private GateResult ParseCoverageFromReports(string workspacePath, QualityGateConfiguration qgc)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("QualityGate.Coverage");
+        activity?.SetTag("gate_name", "coverage");
+
         var threshold = qgc.CoverageThreshold!.Value;
         var format = qgc.CoverageReportFormat ?? "cobertura";
         var isDotnet = string.Equals(qgc.TestCommand, "dotnet", StringComparison.OrdinalIgnoreCase);

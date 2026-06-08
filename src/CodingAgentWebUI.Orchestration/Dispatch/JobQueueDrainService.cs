@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.Extensions.Hosting;
+using OpenTelemetry.Trace;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -124,26 +126,41 @@ public sealed class JobQueueDrainService : BackgroundService
     /// </summary>
     internal async Task DrainAsync(CancellationToken ct)
     {
-        // Phase 1: Drain pipeline jobs (higher priority)
-        await DrainPipelineJobsAsync(ct);
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("DrainCycle");
 
-        // Phase 2: Drain consolidation jobs (lower priority — only if idle agents remain)
-        await DrainConsolidationJobsAsync(ct);
+        try
+        {
+            // Phase 1: Drain pipeline jobs (higher priority)
+            var pipelineDispatched = await DrainPipelineJobsAsync(ct);
+
+            // Phase 2: Drain consolidation jobs (lower priority — only if idle agents remain)
+            var consolidationDispatched = await DrainConsolidationJobsAsync(ct);
+
+            activity?.SetTag("jobs_dispatched", pipelineDispatched + consolidationDispatched);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            throw;
+        }
     }
 
-    private async Task DrainPipelineJobsAsync(CancellationToken ct)
+    private async Task<int> DrainPipelineJobsAsync(CancellationToken ct)
     {
         var queueLength = _dispatcher.QueueLength;
         if (queueLength == 0)
-            return;
+            return 0;
 
         var idleAgents = _registry.GetIdleAgents();
         if (idleAgents.Count == 0)
-            return;
+            return 0;
 
         _logger.Debug(
             "Drain cycle: {QueueLength} queued pipeline job(s), {IdleAgents} idle agent(s)",
             queueLength, idleAgents.Count);
+
+        var dispatchedCount = 0;
 
         foreach (var agent in idleAgents)
         {
@@ -216,7 +233,11 @@ public sealed class JobQueueDrainService : BackgroundService
                         project: pendingJob.Project);
                 }
 
-                if (!dispatched)
+                if (dispatched)
+                {
+                    dispatchedCount++;
+                }
+                else
                 {
                     _logger.Warning(
                         "Drain: failed to dispatch job for issue {IssueIdentifier}, re-enqueuing",
@@ -232,21 +253,25 @@ public sealed class JobQueueDrainService : BackgroundService
                 _dispatcher.EnqueueJob(pendingJob);
             }
         }
+
+        return dispatchedCount;
     }
 
-    private async Task DrainConsolidationJobsAsync(CancellationToken ct)
+    private async Task<int> DrainConsolidationJobsAsync(CancellationToken ct)
     {
         var queueLength = _consolidationQueue.QueueLength;
         if (queueLength == 0)
-            return;
+            return 0;
 
         var idleAgents = _registry.GetIdleAgents();
         if (idleAgents.Count == 0)
-            return;
+            return 0;
 
         _logger.Debug(
             "Drain cycle: {QueueLength} queued consolidation job(s), {IdleAgents} idle agent(s)",
             queueLength, idleAgents.Count);
+
+        var dispatchedCount = 0;
 
         foreach (var agent in idleAgents)
         {
@@ -276,6 +301,7 @@ public sealed class JobQueueDrainService : BackgroundService
 
                 if (dispatched)
                 {
+                    dispatchedCount++;
                     // Transition run from Queued to Running
                     await _consolidationService.TransitionToRunningAsync(job.RunId, ct);
                 }
@@ -324,5 +350,7 @@ public sealed class JobQueueDrainService : BackgroundService
                 }
             }
         }
+
+        return dispatchedCount;
     }
 }

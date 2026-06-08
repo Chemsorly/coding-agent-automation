@@ -1,6 +1,9 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Prompts;
+using CodingAgentWebUI.Pipeline.Telemetry;
+using OpenTelemetry.Trace;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -28,6 +31,9 @@ internal sealed class PullRequestFinalizationService
         PipelineRun run, IAgentProvider agentProvider, PipelineConfiguration config,
         Action<string> emitOutputLine, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("Reflection");
+        activity?.SetTag("pipeline.run_id", run.RunId);
+
         emitOutputLine("🧠 Reflecting on run and updating brain knowledge...");
         try
         {
@@ -51,6 +57,8 @@ internal sealed class PullRequestFinalizationService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
             _logger.Warning(ex, "Pipeline {RunId} reflection step failed, continuing with brain sync", run.RunId);
         }
     }
@@ -63,12 +71,17 @@ internal sealed class PullRequestFinalizationService
         PipelineRun run, IBrainSyncService brainSync, IRepositoryProvider brainProvider,
         PipelineConfiguration config, Action<string> emitOutputLine, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("BrainSyncPostRun");
+        activity?.SetTag("pipeline.run_id", run.RunId);
+
         try
         {
             await brainSync.SyncPostRunAsync(run, brainProvider, ct, emitOutputLine, config.BrainPushMaxRetries);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
             _logger.Warning(ex, "Pipeline {RunId} brain post-run sync failed", run.RunId);
             run.BrainUpdatesPushed = false;
         }
@@ -82,6 +95,9 @@ internal sealed class PullRequestFinalizationService
         PipelineRun run, IAgentProvider agentProvider, FeedbackService feedbackService,
         IPipelineRunHistoryService? historyService, Action<string> emitOutputLine, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("FeedbackCollection");
+        activity?.SetTag("pipeline.run_id", run.RunId);
+
         emitOutputLine("📋 Collecting run feedback...");
         try
         {
@@ -122,6 +138,8 @@ internal sealed class PullRequestFinalizationService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
             _logger.Warning(ex, "Pipeline {RunId} feedback collection failed, using fallback", run.RunId);
             run.Feedback = feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
                 $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
