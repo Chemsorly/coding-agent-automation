@@ -17,12 +17,20 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
     public string? LastBranchName { get; private set; }
     public bool ShouldFail { get; set; }
 
+    /// <summary>Seed PRs for ListOpenPullRequestsAsync.</summary>
+    public List<PullRequestSummary> PullRequests { get; } = new();
+
+    /// <summary>Tracks label changes for assertion (action, prNumber, label).</summary>
+    public List<(string Action, int PrNumber, string Label)> PrLabelChanges { get; } = new();
+
     public void Reset()
     {
         MethodCalls.Clear();
         LastCreatedPrUrl = null;
         LastBranchName = null;
         ShouldFail = false;
+        PullRequests.Clear();
+        PrLabelChanges.Clear();
     }
 
     public Task CloneAsync(string workspacePath, CancellationToken ct)
@@ -95,6 +103,33 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
 
     public Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool markReady, CancellationToken ct) =>
         Task.CompletedTask;
+
+    // TODO: This implementation ignores the labels parameter. If future tests rely on label-filtered
+    // PR listing (e.g., pipeline loop filtering by "agent:next"), add filtering logic here.
+    public Task<PagedResult<PullRequestSummary>> ListOpenPullRequestsAsync(
+        int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)
+    {
+        var items = PullRequests.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        return Task.FromResult(new PagedResult<PullRequestSummary>
+        {
+            Items = items,
+            Page = page,
+            PageSize = pageSize,
+            HasMore = PullRequests.Count > page * pageSize
+        });
+    }
+
+    public Task AddPrLabelAsync(int prNumber, string label, CancellationToken ct)
+    {
+        PrLabelChanges.Add(("Add", prNumber, label));
+        return Task.CompletedTask;
+    }
+
+    public Task RemovePrLabelAsync(int prNumber, string label, CancellationToken ct)
+    {
+        PrLabelChanges.Add(("Remove", prNumber, label));
+        return Task.CompletedTask;
+    }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
