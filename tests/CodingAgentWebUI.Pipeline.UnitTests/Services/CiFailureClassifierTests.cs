@@ -131,6 +131,14 @@ public class CiFailureClassifierTests
         CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Infrastructure);
     }
 
+    [Fact]
+    public void Classify_CrlfLineEndings_MatchesCodeFailurePattern()
+    {
+        var logContent = "FAILED MyTest.ShouldWork\r\n  Error Message:\r\n   Assert.Equal() Failure";
+        var status = CreateStatus(logContent);
+        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.CodeFailure);
+    }
+
     private static PipelineRunStatus CreateStatus(string logContent) => new()
     {
         State = PipelineRunState.Failed,
