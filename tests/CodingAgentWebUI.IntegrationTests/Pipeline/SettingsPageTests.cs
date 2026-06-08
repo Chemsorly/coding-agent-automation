@@ -365,7 +365,7 @@ public class SettingsPageTests
         savedConfig.Should().NotBeNull();
         savedConfig!.MaxRetries.Should().Be(3);
         savedConfig.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30));
-        savedConfig.BlacklistedPaths.Should().BeEquivalentTo(new[] { ".agent", ".github", ".brain" });
+        savedConfig.BlacklistedPaths.Should().BeEquivalentTo(new[] { ".agent", ".brain" });
         savedConfig.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
         savedConfig.CodeReview.FixPrompt.Should().BeNull();
         savedConfig.AnalysisPrompt.Should().Be(PipelineConfiguration.DefaultAnalysisPrompt);

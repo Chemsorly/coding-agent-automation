@@ -14,13 +14,12 @@ public class BlacklistEnforcementTests
     // --- PipelineConfiguration defaults ---
 
     [Fact]
-    public void PipelineConfiguration_DefaultBlacklistedPaths_ContainsKiroAndGitHub()
+    public void PipelineConfiguration_DefaultBlacklistedPaths_ContainsAgentAndBrain()
     {
         var config = new PipelineConfiguration();
         config.BlacklistedPaths.Should().Contain(".agent");
-        config.BlacklistedPaths.Should().Contain(".github");
         config.BlacklistedPaths.Should().Contain(".brain");
-        config.BlacklistedPaths.Should().HaveCount(3);
+        config.BlacklistedPaths.Should().HaveCount(2);
     }
 
     [Fact]
