@@ -19,6 +19,7 @@
 @inject IConfigurationStore ConfigStore
 @inject IProjectStore ProjectStore
 @inject IProviderFactory ProviderFactory
+@inject IDependencyChecker DependencyChecker
 @inject IJSRuntime JS
 
 <div class="agent-coding-page">
@@ -1518,6 +1519,28 @@
         {
             _errorMessage = "Could not dispatch — no agents are currently connected.";
             return;
+        }
+
+        // Check issue dependencies before dispatch
+        // TODO: Move dependency check inside the try/catch below so exceptions (e.g. network errors) are handled gracefully
+        // TODO: Consider reusing the issue provider instance instead of creating/disposing one per dispatch attempt
+        var depProviderConfig = _issueProviders.FirstOrDefault(p => p.Id == _drawerTemplate.IssueProviderId);
+        if (depProviderConfig != null)
+        {
+            await using var issueProvider = ProviderFactory.CreateIssueProvider(depProviderConfig);
+            var depResult = await DependencyChecker.CheckAsync(
+                _selectedDrawerIssue.Identifier,
+                _selectedDrawerIssue.Description,
+                issueProvider,
+                new Dictionary<int, bool>(),
+                CancellationToken.None);
+
+            if (!depResult.IsReady)
+            {
+                var blockedNumbers = string.Join(", ", depResult.BlockedBy.Select(n => $"#{n}"));
+                _errorMessage = $"Cannot dispatch — issue is blocked by open dependencies: {blockedNumbers}";
+                return;
+            }
         }
 
         _drawerDispatching = true;
