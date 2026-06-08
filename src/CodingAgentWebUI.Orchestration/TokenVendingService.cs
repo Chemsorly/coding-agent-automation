@@ -100,70 +100,70 @@ public sealed partial class TokenVendingService : ITokenVendingService
         {
             var settings = repoConfig.Settings;
 
-        if (!settings.TryGetValue(ProviderSettingKeys.PrivateKeyBase64, out var privateKeyBase64) || string.IsNullOrWhiteSpace(privateKeyBase64))
-            throw new InvalidOperationException("Repository config is missing 'privateKeyBase64' setting");
+            if (!settings.TryGetValue(ProviderSettingKeys.PrivateKeyBase64, out var privateKeyBase64) || string.IsNullOrWhiteSpace(privateKeyBase64))
+                throw new InvalidOperationException("Repository config is missing 'privateKeyBase64' setting");
 
-        if (!settings.TryGetValue(ProviderSettingKeys.ClientId, out var clientId) || string.IsNullOrWhiteSpace(clientId))
-            throw new InvalidOperationException("Repository config is missing 'clientId' setting");
+            if (!settings.TryGetValue(ProviderSettingKeys.ClientId, out var clientId) || string.IsNullOrWhiteSpace(clientId))
+                throw new InvalidOperationException("Repository config is missing 'clientId' setting");
 
-        if (!settings.TryGetValue(ProviderSettingKeys.InstallationId, out var installationIdStr) || !long.TryParse(installationIdStr, out var installationId))
-            throw new InvalidOperationException("Repository config is missing or invalid 'installationId' setting");
+            if (!settings.TryGetValue(ProviderSettingKeys.InstallationId, out var installationIdStr) || !long.TryParse(installationIdStr, out var installationId))
+                throw new InvalidOperationException("Repository config is missing or invalid 'installationId' setting");
 
-        var apiUrl = settings.TryGetValue(ProviderSettingKeys.ApiUrl, out var url) ? url.TrimEnd('/') : "https://api.github.com";
+            var apiUrl = settings.TryGetValue(ProviderSettingKeys.ApiUrl, out var url) ? url.TrimEnd('/') : "https://api.github.com";
 
-        // Generate JWT (same pattern as GitHubAppAuthService)
-        var jwt = GenerateJwt(clientId, privateKeyBase64);
+            // Generate JWT (same pattern as GitHubAppAuthService)
+            var jwt = GenerateJwt(clientId, privateKeyBase64);
 
-        // Build the scoped token request body
-        var requestBody = new TokenRequestBody
-        {
-            Permissions = new TokenPermissions
+            // Build the scoped token request body
+            var requestBody = new TokenRequestBody
             {
-                Contents = "write",
-                PullRequests = "write",
-                Actions = "read",
-                Issues = includeIssuePermission ? "write" : null
-            }
-        };
+                Permissions = new TokenPermissions
+                {
+                    Contents = "write",
+                    PullRequests = "write",
+                    Actions = "read",
+                    Issues = includeIssuePermission ? "write" : null
+                }
+            };
 
-        // Scope to specific repository if available
-        if (settings.TryGetValue(ProviderSettingKeys.Repo, out var repoName) && !string.IsNullOrWhiteSpace(repoName))
-        {
-            requestBody.Repositories = [repoName];
-        }
-
-        var requestJson = JsonSerializer.Serialize(requestBody, TokenRequestJsonContext.Default.TokenRequestBody);
-        var requestUrl = $"{apiUrl}/app/installations/{installationId}/access_tokens";
-
-        var responseJson = await _httpPipeline.ExecuteAsync(async token =>
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", jwt);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-            request.Headers.UserAgent.Add(new ProductInfoHeaderValue("CodingAgentWebUI-TokenVending", "1.0"));
-            request.Content = new StringContent(requestJson, Encoding.UTF8, "application/json");
-
-            using var httpClient = _httpClientFactory.CreateClient("TokenVending");
-            using var response = await httpClient.SendAsync(request, token);
-
-            if (!response.IsSuccessStatusCode)
+            // Scope to specific repository if available
+            if (settings.TryGetValue(ProviderSettingKeys.Repo, out var repoName) && !string.IsNullOrWhiteSpace(repoName))
             {
-                var errorBody = await response.Content.ReadAsStringAsync(token);
-                throw new HttpRequestException(
-                    $"GitHub token exchange failed (HTTP {(int)response.StatusCode}): {errorBody}");
+                requestBody.Repositories = [repoName];
             }
 
-            return await response.Content.ReadAsStringAsync(token);
-        }, ct);
+            var requestJson = JsonSerializer.Serialize(requestBody, TokenRequestJsonContext.Default.TokenRequestBody);
+            var requestUrl = $"{apiUrl}/app/installations/{installationId}/access_tokens";
 
-        var tokenResponse = JsonSerializer.Deserialize(responseJson, TokenResponseJsonContext.Default.TokenResponseBody)
-            ?? throw new InvalidOperationException("Failed to deserialize token response");
+            var responseJson = await _httpPipeline.ExecuteAsync(async token =>
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", jwt);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+                request.Headers.UserAgent.Add(new ProductInfoHeaderValue("CodingAgentWebUI-TokenVending", "1.0"));
+                request.Content = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
-        var expiresAt = DateTimeOffset.Parse(tokenResponse.ExpiresAt);
+                using var httpClient = _httpClientFactory.CreateClient("TokenVending");
+                using var response = await httpClient.SendAsync(request, token);
 
-        _logger.Information(
-            "Generated scoped agent token for installation {InstallationId}, expires at {ExpiresAt}",
-            installationId, expiresAt);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorBody = await response.Content.ReadAsStringAsync(token);
+                    throw new HttpRequestException(
+                        $"GitHub token exchange failed (HTTP {(int)response.StatusCode}): {errorBody}");
+                }
+
+                return await response.Content.ReadAsStringAsync(token);
+            }, ct);
+
+            var tokenResponse = JsonSerializer.Deserialize(responseJson, TokenResponseJsonContext.Default.TokenResponseBody)
+                ?? throw new InvalidOperationException("Failed to deserialize token response");
+
+            var expiresAt = DateTimeOffset.Parse(tokenResponse.ExpiresAt);
+
+            _logger.Information(
+                "Generated scoped agent token for installation {InstallationId}, expires at {ExpiresAt}",
+                installationId, expiresAt);
 
             return (tokenResponse.Token, expiresAt);
         }

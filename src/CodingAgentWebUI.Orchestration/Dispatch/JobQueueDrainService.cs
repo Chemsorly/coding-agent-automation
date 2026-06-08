@@ -160,7 +160,7 @@ public sealed class JobQueueDrainService : BackgroundService
             "Drain cycle: {QueueLength} queued pipeline job(s), {IdleAgents} idle agent(s)",
             queueLength, idleAgents.Count);
 
-        var dispatched_count = 0;
+        var dispatchedCount = 0;
 
         foreach (var agent in idleAgents)
         {
@@ -235,7 +235,7 @@ public sealed class JobQueueDrainService : BackgroundService
 
                 if (dispatched)
                 {
-                    dispatched_count++;
+                    dispatchedCount++;
                 }
                 else
                 {
@@ -254,7 +254,7 @@ public sealed class JobQueueDrainService : BackgroundService
             }
         }
 
-        return dispatched_count;
+        return dispatchedCount;
     }
 
     private async Task<int> DrainConsolidationJobsAsync(CancellationToken ct)
@@ -271,7 +271,7 @@ public sealed class JobQueueDrainService : BackgroundService
             "Drain cycle: {QueueLength} queued consolidation job(s), {IdleAgents} idle agent(s)",
             queueLength, idleAgents.Count);
 
-        var dispatched_count = 0;
+        var dispatchedCount = 0;
 
         foreach (var agent in idleAgents)
         {
@@ -301,7 +301,7 @@ public sealed class JobQueueDrainService : BackgroundService
 
                 if (dispatched)
                 {
-                    dispatched_count++;
+                    dispatchedCount++;
                     // Transition run from Queued to Running
                     await _consolidationService.TransitionToRunningAsync(job.RunId, ct);
                 }
@@ -351,6 +351,6 @@ public sealed class JobQueueDrainService : BackgroundService
             }
         }
 
-        return dispatched_count;
+        return dispatchedCount;
     }
 }
