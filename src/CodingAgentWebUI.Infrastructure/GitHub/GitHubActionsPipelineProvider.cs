@@ -273,6 +273,13 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         };
     }
 
+    /// <summary>
+    /// Aggregates multiple workflow run statuses into a single pipeline state.
+    /// Uses early-return semantics: if any run has already failed or been cancelled,
+    /// returns immediately without waiting for other in-progress runs to complete.
+    /// This gives the agent faster feedback — it can start fixing the failure while
+    /// other workflows are still running. The next push will re-trigger all workflows.
+    /// </summary>
     internal static PipelineRunState AggregateState(IReadOnlyList<WorkflowRun> runs)
     {
         if (runs.Count == 0) return PipelineRunState.Pending;
@@ -297,10 +304,12 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
             }
         }
 
-        if (hasRunning) return PipelineRunState.Running;
-        if (hasPending) return PipelineRunState.Pending;
+        // Early-return: surface failures immediately even if other runs are still in progress.
+        // The agent benefits from faster feedback; the next push re-triggers all workflows.
         if (hasFailed) return PipelineRunState.Failed;
         if (hasCancelled) return PipelineRunState.Cancelled;
+        if (hasRunning) return PipelineRunState.Running;
+        if (hasPending) return PipelineRunState.Pending;
         return PipelineRunState.Passed;
     }
 }
