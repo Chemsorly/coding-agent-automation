@@ -104,8 +104,8 @@ public class DecompositionTemplatePropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        // Wait for at least one poll cycle
-        await Task.Delay(400);
+        // Wait for at least one poll cycle (generous delay for CI ARM runners under load)
+        await Task.Delay(800);
         svc.StopLoop();
         await Task.Delay(200);
         cts.Cancel();
