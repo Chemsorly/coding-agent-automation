@@ -438,14 +438,13 @@ public sealed record PipelineConfiguration
     /// <summary>
     /// Maximum number of sub-issues per epic decomposition (range: 1–20). Default: 10.
     /// </summary>
-    // TODO: This refactor from backing field to C# 13 `field` keyword changes the exception message format — verify no consumers depend on the old message.
     public int MaxDecompositionSubIssues
     {
         get => field;
         init
         {
-            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 20);
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1, nameof(MaxDecompositionSubIssues));
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 20, nameof(MaxDecompositionSubIssues));
             field = value;
         }
     } = 10;
