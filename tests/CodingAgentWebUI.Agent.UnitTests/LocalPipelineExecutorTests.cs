@@ -724,7 +724,7 @@ public class LocalPipelineExecutorTests : IDisposable
                 [ProviderSettingKeys.Token] = "fake-token"
             },
             BlacklistedPaths = ["*.secret", "credentials/"],
-            BlacklistMode = BlacklistMode.Fail
+            BlacklistMode = BlacklistMode.WarnAndExclude
         };
         var agentConfig = new ProviderConfig
         {

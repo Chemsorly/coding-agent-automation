@@ -533,10 +533,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 
     private async Task HandlePrCreationResultAsync(PipelineRun run, string? prUrl, bool isDraft, CancellationToken ct)
     {
-        if (prUrl == null && _activeConfig?.BlacklistMode == BlacklistMode.Fail
-            && run.BlacklistedFilesDetected.Count > 0)
-        { await FailRunAsync(run, $"Blacklisted files detected: {string.Join(", ", run.BlacklistedFilesDetected)}. The agent modified protected paths."); return; }
-
         if (prUrl == null)
         { await FailRunAsync(run, "Agent did not produce any changes. No commits ahead of base branch.", ct); return; }
 

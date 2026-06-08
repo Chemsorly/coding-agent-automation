@@ -677,14 +677,6 @@ public sealed class LocalPipelineExecutor
                 run, report, isDraft, context.RepoProvider, context.Job.IssueDetail, context.Job.IssueComments, context.Config, ct,
                 context.EmitOutputLine, isRework: run.LinkedPullRequest is not null);
 
-            if (prUrl is null && context.Config.BlacklistMode == BlacklistMode.Fail && run.BlacklistedFilesDetected.Count > 0)
-            {
-                run.FailureReason = $"Blacklisted files detected: {string.Join(", ", run.BlacklistedFilesDetected)}";
-                run.CompletedAt = DateTime.UtcNow;
-                run.CurrentStep = PipelineStep.Failed;
-                return;
-            }
-
             if (prUrl is null)
             {
                 run.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";

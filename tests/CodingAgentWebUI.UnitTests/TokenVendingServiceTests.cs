@@ -424,7 +424,7 @@ public class TokenVendingServiceTests
 
         var requiredLabels = new List<string> { "dotnet", "dotnet10" };
         var blacklistedPaths = new List<string> { "docs/", "*.md" };
-        var blacklistMode = BlacklistMode.Fail;
+        var blacklistMode = BlacklistMode.WarnAndExclude;
 
         var configs = new List<ProviderConfig>
         {

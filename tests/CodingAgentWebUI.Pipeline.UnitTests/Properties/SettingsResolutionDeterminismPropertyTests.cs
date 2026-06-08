@@ -294,7 +294,7 @@ public class SettingsResolutionArbitraries
         from brainConsolidationReviewEnabled in Gen.Elements(true, false)
         from harnessSuggestionsReviewEnabled in Gen.Elements(true, false)
         from blacklistedPaths in GenBlacklistedPaths()
-        from blacklistMode in Gen.Elements(BlacklistMode.WarnAndExclude, BlacklistMode.Fail)
+        from blacklistMode in Gen.Constant(BlacklistMode.WarnAndExclude)
         from brainReadOnly in Gen.Elements(true, false)
         select new PipelineConfiguration
         {
@@ -358,7 +358,7 @@ public class SettingsResolutionArbitraries
         from blacklistedPaths in Gen.Frequency(
             (2, Gen.Constant<IReadOnlyList<string>?>(null)),
             (1, GenBlacklistedPaths().Select<IReadOnlyList<string>, IReadOnlyList<string>?>(p => p)))
-        from blacklistMode in Gen.Elements<BlacklistMode?>(null, BlacklistMode.WarnAndExclude, BlacklistMode.Fail)
+        from blacklistMode in Gen.Elements<BlacklistMode?>(null, BlacklistMode.WarnAndExclude)
         from brainReadOnly in Gen.Elements<bool?>(null, true, false)
         select new PipelineProject
         {

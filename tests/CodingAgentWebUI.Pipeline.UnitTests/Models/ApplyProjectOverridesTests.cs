@@ -312,11 +312,11 @@ public class ApplyProjectOverridesTests
     public void BlacklistMode_NonNull_OverridesGlobal()
     {
         var config = TestPipelineConfig.Default(); // WarnAndExclude by default
-        var project = TestPipelineConfig.WithProject() with { BlacklistMode = BlacklistMode.Fail };
+        var project = TestPipelineConfig.WithProject() with { BlacklistMode = BlacklistMode.WarnAndExclude };
 
         var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
 
-        result.BlacklistMode.Should().Be(BlacklistMode.Fail);
+        result.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
     }
 
     [Fact]
@@ -400,7 +400,7 @@ public class ApplyProjectOverridesTests
         var project = TestPipelineConfig.WithProject() with
         {
             BlacklistedPaths = projectPaths,
-            BlacklistMode = BlacklistMode.Fail,
+            BlacklistMode = BlacklistMode.WarnAndExclude,
         };
 
         // 3. ProviderConfig overrides the project-level blacklist (repo-specific)
@@ -420,7 +420,7 @@ public class ApplyProjectOverridesTests
 
         // Project overrides should have applied over global
         afterProject.BlacklistedPaths.Should().BeEquivalentTo(projectPaths);
-        afterProject.BlacklistMode.Should().Be(BlacklistMode.Fail);
+        afterProject.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
 
         // ProviderConfig should override the project-level values
         afterProvider.BlacklistedPaths.Should().BeEquivalentTo(new[] { "secrets", "internal" });

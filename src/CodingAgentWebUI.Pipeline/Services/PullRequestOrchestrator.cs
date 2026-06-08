@@ -151,8 +151,8 @@ internal class PullRequestOrchestrator
         run.BlacklistedFilesDetected = merged;
 
         _logger.Warning(
-            "Pipeline {RunId} blacklisted {Count} file(s) excluded from commit (mode={BlacklistMode}, patterns={Patterns}): {Files}",
-            run.RunId, blacklisted.Count, config.BlacklistMode, config.BlacklistedPaths, blacklisted);
+            "Pipeline {RunId} blacklisted {Count} file(s) excluded from commit (patterns={Patterns}): {Files}",
+            run.RunId, blacklisted.Count, config.BlacklistedPaths, blacklisted);
     }
 
     /// <summary>Updates file change statistics on the run.</summary>
@@ -356,7 +356,6 @@ internal class PullRequestOrchestrator
 
     /// <summary>
     /// Commits uncommitted changes, pushes the branch, and refreshes file change stats.
-    /// Returns false if blacklisted files were detected and BlacklistMode is Fail.
     /// </summary>
     private async Task<bool> CommitAndPushAsync(
         PipelineRun run,
@@ -374,8 +373,6 @@ internal class PullRequestOrchestrator
             if (blacklisted.Count > 0)
             {
                 RecordBlacklistedFiles(run, blacklisted, config);
-                if (config.BlacklistMode == BlacklistMode.Fail)
-                    return false;
             }
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))

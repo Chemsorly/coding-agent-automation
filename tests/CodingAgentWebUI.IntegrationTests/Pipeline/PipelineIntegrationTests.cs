@@ -44,7 +44,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
             StallWarningInterval = TimeSpan.FromMinutes(5),
             StallPollInterval = TimeSpan.FromSeconds(15),
             BlacklistedPaths = new[] { ".agent", ".github", ".secret" },
-            BlacklistMode = BlacklistMode.Fail,
+            BlacklistMode = BlacklistMode.WarnAndExclude,
             FailedWorkspaceRetentionDays = 14,
             LastUsedProviderIds = new Dictionary<string, string>
             {

@@ -242,8 +242,6 @@ public sealed record PipelineConfiguration
                 config = config with { HarnessSuggestionsReviewEnabled = project.HarnessSuggestionsReviewEnabled.Value };
             if (project.BlacklistedPaths is not null)
                 config = config with { BlacklistedPaths = project.BlacklistedPaths };
-            if (project.BlacklistMode.HasValue)
-                config = config with { BlacklistMode = project.BlacklistMode.Value };
             if (project.BrainReadOnly.HasValue)
                 config = config with { BrainReadOnly = project.BrainReadOnly.Value };
         }
@@ -260,9 +258,8 @@ public sealed record PipelineConfiguration
 
     /// <summary>
     /// Applies per-repo blacklist overrides from a <see cref="ProviderConfig"/>.
-    /// When the provider config specifies <see cref="ProviderConfig.BlacklistedPaths"/>
-    /// or <see cref="ProviderConfig.BlacklistMode"/>, they take precedence over the
-    /// global pipeline configuration defaults.
+    /// When the provider config specifies <see cref="ProviderConfig.BlacklistedPaths"/>,
+    /// it takes precedence over the global pipeline configuration default.
     /// </summary>
     public static PipelineConfiguration ApplyBlacklistOverride(PipelineConfiguration config, ProviderConfig? repoProviderConfig)
     {
@@ -271,8 +268,6 @@ public sealed record PipelineConfiguration
 
         if (repoProviderConfig.BlacklistedPaths is { Count: > 0 })
             config = config with { BlacklistedPaths = repoProviderConfig.BlacklistedPaths };
-        if (repoProviderConfig.BlacklistMode is { } repoBlacklistMode)
-            config = config with { BlacklistMode = repoBlacklistMode };
         return config;
     }
 

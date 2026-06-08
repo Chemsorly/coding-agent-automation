@@ -151,8 +151,7 @@ public class BlacklistEnforcementTests
     [Fact]
     public void BlacklistMode_HasExpectedValues()
     {
-        Enum.GetValues<BlacklistMode>().Should().HaveCount(2);
+        Enum.GetValues<BlacklistMode>().Should().HaveCount(1);
         Enum.IsDefined(BlacklistMode.WarnAndExclude).Should().BeTrue();
-        Enum.IsDefined(BlacklistMode.Fail).Should().BeTrue();
     }
 }
