@@ -20,6 +20,7 @@ public sealed class FakeAgentClient : IAsyncDisposable
     // Observability
     public TaskCompletionSource<JobAssignmentMessage> JobAssigned { get; private set; } = new();
     public TaskCompletionSource<ConsolidationJobMessage> ConsolidationJobAssigned { get; private set; } = new();
+    public TaskCompletionSource<ChatPromptMessage> ChatPromptAssigned { get; private set; } = new();
     public List<string> ReceivedJobIds { get; } = new();
     public List<string> ReceivedConsolidationJobIds { get; } = new();
     public bool IsConnected => _connection?.State == HubConnectionState.Connected;
@@ -42,7 +43,7 @@ public sealed class FakeAgentClient : IAsyncDisposable
         // Register all IAgentHubClient handlers
         _connection.On<JobAssignmentMessage>("AssignJob", OnAssignJob);
         _connection.On<string>("CancelJob", _ => { });
-        _connection.On<ChatPromptMessage>("AssignChatPrompt", _ => { });
+        _connection.On<ChatPromptMessage>("AssignChatPrompt", msg => ChatPromptAssigned.TrySetResult(msg));
         _connection.On<string>("CancelChat", _ => { });
         _connection.On<FetchModelsRequest>("RequestFetchModels", _ => { });
         _connection.On<string, ConsolidationJobMessage>("AssignConsolidationJob", OnAssignConsolidationJob);
@@ -217,6 +218,38 @@ public sealed class FakeAgentClient : IAsyncDisposable
     public void ResetConsolidationJobAssigned()
     {
         ConsolidationJobAssigned = new TaskCompletionSource<ConsolidationJobMessage>();
+    }
+
+    /// <summary>
+    /// Resets the ChatPromptAssigned TaskCompletionSource for reuse across multiple prompts.
+    /// </summary>
+    public void ResetChatPromptAssigned()
+    {
+        ChatPromptAssigned = new TaskCompletionSource<ChatPromptMessage>();
+    }
+
+    /// <summary>
+    /// Responds to a previously received chat prompt by sending response lines and completion.
+    /// Reads the SessionId from the captured ChatPromptMessage.
+    /// </summary>
+    public async Task RespondToChatAsync(string response)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+
+        var prompt = await ChatPromptAssigned.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var sessionId = prompt.SessionId;
+
+        await _connection.InvokeAsync("ReportChatResponse", new ChatResponseMessage
+        {
+            SessionId = sessionId,
+            Lines = response.Split('\n')
+        });
+
+        await _connection.InvokeAsync("ReportChatCompleted", new ChatCompletedMessage
+        {
+            SessionId = sessionId,
+            ExitCode = 0
+        });
     }
 
     /// <summary>
