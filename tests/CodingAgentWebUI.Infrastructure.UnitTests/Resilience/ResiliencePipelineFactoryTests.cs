@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using LibGit2Sharp;
 using Octokit;
+using Polly.Timeout;
 using CodingAgentWebUI.Infrastructure.Resilience;
 using Serilog;
 
@@ -98,6 +99,64 @@ public class ResiliencePipelineFactoryTests
     {
         var pipeline = ResiliencePipelineFactory.CreateGitHubActionsLogsPipeline(Log.Logger);
         pipeline.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task CreateGitNetworkPipeline_HangingOperation_ThrowsTimeoutRejectedException()
+    {
+        var pipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(Log.Logger, TimeSpan.FromSeconds(1));
+
+        var act = () => pipeline.ExecuteAsync(async token =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        }, CancellationToken.None).AsTask();
+
+        await act.Should().ThrowAsync<TimeoutRejectedException>();
+    }
+
+    [Fact]
+    public async Task CreateSignalRPipeline_HangingOperation_ThrowsTimeoutRejectedException()
+    {
+        var pipeline = ResiliencePipelineFactory.CreateSignalRPipeline(Log.Logger, TimeSpan.FromSeconds(1));
+
+        var act = () => pipeline.ExecuteAsync(async token =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        }, CancellationToken.None).AsTask();
+
+        await act.Should().ThrowAsync<TimeoutRejectedException>();
+    }
+
+    [Fact]
+    public async Task CreateGitNetworkPipeline_TimeoutExceptionNotRetried()
+    {
+        var pipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(Log.Logger, TimeSpan.FromSeconds(1));
+        var callCount = 0;
+
+        var act = () => pipeline.ExecuteAsync(async token =>
+        {
+            callCount++;
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        }, CancellationToken.None).AsTask();
+
+        await act.Should().ThrowAsync<TimeoutRejectedException>();
+        callCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task CreateSignalRPipeline_TimeoutExceptionNotRetried()
+    {
+        var pipeline = ResiliencePipelineFactory.CreateSignalRPipeline(Log.Logger, TimeSpan.FromSeconds(1));
+        var callCount = 0;
+
+        var act = () => pipeline.ExecuteAsync(async token =>
+        {
+            callCount++;
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        }, CancellationToken.None).AsTask();
+
+        await act.Should().ThrowAsync<TimeoutRejectedException>();
+        callCount.Should().Be(1);
     }
 
     private static Octokit.IResponse CreateMockResponse(System.Net.HttpStatusCode statusCode)

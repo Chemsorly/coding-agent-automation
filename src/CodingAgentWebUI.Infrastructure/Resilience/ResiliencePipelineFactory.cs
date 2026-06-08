@@ -17,6 +17,8 @@ public static class ResiliencePipelineFactory
 {
     private const int DefaultMaxRetryAttempts = 3;
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan GitNetworkTimeout = TimeSpan.FromSeconds(120);
+    internal static readonly TimeSpan SignalRTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Creates a resilience pipeline for GitHub API (Octokit) calls.
@@ -104,6 +106,9 @@ public static class ResiliencePipelineFactory
     /// Creates a resilience pipeline for LibGit2Sharp network operations (Clone, Fetch, Push, Pull).
     /// </summary>
     public static ResiliencePipeline CreateGitNetworkPipeline(ILogger logger)
+        => CreateGitNetworkPipeline(logger, GitNetworkTimeout);
+
+    internal static ResiliencePipeline CreateGitNetworkPipeline(ILogger logger, TimeSpan timeout)
     {
         return new ResiliencePipelineBuilder()
             .AddRetry(new RetryStrategyOptions
@@ -130,6 +135,7 @@ public static class ResiliencePipelineFactory
                     return ValueTask.CompletedTask;
                 }
             })
+            .AddTimeout(timeout)
             .Build();
     }
 
@@ -173,6 +179,9 @@ public static class ResiliencePipelineFactory
     /// Creates a resilience pipeline for SignalR hub invocations.
     /// </summary>
     public static ResiliencePipeline CreateSignalRPipeline(ILogger logger)
+        => CreateSignalRPipeline(logger, SignalRTimeout);
+
+    internal static ResiliencePipeline CreateSignalRPipeline(ILogger logger, TimeSpan timeout)
     {
         return new ResiliencePipelineBuilder()
             .AddRetry(new RetryStrategyOptions
@@ -204,6 +213,7 @@ public static class ResiliencePipelineFactory
                     return ValueTask.CompletedTask;
                 }
             })
+            .AddTimeout(timeout)
             .Build();
     }
 
