@@ -200,6 +200,55 @@ public class FailPhaseAsyncTests
         _mockCallbacks.Verify(c => c.AddRunToHistory(_run), Times.Once);
     }
 
+    [Fact]
+    public async Task FailPhase_WhenGenericExceptionAndNoFileChanges_FailsFast()
+    {
+        // Arrange: agent throws IOException with no file changes
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new IOException("disk full"));
+
+        var context = BuildContext();
+
+        // Act
+        var result = await _orchestrator.ExecuteCodeGenerationAsync(context, CancellationToken.None);
+
+        // Assert: FailPhaseAsync is called — run fails fast with no quality gate entry
+        result.Should().BeFalse();
+        _run.FailureReason.Should().Contain("disk full");
+        _run.FailureReason.Should().Contain("no file changes");
+        _run.CompletedAt.Should().NotBeNull();
+        _mockIssueOps.Verify(
+            o => o.SwapLabelAsync(_run.IssueIdentifier, AgentLabels.Error, It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
+        _mockCallbacks.Verify(c => c.AddRunToHistory(_run), Times.Once);
+    }
+
+    [Fact]
+    public async Task FailPhase_WhenGenericExceptionWithPartialFileChanges_ContinuesToQualityGates()
+    {
+        // Arrange: agent throws IOException but there ARE file changes
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new IOException("connection reset"));
+
+        _mockCallbacks.Setup(c => c.UpdateFileChangeStats(It.IsAny<PipelineRun>()))
+            .Callback<PipelineRun>(r => r.FilesChangedCount = 3)
+            .Returns(Task.CompletedTask);
+
+        var context = BuildContext();
+
+        // Act
+        var result = await _orchestrator.ExecuteCodeGenerationAsync(context, CancellationToken.None);
+
+        // Assert: continues to quality gates (returns true), no FailPhaseAsync side effects
+        result.Should().BeTrue();
+        _run.FailureReason.Should().BeNull();
+        _mockIssueOps.Verify(
+            o => o.SwapLabelAsync(It.IsAny<string>(), AgentLabels.Error, It.IsAny<CancellationToken>()),
+            Times.Never);
+        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Never);
+    }
+
     private AgentPhaseContext BuildContext()
     {
         return new AgentPhaseContext

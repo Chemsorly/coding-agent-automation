@@ -2793,6 +2793,10 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 throw new InvalidOperationException("Agent process crashed");
             });
 
+        // Simulate partial file changes so the pipeline continues to quality gates
+        _mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new FileChangeSummary("Modified", "src/file.cs", 10, 2) } as IReadOnlyList<FileChangeSummary>);
+
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Verify pipeline continued past GeneratingCode to RunningQualityGates and Completed
