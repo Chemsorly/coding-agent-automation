@@ -155,6 +155,7 @@ try
         sp.GetRequiredService<IKiroCliOrchestrator>(),
         sp.GetRequiredService<IHttpClientFactory>(),
         sp.GetRequiredService<AgentIdentity>(),
+        sp.GetRequiredService<IHostApplicationLifetime>(),
         Log.Logger));
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
 
