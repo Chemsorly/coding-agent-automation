@@ -32,6 +32,7 @@ public static class SerilogOtlpExtensions
                          ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
                          ?? "Production";
 
+        // ignoreEnvironment: true because we read OTEL env vars ourselves with URL-decoding and validation
         return loggerConfiguration.WriteTo.OpenTelemetry(options =>
         {
             options.Endpoint = endpoint;
@@ -43,20 +44,28 @@ public static class SerilogOtlpExtensions
             };
 
             var headers = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_HEADERS");
-            // TODO: URL-decode header keys/values per OTEL spec (values may contain %20, %3D, etc.)
             if (!string.IsNullOrWhiteSpace(headers))
             {
                 foreach (var pair in headers.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 {
                     var separatorIndex = pair.IndexOf('=');
-                    if (separatorIndex > 0)
+                    if (separatorIndex <= 0)
                     {
-                        var key = pair[..separatorIndex].Trim();
-                        var value = pair[(separatorIndex + 1)..];
-                        options.Headers[key] = value;
+                        Log.Warning("OTEL_EXPORTER_OTLP_HEADERS contains invalid entry '{Entry}' (missing '=' separator), skipping", pair);
+                        continue;
                     }
+
+                    var key = Uri.UnescapeDataString(pair[..separatorIndex].Trim());
+                    if (string.IsNullOrWhiteSpace(key))
+                    {
+                        Log.Warning("OTEL_EXPORTER_OTLP_HEADERS contains entry with empty key, skipping");
+                        continue;
+                    }
+
+                    var value = Uri.UnescapeDataString(pair[(separatorIndex + 1)..]);
+                    options.Headers[key] = value;
                 }
             }
-        });
+        }, ignoreEnvironment: true);
     }
 }

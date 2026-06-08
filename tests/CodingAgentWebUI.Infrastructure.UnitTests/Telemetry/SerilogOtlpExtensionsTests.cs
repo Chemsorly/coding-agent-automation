@@ -99,6 +99,54 @@ public class SerilogOtlpExtensionsTests : IDisposable
         logger.Dispose();
     }
 
+    [Theory]
+    [InlineData("key1=value%3Dencoded")]
+    [InlineData("key2=value%20with%20spaces")]
+    [InlineData("x-custom%2Dheader=val1,x-other=val2")]
+    public void WriteToOtlpIfConfigured_UrlEncodedHeaders_BuildsWithoutError(string headers)
+    {
+        SetEnvVar("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317");
+        SetEnvVar("OTEL_EXPORTER_OTLP_HEADERS", headers);
+
+        var logger = new LoggerConfiguration()
+            .WriteToOtlpIfConfigured("test-service", "Test")
+            .CreateLogger();
+
+        logger.Information("Test message");
+        logger.Dispose();
+    }
+
+    [Theory]
+    [InlineData("no-equals-sign")]
+    [InlineData("=value-without-key")]
+    [InlineData("%20=value")]
+    public void WriteToOtlpIfConfigured_InvalidHeaders_BuildsWithoutError(string headers)
+    {
+        SetEnvVar("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317");
+        SetEnvVar("OTEL_EXPORTER_OTLP_HEADERS", headers);
+
+        var logger = new LoggerConfiguration()
+            .WriteToOtlpIfConfigured("test-service", "Test")
+            .CreateLogger();
+
+        logger.Information("Test message");
+        logger.Dispose();
+    }
+
+    [Fact]
+    public void WriteToOtlpIfConfigured_MixedValidAndInvalidHeaders_BuildsWithoutError()
+    {
+        SetEnvVar("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317");
+        SetEnvVar("OTEL_EXPORTER_OTLP_HEADERS", "valid=ok,invalid,also=good");
+
+        var logger = new LoggerConfiguration()
+            .WriteToOtlpIfConfigured("test-service", "Test")
+            .CreateLogger();
+
+        logger.Information("Test message");
+        logger.Dispose();
+    }
+
     private static void SetEnvVar(string name, string? value) =>
         Environment.SetEnvironmentVariable(name, value);
 }
