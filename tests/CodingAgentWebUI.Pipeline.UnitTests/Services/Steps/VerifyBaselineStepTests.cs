@@ -255,6 +255,51 @@ public class VerifyBaselineStepTests
 
         Assert.Equal(StepResult.Continue, result);
         Assert.Null(context.Run.BaselineHealthPassed);
+        _outputLines.Should().Contain(l => l.Contains("⏭️") && l.Contains("skipped"));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_EmptyWorkspacePath_EmitsSkipReasonAndSetsBaselineNull()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "test-run",
+            IssueIdentifier = "42",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.CreatingBranch,
+            WorkspacePath = "",
+            RepositoryName = "owner/repo"
+        };
+
+        var context = new PipelineStepContext
+        {
+            Run = run,
+            Config = new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" },
+            RepoProvider = Mock.Of<IRepositoryProvider>(),
+            AgentProvider = Mock.Of<IAgentProvider>(),
+            BrainProvider = null,
+            PipelineProvider = null,
+            Cts = new CancellationTokenSource(),
+            ConfigStore = _configStore.Object,
+            Callbacks = _callbacks.Object,
+            IssueOps = Mock.Of<IAgentIssueOperations>(),
+            AgentExecution = Mock.Of<IAgentPhaseExecutor>(),
+            QualityGates = Mock.Of<IQualityGateExecutor>(),
+            BrainSync = null,
+            PrOrchestrator = new PullRequestOrchestrator(_logger),
+            Logger = _logger,
+            QualityGateValidator = _validator.Object
+        };
+
+        var step = new VerifyBaselineStep();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepResult.Continue, result);
+        Assert.Null(context.Run.BaselineHealthPassed);
+        _outputLines.Should().Contain(l => l.Contains("⏭️") && l.Contains("skipped"));
     }
 
     [Fact]

@@ -52,9 +52,9 @@ internal sealed class VerifyBaselineStep : IPipelineStep
 
     private static async Task RunWorkspaceBaselineAsync(PipelineStepContext context, CancellationToken ct)
     {
-        // TODO: Emit output line explaining why workspace baseline was skipped when validator/workspace is null
         if (context.QualityGateValidator is null || string.IsNullOrEmpty(context.Run.WorkspacePath))
         {
+            context.Callbacks.EmitOutputLine("⏭️ Workspace baseline skipped: validator or workspace not available");
             context.Run.BaselineHealthPassed = null;
             return;
         }
