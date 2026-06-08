@@ -41,7 +41,7 @@ public class ConfigurationStorePropertyTests : IDisposable
         // Constrain to reasonable values
         var clampedRetries = Math.Clamp(Math.Abs(maxRetries), 0, 100);
         var timeoutMinutes = Math.Clamp(Math.Abs(maxRetries % 120) + 1, 1, 120);
-        var blacklistMode = (Math.Abs(maxRetries) % 2 == 0) ? BlacklistMode.WarnAndExclude : BlacklistMode.Fail;
+        var blacklistMode = BlacklistMode.WarnAndExclude;
 
         var original = new PipelineConfiguration
         {

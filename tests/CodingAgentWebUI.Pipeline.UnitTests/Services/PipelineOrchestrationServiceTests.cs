@@ -710,10 +710,10 @@ public class PipelineOrchestrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartPipeline_FailMode_TransitionsToFailed()
+    public async Task StartPipeline_WarnMode_RecordsBlacklistedFilesAndContinues()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), BlacklistMode = BlacklistMode.Fail });
+            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), BlacklistMode = BlacklistMode.WarnAndExclude });
 
         var blacklisted = new List<string> { ".github/workflows/ci.yml" };
         _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
@@ -721,8 +721,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        run.CurrentStep.Should().Be(PipelineStep.Failed);
-        run.FailureReason.Should().Contain("Blacklisted files detected");
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.BlacklistedFilesDetected.Should().Contain(".github/workflows/ci.yml");
     }
 

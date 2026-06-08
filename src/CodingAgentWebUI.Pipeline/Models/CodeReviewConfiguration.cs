@@ -9,10 +9,7 @@ namespace CodingAgentWebUI.Pipeline.Models;
 public enum BlacklistMode
 {
     /// <summary>Unstage blacklisted files, log a warning, and continue the pipeline.</summary>
-    WarnAndExclude,
-
-    /// <summary>Fail the pipeline with a clear error listing the violating files.</summary>
-    Fail
+    WarnAndExclude
 }
 
 /// <summary>

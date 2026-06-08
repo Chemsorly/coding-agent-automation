@@ -40,7 +40,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// <summary>The effort level configured for this agent provider.</summary>
     public AgentEffortLevel Effort => _effort;
 
-    public KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger = null, string? model = null, string executablePath = AgentDefaults.KiroCliPath, AgentEffortLevel effort = AgentEffortLevel.Auto)
+    public KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger = null, string? model = null, string executablePath = AgentDefaults.KiroCliPath, AgentEffortLevel effort = AgentEffortLevel.High)
         : this(orchestrator, logger, model, executablePath, effort, null)
     {
     }

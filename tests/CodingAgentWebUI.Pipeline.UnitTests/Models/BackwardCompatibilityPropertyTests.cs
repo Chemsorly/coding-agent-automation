@@ -145,7 +145,7 @@ public class PipelineConfigArbitraries
             from harnessSuggestionsReview in Gen.Elements(true, false)
             from blacklistCount in Gen.Choose(1, 4)
             from blacklistedPaths in Gen.ArrayOf(Gen.Elements(PathPool)).Resize(blacklistCount)
-            from blacklistMode in Gen.Elements(BlacklistMode.WarnAndExclude, BlacklistMode.Fail)
+            from blacklistMode in Gen.Constant(BlacklistMode.WarnAndExclude)
             from brainReadOnly in Gen.Elements(true, false)
             from workspaceDir in Gen.Elements(WorkspaceDirPool)
             select new PipelineConfiguration

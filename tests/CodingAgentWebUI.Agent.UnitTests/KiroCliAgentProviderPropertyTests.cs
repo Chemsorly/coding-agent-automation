@@ -83,7 +83,12 @@ public class KiroCliAgentProviderPropertyTests
         // Arrange
         var mockOrchestrator = new Mock<IKiroCliOrchestrator>();
         var mockLogger = new Mock<Serilog.ILogger>();
-        var provider = new KiroCliAgentProvider(mockOrchestrator.Object, mockLogger.Object);
+        var mockProcessStarter = new Mock<IProcessStarter>();
+        mockProcessStarter.Setup(p => p.Start(It.IsAny<System.Diagnostics.ProcessStartInfo>()))
+            .Returns((System.Diagnostics.Process?)null);
+        var provider = new KiroCliAgentProvider(
+            mockOrchestrator.Object, mockLogger.Object, null,
+            "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, mockProcessStarter.Object);
 
         mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(

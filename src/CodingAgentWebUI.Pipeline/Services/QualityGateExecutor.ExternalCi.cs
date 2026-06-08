@@ -66,8 +66,7 @@ internal partial class QualityGateExecutor
                 var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, issueRef);
                 var blacklisted = await context.RepoProvider.CommitAllAsync(
                     run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct);
-                if (await RecordBlacklistedFiles(run, blacklisted, config, callbacks, context.IssueOps, ct))
-                    return report;
+                RecordBlacklistedFiles(run, blacklisted, config, callbacks);
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
             {
@@ -207,31 +206,16 @@ internal partial class QualityGateExecutor
     }
 
     /// <summary>
-    /// Records blacklisted files and returns true if the pipeline should stop (Fail mode).
+    /// Records blacklisted files on the run and notifies the UI.
     /// </summary>
-    private async Task<bool> RecordBlacklistedFiles(
+    private void RecordBlacklistedFiles(
         PipelineRun run, IReadOnlyList<string> blacklisted,
         PipelineConfiguration config,
-        IPipelineCallbacks callbacks,
-        IAgentIssueOperations issueOps,
-        CancellationToken ct)
+        IPipelineCallbacks callbacks)
     {
-        if (blacklisted.Count == 0) return false;
+        if (blacklisted.Count == 0) return;
 
         _prOrchestrator.RecordBlacklistedFiles(run, blacklisted, config);
-
-        if (config.BlacklistMode == BlacklistMode.Fail)
-        {
-            var fileList = string.Join(", ", blacklisted);
-            run.FailureReason = $"Blacklisted files detected: {fileList}. The agent modified protected paths.";
-            run.CompletedAt = DateTime.UtcNow;
-            await issueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
-            callbacks.TransitionTo(PipelineStep.Failed);
-            callbacks.AddRunToHistory(run);
-            return true;
-        }
-
         callbacks.NotifyChange();
-        return false;
     }
 }

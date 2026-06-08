@@ -4,6 +4,7 @@ using KiroCliLib.Core;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Agent.KiroCli;
+using System.Diagnostics;
 
 namespace CodingAgentWebUI.Agent.UnitTests;
 
@@ -11,13 +12,19 @@ public class KiroCliAgentProviderTests
 {
     private readonly Mock<IKiroCliOrchestrator> _mockOrchestrator;
     private readonly Mock<Serilog.ILogger> _mockLogger;
+    private readonly Mock<IProcessStarter> _mockProcessStarter;
     private readonly KiroCliAgentProvider _provider;
 
     public KiroCliAgentProviderTests()
     {
         _mockOrchestrator = new Mock<IKiroCliOrchestrator>();
         _mockLogger = new Mock<Serilog.ILogger>();
-        _provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object);
+        _mockProcessStarter = new Mock<IProcessStarter>();
+        // Mock the process starter to return null (simulates "process didn't start" gracefully handled)
+        _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>())).Returns((Process?)null);
+        _provider = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, null,
+            "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
     }
 
     // --- EnsureSessionAsync tests ---
@@ -246,42 +253,49 @@ public class KiroCliAgentProviderTests
     [Fact]
     public void Model_WhenNotProvided_ReturnsNull()
     {
-        var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object);
-        provider.Model.Should().BeNull();
+        _provider.Model.Should().BeNull();
     }
 
     [Fact]
     public void Model_WhenProvided_ReturnsConfiguredValue()
     {
-        var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object, model: "claude-sonnet-4.6");
+        var provider = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, model: "claude-sonnet-4.6",
+            "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
         provider.Model.Should().Be("claude-sonnet-4.6");
     }
 
     [Fact]
     public async Task ApplyModelSettingAsync_WhenModelIsNull_DoesNothing()
     {
-        var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object, model: null);
-        await provider.ApplyModelSettingAsync(CancellationToken.None);
+        // _provider already has model=null
+        await _provider.ApplyModelSettingAsync(CancellationToken.None);
     }
 
     [Fact]
     public async Task ApplyModelSettingAsync_WhenModelIsAuto_DoesNothing()
     {
-        var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object, model: "auto");
+        var provider = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, model: "auto",
+            "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
         await provider.ApplyModelSettingAsync(CancellationToken.None);
     }
 
     [Fact]
     public async Task ApplyModelSettingAsync_WhenModelIsAutoUpperCase_DoesNothing()
     {
-        var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object, model: "Auto");
+        var provider = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, model: "Auto",
+            "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
         await provider.ApplyModelSettingAsync(CancellationToken.None);
     }
 
     [Fact]
     public async Task ApplyModelSettingAsync_WhenModelContainsInvalidChars_RejectsAndLogs()
     {
-        var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object, model: "foo\" && rm -rf /");
+        var provider = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, model: "foo\" && rm -rf /",
+            "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
         await provider.ApplyModelSettingAsync(CancellationToken.None);
 
         _mockLogger.Verify(l => l.Warning(
@@ -292,7 +306,9 @@ public class KiroCliAgentProviderTests
     [Fact]
     public async Task ApplyModelSettingAsync_WhenModelContainsSpaces_RejectsAndLogs()
     {
-        var provider = new KiroCliAgentProvider(_mockOrchestrator.Object, _mockLogger.Object, model: "model with spaces");
+        var provider = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, model: "model with spaces",
+            "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
         await provider.ApplyModelSettingAsync(CancellationToken.None);
 
         _mockLogger.Verify(l => l.Warning(

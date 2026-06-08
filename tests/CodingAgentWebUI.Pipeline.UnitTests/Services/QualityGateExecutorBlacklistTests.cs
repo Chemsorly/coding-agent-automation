@@ -53,29 +53,36 @@ public class QualityGateExecutorBlacklistTests
     }
 
     [Fact]
-    public async Task AppendExternalCi_BlacklistedFilesInFailMode_StopsPipeline()
+    public async Task AppendExternalCi_BlacklistedFilesInWarnMode_RecordsAndContinues()
     {
         // Arrange
         var blacklistedFiles = new List<string> { ".agent/settings.json", ".github/workflows/ci.yml" };
         var run = CreateRun();
-        var config = CreateConfig(BlacklistMode.Fail);
+        var config = CreateConfig(BlacklistMode.WarnAndExclude);
 
         _mockRepoProvider.Setup(r => r.CommitAllAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(blacklistedFiles.AsReadOnly());
+        _mockRepoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _mockRepoProvider.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("abc123");
+        _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = new List<PipelineJobResult>() });
 
         var context = BuildContext(run, config);
 
         // Act
         var result = await _orchestrator.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
 
-        // Assert: pipeline stopped — label swapped to Error, transitioned to Failed
-        _mockIssueOps.Verify(o => o.SwapLabelAsync("42", AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
-        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
-        _mockCallbacks.Verify(c => c.AddRunToHistory(run), Times.Once);
-        run.FailureReason.Should().Contain("Blacklisted files detected");
-        run.FailureReason.Should().Contain(".agent/settings.json");
-        run.CompletedAt.Should().NotBeNull();
+        // Assert: pipeline continues — blacklisted files recorded but no failure
+        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Never);
+        _mockIssueOps.Verify(o => o.SwapLabelAsync(It.IsAny<string>(), AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Never);
+        run.BlacklistedFilesDetected.Should().Contain(".agent/settings.json");
+        run.BlacklistedFilesDetected.Should().Contain(".github/workflows/ci.yml");
+        run.FailureReason.Should().BeNull();
     }
 
     [Fact]
@@ -116,7 +123,7 @@ public class QualityGateExecutorBlacklistTests
     {
         // Arrange
         var run = CreateRun();
-        var config = CreateConfig(BlacklistMode.Fail);
+        var config = CreateConfig(BlacklistMode.WarnAndExclude);
 
         _mockRepoProvider.Setup(r => r.CommitAllAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
