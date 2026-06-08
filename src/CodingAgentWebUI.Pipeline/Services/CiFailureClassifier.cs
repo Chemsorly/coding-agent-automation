@@ -45,7 +45,7 @@ public static class CiFailureClassifier
         "error CS",
         "Build FAILED",
         "Failed!  - Failed:",
-        "Error Message:\n" // TODO: May not match CRLF line endings from GitHub Actions API; consider using "Error Message:" without trailing newline
+        "Error Message:\n"
     };
 
     private static readonly string[] RateLimitPatterns =
@@ -77,7 +77,7 @@ public static class CiFailureClassifier
                 continue;
 
             hasAnyLogs = true;
-            var log = job.LogContent;
+            var log = job.LogContent.ReplaceLineEndings("\n");
 
             if (CodeFailurePatterns.Any(p => log.Contains(p, StringComparison.OrdinalIgnoreCase)))
                 hasCodeFailure = true;
