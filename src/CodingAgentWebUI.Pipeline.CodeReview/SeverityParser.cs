@@ -8,6 +8,8 @@ public static class SeverityParser
     /// <summary>
     /// Counts occurrences of severity markers in agent output lines.
     /// Matching is case-insensitive.
+    /// Lines containing "RESOLVED" (case-insensitive) are excluded from counting,
+    /// as they represent prior findings that have been addressed.
     /// </summary>
     public static SeverityCounts Parse(IReadOnlyList<string> outputLines)
     {
@@ -17,6 +19,10 @@ public static class SeverityParser
 
         foreach (var line in outputLines)
         {
+            // Skip lines referencing resolved findings from prior reviews
+            if (line.Contains("RESOLVED", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             critical += CountOccurrences(line, "[CRITICAL]");
             warning += CountOccurrences(line, "[WARNING]");
             suggestion += CountOccurrences(line, "[SUGGESTION]");

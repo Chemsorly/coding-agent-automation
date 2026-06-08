@@ -28,6 +28,11 @@ public static partial class FindingsParser
         foreach (var rawLine in lines)
         {
             var line = rawLine.TrimEnd('\r');
+
+            // Skip lines referencing resolved findings from prior reviews
+            if (line.Contains("RESOLVED", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             var severityMatch = SeverityMarkerRegex().Match(line);
             if (!severityMatch.Success)
                 continue;
