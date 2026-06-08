@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
@@ -168,6 +170,7 @@ internal sealed class PipelineStepContext
         try { await action(); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            Activity.Current?.RecordError(ex);
             Logger.Error(ex, "Pipeline {RunId} {ActionDescription} failed", Run.RunId, actionDescription);
             await FailRunAsync($"{actionDescription} failed: {ex.Message}", ct);
             return StepResult.Stop;
@@ -185,6 +188,7 @@ internal sealed class PipelineStepContext
         try { await action(); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            Activity.Current?.RecordError(ex);
             Logger.Warning(ex, "Pipeline {RunId} {ActionDescription} failed, continuing", Run.RunId, actionDescription);
             onFailure?.Invoke();
         }

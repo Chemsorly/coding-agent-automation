@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
@@ -26,6 +27,11 @@ internal static class PipelineStepRunner
             try
             {
                 result = await step.ExecuteAsync(context, ct);
+            }
+            catch (Exception ex)
+            {
+                Activity.Current?.RecordError(ex, ct);
+                throw;
             }
             finally
             {

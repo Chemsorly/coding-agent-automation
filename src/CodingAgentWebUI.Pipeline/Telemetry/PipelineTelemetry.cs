@@ -123,6 +123,23 @@ public static class PipelineTelemetry
             ProjectNameTag(projectName)
         ]);
 
+    /// <summary>
+    /// Records an error on the given <see cref="Activity"/>. For graceful cancellation
+    /// (token-cancelled <see cref="OperationCanceledException"/>), sets a cancelled tag
+    /// without error status. For all other exceptions, sets error status and records the exception.
+    /// </summary>
+    public static void RecordError(this Activity? activity, Exception ex, CancellationToken ct = default)
+    {
+        if (activity is null) return;
+        if (ex is OperationCanceledException && ct.IsCancellationRequested)
+        {
+            activity.SetTag("pipeline.cancelled", true);
+            return;
+        }
+        activity.SetStatus(ActivityStatusCode.Error, ex.Message);
+        activity.AddException(ex);
+    }
+
     private static readonly TraceContextPropagator TraceContextPropagator = new();
 
     /// <summary>

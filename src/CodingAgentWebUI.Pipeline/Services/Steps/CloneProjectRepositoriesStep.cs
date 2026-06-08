@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -111,6 +112,7 @@ internal sealed class CloneProjectRepositoriesStep : IPipelineStep
             }
             catch (Exception ex)
             {
+                Activity.Current?.RecordError(ex);
                 context.Logger.Warning(ex, "Failed to clone additional repo '{TemplateName}' — marking unavailable: {Error}",
                     templateName, ex.Message);
             }

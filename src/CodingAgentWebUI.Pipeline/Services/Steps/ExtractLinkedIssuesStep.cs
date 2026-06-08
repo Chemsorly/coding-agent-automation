@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -134,6 +135,7 @@ internal sealed class ExtractLinkedIssuesStep : IPipelineStep
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            Activity.Current?.RecordError(ex);
             context.Logger.Warning(ex,
                 "Failed to write PR conversation context for PR #{PrNumber}, review will proceed without it",
                 prNumber);
