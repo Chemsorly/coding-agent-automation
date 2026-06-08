@@ -3,6 +3,7 @@ using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Pipeline.Models;
+using Microsoft.Extensions.Hosting;
 using Moq;
 
 namespace CodingAgentWebUI.Agent.UnitTests;
@@ -29,7 +30,7 @@ public class AgentWorkerServiceTests
         var mockConsolidationExecutor = CreateMockConsolidationExecutor();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
-        var act = () => new AgentWorkerService(null!, mockExecutor, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), mockLogger.Object);
+        var act = () => new AgentWorkerService(null!, mockExecutor, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("hubManager");
     }
 
@@ -41,7 +42,7 @@ public class AgentWorkerServiceTests
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
         var act = () => new AgentWorkerService(
-            CreateTestHubManager(), null!, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), mockLogger.Object);
+            CreateTestHubManager(), null!, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("executor");
     }
 
@@ -50,7 +51,7 @@ public class AgentWorkerServiceTests
     {
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var act = () => new AgentWorkerService(
-            CreateTestHubManager(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), null!);
+            CreateTestHubManager(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), null!);
         act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
     }
 
@@ -97,7 +98,7 @@ public class AgentWorkerServiceTests
             var mockLogger = new Mock<Serilog.ILogger>();
             var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
             var act = () => new AgentWorkerService(
-                CreateTestHubManager(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), mockLogger.Object);
+                CreateTestHubManager(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
             act.Should().Throw<InvalidOperationException>()
                 .WithMessage("*AGENT_TYPE*");
         }
@@ -658,6 +659,41 @@ public class AgentWorkerServiceTests
         callOrder[0].useResume.Should().BeTrue();
     }
 
+    // ── Re-registration extended retry ──────────────────────────────────
+
+    [Fact]
+    public async Task HandleReconnectedAsync_AllRetriesFail_CallsStopApplication()
+    {
+        // Arrange
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AGENT_TYPE")))
+            Environment.SetEnvironmentVariable("AGENT_TYPE", "kiro-dotnet");
+
+        var mockLifetime = new Mock<IHostApplicationLifetime>();
+        var mockLogger = new Mock<Serilog.ILogger>();
+        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
+
+        var service = new AgentWorkerService(
+            CreateTestHubManager(),
+            CreateMockExecutor(),
+            CreateMockConsolidationExecutor(),
+            mockOrchestrator.Object,
+            Mock.Of<IHttpClientFactory>(),
+            new AgentIdentity("test-agent"),
+            mockLifetime.Object,
+            mockLogger.Object);
+
+        // Override _extendedRetryDelay to zero for fast test execution
+        SetPrivateField(service, "_extendedRetryDelay", TimeSpan.Zero);
+
+        // Act — invoke HandleReconnectedAsync; hub is not connected so all calls throw
+        var method = GetPrivateMethod(service, "HandleReconnectedAsync");
+        var task = (Task)method.Invoke(service, ["fake-connection-id"])!;
+        await task;
+
+        // Assert
+        mockLifetime.Verify(l => l.StopApplication(), Times.Once);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static HubConnectionManager CreateTestHubManager()
@@ -711,6 +747,7 @@ public class AgentWorkerServiceTests
             mockOrchestrator.Object,
             Mock.Of<IHttpClientFactory>(),
             new AgentIdentity("test-agent"),
+            Mock.Of<IHostApplicationLifetime>(),
             mockLogger.Object);
     }
 
@@ -732,6 +769,7 @@ public class AgentWorkerServiceTests
             orchestrator,
             Mock.Of<IHttpClientFactory>(),
             new AgentIdentity("test-agent"),
+            Mock.Of<IHostApplicationLifetime>(),
             mockLogger.Object);
     }
 
