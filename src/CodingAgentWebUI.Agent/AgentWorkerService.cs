@@ -44,9 +44,11 @@ public sealed class AgentWorkerService : BackgroundService
     private readonly LocalConsolidationExecutor _consolidationExecutor;
     private readonly IKiroCliOrchestrator _orchestrator;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
     private readonly bool _isOpenCodeProvider;
+    private TimeSpan _extendedRetryDelay = TimeSpan.FromSeconds(5);
 
     private readonly string _agentId;
     private readonly string _agentType;
@@ -69,6 +71,7 @@ public sealed class AgentWorkerService : BackgroundService
         IKiroCliOrchestrator orchestrator,
         IHttpClientFactory httpClientFactory,
         AgentIdentity agentIdentity,
+        IHostApplicationLifetime hostApplicationLifetime,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(hubManager);
@@ -77,6 +80,7 @@ public sealed class AgentWorkerService : BackgroundService
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(agentIdentity);
+        ArgumentNullException.ThrowIfNull(hostApplicationLifetime);
         ArgumentNullException.ThrowIfNull(logger);
 
         _hubManager = hubManager;
@@ -84,6 +88,7 @@ public sealed class AgentWorkerService : BackgroundService
         _consolidationExecutor = consolidationExecutor;
         _orchestrator = orchestrator;
         _httpClientFactory = httpClientFactory;
+        _hostApplicationLifetime = hostApplicationLifetime;
         _logger = logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
         _isOpenCodeProvider = (Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "")
@@ -497,7 +502,25 @@ public sealed class AgentWorkerService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Failed to re-register agent {AgentId} after reconnection", _agentId);
+            _logger.Error(ex, "Failed to re-register agent {AgentId} after initial retry pipeline, starting extended recovery", _agentId);
+
+            for (var i = 0; i < 3; i++)
+            {
+                await Task.Delay(_extendedRetryDelay);
+                try
+                {
+                    await _hubManager.Connection.InvokeAsync("RegisterAgent", registration, CancellationToken.None);
+                    _logger.Information("Agent {AgentId} re-registered on extended attempt {Attempt}", _agentId, i + 1);
+                    return;
+                }
+                catch (Exception retryEx)
+                {
+                    _logger.Warning(retryEx, "Extended re-registration attempt {Attempt}/3 failed for agent {AgentId}", i + 1, _agentId);
+                }
+            }
+
+            _logger.Fatal("Agent {AgentId} cannot re-register after all recovery attempts, terminating for container restart", _agentId);
+            _hostApplicationLifetime.StopApplication();
         }
     }
 
