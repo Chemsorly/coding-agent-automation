@@ -110,7 +110,6 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
             "ListComments", ct);
 
         return notes
-            .Where(n => !CommentMarkers.IsPipelineGeneratedComment(n.Body))
             .Select(n => new PipelineIssueComment
             {
                 Id = n.NoteId.ToString(),
