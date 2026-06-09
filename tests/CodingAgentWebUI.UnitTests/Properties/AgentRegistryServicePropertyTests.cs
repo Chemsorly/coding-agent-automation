@@ -143,7 +143,7 @@ public class AgentRegistryServicePropertyTests
 
         selected.Should().NotBeNull();
         selected!.AgentId.Should().Be("agent-0"); // Oldest LastJobCompletedAt
-        selected.Status.Should().Be(AgentStatus.Idle);
+        selected.Status.Should().Be(AgentStatus.Busy); // SelectAgent atomically reserves by transitioning to Busy
     }
 
     /// <summary>
