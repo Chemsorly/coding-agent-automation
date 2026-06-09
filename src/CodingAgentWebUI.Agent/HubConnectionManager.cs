@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -97,12 +99,13 @@ public sealed class HubConnectionManager : IAsyncDisposable
 
         _logger = logger;
 
+        var derivedKey = DeriveKey(apiKey, agentId);
         var hubUrl = $"{orchestratorUrl.TrimEnd('/')}{HubRoutes.Agent}?agentId={Uri.EscapeDataString(agentId)}";
 
         _connection = new HubConnectionBuilder()
             .WithUrl(hubUrl, options =>
             {
-                options.AccessTokenProvider = () => Task.FromResult<string?>(apiKey);
+                options.AccessTokenProvider = () => Task.FromResult<string?>(derivedKey);
             })
             .AddMessagePackProtocol()
             .WithAutomaticReconnect(ReconnectDelays)
@@ -214,5 +217,19 @@ public sealed class HubConnectionManager : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await _connection.DisposeAsync();
+    }
+
+    /// <summary>
+    /// Derives a per-agent key from the master secret and agent ID using HMAC-SHA256.
+    /// Returns the raw key if agentId is empty (legacy fallback).
+    /// </summary>
+    internal static string DeriveKey(string masterKey, string agentId)
+    {
+        if (string.IsNullOrEmpty(agentId))
+            return masterKey;
+
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(masterKey));
+        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(agentId));
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 }

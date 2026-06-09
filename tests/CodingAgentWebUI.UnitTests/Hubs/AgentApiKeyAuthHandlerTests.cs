@@ -262,12 +262,127 @@ public class AgentApiKeyAuthHandlerTests
         AgentApiKeyDefaults.AuthenticationScheme.Should().Be("AgentApiKey");
     }
 
+    // ── HMAC derivation tests ──────────────────────────────────────────
+
+    [Fact]
+    public async Task HandleAuthenticate_HmacDerivedToken_ReturnsSuccess()
+    {
+        var masterKey = "my-master-key";
+        var agentId = "agent-1";
+        using var hmac = new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(masterKey));
+        var hash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(agentId));
+        var derivedToken = Convert.ToHexString(hash).ToLowerInvariant();
+
+        var handler = await CreateHandlerAsync(masterKey, queryToken: derivedToken, authHeader: null, agentId: agentId);
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task HandleAuthenticate_HmacDerivedToken_SetsNameIdentifierToAgentId()
+    {
+        var masterKey = "my-master-key";
+        var agentId = "agent-1";
+        using var hmac = new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(masterKey));
+        var hash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(agentId));
+        var derivedToken = Convert.ToHexString(hash).ToLowerInvariant();
+
+        var handler = await CreateHandlerAsync(masterKey, queryToken: derivedToken, authHeader: null, agentId: agentId);
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeTrue();
+        var nameId = result.Principal!.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        nameId.Should().Be(agentId);
+    }
+
+    [Fact]
+    public async Task HandleAuthenticate_RawTokenWithAgentId_ReturnsFail()
+    {
+        // Presenting the raw master key when agentId is present should fail
+        var masterKey = "my-master-key";
+        var agentId = "agent-1";
+
+        var handler = await CreateHandlerAsync(masterKey, queryToken: masterKey, authHeader: null, agentId: agentId);
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HandleAuthenticate_TokenDerivedFromWrongAgent_ReturnsFail()
+    {
+        var masterKey = "my-master-key";
+        // Derive token for agent-1 but present with agentId=agent-2
+        using var hmac = new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(masterKey));
+        var hash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes("agent-1"));
+        var derivedToken = Convert.ToHexString(hash).ToLowerInvariant();
+
+        var handler = await CreateHandlerAsync(masterKey, queryToken: derivedToken, authHeader: null, agentId: "agent-2");
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HandleAuthenticate_NoAgentId_LegacyFallback_ReturnsSuccess()
+    {
+        // When agentId is absent, raw key comparison should work (legacy)
+        var masterKey = "my-master-key";
+
+        var handler = await CreateHandlerAsync(masterKey, queryToken: masterKey, authHeader: null);
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task HandleAuthenticate_NoAgentId_SetsNameIdentifierToAgent()
+    {
+        var masterKey = "my-master-key";
+
+        var handler = await CreateHandlerAsync(masterKey, queryToken: masterKey, authHeader: null);
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeTrue();
+        var nameId = result.Principal!.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        nameId.Should().Be("agent");
+    }
+
+    [Fact]
+    public async Task HandleAuthenticate_DifferentAgents_ProduceDifferentKeys()
+    {
+        var masterKey = "my-master-key";
+        using var hmac1 = new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(masterKey));
+        var hash1 = hmac1.ComputeHash(System.Text.Encoding.UTF8.GetBytes("agent-1"));
+        var key1 = Convert.ToHexString(hash1).ToLowerInvariant();
+
+        using var hmac2 = new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(masterKey));
+        var hash2 = hmac2.ComputeHash(System.Text.Encoding.UTF8.GetBytes("agent-2"));
+        var key2 = Convert.ToHexString(hash2).ToLowerInvariant();
+
+        key1.Should().NotBe(key2);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
+
+    private Task<AgentApiKeyAuthHandler> CreateHandlerAsync(
+        string configuredApiKey,
+        string? queryToken,
+        string? authHeader)
+        => CreateHandlerAsync(configuredApiKey, queryToken, authHeader, agentId: null);
 
     private async Task<AgentApiKeyAuthHandler> CreateHandlerAsync(
         string configuredApiKey,
         string? queryToken,
-        string? authHeader)
+        string? authHeader,
+        string? agentId)
     {
         var options = new AgentApiKeyAuthOptions { ApiKey = configuredApiKey };
         var optionsMonitor = new Mock<IOptionsMonitor<AgentApiKeyAuthOptions>>();
@@ -285,10 +400,13 @@ public class AgentApiKeyAuthHandlerTests
 
         // Create a fake HttpContext
         var context = new DefaultHttpContext();
+        var queryParts = new List<string>();
         if (queryToken != null)
-        {
-            context.Request.QueryString = new QueryString($"?access_token={queryToken}");
-        }
+            queryParts.Add($"access_token={Uri.EscapeDataString(queryToken)}");
+        if (agentId != null)
+            queryParts.Add($"agentId={Uri.EscapeDataString(agentId)}");
+        if (queryParts.Count > 0)
+            context.Request.QueryString = new QueryString("?" + string.Join("&", queryParts));
         if (authHeader != null)
         {
             context.Request.Headers.Authorization = authHeader;
