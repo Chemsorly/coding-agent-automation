@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -37,8 +39,12 @@ public sealed class FakeAgentClient : IAsyncDisposable
     /// </summary>
     public async Task ConnectAsync(string serverAddress, string apiKey)
     {
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(apiKey));
+        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(AgentId));
+        var derivedToken = Convert.ToHexString(hash).ToLowerInvariant();
+
         _connection = new HubConnectionBuilder()
-            .WithUrl($"{serverAddress}{HubRoutes.Agent}?agentId={AgentId}&access_token={apiKey}")
+            .WithUrl($"{serverAddress}{HubRoutes.Agent}?agentId={AgentId}&access_token={derivedToken}")
             .Build();
 
         // Register all IAgentHubClient handlers
