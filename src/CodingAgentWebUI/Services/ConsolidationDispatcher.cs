@@ -244,9 +244,15 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
             var json = await File.ReadAllTextAsync(filePath, ct);
             return System.Text.Json.JsonSerializer.Deserialize<ConsolidationRun>(json, Pipeline.PipelineJsonOptions.Default);
         }
-        catch (OperationCanceledException) { throw; } // TODO: Bare catch was swallowing OperationCanceledException — propagate cancellation properly
-        catch
+        catch (OperationCanceledException) { throw; }
+        catch (System.Text.Json.JsonException ex)
         {
+            _logger.Warning(ex, "Consolidation run file {RunId} is malformed, skipping", runId);
+            return null;
+        }
+        catch (IOException ex)
+        {
+            _logger.Warning(ex, "Failed to read consolidation run file {RunId}", runId);
             return null;
         }
     }
@@ -388,9 +394,14 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
                         latest = historicRun.CompletedAtUtc.Value;
                 }
             }
-            catch
+            catch (OperationCanceledException) { throw; }
+            catch (System.Text.Json.JsonException ex)
             {
-                // Skip malformed files
+                _logger.Warning(ex, "Consolidation run file {File} is malformed, skipping", file);
+            }
+            catch (IOException ex)
+            {
+                _logger.Warning(ex, "Failed to read consolidation run file {File}", file);
             }
         }
 
