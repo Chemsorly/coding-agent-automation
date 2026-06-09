@@ -141,4 +141,31 @@ public sealed class AgentCodingPage
         var element = await _page.QuerySelectorAsync("[data-testid='output-panel']");
         return element is not null;
     }
+
+    /// <summary>Clicks the "Browse Pull Requests" button to open the PR drawer.</summary>
+    public async Task ClickBrowsePrsAsync()
+    {
+        await _page.WaitForFunctionAsync(
+            @"() => {
+                const btn = document.querySelector('[data-testid=""browse-prs-btn""]');
+                return btn && !btn.disabled;
+            }",
+            null,
+            new() { Timeout = 10_000 });
+
+        await _page.ClickAsync("[data-testid='browse-prs-btn']");
+        await _page.WaitForSelectorAsync(".dispatch-drawer.open", new() { Timeout = 10_000 });
+    }
+
+    /// <summary>Selects a PR from the drawer by its identifier.</summary>
+    public async Task SelectPrAsync(string identifier)
+    {
+        await _page.ClickAsync($"[data-testid='pr-row-{identifier}']");
+    }
+
+    /// <summary>Clicks the "Start Review on PR #X" button in the PR drawer.</summary>
+    public async Task ClickDispatchPrReviewAsync()
+    {
+        await _page.ClickAsync("[data-testid='dispatch-pr-btn']");
+    }
 }

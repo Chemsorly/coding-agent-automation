@@ -1670,6 +1670,14 @@
     private async Task DispatchPrReviewFromDrawer()
     {
         if (_selectedDrawerPr == null || _prDrawerTemplate == null) return;
+
+        // Check if any agents are connected before attempting dispatch
+        if (!JobDispatcher.HasRegisteredAgents)
+        {
+            _errorMessage = "Could not dispatch — no agents are currently connected.";
+            return;
+        }
+
         _prDrawerDispatching = true;
         StateHasChanged();
 
