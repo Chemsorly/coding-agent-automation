@@ -25,6 +25,18 @@ public static class PipelineConstants
     /// <summary>Default capacity (line count) for the output ring buffer.</summary>
     public const int DefaultOutputBufferCapacity = 10_000;
 
+    /// <summary>Default capacity for PipelineRun.OutputLines bounded queue.</summary>
+    public const int DefaultOutputLinesCapacity = 5_000;
+
+    /// <summary>Default capacity for PipelineRun.ChatHistory bounded queue.</summary>
+    public const int DefaultChatHistoryCapacity = 200;
+
+    /// <summary>Default capacity for PipelineRun.QualityGateHistory bounded queue.</summary>
+    public const int DefaultQualityGateHistoryCapacity = 50;
+
+    /// <summary>Default capacity for PipelineRun.RetryErrors bounded queue.</summary>
+    public const int DefaultRetryErrorsCapacity = 100;
+
     /// <summary>Number of output lines to include in chat history summaries and log messages.</summary>
     public const int OutputTailLineCount = 10;
 

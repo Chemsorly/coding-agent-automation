@@ -99,7 +99,7 @@ internal partial class QualityGateExecutor
                     callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.MaxRetries} retries, leaving PR as draft");
 
                     var finalErrorSummary = BuildQualityGateErrorSummary(report);
-                    run.RetryErrors.Add(finalErrorSummary);
+                    run.RetryErrors.Enqueue(finalErrorSummary);
 
                     // Collect failure feedback before finalizing draft PR
                     await CollectFailureFeedbackAsync(context, run, report, linkedCt);
@@ -114,7 +114,7 @@ internal partial class QualityGateExecutor
                 callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.MaxRetries} retries, leaving PR as draft");
 
                 var errorSummary = BuildQualityGateErrorSummary(report);
-                run.RetryErrors.Add(errorSummary);
+                run.RetryErrors.Enqueue(errorSummary);
 
                 // Collect failure feedback before finalizing draft PR
                 await CollectFailureFeedbackAsync(context, run, report, linkedCt);
@@ -290,7 +290,7 @@ internal partial class QualityGateExecutor
             // TODO: Consider using BuildTags (run_type + project_id + project_name) for dimensional consistency with duration metrics
             PipelineTelemetry.QualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(run.RunType));
             var errorSummary = BuildQualityGateErrorSummary(report);
-            run.RetryErrors.Add(errorSummary);
+            run.RetryErrors.Enqueue(errorSummary);
 
             _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}",
                 run.RunId, run.RetryCount, config.MaxRetries);

@@ -406,6 +406,46 @@ public sealed record PipelineConfiguration
         init => Agent = Agent with { OutputBufferCapacity = value };
     }
 
+    /// <summary>
+    /// Maximum number of output lines in PipelineRun.OutputLines bounded queue.
+    /// Default: 5,000.
+    /// </summary>
+    public int OutputLinesCapacity
+    {
+        get => Agent.OutputLinesCapacity;
+        init => Agent = Agent with { OutputLinesCapacity = value };
+    }
+
+    /// <summary>
+    /// Maximum number of chat entries in PipelineRun.ChatHistory bounded queue.
+    /// Default: 200.
+    /// </summary>
+    public int ChatHistoryCapacity
+    {
+        get => Agent.ChatHistoryCapacity;
+        init => Agent = Agent with { ChatHistoryCapacity = value };
+    }
+
+    /// <summary>
+    /// Maximum number of quality gate reports in PipelineRun.QualityGateHistory bounded queue.
+    /// Default: 50.
+    /// </summary>
+    public int QualityGateHistoryCapacity
+    {
+        get => Agent.QualityGateHistoryCapacity;
+        init => Agent = Agent with { QualityGateHistoryCapacity = value };
+    }
+
+    /// <summary>
+    /// Maximum number of retry error messages in PipelineRun.RetryErrors bounded queue.
+    /// Default: 100.
+    /// </summary>
+    public int RetryErrorsCapacity
+    {
+        get => Agent.RetryErrorsCapacity;
+        init => Agent = Agent with { RetryErrorsCapacity = value };
+    }
+
     // ── Multi-repo pipeline loop ────────────────────────────────────────
 
     /// <summary>
