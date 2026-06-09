@@ -43,10 +43,16 @@ public class PipelineTelemetryTagTests : IDisposable
     [InlineData(PipelineRunType.Decomposition, "decomposition")]
     public void JobsDispatched_Add_IncludesRunTypeTag(PipelineRunType runType, string expected)
     {
+        // Verify the tag helper produces the correct value directly (avoids cross-test interference from static meter)
+        var tag = PipelineTelemetry.RunTypeTag(runType);
+        tag.Key.Should().Be("run_type");
+        tag.Value.Should().Be(expected);
+
+        // Also verify emission via listener — use snapshot to isolate from concurrent tests
         _capturedTags.Clear();
         PipelineTelemetry.JobsDispatched.Add(1, PipelineTelemetry.RunTypeTag(runType));
 
-        _capturedTags.Should().Contain(new KeyValuePair<string, object?>("run_type", expected));
+        _capturedTags.Should().Contain(t => t.Key == "run_type" && (string?)t.Value == expected);
     }
 
     [Fact]
