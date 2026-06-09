@@ -7,6 +7,7 @@ public sealed class PipelineRun
 {
     public required string RunId { get; init; }
     public required string IssueIdentifier { get; init; }
+    // NOTE: Semantically set-once (populated after construction from fetched issue title). Cannot be init-only without restructuring call sites.
     public required string IssueTitle { get; set; }
     public required string IssueProviderConfigId { get; init; }
     public required string RepoProviderConfigId { get; init; }
@@ -20,10 +21,14 @@ public sealed class PipelineRun
     public string? BranchName { get; set; }
     public string? FailureReason { get; set; }
     public string? PullRequestUrl { get; set; }
-    public int RetryCount { get; set; }
+
+    /// <summary>Cohesive sub-state group for execution metrics (MAINT-13). Delegating properties below preserve the existing API surface.</summary>
+    public RunMetrics Metrics { get; } = new();
+
+    public int RetryCount { get => Metrics.RetryCount; set => Metrics.RetryCount = value; }
 
     /// <summary>Number of infrastructure CI retries (does not consume agent retry budget).</summary>
-    public int InfrastructureRetryCount { get; set; }
+    public int InfrastructureRetryCount { get => Metrics.InfrastructureRetryCount; set => Metrics.InfrastructureRetryCount = value; }
 
     /// <summary>Agent-generated analysis content, populated during AnalyzingCode step.</summary>
     public string? AnalysisContent { get; set; }
@@ -118,13 +123,13 @@ public sealed class PipelineRun
     public string? CodegenSessionId { get; set; }
 
     /// <summary>Number of files changed during code generation, updated after agent execution.</summary>
-    public int FilesChangedCount { get; set; }
+    public int FilesChangedCount { get => Metrics.FilesChangedCount; set => Metrics.FilesChangedCount = value; }
 
     /// <summary>Lines added during code generation.</summary>
-    public int LinesAdded { get; set; }
+    public int LinesAdded { get => Metrics.LinesAdded; set => Metrics.LinesAdded = value; }
 
     /// <summary>Lines removed during code generation.</summary>
-    public int LinesRemoved { get; set; }
+    public int LinesRemoved { get => Metrics.LinesRemoved; set => Metrics.LinesRemoved = value; }
 
     /// <summary>PR number extracted from the PR URL (e.g. "47").</summary>
     public string? PullRequestNumber { get; set; }
@@ -225,10 +230,10 @@ public sealed class PipelineRun
     public RunFeedback? Feedback { get; set; }
 
     /// <summary>Accumulated total tokens across all agent invocations in this run.</summary>
-    public long TotalTokens { get; set; }
+    public long TotalTokens { get => Metrics.TotalTokens; set => Metrics.TotalTokens = value; }
 
     /// <summary>Accumulated total cost (USD, decimal) across all agent invocations, or null if no cost data available.</summary>
-    public decimal? TotalCost { get; set; }
+    public decimal? TotalCost { get => Metrics.TotalCost; set => Metrics.TotalCost = value; }
 
     /// <summary>Number of sub-issues successfully created during the Decomposition phase.</summary>
     public int DecompositionSubIssuesCreated { get; set; }
