@@ -48,8 +48,13 @@ public sealed partial class AgentHub
         {
             _facade.RemoveRun(jobId);
             _facade.MarkIssueComplete(run.IssueIdentifier);
-            _logger.Information("Removed rejected run {JobId} for issue {IssueIdentifier}",
-                jobId, run.IssueIdentifier);
+            _logger.Warning("Cleaned up rejected run {JobId} for issue {IssueIdentifier} (step={Step}, agent={AgentId}). " +
+                "This indicates a dispatch race condition — investigate if recurring.",
+                jobId, run.IssueIdentifier, run.CurrentStep, run.AgentId);
+        }
+        else
+        {
+            _logger.Warning("Agent rejected job {JobId} but no active run found — may have been cleaned up already", jobId);
         }
 
         // Transition agent back to Idle (it may still be marked Busy from reservation)

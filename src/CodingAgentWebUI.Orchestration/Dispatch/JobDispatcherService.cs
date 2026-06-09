@@ -82,6 +82,13 @@ public sealed class JobDispatcherService
         {
             var idleAgents = _registry.GetIdleAgents();
 
+            if (idleAgents.Count == 0)
+            {
+                _logger.Debug("SelectAgent: no idle agents available (requiredLabels=[{Labels}])",
+                    string.Join(", ", requiredLabels));
+                return null;
+            }
+
             var compatible = idleAgents
                 .Where(agent => !agent.Disabled)
                 .Where(agent => LabelMatchHelper.IsLabelMatch(agent.Labels, requiredLabels))
@@ -89,12 +96,19 @@ public sealed class JobDispatcherService
                 .ToList();
 
             if (compatible.Count == 0)
+            {
+                _logger.Debug("SelectAgent: {IdleCount} idle agent(s) but none match requiredLabels=[{Labels}]",
+                    idleAgents.Count, string.Join(", ", requiredLabels));
                 return null;
+            }
 
             var selected = compatible[0];
 
             // Atomically reserve the agent so no other dispatch path can select it
             _registry.TransitionStatus(selected.AgentId, AgentStatus.Busy);
+
+            _logger.Debug("SelectAgent: reserved agent {AgentId} for requiredLabels=[{Labels}] ({CompatibleCount} compatible, {IdleCount} idle)",
+                selected.AgentId, string.Join(", ", requiredLabels), compatible.Count, idleAgents.Count);
 
             return selected;
         }
