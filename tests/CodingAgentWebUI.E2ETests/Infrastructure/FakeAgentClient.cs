@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR.Client;
 
@@ -259,6 +260,15 @@ public sealed class FakeAgentClient : IAsyncDisposable
     {
         if (_connection is null) throw new InvalidOperationException("Not connected");
         await _connection.InvokeAsync("ReportConsolidationComplete", result);
+    }
+
+    /// <summary>
+    /// Creates a sub-issue via the hub's RequestCreateIssue method (requires an active job).
+    /// </summary>
+    public async Task<CreatedIssueResult> RequestCreateIssueAsync(string jobId, string title, string body, IReadOnlyList<string> labels)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        return await _connection.InvokeAsync<CreatedIssueResult>("RequestCreateIssue", jobId, title, body, labels);
     }
 
     public async ValueTask DisposeAsync()
