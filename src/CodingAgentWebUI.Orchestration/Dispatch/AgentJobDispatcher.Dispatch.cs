@@ -158,8 +158,8 @@ public sealed partial class AgentJobDispatcher
         string logMessageTemplate,
         CancellationToken ct)
     {
-        var config = await _configStore.LoadPipelineConfigAsync(ct);
-        var repoConfig = await _configStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
+        var config = await _resolution.ConfigStore.LoadPipelineConfigAsync(ct);
+        var repoConfig = await _resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
         var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
 
         var agent = _dispatcher.SelectAgent(requiredLabels);

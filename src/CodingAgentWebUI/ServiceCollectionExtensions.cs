@@ -140,6 +140,13 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<QualityGateResolver>();
         services.AddSingleton<ReviewerResolver>();
 
+        services.AddSingleton(sp => new DispatchResolutionService(
+            sp.GetRequiredService<ProfileResolver>(),
+            sp.GetRequiredService<QualityGateResolver>(),
+            sp.GetRequiredService<ReviewerResolver>(),
+            sp.GetRequiredService<IConfigurationStore>(),
+            Log.Logger));
+
         services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
             sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));
 
@@ -154,12 +161,9 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<OrchestratorRunService>(),
             sp.GetRequiredService<PipelineOrchestrationService>(),
             sp.GetRequiredService<ITokenVendingService>(),
-            sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILabelSwapper>(),
-            sp.GetRequiredService<ProfileResolver>(),
-            sp.GetRequiredService<QualityGateResolver>(),
-            sp.GetRequiredService<ReviewerResolver>(),
+            sp.GetRequiredService<DispatchResolutionService>(),
             sp.GetRequiredService<IAgentCommunication>(),
             Log.Logger));
 

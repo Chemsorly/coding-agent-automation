@@ -52,12 +52,9 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
     private readonly OrchestratorRunService _runService;
     private readonly Pipeline.Services.PipelineOrchestrationService _orchestration;
     private readonly ITokenVendingService _tokenVending;
-    private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
     private readonly ILabelSwapper _labelSwapper;
-    private readonly ProfileResolver _profileResolver;
-    private readonly QualityGateResolver _qualityGateResolver;
-    private readonly ReviewerResolver _reviewerResolver;
+    private readonly DispatchResolutionService _resolution;
     private readonly IAgentCommunication _agentComm;
     private readonly ILogger _logger;
 
@@ -67,12 +64,9 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
         OrchestratorRunService runService,
         Pipeline.Services.PipelineOrchestrationService orchestration,
         ITokenVendingService tokenVending,
-        IConfigurationStore configStore,
         IProviderFactory providerFactory,
         ILabelSwapper labelSwapper,
-        ProfileResolver profileResolver,
-        QualityGateResolver qualityGateResolver,
-        ReviewerResolver reviewerResolver,
+        DispatchResolutionService resolution,
         IAgentCommunication agentComm,
         ILogger logger)
     {
@@ -81,12 +75,9 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
         ArgumentNullException.ThrowIfNull(runService);
         ArgumentNullException.ThrowIfNull(orchestration);
         ArgumentNullException.ThrowIfNull(tokenVending);
-        ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
         ArgumentNullException.ThrowIfNull(labelSwapper);
-        ArgumentNullException.ThrowIfNull(profileResolver);
-        ArgumentNullException.ThrowIfNull(qualityGateResolver);
-        ArgumentNullException.ThrowIfNull(reviewerResolver);
+        ArgumentNullException.ThrowIfNull(resolution);
         ArgumentNullException.ThrowIfNull(agentComm);
         ArgumentNullException.ThrowIfNull(logger);
 
@@ -95,12 +86,9 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
         _runService = runService;
         _orchestration = orchestration;
         _tokenVending = tokenVending;
-        _configStore = configStore;
         _providerFactory = providerFactory;
         _labelSwapper = labelSwapper;
-        _profileResolver = profileResolver;
-        _qualityGateResolver = qualityGateResolver;
-        _reviewerResolver = reviewerResolver;
+        _resolution = resolution;
         _agentComm = agentComm;
         _logger = logger;
     }
