@@ -30,48 +30,40 @@ public partial class GitHubRepositoryProvider
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         var branchPrefix = $"{PipelineConstants.BranchPrefix}{issueIdentifier}-";
 
-        // 1. List all open PRs for the repository
-        var allPrs = await ExecuteWithResilienceAsync(
-            client => client.PullRequest.GetAllForRepository(
-                Owner, Repo,
-                new PullRequestRequest { State = ItemStateFilter.Open }),
-            "GetAgentPullRequests.List", ct);
+        // 1. Server-side search for matching PRs (head: qualifier does prefix matching)
+        var searchRequest = new SearchIssuesRequest
+        {
+            Type = IssueTypeQualifier.PullRequest,
+            State = ItemState.Open,
+            Head = branchPrefix,
+            Repos = new RepositoryCollection { { Owner, Repo } }
+        };
+        var searchResult = await ExecuteWithResilienceAsync(
+            client => client.Search.SearchIssues(searchRequest),
+            "GetAgentPullRequests.Search", ct);
 
-        // 2. Filter by branch name prefix (client-side)
-        var matching = allPrs
-            .Where(pr => pr.Head.Ref.StartsWith(branchPrefix, StringComparison.Ordinal))
-            .ToList();
-
-        if (matching.Count == 0)
+        if (searchResult.Items.Count == 0)
             return Array.Empty<LinkedPullRequest>();
 
-        // 3. For each match, fetch individual PR to get Mergeable field
-        var results = new List<LinkedPullRequest>();
-        foreach (var pr in matching)
+        // 2. Parallel detail fetch with bounded concurrency (≤3 concurrent)
+        using var semaphore = new SemaphoreSlim(3, 3);
+        var tasks = searchResult.Items.Select(async item =>
         {
-            var detailed = await ExecuteWithResilienceAsync(
-                client => client.PullRequest.Get(Owner, Repo, pr.Number),
-                "GetAgentPullRequests.Get", ct);
+            await semaphore.WaitAsync(ct);
+            try
+            {
+                var detailed = await ExecuteWithResilienceAsync(
+                    client => client.PullRequest.Get(Owner, Repo, item.Number),
+                    "GetAgentPullRequests.Get", ct);
 
-            // 4. Fetch review comments
-            var reviewComments = await ExecuteWithResilienceAsync(
-                client => client.PullRequest.ReviewComment.GetAll(Owner, Repo, pr.Number),
-                "GetAgentPullRequests.ReviewComments", ct);
-            var conversationComments = await ExecuteWithResilienceAsync(
-                client => client.Issue.Comment.GetAllForIssue(Owner, Repo, pr.Number),
-                "GetAgentPullRequests.ConversationComments", ct);
+                var reviewComments = await ExecuteWithResilienceAsync(
+                    client => client.PullRequest.ReviewComment.GetAll(Owner, Repo, item.Number),
+                    "GetAgentPullRequests.ReviewComments", ct);
+                var conversationComments = await ExecuteWithResilienceAsync(
+                    client => client.Issue.Comment.GetAllForIssue(Owner, Repo, item.Number),
+                    "GetAgentPullRequests.ConversationComments", ct);
 
-            var allComments = reviewComments
-                .Where(c => !CommentMarkers.IsPipelineGeneratedComment(c.Body))
-                .Select(c => new Pipeline.Models.PullRequestReviewComment
-                {
-                    Id = c.Id.ToString(),
-                    Body = c.Body ?? string.Empty,
-                    Author = c.User?.Login ?? string.Empty,
-                    CreatedAt = c.CreatedAt.UtcDateTime,
-                    Path = c.Path
-                })
-                .Concat(conversationComments
+                var allComments = reviewComments
                     .Where(c => !CommentMarkers.IsPipelineGeneratedComment(c.Body))
                     .Select(c => new Pipeline.Models.PullRequestReviewComment
                     {
@@ -79,24 +71,40 @@ public partial class GitHubRepositoryProvider
                         Body = c.Body ?? string.Empty,
                         Author = c.User?.Login ?? string.Empty,
                         CreatedAt = c.CreatedAt.UtcDateTime,
-                        Path = null
-                    }))
-                .OrderBy(c => c.CreatedAt)
-                .Take(50)
-                .ToList();
+                        Path = c.Path
+                    })
+                    .Concat(conversationComments
+                        .Where(c => !CommentMarkers.IsPipelineGeneratedComment(c.Body))
+                        .Select(c => new Pipeline.Models.PullRequestReviewComment
+                        {
+                            Id = c.Id.ToString(),
+                            Body = c.Body ?? string.Empty,
+                            Author = c.User?.Login ?? string.Empty,
+                            CreatedAt = c.CreatedAt.UtcDateTime,
+                            Path = null
+                        }))
+                    .OrderBy(c => c.CreatedAt)
+                    .Take(50)
+                    .ToList();
 
-            results.Add(new LinkedPullRequest
+                return new LinkedPullRequest
+                {
+                    Number = detailed.Number,
+                    BranchName = detailed.Head.Ref,
+                    Url = detailed.HtmlUrl,
+                    IsDraft = detailed.Draft,
+                    IsMergeable = detailed.Mergeable,
+                    ReviewComments = allComments
+                };
+            }
+            finally
             {
-                Number = detailed.Number,
-                BranchName = detailed.Head.Ref,
-                Url = detailed.HtmlUrl,
-                IsDraft = detailed.Draft,
-                IsMergeable = detailed.Mergeable,
-                ReviewComments = allComments
-            });
-        }
+                semaphore.Release();
+            }
+        });
 
-        return results;
+        var results = await Task.WhenAll(tasks);
+        return results.ToList();
     }
 
     public async Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool markReady, CancellationToken ct)
