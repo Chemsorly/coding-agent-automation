@@ -23,6 +23,9 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
     /// <summary>Tracks label changes for assertion (action, prNumber, label).</summary>
     public List<(string Action, int PrNumber, string Label)> PrLabelChanges { get; } = new();
 
+    /// <summary>Tracks submitted reviews for assertion.</summary>
+    public List<(int PrNumber, string Body, PullRequestReviewType Type)> PostedReviews { get; } = new();
+
     public void Reset()
     {
         MethodCalls.Clear();
@@ -31,6 +34,7 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
         ShouldFail = false;
         PullRequests.Clear();
         PrLabelChanges.Clear();
+        PostedReviews.Clear();
     }
 
     public Task CloneAsync(string workspacePath, CancellationToken ct)
@@ -128,6 +132,19 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
     public Task RemovePrLabelAsync(int prNumber, string label, CancellationToken ct)
     {
         PrLabelChanges.Add(("Remove", prNumber, label));
+        return Task.CompletedTask;
+    }
+
+    public Task SubmitPullRequestReviewAsync(
+        int prNumber, string body, PullRequestReviewType type, CancellationToken ct)
+    {
+        PostedReviews.Add((prNumber, body, type));
+        return Task.CompletedTask;
+    }
+
+    public Task SubmitPullRequestReviewAsync(int prNumber, ReviewSubmission submission, CancellationToken ct)
+    {
+        PostedReviews.Add((prNumber, submission.Body, submission.Type));
         return Task.CompletedTask;
     }
 
