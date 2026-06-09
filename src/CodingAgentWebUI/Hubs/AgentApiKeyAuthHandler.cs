@@ -73,18 +73,28 @@ public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAu
 
         if (string.IsNullOrEmpty(token))
         {
-            // NoResult (not Fail) — this request simply doesn't carry a token.
-            // Fail("Missing API key") causes ASP.NET Core to log a noisy warning on every
-            // unauthenticated request (e.g. Docker health checks hitting /health every 10s).
-            // NoResult means "this handler has no opinion" and lets the authorization layer
-            // decide whether to reject the request based on endpoint policy.
             return Task.FromResult(AuthenticateResult.NoResult());
         }
 
-        var expectedKey = Options.ApiKey;
-        if (string.IsNullOrEmpty(expectedKey))
+        var masterKey = Options.ApiKey;
+        if (string.IsNullOrEmpty(masterKey))
         {
             return Task.FromResult(AuthenticateResult.Fail("Server API key not configured"));
+        }
+
+        // Derive expected key from agentId query parameter (HMAC path),
+        // or use raw master key if agentId is absent (legacy fallback).
+        var agentId = Request.Query["agentId"].FirstOrDefault();
+        string expectedKey;
+        if (!string.IsNullOrEmpty(agentId))
+        {
+            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(masterKey));
+            var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(agentId));
+            expectedKey = Convert.ToHexString(hash).ToLowerInvariant();
+        }
+        else
+        {
+            expectedKey = masterKey;
         }
 
         // Constant-time comparison to prevent timing attacks
@@ -97,8 +107,9 @@ public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAu
             return Task.FromResult(AuthenticateResult.Fail("Invalid API key"));
         }
 
-        // Create a minimal claims identity for the authenticated agent
-        var claims = new[] { new Claim(ClaimTypes.NameIdentifier, "agent") };
+        // Create a claims identity with the authenticated agent ID
+        var claimId = !string.IsNullOrEmpty(agentId) ? agentId : "agent";
+        var claims = new[] { new Claim(ClaimTypes.NameIdentifier, claimId) };
         var identity = new ClaimsIdentity(claims, Scheme.Name);
         var principal = new ClaimsPrincipal(identity);
         var ticket = new AuthenticationTicket(principal, Scheme.Name);

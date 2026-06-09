@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -94,8 +96,12 @@ public sealed class SignalRTestFixture : IAsyncLifetime
     /// </summary>
     public HubConnection CreateHubConnection(string agentId)
     {
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(SignalRTestFactory.TestApiKey));
+        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(agentId));
+        var derivedToken = Convert.ToHexString(hash).ToLowerInvariant();
+
         return new HubConnectionBuilder()
-            .WithUrl($"{ServerAddress}{HubRoutes.Agent}?agentId={agentId}&access_token={SignalRTestFactory.TestApiKey}")
+            .WithUrl($"{ServerAddress}{HubRoutes.Agent}?agentId={agentId}&access_token={derivedToken}")
             .Build();
     }
 

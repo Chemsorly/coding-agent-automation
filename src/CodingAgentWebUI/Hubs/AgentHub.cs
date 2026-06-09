@@ -89,7 +89,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
     /// <summary>
     /// Registers an agent in the registry. Validates that the <c>agentId</c> in the message
-    /// matches the <c>agentId</c> query parameter from the connection.
+    /// matches the <c>agentId</c> query parameter from the connection and the authenticated identity.
     /// </summary>
     public Task RegisterAgent(AgentRegistrationMessage message)
     {
@@ -102,6 +102,17 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
                 "RegisterAgent rejected — message agentId '{MessageAgentId}' does not match query param '{QueryAgentId}'",
                 message.AgentId, queryAgentId);
             throw new HubException($"AgentId mismatch: message has '{message.AgentId}' but connection has '{queryAgentId}'");
+        }
+
+        // Defense-in-depth: validate authenticated identity matches registration
+        var authenticatedAgentId = Context.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (!string.IsNullOrEmpty(authenticatedAgentId) && authenticatedAgentId != "agent" &&
+            !string.Equals(message.AgentId, authenticatedAgentId, StringComparison.Ordinal))
+        {
+            _logger.Warning(
+                "RegisterAgent rejected — authenticated as '{AuthenticatedAgentId}' but registering as '{MessageAgentId}'",
+                authenticatedAgentId, message.AgentId);
+            throw new HubException($"AgentId mismatch: authenticated as '{authenticatedAgentId}' but registering as '{message.AgentId}'");
         }
 
         _facade.Register(message, Context.ConnectionId);

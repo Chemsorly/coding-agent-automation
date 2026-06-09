@@ -200,6 +200,58 @@ public class HubConnectionManagerTests : IAsyncDisposable
         Uri.UnescapeDataString(escapedAgentId).Should().Be(agentId.Value);
     }
 
+    // ── DeriveKey tests ─────────────────────────────────────────────────
+
+    [Fact]
+    public void DeriveKey_NonEmptyAgentId_ReturnsHmacHex()
+    {
+        var key = HubConnectionManager.DeriveKey("master-secret", "agent-1");
+
+        // HMAC-SHA256 produces 32 bytes = 64 hex chars
+        key.Length.Should().Be(64);
+        key.Should().MatchRegex("^[0-9a-f]{64}$");
+    }
+
+    [Fact]
+    public void DeriveKey_EmptyAgentId_ReturnsRawKey()
+    {
+        var key = HubConnectionManager.DeriveKey("master-secret", "");
+
+        key.Should().Be("master-secret");
+    }
+
+    [Fact]
+    public void DeriveKey_SameInputs_ProducesSameOutput()
+    {
+        var key1 = HubConnectionManager.DeriveKey("master", "agent-1");
+        var key2 = HubConnectionManager.DeriveKey("master", "agent-1");
+
+        key1.Should().Be(key2);
+    }
+
+    [Fact]
+    public void DeriveKey_DifferentAgentIds_ProduceDifferentKeys()
+    {
+        var key1 = HubConnectionManager.DeriveKey("master", "agent-1");
+        var key2 = HubConnectionManager.DeriveKey("master", "agent-2");
+
+        key1.Should().NotBe(key2);
+    }
+
+    [Fact]
+    public void DeriveKey_KnownVector_MatchesExpected()
+    {
+        // Verify against independently computed HMAC-SHA256("test-key", "my-agent")
+        using var hmac = new System.Security.Cryptography.HMACSHA256(
+            System.Text.Encoding.UTF8.GetBytes("test-key"));
+        var hash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes("my-agent"));
+        var expected = Convert.ToHexString(hash).ToLowerInvariant();
+
+        var actual = HubConnectionManager.DeriveKey("test-key", "my-agent");
+
+        actual.Should().Be(expected);
+    }
+
     /// <summary>
     /// Helper to create a HubConnectionManager and track it for disposal.
     /// </summary>
