@@ -15,6 +15,13 @@
         </div>
         <div class="form-group">
             <div class="label-with-hint">
+                <label>Max Infrastructure Retries</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum retries for infrastructure CI failures (e.g. flaky runners, network issues). Does not consume the agent retry budget.">?</span>
+            </div>
+            <input type="number" @bind="_maxInfrastructureRetries" min="0" max="10" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
                 <label>Failed Run Workspace Retention (days)</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Days to keep workspaces for failed/cancelled runs. 0 = delete immediately, -1 = keep forever">?</span>
             </div>
@@ -32,6 +39,7 @@
 
     private int _maxRetries = 3;
     private int _agentTimeoutMinutes = 30;
+    private int _maxInfrastructureRetries = 5;
     private int _failedWorkspaceRetentionDays = 7;
 
     protected override async Task OnInitializedAsync()
@@ -39,6 +47,7 @@
         var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         _maxRetries = config.MaxRetries;
         _agentTimeoutMinutes = (int)config.AgentTimeout.TotalMinutes;
+        _maxInfrastructureRetries = config.MaxInfrastructureRetries;
         _failedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays;
     }
 
@@ -51,6 +60,7 @@
                 {
                     MaxRetries = _maxRetries,
                     AgentTimeout = TimeSpan.FromMinutes(_agentTimeoutMinutes),
+                    MaxInfrastructureRetries = _maxInfrastructureRetries,
                     FailedWorkspaceRetentionDays = _failedWorkspaceRetentionDays
                 },
                 CancellationToken.None);

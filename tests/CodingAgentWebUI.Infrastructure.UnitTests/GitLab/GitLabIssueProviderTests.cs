@@ -339,12 +339,12 @@ public class GitLabIssueProviderTests
     }
 
     /// <summary>
-    /// Property 9: Pipeline-generated comments are filtered from ListCommentsAsync.
-    /// Comments starting with PipelinePrefix or containing AgentCommentPrefix are excluded.
+    /// Property 9: ListCommentsAsync returns all comments including pipeline-generated ones.
+    /// Filtering is handled downstream by prompt builders, not at the provider level.
     /// **Validates: Requirements 5.9**
     /// </summary>
     [Fact]
-    public async Task ListCommentsAsync_FiltersPipelineGeneratedComments()
+    public async Task ListCommentsAsync_ReturnsAllCommentsIncludingPipelineGenerated()
     {
         // Arrange
         var (client, projectId) = CreateServerWithProject();
@@ -358,21 +358,21 @@ public class GitLabIssueProviderTests
 
         var noteClient = client.GetProjectIssueNoteClient(projectId);
 
-        // User comment (should be included)
+        // User comment
         noteClient.Create(new ProjectIssueNoteCreate
         {
             IssueId = issue.IssueId,
             Body = "User feedback here"
         });
 
-        // Pipeline-generated comment (should be filtered)
+        // Pipeline-generated comment
         noteClient.Create(new ProjectIssueNoteCreate
         {
             IssueId = issue.IssueId,
             Body = $"{CommentMarkers.PipelinePrefix} Agent Analysis\nSome analysis"
         });
 
-        // Agent comment marker (should be filtered)
+        // Agent comment marker
         noteClient.Create(new ProjectIssueNoteCreate
         {
             IssueId = issue.IssueId,
@@ -383,9 +383,11 @@ public class GitLabIssueProviderTests
         var comments = await provider.ListCommentsAsync(
             issue.IssueId.ToString(), CancellationToken.None);
 
-        // Assert — only the user comment should remain
-        comments.Should().ContainSingle()
-            .Which.Body.Should().Be("User feedback here");
+        // Assert — all comments should be returned (filtering happens downstream)
+        comments.Should().HaveCount(3);
+        comments.Select(c => c.Body).Should().Contain("User feedback here");
+        comments.Select(c => c.Body).Should().Contain($"{CommentMarkers.PipelinePrefix} Agent Analysis\nSome analysis");
+        comments.Select(c => c.Body).Should().Contain($"{CommentMarkers.AgentCommentPrefix}gate-rejection -->Rejected");
     }
 
     #endregion
