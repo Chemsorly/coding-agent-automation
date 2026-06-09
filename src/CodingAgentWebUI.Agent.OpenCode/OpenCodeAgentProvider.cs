@@ -708,13 +708,12 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     /// <summary>
     /// Environment variable keys that MUST NOT be passed to MCP server child processes.
     /// </summary>
-    // TODO: Consider extracting remaining API key literals ("ANTHROPIC_API_KEY", etc.) into a centralized constants class for consistency
     private static readonly HashSet<string> ExcludedEnvKeys = new(StringComparer.OrdinalIgnoreCase)
     {
         AgentDefaults.EnvOpenCodeServerPassword,
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-        "OPENROUTER_API_KEY"
+        AgentDefaults.EnvAnthropicApiKey,
+        AgentDefaults.EnvOpenAiApiKey,
+        AgentDefaults.EnvOpenRouterApiKey
     };
 
     internal async Task RegisterMcpServersAsync(IReadOnlyList<McpServerConfig> servers, CancellationToken ct)
