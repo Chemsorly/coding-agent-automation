@@ -30,7 +30,14 @@ public sealed record ExternalCiConfiguration
 {
     public TimeSpan ExternalCiTimeout { get; init; } = PipelineConstants.DefaultExternalCiTimeout;
     public TimeSpan ExternalCiPollInterval { get; init; } = PipelineConstants.DefaultExternalCiPollInterval;
-    public int MaxInfrastructureRetries { get; init; } = 5; // TODO: Add range validation (e.g., 0–10) consistent with other config properties
+    public int MaxInfrastructureRetries
+    {
+        get => _maxInfrastructureRetries;
+        init => _maxInfrastructureRetries = value is >= 0 and <= 10
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(MaxInfrastructureRetries), value, "Value must be between 0 and 10.");
+    }
+    private readonly int _maxInfrastructureRetries = 5;
 }
 
 /// <summary>
