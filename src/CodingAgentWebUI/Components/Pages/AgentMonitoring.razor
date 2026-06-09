@@ -15,6 +15,8 @@
 @inject OrchestratorRunService RunService
 @inject PipelineOrchestrationService PipelineService
 @inject IConfigurationStore ConfigStore
+@inject IConsolidationService ConsolidationService
+@inject ConsolidationQueueService ConsolidationQueue
 @inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
 @inject IJSRuntime JS
 @using Microsoft.AspNetCore.SignalR
@@ -26,19 +28,20 @@
 
     <!-- Active Runs -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2>🔄 Active Runs (@_activeRuns.Count)</h2>
+        <h2>🔄 Active Runs (@(_activeRuns.Count + _activeConsolidationRuns.Count))</h2>
         @{
             var implRuns = _activeRuns.Count(r => r.RunType == PipelineRunType.Implementation);
             var reviewRuns = _activeRuns.Count(r => r.RunType == PipelineRunType.Review);
             var decompRuns = _activeRuns.Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
+            var consolidationRuns = _activeConsolidationRuns.Count;
         }
-        @if (_activeRuns.Count > 0)
+        @if (_activeRuns.Count + _activeConsolidationRuns.Count > 0)
         {
             <div class="monitoring-run-counts" style="margin-bottom: 8px; font-size: 0.85rem; color: var(--text-muted);">
-                🔨 @implRuns implementation · 🔍 @reviewRuns review · 🧩 @decompRuns decomposition
+                🔨 @implRuns implementation · 🔍 @reviewRuns review · 🧩 @decompRuns decomposition · 🧠 @consolidationRuns consolidation
             </div>
         }
-        @if (_activeRuns.Count == 0)
+        @if (_activeRuns.Count == 0 && _activeConsolidationRuns.Count == 0)
         {
             <div class="monitoring-empty">No active pipeline runs.</div>
         }
@@ -117,6 +120,27 @@
                                         </button>
                                     }
                                 </td>
+                            </tr>
+                        }
+                        @foreach (var cRun in _activeConsolidationRuns)
+                        {
+                            var cElapsed = DateTime.UtcNow - cRun.StartedAtUtc;
+                            var cAgent = _agents.FirstOrDefault(a => a.ActiveJobId == cRun.RunId);
+                            <tr>
+                                <td class="monitoring-mono" title="@cRun.RunId">@cRun.RunId</td>
+                                <td>
+                                    <span class="run-type-badge run-type-consolidation" title="@FormatConsolidationRunType(cRun.Type)">
+                                        @GetConsolidationTypeIcon(cRun.Type) @FormatConsolidationRunTypeShort(cRun.Type)
+                                    </span>
+                                </td>
+                                <td title="@(cRun.TemplateName ?? "Global")">@(cRun.TemplateName ?? "Global")</td>
+                                <td title="@(cAgent?.AgentId ?? "—")">@(cAgent?.AgentId ?? "—")</td>
+                                <td>
+                                    <span class="monitoring-step monitoring-step-running">Running</span>
+                                </td>
+                                <td>@cRun.StartedAtUtc.ToLocalTime().ToString("HH:mm:ss")</td>
+                                <td>@cElapsed.ToString(@"hh\:mm\:ss")</td>
+                                <td>—</td>
                             </tr>
                         }
                     </tbody>
@@ -355,8 +379,8 @@
 
     <!-- Job Queue -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2>📋 Job Queue (@_queuedJobs.Count)</h2>
-        @if (_queuedJobs.Count == 0)
+        <h2>📋 Job Queue (@(_queuedJobs.Count + _queuedConsolidationRuns.Count))</h2>
+        @if (_queuedJobs.Count == 0 && _queuedConsolidationRuns.Count == 0)
         {
             <div class="monitoring-empty">No pending jobs in queue.</div>
         }
@@ -367,6 +391,7 @@
                     <thead>
                         <tr>
                             <th>#</th>
+                            <th>Type</th>
                             <th>Issue</th>
                             <th>Initiated By</th>
                             <th>Enqueued At</th>
@@ -382,6 +407,24 @@
                             var waitTime = DateTimeOffset.UtcNow - job.EnqueuedAt;
                             <tr>
                                 <td>@position</td>
+                                <td>
+                                    @if (job.RunType == PipelineRunType.Review)
+                                    {
+                                        <span class="run-type-badge run-type-review" title="PR Review">🔍 Review</span>
+                                    }
+                                    else if (job.RunType == PipelineRunType.DecompositionAnalysis)
+                                    {
+                                        <span class="run-type-badge run-type-decomp" title="Decomposition Analysis">🧩 Decomp (A)</span>
+                                    }
+                                    else if (job.RunType == PipelineRunType.Decomposition)
+                                    {
+                                        <span class="run-type-badge run-type-decomp" title="Decomposition">🧩 Decomp</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="run-type-badge run-type-impl" title="Implementation">🔨 Impl</span>
+                                    }
+                                </td>
                                 <td title="#@job.IssueIdentifier @job.IssueTitle">#@job.IssueIdentifier @job.IssueTitle</td>
                                 <td title="@job.InitiatedBy">@job.InitiatedBy</td>
                                 <td>@job.EnqueuedAt.ToLocalTime().ToString("HH:mm:ss")</td>
@@ -401,6 +444,41 @@
                                 </td>
                                 <td>
                                     <button class="btn-cancel-small" @onclick="() => RemoveFromQueue(job.IssueIdentifier)">
+                                        Remove
+                                    </button>
+                                </td>
+                            </tr>
+                            position++;
+                        }
+                        @foreach (var cRun in _queuedConsolidationRuns)
+                        {
+                            var cWaitTime = DateTime.UtcNow - cRun.StartedAtUtc;
+                            <tr>
+                                <td>@position</td>
+                                <td>
+                                    <span class="run-type-badge run-type-consolidation" title="@FormatConsolidationRunType(cRun.Type)">
+                                        @GetConsolidationTypeIcon(cRun.Type) @FormatConsolidationRunTypeShort(cRun.Type)
+                                    </span>
+                                </td>
+                                <td title="@(cRun.TemplateName ?? "Global")">@(cRun.TemplateName ?? "Global")</td>
+                                <td>consolidation</td>
+                                <td>@cRun.StartedAtUtc.ToLocalTime().ToString("HH:mm:ss")</td>
+                                <td>@cWaitTime.ToString(@"hh\:mm\:ss")</td>
+                                <td>
+                                    @if (cRun.QueuedRequiredLabels is { Count: > 0 })
+                                    {
+                                        @foreach (var label in cRun.QueuedRequiredLabels)
+                                        {
+                                            <span class="sidebar-label">@label</span>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <span class="monitoring-muted">any</span>
+                                    }
+                                </td>
+                                <td>
+                                    <button class="btn-cancel-small" @onclick="() => CancelConsolidationRun(cRun.RunId)">
                                         Remove
                                     </button>
                                 </td>
@@ -627,6 +705,8 @@
     private IReadOnlyList<PipelineRun> _activeRuns = [];
     private IReadOnlyList<AgentEntry> _agents = [];
     private IReadOnlyList<PendingJob> _queuedJobs = [];
+    private IReadOnlyList<ConsolidationRun> _activeConsolidationRuns = [];
+    private IReadOnlyList<ConsolidationRun> _queuedConsolidationRuns = [];
     private Dictionary<string, ProviderConfig> _providerConfigLookup = new();
     private Dictionary<string, AgentProfile> _profileLookup = new();
     private Dictionary<string, QualityGateConfiguration> _qgcLookup = new();
@@ -648,6 +728,7 @@
     protected override async Task OnInitializedAsync()
     {
         PipelineService.OnChange += HandleStateChanged;
+        ConsolidationService.OnChange += HandleStateChanged;
 
         // Refresh every 2 seconds for heartbeat/elapsed updates
         _refreshTimer = new Timer(RefreshTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
@@ -728,6 +809,25 @@
         _agents = Registry.GetAllAgents();
         _queuedJobs = Dispatcher.GetQueuedJobs();
         _runHistory = PipelineService.GetRunHistory();
+        RefreshConsolidationDataAsync();
+    }
+
+    private async void RefreshConsolidationDataAsync()
+    {
+        try
+        {
+            var allConsolidationRuns = await ConsolidationService.GetRunHistoryAsync(CancellationToken.None);
+            _activeConsolidationRuns = allConsolidationRuns
+                .Where(r => r.Status == ConsolidationRunStatus.Running)
+                .ToList();
+            _queuedConsolidationRuns = allConsolidationRuns
+                .Where(r => r.Status == ConsolidationRunStatus.Queued)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to load consolidation runs for monitoring page");
+        }
     }
 
     private async void RefreshTick(object? state)
@@ -824,6 +924,13 @@
         StateHasChanged();
     }
 
+    private async Task CancelConsolidationRun(string runId)
+    {
+        await ConsolidationService.CancelQueuedRunAsync(runId, CancellationToken.None);
+        RefreshData();
+        StateHasChanged();
+    }
+
     private void SelectAgent(string agentId)
     {
         // Find the active run for this agent and open the run detail modal
@@ -889,6 +996,30 @@
         _ => "Implementation"
     };
 
+    private static string FormatConsolidationRunType(ConsolidationRunType type) => type switch
+    {
+        ConsolidationRunType.BrainConsolidation => "Brain Consolidation",
+        ConsolidationRunType.RefactoringDetection => "Refactoring Detection",
+        ConsolidationRunType.HarnessSuggestions => "Harness Suggestions",
+        _ => type.ToString()
+    };
+
+    private static string FormatConsolidationRunTypeShort(ConsolidationRunType type) => type switch
+    {
+        ConsolidationRunType.BrainConsolidation => "Brain",
+        ConsolidationRunType.RefactoringDetection => "Refactor",
+        ConsolidationRunType.HarnessSuggestions => "Harness",
+        _ => type.ToString()
+    };
+
+    private static string GetConsolidationTypeIcon(ConsolidationRunType type) => type switch
+    {
+        ConsolidationRunType.BrainConsolidation => "🧠",
+        ConsolidationRunType.RefactoringDetection => "🔄",
+        ConsolidationRunType.HarnessSuggestions => "✨",
+        _ => "📋"
+    };
+
     private static string FormatDuration(DateTime startedAt, DateTime? completedAt)
     {
         if (completedAt is null) return "—";
@@ -929,5 +1060,6 @@
         _disposed = true;
         _refreshTimer?.Dispose();
         PipelineService.OnChange -= HandleStateChanged;
+        ConsolidationService.OnChange -= HandleStateChanged;
     }
 }

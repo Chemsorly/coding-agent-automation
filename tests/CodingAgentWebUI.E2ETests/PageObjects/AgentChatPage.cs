@@ -49,6 +49,11 @@ public sealed class AgentChatPage
     /// </summary>
     public async Task<string?> GetResponseTextAsync(int timeoutMs = 15_000)
     {
+        // Wait for at least one agent message to appear
+        await _page.WaitForSelectorAsync(
+            ".chat-message-agent .chat-message-content pre",
+            new() { Timeout = timeoutMs });
+
         // Wait for streaming to finish (no more .chat-streaming elements)
         await _page.WaitForFunctionAsync(
             "() => !document.querySelector('.chat-streaming')",
