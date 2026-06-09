@@ -61,7 +61,7 @@ public class EpicDeduplicationPropertyTests
             mockProviderFactory.Object,
             issueParser,
             new AgentPhaseExecutor(mockLogger.Object),
-            new QualityGateExecutor(mockQualityGateValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
+            new QualityGateExecutor(mockQualityGateValidator.Object, new PullRequestOrchestrator(mockLogger.Object), new CiLogWriter(mockLogger.Object), new FeedbackService(mockLogger.Object), mockLogger.Object),
             mockLogger.Object,
             mockBrainUpdateService.Object,
             mockHistoryService.Object,

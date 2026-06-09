@@ -201,7 +201,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
             MockFactory.Object,
             new IssueDescriptionParser(),
             new AgentPhaseExecutor(MockLogger.Object),
-            new QualityGateExecutor(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), MockLogger.Object),
+            new QualityGateExecutor(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), new CiLogWriter(MockLogger.Object), new FeedbackService(MockLogger.Object), MockLogger.Object),
             MockLogger.Object,
             brainUpdateService: new BrainUpdateService(MockLogger.Object),
             historyService: new PipelineRunHistoryService(MockLogger.Object, RunsDir));

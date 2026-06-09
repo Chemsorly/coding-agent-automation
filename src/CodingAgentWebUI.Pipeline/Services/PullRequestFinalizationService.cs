@@ -12,7 +12,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// that was previously duplicated between PipelineOrchestrationService and LocalPipelineExecutor.
 /// Stateless service — all dependencies are passed per-call.
 /// </summary>
-internal sealed class PullRequestFinalizationService
+public sealed class PullRequestFinalizationService
 {
     private readonly Serilog.ILogger _logger;
 

@@ -296,7 +296,7 @@ public sealed class LocalPipelineExecutor
         // Orchestrators
         var agentExecution = new AgentPhaseExecutor(_logger);
         var prOrchestrator = new PullRequestOrchestrator(_logger);
-        var qualityGates = new QualityGateExecutor(_qualityGateValidator, prOrchestrator, _logger, _historyService);
+        var qualityGates = new QualityGateExecutor(_qualityGateValidator, prOrchestrator, new CiLogWriter(_logger), _feedbackService, _logger, _historyService);
         BrainSyncService? brainSync = _brainUpdateService is not null
             ? new BrainSyncService(_brainUpdateService, _logger)
             : null;

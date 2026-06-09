@@ -52,7 +52,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             _mockFactory.Object,
             new IssueDescriptionParser(),
             new AgentPhaseExecutor(_mockLogger.Object),
-            new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
+            new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
             _mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: mockHistoryService.Object);
@@ -1620,7 +1620,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             mockFactory.Object,
             new IssueDescriptionParser(),
             new AgentPhaseExecutor(mockLogger.Object),
-            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), mockLogger.Object),
+            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), new CiLogWriter(mockLogger.Object), new FeedbackService(mockLogger.Object), mockLogger.Object),
             mockLogger.Object,
             brainUpdateService: mockBrainUpdateService.Object,
             historyService: mockHistoryService.Object);
@@ -3466,7 +3466,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             _mockFactory.Object,
             new IssueDescriptionParser(),
             new AgentPhaseExecutor(_mockLogger.Object),
-            new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
+            new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
             _mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: mockHistoryService.Object,

@@ -20,18 +20,22 @@ internal partial class QualityGateExecutor : IQualityGateExecutor
     public QualityGateExecutor(
         IQualityGateValidator qualityGateValidator,
         PullRequestOrchestrator prOrchestrator,
+        CiLogWriter ciLogWriter,
+        FeedbackService feedbackService,
         Serilog.ILogger logger,
         IPipelineRunHistoryService? historyService = null)
     {
         ArgumentNullException.ThrowIfNull(qualityGateValidator);
         ArgumentNullException.ThrowIfNull(prOrchestrator);
+        ArgumentNullException.ThrowIfNull(ciLogWriter);
+        ArgumentNullException.ThrowIfNull(feedbackService);
         ArgumentNullException.ThrowIfNull(logger);
 
         _qualityGateValidator = qualityGateValidator;
-        _ciLogWriter = new CiLogWriter(logger);
+        _ciLogWriter = ciLogWriter;
         _prOrchestrator = prOrchestrator;
         _historyService = historyService;
-        _feedbackService = new FeedbackService(logger);
+        _feedbackService = feedbackService;
         _logger = logger;
     }
 

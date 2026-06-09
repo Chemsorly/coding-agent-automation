@@ -63,7 +63,7 @@ public class AgentJobDispatcherTests : IDisposable
             _mockProviderFactory.Object,
             issueParser,
             new AgentPhaseExecutor(_mockLogger.Object),
-            new QualityGateExecutor(mockQualityGateValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), _mockLogger.Object),
+            new QualityGateExecutor(mockQualityGateValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
             _mockLogger.Object,
             mockBrainUpdateService.Object,
             _mockHistoryService.Object,
