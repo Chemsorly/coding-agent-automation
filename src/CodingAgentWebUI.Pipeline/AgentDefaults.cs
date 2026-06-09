@@ -57,4 +57,13 @@ public static class AgentDefaults
 
     /// <summary>Password for OpenCode server authentication.</summary>
     public const string EnvOpenCodeServerPassword = "OPENCODE_SERVER_PASSWORD";
+
+    /// <summary>Anthropic API key for LLM access.</summary>
+    public const string EnvAnthropicApiKey = "ANTHROPIC_API_KEY";
+
+    /// <summary>OpenAI API key for LLM access.</summary>
+    public const string EnvOpenAiApiKey = "OPENAI_API_KEY";
+
+    /// <summary>OpenRouter API key for LLM access.</summary>
+    public const string EnvOpenRouterApiKey = "OPENROUTER_API_KEY";
 }
