@@ -655,6 +655,93 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     #endregion
 
+    #region ReportChatResponse / ReportChatCompleted — Session Ownership
+
+    [Fact]
+    public async Task ReportChatResponse_AgentOwnsSession_Succeeds()
+    {
+        var agent = CreateAgent();
+        agent.ActiveChatSessionId = "s1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        var hub = CreateHubWithOrchestration();
+        var message = new ChatResponseMessage { SessionId = "s1", Lines = new[] { "hello" } };
+
+        await hub.ReportChatResponse(message);
+        // No exception — success
+    }
+
+    [Fact]
+    public async Task ReportChatResponse_AgentDoesNotOwnSession_ThrowsHubException()
+    {
+        var agent = CreateAgent();
+        agent.ActiveChatSessionId = "s1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        var hub = CreateHub();
+        var message = new ChatResponseMessage { SessionId = "s2", Lines = new[] { "hello" } };
+
+        var act = () => hub.ReportChatResponse(message);
+        await act.Should().ThrowAsync<HubException>().WithMessage("*not assigned*");
+    }
+
+    [Fact]
+    public async Task ReportChatResponse_UnknownConnection_ThrowsHubException()
+    {
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
+
+        var hub = CreateHub();
+        var message = new ChatResponseMessage { SessionId = "s1", Lines = new[] { "hello" } };
+
+        var act = () => hub.ReportChatResponse(message);
+        await act.Should().ThrowAsync<HubException>().WithMessage("*not assigned*");
+    }
+
+    [Fact]
+    public async Task ReportChatCompleted_AgentOwnsSession_Succeeds()
+    {
+        var agent = CreateAgent();
+        agent.ActiveChatSessionId = "s1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        var hub = CreateHubWithOrchestration();
+        var message = new ChatCompletedMessage { SessionId = "s1", ExitCode = 0 };
+
+        await hub.ReportChatCompleted(message);
+        // No exception — success
+    }
+
+    [Fact]
+    public async Task ReportChatCompleted_AgentDoesNotOwnSession_ThrowsHubException()
+    {
+        var agent = CreateAgent();
+        agent.ActiveChatSessionId = "s1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        var hub = CreateHub();
+        var message = new ChatCompletedMessage { SessionId = "s2", ExitCode = 0 };
+
+        var act = () => hub.ReportChatCompleted(message);
+        await act.Should().ThrowAsync<HubException>().WithMessage("*not assigned*");
+    }
+
+    [Fact]
+    public async Task ReportChatCompleted_ClearsActiveChatSessionId()
+    {
+        var agent = CreateAgent();
+        agent.ActiveChatSessionId = "s1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        var hub = CreateHubWithOrchestration();
+        var message = new ChatCompletedMessage { SessionId = "s1", ExitCode = 0 };
+
+        await hub.ReportChatCompleted(message);
+
+        agent.ActiveChatSessionId.Should().BeNull();
+    }
+
+    #endregion
+
     public void Dispose()
     {
         foreach (var orchestration in _orchestrationInstances)
