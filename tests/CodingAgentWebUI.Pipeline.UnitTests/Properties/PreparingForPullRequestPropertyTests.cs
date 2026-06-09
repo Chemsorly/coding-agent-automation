@@ -275,7 +275,7 @@ public class PreparingForPullRequestPropertyTests
             factory.Object,
             new IssueDescriptionParser(),
             new AgentPhaseExecutor(logger.Object),
-            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(logger.Object), logger.Object),
+            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(logger.Object), new CiLogWriter(logger.Object), new FeedbackService(logger.Object), logger.Object),
             logger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
@@ -311,7 +311,7 @@ public class PreparingForPullRequestPropertyTests
             factory.Object,
             new IssueDescriptionParser(),
             new AgentPhaseExecutor(logger.Object),
-            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(logger.Object), logger.Object),
+            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(logger.Object), new CiLogWriter(logger.Object), new FeedbackService(logger.Object), logger.Object),
             logger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);

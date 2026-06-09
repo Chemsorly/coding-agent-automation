@@ -56,7 +56,7 @@ public class BuildAgentPhaseContextTests
             IssueOps = _issueOps.Object,
             AgentExecution = new AgentPhaseExecutor(_logger),
             QualityGates = new QualityGateExecutor(
-                Mock.Of<IQualityGateValidator>(), prOrchestrator, _logger),
+                Mock.Of<IQualityGateValidator>(), prOrchestrator, new CiLogWriter(_logger), new FeedbackService(_logger), _logger),
             BrainSync = null,
             PrOrchestrator = prOrchestrator,
             Logger = _logger

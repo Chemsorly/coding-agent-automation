@@ -60,6 +60,9 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<OrchestratorRunService>(),
             Log.Logger));
 
+        services.AddSingleton<IBrainSyncService>(sp => new BrainSyncService(
+            sp.GetRequiredService<IBrainUpdateService>(), Log.Logger));
+
         services.AddSingleton(sp => new PipelineOrchestrationService(
             sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IProviderFactory>(),
@@ -72,7 +75,11 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<OrchestratorRunService>(),
             sp.GetRequiredService<PipelineRunLifecycleService>(),
             sp.GetRequiredService<IQualityGateValidator>(),
-            sp.GetRequiredService<ILabelSwapper>()));
+            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<FeedbackService>(),
+            sp.GetRequiredService<PullRequestOrchestrator>(),
+            sp.GetRequiredService<PullRequestFinalizationService>(),
+            sp.GetRequiredService<IBrainSyncService>()));
 
         services.AddSingleton<IDependencyChecker>(sp => new DependencyChecker(Log.Logger));
         services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(

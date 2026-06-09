@@ -27,7 +27,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     private readonly IProviderFactory _providerFactory;
     private readonly ILabelSwapper _labelSwapper;
     private readonly IssueDescriptionParser _issueParser;
-    private readonly BrainSyncService _brainSync;
+    private readonly IBrainSyncService _brainSync;
     private readonly PullRequestOrchestrator _prOrchestrator;
     private readonly PullRequestFinalizationService _finalization;
     private readonly IPipelineRunHistoryService _historyService;
@@ -112,7 +112,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         IOrchestratorRunService? runService = null,
         PipelineRunLifecycleService? lifecycle = null,
         Interfaces.IQualityGateValidator? qualityGateValidator = null,
-        ILabelSwapper? labelSwapper = null)
+        ILabelSwapper? labelSwapper = null,
+        FeedbackService? feedbackService = null,
+        PullRequestOrchestrator? prOrchestrator = null,
+        PullRequestFinalizationService? finalization = null,
+        IBrainSyncService? brainSync = null)
     {
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
@@ -129,13 +133,13 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         _agentExecution = agentExecution;
         _qualityGates = qualityGates;
         _qualityGateValidator = qualityGateValidator;
-        _feedbackService = new FeedbackService(logger);
+        _feedbackService = feedbackService ?? new FeedbackService(logger);
         _providerManager = new PipelineProviderManager(configStore, providerFactory, logger);
 
         ArgumentNullException.ThrowIfNull(brainUpdateService);
-        _brainSync = new BrainSyncService(brainUpdateService, logger);
-        _prOrchestrator = new PullRequestOrchestrator(logger);
-        _finalization = new PullRequestFinalizationService(logger);
+        _brainSync = brainSync ?? new BrainSyncService(brainUpdateService, logger);
+        _prOrchestrator = prOrchestrator ?? new PullRequestOrchestrator(logger);
+        _finalization = finalization ?? new PullRequestFinalizationService(logger);
         _historyService = historyService ?? throw new ArgumentNullException(nameof(historyService));
 
         // Use provided lifecycle service or create one internally for backward compatibility

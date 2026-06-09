@@ -181,7 +181,7 @@ public class ActivityErrorRecordingTests : IDisposable
             IssueOps = Mock.Of<IAgentIssueOperations>(),
             AgentExecution = new AgentPhaseExecutor(logger),
             QualityGates = new QualityGateExecutor(
-                Mock.Of<IQualityGateValidator>(), prOrchestrator, logger),
+                Mock.Of<IQualityGateValidator>(), prOrchestrator, new CiLogWriter(logger), new FeedbackService(logger), logger),
             BrainSync = null,
             PrOrchestrator = prOrchestrator,
             Logger = logger

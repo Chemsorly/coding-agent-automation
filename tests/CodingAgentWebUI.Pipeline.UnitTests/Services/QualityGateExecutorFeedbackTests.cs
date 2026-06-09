@@ -61,6 +61,8 @@ public class QualityGateExecutorFeedbackTests
         _orchestrator = new QualityGateExecutor(
             _mockValidator.Object,
             new PullRequestOrchestrator(_mockLogger.Object),
+            new CiLogWriter(_mockLogger.Object),
+            new FeedbackService(_mockLogger.Object),
             _mockLogger.Object,
             _mockHistoryService.Object);
 

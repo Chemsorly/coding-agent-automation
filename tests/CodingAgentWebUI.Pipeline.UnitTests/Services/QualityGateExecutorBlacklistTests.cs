@@ -38,6 +38,8 @@ public class QualityGateExecutorBlacklistTests
         _orchestrator = new QualityGateExecutor(
             _mockValidator.Object,
             new PullRequestOrchestrator(_mockLogger.Object),
+            new CiLogWriter(_mockLogger.Object),
+            new FeedbackService(_mockLogger.Object),
             _mockLogger.Object);
 
         _mockCallbacks.Setup(c => c.SwapAgentLabel(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
