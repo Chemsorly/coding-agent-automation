@@ -33,14 +33,26 @@ public sealed partial class AgentHub
     }
 
     /// <summary>
-    /// Agent rejects a job. Orchestrator should select a different agent or re-queue.
+    /// Agent rejects a job. Cleans up the orphaned run so the pipeline loop can
+    /// re-discover and re-dispatch the issue on its next cycle.
+    /// This should be rare after the atomic agent reservation fix in SelectAgent.
     /// </summary>
     public Task JobRejected(string jobId, string reason)
     {
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         _logger.Warning("Agent {AgentId} rejected job {JobId}: {Reason}", agent?.AgentId, jobId, reason);
 
-        // Transition agent back to Idle
+        // Clean up the orphaned run so the issue can be re-dispatched
+        var run = _facade.GetRun(jobId);
+        if (run is not null)
+        {
+            _facade.RemoveRun(jobId);
+            _facade.MarkIssueComplete(run.IssueIdentifier);
+            _logger.Information("Removed rejected run {JobId} for issue {IssueIdentifier}",
+                jobId, run.IssueIdentifier);
+        }
+
+        // Transition agent back to Idle (it may still be marked Busy from reservation)
         if (agent is not null)
         {
             agent.ActiveJobId = null;

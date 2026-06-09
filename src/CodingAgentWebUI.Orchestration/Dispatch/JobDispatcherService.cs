@@ -56,6 +56,8 @@ public sealed class JobDispatcherService
 
     private readonly object _queueLock = new();
 
+    private readonly object _selectionLock = new();
+
     public JobDispatcherService(AgentRegistryService registry, ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(registry);
@@ -65,24 +67,37 @@ public sealed class JobDispatcherService
     }
 
     /// <summary>
-    /// Selects an idle agent whose labels are a superset of the required labels.
+    /// Selects an idle agent whose labels are a superset of the required labels and
+    /// atomically reserves it by transitioning to <see cref="AgentStatus.Busy"/>.
+    /// This prevents concurrent dispatch paths from selecting the same agent.
     /// When multiple agents match, selects the one idle longest (FIFO by
     /// <see cref="AgentEntry.LastJobCompletedAt"/>, falling back to <see cref="AgentEntry.RegisteredAt"/>).
     /// </summary>
-    /// <returns>The best matching idle agent, or <c>null</c> if none available.</returns>
+    /// <returns>The reserved agent (already transitioned to Busy), or <c>null</c> if none available.</returns>
     public AgentEntry? SelectAgent(IReadOnlyList<string> requiredLabels)
     {
         ArgumentNullException.ThrowIfNull(requiredLabels);
 
-        var idleAgents = _registry.GetIdleAgents();
+        lock (_selectionLock)
+        {
+            var idleAgents = _registry.GetIdleAgents();
 
-        var compatible = idleAgents
-            .Where(agent => !agent.Disabled)
-            .Where(agent => LabelMatchHelper.IsLabelMatch(agent.Labels, requiredLabels))
-            .OrderBy(agent => agent.LastJobCompletedAt ?? agent.RegisteredAt)
-            .ToList();
+            var compatible = idleAgents
+                .Where(agent => !agent.Disabled)
+                .Where(agent => LabelMatchHelper.IsLabelMatch(agent.Labels, requiredLabels))
+                .OrderBy(agent => agent.LastJobCompletedAt ?? agent.RegisteredAt)
+                .ToList();
 
-        return compatible.Count > 0 ? compatible[0] : null;
+            if (compatible.Count == 0)
+                return null;
+
+            var selected = compatible[0];
+
+            // Atomically reserve the agent so no other dispatch path can select it
+            _registry.TransitionStatus(selected.AgentId, AgentStatus.Busy);
+
+            return selected;
+        }
     }
 
     /// <summary>
