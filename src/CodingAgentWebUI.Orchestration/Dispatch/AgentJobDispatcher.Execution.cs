@@ -31,19 +31,17 @@ public sealed partial class AgentJobDispatcher
             project = EnsureProject(project, issueIdentifier, "issue");
 
             // Resolve profile for this agent
-            var profile = await ResolveProfileAsync(agent, ct);
+            var profile = await _resolution.ResolveProfileAsync(agent, ct);
             if (profile is null)
                 return false;
 
             var agentProviderId = profile.AgentProviderConfigId;
 
             // Resolve quality gate configurations for this job
-            var allQgcs = await _configStore.LoadQualityGateConfigsAsync(ct);
-            var resolvedQgcs = _qualityGateResolver.Resolve(allQgcs, requiredLabels);
+            var resolvedQgcs = await _resolution.ResolveQualityGatesAsync(requiredLabels, ct);
 
             // Resolve reviewer configurations for this job
-            var allReviewerConfigs = await _configStore.LoadReviewerConfigsAsync(ct);
-            var resolvedReviewerConfigs = _reviewerResolver.Resolve(allReviewerConfigs, requiredLabels);
+            var resolvedReviewerConfigs = await _resolution.ResolveReviewersAsync(requiredLabels, ct);
 
             // Create the dispatched run via PipelineOrchestrationService
             var run = await _orchestration.CreateDispatchedRunAsync(
@@ -153,15 +151,14 @@ public sealed partial class AgentJobDispatcher
             project = EnsureProject(project, request.PrIdentifier, "PR");
 
             // Resolve profile for this agent
-            var profile = await ResolveProfileAsync(agent, ct);
+            var profile = await _resolution.ResolveProfileAsync(agent, ct);
             if (profile is null)
                 return false;
 
             var agentProviderId = profile.AgentProviderConfigId;
 
             // Resolve reviewer configurations for this job (quality gates not needed for reviews)
-            var allReviewerConfigs = await _configStore.LoadReviewerConfigsAsync(ct);
-            var resolvedReviewerConfigs = _reviewerResolver.Resolve(allReviewerConfigs, requiredLabels);
+            var resolvedReviewerConfigs = await _resolution.ResolveReviewersAsync(requiredLabels, ct);
 
             // Create the dispatched run via PipelineOrchestrationService
             var run = await _orchestration.CreateDispatchedRunAsync(
@@ -320,7 +317,7 @@ public sealed partial class AgentJobDispatcher
             project = EnsureProject(project, epicIdentifier, "epic");
 
             // Resolve profile for this agent
-            var profile = await ResolveProfileAsync(agent, ct);
+            var profile = await _resolution.ResolveProfileAsync(agent, ct);
             if (profile is null)
                 return false;
 
@@ -339,7 +336,7 @@ public sealed partial class AgentJobDispatcher
             }
 
             // Load config early — needed for WorkspaceBaseDirectory before settings override
-            var config = await _configStore.LoadPipelineConfigAsync(ct);
+            var config = await _resolution.ConfigStore.LoadPipelineConfigAsync(ct);
             var runId = run.RunId;
             var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, "decomposition", runId);
 
@@ -387,7 +384,7 @@ public sealed partial class AgentJobDispatcher
             DecompositionProjectContext? projectContext = null;
             if (!string.IsNullOrEmpty(project.EpicIssueProviderId))
             {
-                var repoProviderConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+                var repoProviderConfigs = await _resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
                 var repoConfigLookup = repoProviderConfigs.ToDictionary(c => c.Id);
                 var templateLookup = config.PipelineJobTemplates.ToDictionary(t => t.Id);
 
@@ -530,26 +527,9 @@ public sealed partial class AgentJobDispatcher
         IReadOnlyList<ProviderConfig> providerConfigs,
         CancellationToken ct)
     {
-        var config = await _configStore.LoadPipelineConfigAsync(ct);
+        var config = await _resolution.ConfigStore.LoadPipelineConfigAsync(ct);
         config = PipelineConfiguration.ApplyProjectOverrides(config, project);
         return ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs);
-    }
-
-    /// <summary>
-    /// Resolves the agent profile by loading all profiles and matching against the agent's labels.
-    /// Returns <c>null</c> (with a warning log) if no profile matches.
-    /// </summary>
-    private async Task<AgentProfile?> ResolveProfileAsync(AgentEntry agent, CancellationToken ct)
-    {
-        var profiles = await _configStore.LoadAgentProfilesAsync(ct);
-        var profile = _profileResolver.Resolve(profiles, agent.Labels);
-        if (profile is null)
-        {
-            var labelsStr = string.Join(", ", agent.Labels);
-            _logger.Warning("No profile matches agent {AgentId} labels [{Labels}]", agent.AgentId, labelsStr);
-        }
-
-        return profile;
     }
 
     /// <summary>
@@ -610,7 +590,7 @@ public sealed partial class AgentJobDispatcher
         try
         {
             // Resolve repository provider to extract linked issues
-            var repoConfig = await _configStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
+            var repoConfig = await _resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
             if (repoConfig == null)
             {
                 _logger.Warning("Repo provider config '{ConfigId}' not found for linked issue extraction", repoProviderId);
@@ -636,7 +616,7 @@ public sealed partial class AgentJobDispatcher
             }
 
             // Resolve issue provider to fetch issue details
-            var issueConfig = await _configStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
+            var issueConfig = await _resolution.ConfigStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
             if (issueConfig == null)
             {
                 _logger.Warning("Issue provider config '{ConfigId}' not found for linked issue pre-fetch", issueProviderId);
@@ -683,7 +663,7 @@ public sealed partial class AgentJobDispatcher
         string issueProviderId,
         CancellationToken ct)
     {
-        var issueConfig = await _configStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
+        var issueConfig = await _resolution.ConfigStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
         if (issueConfig == null)
             return null;
 
@@ -749,7 +729,7 @@ public sealed partial class AgentJobDispatcher
     {
         var configs = new List<ProviderConfig>();
 
-        var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+        var repoConfigs = await _resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
         var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == repoProviderId);
         if (repoConfig != null)
             configs.Add(repoConfig);
@@ -770,7 +750,7 @@ public sealed partial class AgentJobDispatcher
             }
         }
 
-        var agentConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
+        var agentConfigs = await _resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
         var agentConfig = agentConfigs.FirstOrDefault(c => c.Id == agentProviderId);
         if (agentConfig != null)
             configs.Add(agentConfig);
@@ -784,7 +764,7 @@ public sealed partial class AgentJobDispatcher
 
         if (!string.IsNullOrEmpty(pipelineProviderId))
         {
-            var pipelineConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
+            var pipelineConfigs = await _resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
             var pipelineConfig = pipelineConfigs.FirstOrDefault(c => c.Id == pipelineProviderId);
             if (pipelineConfig != null)
                 configs.Add(pipelineConfig);

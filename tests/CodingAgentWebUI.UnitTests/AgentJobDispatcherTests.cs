@@ -76,12 +76,14 @@ public class AgentJobDispatcherTests : IDisposable
             _runService,
             orchestration,
             _tokenVending,
-            _mockConfigStore.Object,
             _mockProviderFactory.Object,
             _mockLabelSwapper.Object,
-            new ProfileResolver(),
-            new QualityGateResolver(),
-            new ReviewerResolver(),
+            new DispatchResolutionService(
+                new ProfileResolver(),
+                new QualityGateResolver(),
+                new ReviewerResolver(),
+                _mockConfigStore.Object,
+                _mockLogger.Object),
             _mockAgentComm.Object,
             _mockLogger.Object);
     }

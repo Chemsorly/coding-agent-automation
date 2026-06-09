@@ -73,12 +73,14 @@ public class EpicDeduplicationPropertyTests
             runService,
             orchestration,
             tokenVending,
-            mockConfigStore.Object,
             mockProviderFactory.Object,
             mockLabelSwapper.Object,
-            new ProfileResolver(),
-            new QualityGateResolver(),
-            new ReviewerResolver(),
+            new DispatchResolutionService(
+                new ProfileResolver(),
+                new QualityGateResolver(),
+                new ReviewerResolver(),
+                mockConfigStore.Object,
+                mockLogger.Object),
             mockAgentComm.Object,
             mockLogger.Object);
 
