@@ -3,6 +3,7 @@ using System.Text.Json;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Hosting;
@@ -153,6 +154,7 @@ public sealed class AgentWorkerService : BackgroundService
                 }
                 catch (Exception ex)
                 {
+                    PipelineTelemetry.AgentHeartbeatFailures.Add(1);
                     _logger.Warning(ex, "Heartbeat failed, will retry on next tick");
                 }
             }
@@ -174,8 +176,16 @@ public sealed class AgentWorkerService : BackgroundService
 
     private async Task HandleAssignJobAsync(JobAssignmentMessage message)
     {
+        PipelineTelemetry.AgentJobsReceived.Add(1);
+
+        using var receiveActivity = PipelineTelemetry.ActivitySource.StartActivity("Agent.ReceiveJob");
+        receiveActivity?.SetTag("job_id", message.JobId);
+        receiveActivity?.SetTag("run_type", "implementation");
+
         if (!TryAcquireJobSlot(message.JobId, out var busyWith))
         {
+            PipelineTelemetry.AgentJobsRejected.Add(1,
+                new KeyValuePair<string, object?>("reason", PipelineTelemetry.AgentRejectionReasons.Busy));
             _logger.Warning("Rejecting job {JobId} — agent is busy with {ActiveJobId}",
                 message.JobId, busyWith);
             try
@@ -184,6 +194,8 @@ public sealed class AgentWorkerService : BackgroundService
             }
             catch (Exception ex)
             {
+                receiveActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                receiveActivity?.AddException(ex);
                 _logger.Warning(ex, "Failed to notify orchestrator of job rejection {JobId}", message.JobId);
             }
             return;
@@ -199,6 +211,8 @@ public sealed class AgentWorkerService : BackgroundService
         }
         catch (Exception ex)
         {
+            receiveActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            receiveActivity?.AddException(ex);
             _logger.Error(ex, "Failed to send JobAccepted for {JobId}", message.JobId);
             lock (_busyLock)
             {
@@ -256,6 +270,9 @@ public sealed class AgentWorkerService : BackgroundService
             finally
             {
                 // Report completion
+                using var completionActivity = PipelineTelemetry.ActivitySource.StartActivity("Agent.ReportCompletion");
+                completionActivity?.SetTag("job_id", message.JobId);
+                completionActivity?.SetTag("success", completion?.FinalStep is not (PipelineStep.Failed or PipelineStep.Cancelled));
                 try
                 {
                     if (completion is not null)
@@ -264,6 +281,8 @@ public sealed class AgentWorkerService : BackgroundService
                 }
                 catch (Exception ex)
                 {
+                    completionActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    completionActivity?.AddException(ex);
                     _logger.Error(ex, "Failed to report job completion for {JobId}", message.JobId);
                 }
 
@@ -489,6 +508,7 @@ public sealed class AgentWorkerService : BackgroundService
     /// </summary>
     private async Task HandleReconnectedAsync(string? connectionId)
     {
+        PipelineTelemetry.AgentReconnections.Add(1);
         _logger.Information("Re-registering agent {AgentId} after reconnection (connectionId={ConnectionId})",
             _agentId, connectionId);
 
@@ -603,8 +623,16 @@ public sealed class AgentWorkerService : BackgroundService
 
     private async Task HandleAssignConsolidationJobAsync(ConsolidationJobMessage message)
     {
+        PipelineTelemetry.AgentJobsReceived.Add(1);
+
+        using var receiveActivity = PipelineTelemetry.ActivitySource.StartActivity("Agent.ReceiveJob");
+        receiveActivity?.SetTag("job_id", message.JobId);
+        receiveActivity?.SetTag("run_type", "consolidation");
+
         if (!TryAcquireJobSlot(message.JobId, out var busyWith))
         {
+            PipelineTelemetry.AgentJobsRejected.Add(1,
+                new KeyValuePair<string, object?>("reason", PipelineTelemetry.AgentRejectionReasons.Busy));
             _logger.Warning("Rejecting consolidation job {JobId} — agent is busy with {ActiveJobId}",
                 message.JobId, busyWith);
             try
@@ -613,6 +641,8 @@ public sealed class AgentWorkerService : BackgroundService
             }
             catch (Exception ex)
             {
+                receiveActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                receiveActivity?.AddException(ex);
                 _logger.Warning(ex, "Failed to notify orchestrator of consolidation job rejection {JobId}", message.JobId);
             }
             return;

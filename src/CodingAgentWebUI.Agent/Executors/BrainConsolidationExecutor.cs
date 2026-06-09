@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Services.Prompts;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Agent.Executors;
 
@@ -53,23 +55,52 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             Directory.CreateDirectory(workspacePath);
             Logger.Information("Cloning brain repo for consolidation run {RunId} into {Workspace}",
                 job.JobId, workspacePath);
-            await brainProvider.CloneAsync(workspacePath, ct);
+
+            using (var cloneActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.Clone"))
+            {
+                cloneActivity?.SetTag("pipeline.run_id", job.JobId);
+                try
+                {
+                    await brainProvider.CloneAsync(workspacePath, ct);
+                }
+                catch (Exception ex)
+                {
+                    cloneActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    cloneActivity?.AddException(ex);
+                    throw;
+                }
+            }
 
             // 2. Build prompt
             var prompt = ConsolidationPromptBuilder.BuildBrainConsolidationPrompt(job.LastSuccessfulRunUtc);
 
             // 3. Execute agent
             Logger.Information("Executing brain consolidation agent for run {RunId}", job.JobId);
-            var (agentResult, failure) = await ExecuteAgentAndCheckAsync(
-                agentProvider,
-                new AgentRequest
+            AgentResult agentResult;
+            ConsolidationJobResult? failure;
+            using (var agentActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.AgentExecution"))
+            {
+                agentActivity?.SetTag("pipeline.run_id", job.JobId);
+                try
                 {
-                    Prompt = prompt,
-                    WorkspacePath = workspacePath,
-                    Timeout = job.PipelineConfiguration.AgentTimeout
-                },
-                job.JobId,
-                ct);
+                    (agentResult, failure) = await ExecuteAgentAndCheckAsync(
+                        agentProvider,
+                        new AgentRequest
+                        {
+                            Prompt = prompt,
+                            WorkspacePath = workspacePath,
+                            Timeout = job.PipelineConfiguration.AgentTimeout
+                        },
+                        job.JobId,
+                        ct);
+                }
+                catch (Exception ex)
+                {
+                    agentActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    agentActivity?.AddException(ex);
+                    throw;
+                }
+            }
 
             if (failure is not null) return failure;
 
@@ -79,70 +110,87 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             var skipReview = false;
 
             // 4a. Diff summary step (wrapped in try-catch for error isolation)
-            try
+            using (var diffActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.DiffGeneration"))
             {
-                // Delete stale diff file before requesting new one
-                var diffFilePath = Path.Combine(workspacePath, AgentWorkspacePaths.BrainConsolidationDiffFilePath);
-                if (File.Exists(diffFilePath))
-                    File.Delete(diffFilePath);
-
-                onOutputLine?.Invoke("📝 Requesting diff summary from generator...");
-
-                var diffResult = await agentProvider.ExecuteAsync(
-                    new AgentRequest
-                    {
-                        Prompt = ConsolidationPromptBuilder.BuildBrainConsolidationDiffPrompt(),
-                        WorkspacePath = workspacePath,
-                        Timeout = job.PipelineConfiguration.AgentTimeout,
-                        UseResume = true
-                    },
-                    ct);
-
-                diffSummaryTokenUsage = diffResult.Usage;
-
-                // Check if diff summary file meets minimum content threshold
-                if (!File.Exists(diffFilePath))
+                diffActivity?.SetTag("pipeline.run_id", job.JobId);
+                try
                 {
-                    Logger.Warning("Diff summary file not produced at {Path}, skipping review", AgentWorkspacePaths.BrainConsolidationDiffFilePath);
-                    onOutputLine?.Invoke("⚠️ Diff summary file not produced — skipping review");
-                    skipReview = true;
-                }
-                else
-                {
-                    var diffContent = await File.ReadAllTextAsync(diffFilePath, ct);
-                    if (diffContent.Trim().Length < AdversarialReviewHelper.MinimumContentThreshold)
+                    // Delete stale diff file before requesting new one
+                    var diffFilePath = Path.Combine(workspacePath, AgentWorkspacePaths.BrainConsolidationDiffFilePath);
+                    if (File.Exists(diffFilePath))
+                        File.Delete(diffFilePath);
+
+                    onOutputLine?.Invoke("📝 Requesting diff summary from generator...");
+
+                    var diffResult = await agentProvider.ExecuteAsync(
+                        new AgentRequest
+                        {
+                            Prompt = ConsolidationPromptBuilder.BuildBrainConsolidationDiffPrompt(),
+                            WorkspacePath = workspacePath,
+                            Timeout = job.PipelineConfiguration.AgentTimeout,
+                            UseResume = true
+                        },
+                        ct);
+
+                    diffSummaryTokenUsage = diffResult.Usage;
+
+                    // Check if diff summary file meets minimum content threshold
+                    if (!File.Exists(diffFilePath))
                     {
-                        Logger.Warning("Diff summary file too short ({Length} chars), skipping review",
-                            diffContent.Trim().Length);
-                        onOutputLine?.Invoke($"⚠️ Diff summary too short ({diffContent.Trim().Length} chars) — skipping review");
+                        Logger.Warning("Diff summary file not produced at {Path}, skipping review", AgentWorkspacePaths.BrainConsolidationDiffFilePath);
+                        onOutputLine?.Invoke("⚠️ Diff summary file not produced — skipping review");
                         skipReview = true;
                     }
+                    else
+                    {
+                        var diffContent = await File.ReadAllTextAsync(diffFilePath, ct);
+                        if (diffContent.Trim().Length < AdversarialReviewHelper.MinimumContentThreshold)
+                        {
+                            Logger.Warning("Diff summary file too short ({Length} chars), skipping review",
+                                diffContent.Trim().Length);
+                            onOutputLine?.Invoke($"⚠️ Diff summary too short ({diffContent.Trim().Length} chars) — skipping review");
+                            skipReview = true;
+                        }
+                    }
                 }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                Logger.Warning(ex, "Diff summary step failed: {Message}, skipping review entirely", ex.Message);
-                onOutputLine?.Invoke($"⚠️ Diff summary failed: {ex.Message} — skipping review");
-                skipReview = true;
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    diffActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    diffActivity?.AddException(ex);
+                    Logger.Warning(ex, "Diff summary step failed: {Message}, skipping review entirely", ex.Message);
+                    onOutputLine?.Invoke($"⚠️ Diff summary failed: {ex.Message} — skipping review");
+                    skipReview = true;
+                }
             }
 
             // 4b. Review step (only if diff summary succeeded)
             if (!skipReview)
             {
-                reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
-                    agentProvider,
-                    workspacePath,
-                    ConsolidationPromptBuilder.BuildBrainConsolidationReviewPrompt(),
-                    ConsolidationPromptBuilder.BuildBrainConsolidationRefinementPrompt(),
-                    AgentWorkspacePaths.BrainConsolidationReviewFilePath,
-                    new AdversarialReviewConfig
-                    {
-                        Enabled = job.PipelineConfiguration.BrainConsolidationReviewEnabled,
-                        AgentTimeout = job.PipelineConfiguration.AgentTimeout
-                    },
-                    onOutputLine,
-                    Logger,
-                    ct);
+                using var reviewActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.AdversarialReview");
+                reviewActivity?.SetTag("pipeline.run_id", job.JobId);
+                try
+                {
+                    reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
+                        agentProvider,
+                        workspacePath,
+                        ConsolidationPromptBuilder.BuildBrainConsolidationReviewPrompt(),
+                        ConsolidationPromptBuilder.BuildBrainConsolidationRefinementPrompt(),
+                        AgentWorkspacePaths.BrainConsolidationReviewFilePath,
+                        new AdversarialReviewConfig
+                        {
+                            Enabled = job.PipelineConfiguration.BrainConsolidationReviewEnabled,
+                            AgentTimeout = job.PipelineConfiguration.AgentTimeout
+                        },
+                        onOutputLine,
+                        Logger,
+                        ct);
+                }
+                catch (Exception ex)
+                {
+                    reviewActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    reviewActivity?.AddException(ex);
+                    throw;
+                }
             }
 
             // 5. Capture token usage (preserved regardless of subsequent step outcomes)
@@ -151,42 +199,54 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
 
             // 6. Commit all changes (AFTER review/refinement completes)
             Logger.Information("Committing brain consolidation changes for run {RunId}", job.JobId);
-            try
+            using (var commitActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.Commit"))
             {
-                await brainProvider.CommitAllAsync(workspacePath, $"Brain consolidation run {job.JobId}", ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                Logger.Error(ex, "Commit failed for brain consolidation run {RunId}: {Message}", job.JobId, ex.Message);
-                return new ConsolidationJobResult
+                commitActivity?.SetTag("pipeline.run_id", job.JobId);
+                try
                 {
-                    JobId = job.JobId,
-                    Success = false,
-                    ErrorMessage = $"Commit failed: {ex.Message}",
-                    DiffSummaryTokenUsage = diffSummaryTokenUsage,
-                    ReviewTokenUsage = reviewTokenUsage,
-                    RefinementTokenUsage = refinementTokenUsage
-                };
+                    await brainProvider.CommitAllAsync(workspacePath, $"Brain consolidation run {job.JobId}", ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    commitActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    commitActivity?.AddException(ex);
+                    Logger.Error(ex, "Commit failed for brain consolidation run {RunId}: {Message}", job.JobId, ex.Message);
+                    return new ConsolidationJobResult
+                    {
+                        JobId = job.JobId,
+                        Success = false,
+                        ErrorMessage = $"Commit failed: {ex.Message}",
+                        DiffSummaryTokenUsage = diffSummaryTokenUsage,
+                        ReviewTokenUsage = reviewTokenUsage,
+                        RefinementTokenUsage = refinementTokenUsage
+                    };
+                }
             }
 
             // 7. Push to base branch
             Logger.Information("Pushing brain consolidation changes for run {RunId}", job.JobId);
-            try
+            using (var pushActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.Push"))
             {
-                await brainProvider.PushBranchAsync(workspacePath, brainProvider.BaseBranch, ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                Logger.Error(ex, "Push failed for brain consolidation run {RunId}: {Message}", job.JobId, ex.Message);
-                return new ConsolidationJobResult
+                pushActivity?.SetTag("pipeline.run_id", job.JobId);
+                try
                 {
-                    JobId = job.JobId,
-                    Success = false,
-                    ErrorMessage = $"Push failed: {ex.Message}",
-                    DiffSummaryTokenUsage = diffSummaryTokenUsage,
-                    ReviewTokenUsage = reviewTokenUsage,
-                    RefinementTokenUsage = refinementTokenUsage
-                };
+                    await brainProvider.PushBranchAsync(workspacePath, brainProvider.BaseBranch, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    pushActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    pushActivity?.AddException(ex);
+                    Logger.Error(ex, "Push failed for brain consolidation run {RunId}: {Message}", job.JobId, ex.Message);
+                    return new ConsolidationJobResult
+                    {
+                        JobId = job.JobId,
+                        Success = false,
+                        ErrorMessage = $"Push failed: {ex.Message}",
+                        DiffSummaryTokenUsage = diffSummaryTokenUsage,
+                        ReviewTokenUsage = reviewTokenUsage,
+                        RefinementTokenUsage = refinementTokenUsage
+                    };
+                }
             }
 
             // 8. Parse metrics from agent output

@@ -65,6 +65,16 @@ public static class PipelineTelemetry
     public static readonly Counter<long> LoopCircuitBreakerTrips = Meter.CreateCounter<long>(
         "pipeline.loop.circuit_breaker_trips", "{trip}", "Circuit breaker trip events");
 
+    // Agent worker metrics
+    public static readonly Counter<long> AgentJobsReceived = Meter.CreateCounter<long>(
+        "agent.jobs.received", "{job}", "Jobs received by agent workers");
+    public static readonly Counter<long> AgentJobsRejected = Meter.CreateCounter<long>(
+        "agent.jobs.rejected", "{job}", "Jobs rejected by agent workers");
+    public static readonly Counter<long> AgentHeartbeatFailures = Meter.CreateCounter<long>(
+        "agent.heartbeat.failures", "{failure}", "Agent heartbeat failures");
+    public static readonly Counter<long> AgentReconnections = Meter.CreateCounter<long>(
+        "agent.reconnections", "{reconnection}", "Agent reconnection events");
+
     internal static class LoopDecisions
     {
         public const string Dispatched = "dispatched";
@@ -73,6 +83,13 @@ public static class PipelineTelemetry
         public const string SkippedNoAgent = "skipped_no_agent";
         public const string SkippedMaxRuns = "skipped_max_runs";
         public const string SkippedFilteredByLabel = "skipped_filtered_by_label";
+    }
+
+    internal static class AgentRejectionReasons
+    {
+        public const string Busy = "busy";
+        public const string ShuttingDown = "shutting_down";
+        public const string Unknown = "unknown";
     }
 
     internal static class QualityGateNames
