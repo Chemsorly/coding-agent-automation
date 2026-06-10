@@ -166,6 +166,7 @@ ExecutePromptAsync(prompt, workspace, useResume, ct)
 |------|----------|---------|
 | 0 | `ExitCodes.Success` | Prompt completed successfully |
 | 1 | `ExitCodes.GeneralFailure` | Unspecified error |
+| 124 | `ExitCodes.Timeout` | Execution exceeded the configured timeout |
 | 130 | `ExitCodes.Cancelled` | Execution was cancelled (SIGINT) |
 
 ## Execution States

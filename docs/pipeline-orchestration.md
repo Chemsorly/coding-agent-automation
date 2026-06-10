@@ -216,14 +216,15 @@ flowchart TD
         S1 --> S2[2. CreateBranchStep<br/>checkout PR branch, no merge]
         S2 --> S3[3. SyncBrainPreRunStep<br/>optional]
         S3 --> S4[4. ExtractLinkedIssuesStep]
-        S4 --> S5[5. ReviewCodeStep]
-        S5 --> S6[6. PostReviewFindingsStep]
+        S4 --> S4b[5. WritePrConversationContextStep]
+        S4b --> S5[6. ReviewCodeStep]
+        S5 --> S6[7. PostReviewFindingsStep]
     end
 ```
 
 ### Review Step Sequence
 
-The PR review pipeline executes 6 steps (compared to 10+ for implementation):
+The PR review pipeline executes 7 steps (compared to 10+ for implementation):
 
 | # | Step | Reuses Existing | Description |
 |---|------|:---:|-------------|
@@ -231,8 +232,9 @@ The PR review pipeline executes 6 steps (compared to 10+ for implementation):
 | 2 | `CreateBranchStep` | ✅ | Check out the PR branch (rework path, skip merge from base) |
 | 3 | `SyncBrainPreRunStep` | ✅ | Sync brain repository if configured (non-fatal on failure) |
 | 4 | `ExtractLinkedIssuesStep` | ❌ | Extract linked issues, write context files, synthesize issue context |
-| 5 | `ReviewCodeStep` | ✅ | Resolve reviewer configs and execute multi-agent code review |
-| 6 | `PostReviewFindingsStep` | ❌ | Format findings and post as PR review comment |
+| 5 | `WritePrConversationContextStep` | ❌ | Write PR conversation history and prior review comments to workspace for reviewer context |
+| 6 | `ReviewCodeStep` | ✅ | Resolve reviewer configs and execute multi-agent code review |
+| 7 | `PostReviewFindingsStep` | ❌ | Format findings and post as PR review comment |
 
 Key differences from the implementation pipeline:
 - **No analysis step** — the PR already contains the implementation
@@ -904,7 +906,7 @@ Settings are read at the start of each poll cycle, allowing runtime changes via 
 
 | Property | Type | Default | Range | Description |
 |----------|------|---------|-------|-------------|
-| `MaxDecompositionSubIssues` | `int` | `5` | 1–20 | Maximum sub-issues the agent may propose per epic. Controls both the prompt instruction and the executor's creation cap |
+| `MaxDecompositionSubIssues` | `int` | `10` | 1–20 | Maximum sub-issues the agent may propose per epic. Controls both the prompt instruction and the executor's creation cap |
 | `MaxConcurrentDecompositions` | `int` | `2` | — | Maximum decomposition runs (across both phases) executing simultaneously. Dispatch skipped when limit reached |
 | `DecompositionTimeout` | `TimeSpan` | `15 min` | — | Timeout for decomposition phases (separate from `AgentTimeout`). Accounts for codebase exploration time |
 | `MaxOpenIssuesForContext` | `int` | `50` | 1+ | Maximum open issues downloaded for deduplication context |

@@ -25,6 +25,17 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `agent.jobs.rejected` | Counter | — | `reason` | Jobs rejected by agent workers |
 | `agent.heartbeat.failures` | Counter | — | — | Agent heartbeat send failures |
 | `agent.reconnections` | Counter | — | — | Agent reconnection events |
+| `pipeline.step.duration` | Histogram | seconds | `step_name`, `run_type` | Duration of individual pipeline steps |
+| `pipeline.step.count` | Counter | — | `step_name`, `run_type` | Pipeline step execution count |
+| `agent.tokens.used` | Counter | — | `run_type` | Agent tokens consumed |
+| `quality_gate.retries` | Counter | — | `run_type` | Quality gate retry attempts |
+| `quality_gate.duration` | Histogram | seconds | `run_type` | Total time in quality gate phase |
+| `quality_gate.evaluations` | Counter | — | `gate_name`, `result` | Individual gate evaluation events |
+| `quality_gate.external_ci.duration` | Histogram | seconds | — | Time waiting for external CI |
+| `dispatch.queue.wait_time` | Histogram | seconds | — | Time a job spent waiting in the dispatch queue |
+| `pipeline.decomposition.sub_issues.created` | Counter | — | — | Sub-issues created by decomposition |
+| `pipeline.decomposition.sub_issues.failed` | Counter | — | — | Sub-issue creation failures |
+| `pipeline.decomposition.duration` | Histogram | seconds | — | Duration of decomposition phases |
 
 ### Tag Schema
 
@@ -263,8 +274,6 @@ All resilience pipelines (`ResiliencePipelineFactory` and `TokenVendingService` 
 
 `DrainCycle` spans are root spans (no parent) because `JobQueueDrainService` runs as a `BackgroundService` with no ambient `Activity.Current`. They appear as independent traces in observability backends.
 
-## Planned
+## Completed
 
-The following instrumentation is planned for future implementation:
-
-- **Shared infrastructure step tracing** — Spans for brain sync, workspace setup, and git operations that are currently untraced
+All planned infrastructure step tracing has been implemented. See the Traces table above for the full list of instrumented spans.
