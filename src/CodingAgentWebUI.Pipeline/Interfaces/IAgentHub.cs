@@ -34,6 +34,7 @@ public interface IAgentHub
 
     // Decomposition issue operations (proxied through orchestrator)
     Task<CreatedIssueResult> RequestCreateIssue(string jobId, string title, string body, IReadOnlyList<string> labels);
+    Task<CreatedIssueResult> RequestCreateIssueForProvider(string jobId, string issueProviderConfigId, string title, string body, IReadOnlyList<string> labels);
     Task<PagedResult<IssueSummary>> RequestListOpenIssues(string jobId, int page, int pageSize, IReadOnlyList<string>? labels);
     Task<IssueDetail> RequestGetIssue(string jobId, string identifier);
     Task<IReadOnlyList<IssueComment>> RequestListComments(string jobId, string identifier);

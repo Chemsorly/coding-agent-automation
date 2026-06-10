@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure.Resilience;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Core;
@@ -40,8 +41,7 @@ namespace CodingAgentWebUI.Agent;
 /// </remarks>
 public sealed class AgentWorkerService : BackgroundService
 {
-    private readonly HubConnectionManagerFactory _hubManagerFactory;
-    private HubConnectionManager _hubManager;
+    private readonly HubConnectionManager _hubManager;
     private readonly LocalPipelineExecutor _executor;
     private readonly LocalConsolidationExecutor _consolidationExecutor;
     private readonly IKiroCliOrchestrator _orchestrator;
@@ -68,7 +68,6 @@ public sealed class AgentWorkerService : BackgroundService
 
     public AgentWorkerService(
         HubConnectionManager hubManager,
-        HubConnectionManagerFactory hubManagerFactory,
         LocalPipelineExecutor executor,
         LocalConsolidationExecutor consolidationExecutor,
         IKiroCliOrchestrator orchestrator,
@@ -78,7 +77,6 @@ public sealed class AgentWorkerService : BackgroundService
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(hubManager);
-        ArgumentNullException.ThrowIfNull(hubManagerFactory);
         ArgumentNullException.ThrowIfNull(executor);
         ArgumentNullException.ThrowIfNull(consolidationExecutor);
         ArgumentNullException.ThrowIfNull(orchestrator);
@@ -88,7 +86,6 @@ public sealed class AgentWorkerService : BackgroundService
         ArgumentNullException.ThrowIfNull(logger);
 
         _hubManager = hubManager;
-        _hubManagerFactory = hubManagerFactory;
         _executor = executor;
         _consolidationExecutor = consolidationExecutor;
         _orchestrator = orchestrator;
@@ -121,49 +118,6 @@ public sealed class AgentWorkerService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        int consecutiveFailures = 0;
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await RunConnectionLifecycleAsync(stoppingToken);
-                // Normal exit — stoppingToken was cancelled
-                break;
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                consecutiveFailures++;
-                if (consecutiveFailures % 5 == 0)
-                    _logger.Error(ex, "Connection closed — {Failures} consecutive reconnection failures", consecutiveFailures);
-                else
-                    _logger.Warning(ex, "Connection closed — reconnection attempt {Attempt} starting", consecutiveFailures);
-
-                if (stoppingToken.IsCancellationRequested) break;
-
-                // Exponential backoff matching InfiniteRetryPolicy: 1s, 2s, 4s, 8s, 16s, 32s, 64s, 120s cap + jitter
-                var delay = CalculateReconnectionDelay(consecutiveFailures);
-                _logger.Warning("Waiting {Delay} before fresh reconnection attempt", delay);
-                await Task.Delay(delay, stoppingToken);
-
-                // Dispose old connection, create fresh one
-                await DisposeCurrentConnectionAsync();
-                _hubManager = _hubManagerFactory.Create();
-            }
-        }
-
-        await ShutdownAsync();
-    }
-
-    private async Task RunConnectionLifecycleAsync(CancellationToken stoppingToken)
-    {
-        // Signal that fires when the connection enters terminal Closed state
-        var closedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
         // Wire up event handlers
         _hubManager.OnAssignJob += HandleAssignJobAsync;
         _hubManager.OnCancelJob += HandleCancelJobAsync;
@@ -172,73 +126,52 @@ public sealed class AgentWorkerService : BackgroundService
         _hubManager.OnFetchModels += HandleFetchModelsAsync;
         _hubManager.OnAssignConsolidationJob += HandleAssignConsolidationJobAsync;
         _hubManager.OnReconnected += HandleReconnectedAsync;
-        _hubManager.OnClosed += error =>
-        {
-            closedTcs.TrySetResult();
-            return Task.CompletedTask;
-        };
 
-        // Connect to orchestrator
-        await _hubManager.StartAsync(stoppingToken);
-
-        // Register with orchestrator
-        var registration = BuildRegistrationMessage();
-
-        await _signalRPipeline.ExecuteAsync(async token =>
-            await _hubManager.Connection.InvokeAsync("RegisterAgent", registration, token), stoppingToken);
-        _logger.Information("Agent {AgentId} registered as {AgentType} with labels [{Labels}]",
-            _agentId, _agentType, string.Join(", ", _labels));
-
-        // Heartbeat loop — exits when connection closes or stoppingToken fires
-        using var heartbeatTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            // Race heartbeat tick against connection closed
-            var tickTask = heartbeatTimer.WaitForNextTickAsync(stoppingToken).AsTask();
-            var completedTask = await Task.WhenAny(tickTask, closedTcs.Task);
-
-            if (completedTask == closedTcs.Task)
-            {
-                // Connection permanently closed — throw to trigger reconnection in outer loop
-                throw new InvalidOperationException("SignalR connection entered terminal Closed state");
-            }
-
-            try
-            {
-                if (await tickTask)
-                    await SendHeartbeatAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                PipelineTelemetry.AgentHeartbeatFailures.Add(1);
-                _logger.Warning(ex, "Heartbeat failed, will retry on next tick");
-            }
-        }
-    }
-
-    private static TimeSpan CalculateReconnectionDelay(int attempt)
-    {
-        // Same backoff as InfiniteRetryPolicy: 2^min(attempt, 7) capped at 120s + jitter
-        var delay = TimeSpan.FromSeconds(Math.Pow(2, Math.Min(attempt, 7)));
-        var maxDelay = TimeSpan.FromSeconds(120);
-        if (delay > maxDelay) delay = maxDelay;
-        delay += TimeSpan.FromMilliseconds(Random.Shared.Next(0, 1000));
-        return delay;
-    }
-
-    private async Task DisposeCurrentConnectionAsync()
-    {
         try
         {
-            await _hubManager.DisposeAsync();
+            // Connect to orchestrator
+            await _hubManager.StartAsync(stoppingToken);
+
+            // Register with orchestrator
+            var registration = BuildRegistrationMessage();
+
+            await _signalRPipeline.ExecuteAsync(async token =>
+                await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), stoppingToken);
+            _logger.Information("Agent {AgentId} registered as {AgentType} with labels [{Labels}]",
+                _agentId, _agentType, string.Join(", ", _labels));
+
+            // Heartbeat loop
+            using var heartbeatTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    if (await heartbeatTimer.WaitForNextTickAsync(stoppingToken))
+                        await SendHeartbeatAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    PipelineTelemetry.AgentHeartbeatFailures.Add(1);
+                    _logger.Warning(ex, "Heartbeat failed, will retry on next tick");
+                }
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Expected during shutdown
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Failed to dispose previous hub connection");
+            _logger.Error(ex, "Agent worker service encountered a fatal error");
+            throw;
+        }
+        finally
+        {
+            await ShutdownAsync();
         }
     }
 
@@ -258,7 +191,7 @@ public sealed class AgentWorkerService : BackgroundService
                 message.JobId, busyWith);
             try
             {
-                await _hubManager.Connection.InvokeAsync("JobRejected", message.JobId, "Agent is busy");
+                await _hubManager.Connection.InvokeAsync(HubMethodNames.JobRejected, message.JobId, "Agent is busy");
             }
             catch (Exception ex)
             {
@@ -275,7 +208,7 @@ public sealed class AgentWorkerService : BackgroundService
         try
         {
             await _signalRPipeline.ExecuteAsync(async token =>
-                await _hubManager.Connection.InvokeAsync("JobAccepted", message.JobId, token), CancellationToken.None);
+                await _hubManager.Connection.InvokeAsync(HubMethodNames.JobAccepted, message.JobId, token), CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -299,7 +232,7 @@ public sealed class AgentWorkerService : BackgroundService
             {
                 try
                 {
-                    await _hubManager.Connection.InvokeAsync("ReportOutputLines", message.JobId, lines);
+                    await _hubManager.Connection.InvokeAsync(HubMethodNames.ReportOutputLines, message.JobId, lines);
                 }
                 catch (Exception ex)
                 {
@@ -345,7 +278,7 @@ public sealed class AgentWorkerService : BackgroundService
                 {
                     if (completion is not null)
                         await _signalRPipeline.ExecuteAsync(async token =>
-                            await _hubManager.Connection.InvokeAsync("ReportJobCompleted", message.JobId, completion, token), CancellationToken.None);
+                            await _hubManager.Connection.InvokeAsync(HubMethodNames.ReportJobCompleted, message.JobId, completion, token), CancellationToken.None);
                 }
                 catch (Exception ex)
                 {
@@ -406,7 +339,7 @@ public sealed class AgentWorkerService : BackgroundService
                             SessionId = message.SessionId,
                             Lines = lines.ToList()
                         };
-                        await _hubManager.Connection.InvokeAsync("ReportChatResponse", response);
+                        await _hubManager.Connection.InvokeAsync(HubMethodNames.ReportChatResponse, response);
                     }
                     catch (Exception ex)
                     {
@@ -456,7 +389,7 @@ public sealed class AgentWorkerService : BackgroundService
                     ExitCode = exitCode,
                     Error = error
                 };
-                await _hubManager.Connection.InvokeAsync("ReportChatCompleted", completed);
+                await _hubManager.Connection.InvokeAsync(HubMethodNames.ReportChatCompleted, completed);
             }
             catch (Exception ex)
             {
@@ -585,7 +518,7 @@ public sealed class AgentWorkerService : BackgroundService
         try
         {
             await _signalRPipeline.ExecuteAsync(async token =>
-                await _hubManager.Connection.InvokeAsync("RegisterAgent", registration, token), CancellationToken.None);
+                await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), CancellationToken.None);
             _logger.Information("Agent {AgentId} re-registered successfully after reconnection", _agentId);
         }
         catch (Exception ex)
@@ -597,7 +530,7 @@ public sealed class AgentWorkerService : BackgroundService
                 await Task.Delay(_extendedRetryDelay);
                 try
                 {
-                    await _hubManager.Connection.InvokeAsync("RegisterAgent", registration, CancellationToken.None);
+                    await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, CancellationToken.None);
                     _logger.Information("Agent {AgentId} re-registered on extended attempt {Attempt}", _agentId, i + 1);
                     return;
                 }
@@ -659,7 +592,7 @@ public sealed class AgentWorkerService : BackgroundService
                 }
             }
 
-            await _hubManager.Connection.InvokeAsync("ReportFetchModelsResult", new FetchModelsResponse
+            await _hubManager.Connection.InvokeAsync(HubMethodNames.ReportFetchModelsResult, new FetchModelsResponse
             {
                 RequestId = request.RequestId,
                 Models = models
@@ -676,7 +609,7 @@ public sealed class AgentWorkerService : BackgroundService
     {
         try
         {
-            await _hubManager.Connection.InvokeAsync("ReportFetchModelsResult", new FetchModelsResponse
+            await _hubManager.Connection.InvokeAsync(HubMethodNames.ReportFetchModelsResult, new FetchModelsResponse
             {
                 RequestId = requestId,
                 Models = [],
@@ -705,7 +638,7 @@ public sealed class AgentWorkerService : BackgroundService
                 message.JobId, busyWith);
             try
             {
-                await _hubManager.Connection.InvokeAsync("JobRejected", message.JobId, "Agent is busy");
+                await _hubManager.Connection.InvokeAsync(HubMethodNames.JobRejected, message.JobId, "Agent is busy");
             }
             catch (Exception ex)
             {
@@ -740,7 +673,7 @@ public sealed class AgentWorkerService : BackgroundService
                         Success = false,
                         ErrorMessage = ex.Message
                     };
-                    await _hubManager.Connection.InvokeAsync("ReportConsolidationComplete", failResult);
+                    await _hubManager.Connection.InvokeAsync(HubMethodNames.ReportConsolidationComplete, failResult);
                 }
                 catch (Exception reportEx)
                 {
@@ -813,7 +746,7 @@ public sealed class AgentWorkerService : BackgroundService
     {
         try
         {
-            await _hubManager.Connection.InvokeAsync("AgentReady", _agentId);
+            await _hubManager.Connection.InvokeAsync(HubMethodNames.AgentReady, _agentId);
         }
         catch (Exception ex)
         {
@@ -839,7 +772,7 @@ public sealed class AgentWorkerService : BackgroundService
             MemoryUsageMb = Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024)
         };
 
-        await _hubManager.Connection.InvokeAsync("Heartbeat", heartbeat, ct);
+        await _hubManager.Connection.InvokeAsync(HubMethodNames.Heartbeat, heartbeat, ct);
     }
 
     private async Task ShutdownAsync()
@@ -863,7 +796,7 @@ public sealed class AgentWorkerService : BackgroundService
         {
             if (_hubManager.IsConnected)
             {
-                await _hubManager.Connection.InvokeAsync("DeregisterAgent", _agentId);
+                await _hubManager.Connection.InvokeAsync(HubMethodNames.DeregisterAgent, _agentId);
                 _logger.Information("Agent {AgentId} deregistered from orchestrator", _agentId);
             }
         }

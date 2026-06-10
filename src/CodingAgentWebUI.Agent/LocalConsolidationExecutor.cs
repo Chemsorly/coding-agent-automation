@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using CodingAgentWebUI.Agent.Executors;
 using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -125,7 +126,7 @@ public sealed class LocalConsolidationExecutor
         // Report result back to orchestrator
         try
         {
-            await connection.InvokeAsync("ReportConsolidationComplete", result, ct);
+            await connection.InvokeAsync(HubMethodNames.ReportConsolidationComplete, result, ct);
             _logger.Information("Reported consolidation result for job {JobId}: success={Success}",
                 job.JobId, result.Success);
         }
