@@ -9,9 +9,13 @@ namespace CodingAgentWebUI.Agent;
 /// <para>
 /// <b>Flush Timeout:</b> When <c>flushTimeout</c> is provided, the <see cref="OnFlush"/>
 /// callback is abandoned if it exceeds the timeout. This prevents a blocking flush handler
-/// (e.g., a hung SignalR InvokeAsync on a half-open TCP connection) from holding the
-/// <see cref="SemaphoreSlim"/> indefinitely and starving all concurrent callers of
-/// <see cref="AddLineAsync"/>. Batched lines are discarded on timeout (best-effort delivery).
+/// (e.g., a hung SignalR InvokeAsync on a half-open TCP connection) from stalling delivery
+/// of subsequent batches. Batched lines are discarded on timeout (best-effort delivery).
+/// </para>
+/// <para>
+/// <b>Lock Design:</b> The buffer lock (<c>_lock</c>) is held only during buffer add/copy/clear
+/// operations (microseconds). The flush gate (<c>_flushGate</c>) serializes <see cref="OnFlush"/>
+/// invocations to preserve batch ordering without blocking <see cref="AddLineAsync"/> callers.
 /// </para>
 /// </remarks>
 // TODO: Extraction candidate for shared library. OutputBatcher is a general-purpose
@@ -23,6 +27,7 @@ public sealed class OutputBatcher : IAsyncDisposable
 {
     private readonly List<string> _buffer = new();
     private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly SemaphoreSlim _flushGate = new(1, 1);
     private readonly PeriodicTimer _timer;
     private readonly Task _flushLoop;
     private readonly CancellationTokenSource _cts = new();
@@ -32,9 +37,9 @@ public sealed class OutputBatcher : IAsyncDisposable
     private static readonly TimeSpan FlushInterval = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
-    /// Default flush timeout: 5 seconds. Bounds how long the lock is held during
-    /// a single flush operation. If the OnFlush handler exceeds this, the flush is
-    /// abandoned and the lock released to prevent cascading stalls.
+    /// Default flush timeout: 5 seconds. Bounds how long the flush gate is held during
+    /// a single send operation. If the OnFlush handler exceeds this, the flush is
+    /// abandoned to prevent cascading delivery delays.
     /// </summary>
     public static readonly TimeSpan DefaultFlushTimeout = TimeSpan.FromSeconds(5);
 
@@ -60,20 +65,29 @@ public sealed class OutputBatcher : IAsyncDisposable
 
     /// <summary>
     /// Adds a line to the buffer. Auto-flushes when the buffer reaches <see cref="MaxBatchSize"/>.
+    /// Never blocks on network I/O — the send happens outside the buffer lock.
     /// </summary>
     public async Task AddLineAsync(string line, CancellationToken ct = default)
     {
+        List<string>? batch = null;
+
         await _lock.WaitAsync(ct);
         try
         {
             _buffer.Add(line);
             if (_buffer.Count >= MaxBatchSize)
-                await FlushInternalAsync();
+            {
+                batch = _buffer.ToList();
+                _buffer.Clear();
+            }
         }
         finally
         {
             _lock.Release();
         }
+
+        if (batch is not null)
+            await SendBatchAsync(batch);
     }
 
     private async Task FlushLoopAsync()
@@ -82,16 +96,24 @@ public sealed class OutputBatcher : IAsyncDisposable
         {
             while (await _timer.WaitForNextTickAsync(_cts.Token))
             {
+                List<string>? batch = null;
+
                 await _lock.WaitAsync(_cts.Token);
                 try
                 {
                     if (_buffer.Count > 0)
-                        await FlushInternalAsync();
+                    {
+                        batch = _buffer.ToList();
+                        _buffer.Clear();
+                    }
                 }
                 finally
                 {
                     _lock.Release();
                 }
+
+                if (batch is not null)
+                    await SendBatchAsync(batch);
             }
         }
         catch (OperationCanceledException)
@@ -101,21 +123,16 @@ public sealed class OutputBatcher : IAsyncDisposable
     }
 
     /// <summary>
-    /// Must be called while holding <see cref="_lock"/>.
-    /// Sends the current buffer contents via <see cref="OnFlush"/> and clears the buffer.
-    /// If the flush handler exceeds <see cref="_flushTimeout"/>, it is abandoned to
-    /// release the lock and prevent cascading stalls.
+    /// Sends a batch via <see cref="OnFlush"/>, serialized by <see cref="_flushGate"/> to
+    /// preserve ordering. If the handler exceeds <see cref="_flushTimeout"/>, it is abandoned
+    /// (best-effort delivery).
     /// </summary>
-    private async Task FlushInternalAsync()
+    private async Task SendBatchAsync(List<string> batch)
     {
-        if (_buffer.Count == 0) return;
-
-        var batch = _buffer.ToList();
-        _buffer.Clear();
-
-        if (OnFlush is not null)
+        await _flushGate.WaitAsync();
+        try
         {
-            try
+            if (OnFlush is not null)
             {
                 if (_flushTimeout == Timeout.InfiniteTimeSpan)
                 {
@@ -133,13 +150,17 @@ public sealed class OutputBatcher : IAsyncDisposable
                         // Propagate exception if the flush faulted
                         await flushTask;
                     }
-                    // else: flush timed out — abandon it and release the lock (best-effort)
+                    // else: flush timed out — abandon it (best-effort)
                 }
             }
-            catch
-            {
-                // Best-effort delivery — don't crash the batcher if the handler fails or times out
-            }
+        }
+        catch
+        {
+            // Best-effort delivery — don't crash the batcher if the handler fails or times out
+        }
+        finally
+        {
+            _flushGate.Release();
         }
     }
 
@@ -151,19 +172,27 @@ public sealed class OutputBatcher : IAsyncDisposable
         try { await _flushLoop; }
         catch (OperationCanceledException) { }
 
-        // Flush any remaining lines (with timeout to prevent hang during disposal)
+        // Final flush of remaining lines
+        List<string>? batch = null;
         await _lock.WaitAsync();
         try
         {
             if (_buffer.Count > 0)
-                await FlushInternalAsync();
+            {
+                batch = _buffer.ToList();
+                _buffer.Clear();
+            }
         }
         finally
         {
             _lock.Release();
         }
 
+        if (batch is not null)
+            await SendBatchAsync(batch);
+
         _lock.Dispose();
+        _flushGate.Dispose();
         _cts.Dispose();
     }
 }

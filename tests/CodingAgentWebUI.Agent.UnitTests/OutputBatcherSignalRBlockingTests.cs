@@ -4,37 +4,19 @@ using CodingAgentWebUI.Agent;
 namespace CodingAgentWebUI.Agent.UnitTests;
 
 /// <summary>
-/// Tests demonstrating that OutputBatcher holds its SemaphoreSlim lock for the entire
-/// duration of the OnFlush callback. If SignalR invocations block during reconnection,
-/// all concurrent callers of AddLineAsync are blocked too — including parallel review
-/// agents and the TimeoutHelper's CancelAfter timer callback (which needs a thread pool
-/// thread to fire).
-///
-/// Production scenario: 4 parallel review agents share one OutputBatcher. When SignalR
-/// disconnects briefly, InvokeAsync calls inside OnFlush either throw quickly (good case)
-/// or block while waiting for reconnection (bad case). During the blocking window, any
-/// agent producing output gets stuck on _lock.WaitAsync, and because the lock holder
-/// awaits the OnFlush handler, all producers stall.
-///
-/// This is a contributing factor to the 6-hour hang: if the flush handler blocks long
-/// enough during reconnection, it can cause a cascade where all parallel Tasks are parked
-/// waiting for the lock, thread pool threads are exhausted, and timer-based cancellation
-/// (CancellationTokenSource.CancelAfter) never fires because its callback can't be
-/// scheduled on the saturated thread pool.
+/// Tests verifying that OutputBatcher does NOT block AddLineAsync callers during
+/// the OnFlush callback (which performs async network I/O). The buffer lock is released
+/// before the send, so concurrent producers are never stalled by a slow flush handler.
 /// </summary>
 public class OutputBatcherSignalRBlockingTests
 {
     /// <summary>
-    /// Demonstrates that when OnFlush blocks (simulating a SignalR invocation waiting for
-    /// reconnection), subsequent AddLineAsync calls are blocked because the SemaphoreSlim
-    /// is held during the entire flush operation.
-    ///
-    /// This is the mechanism by which a SignalR disconnect can freeze all parallel review
-    /// agents: they all call EmitOutputLine → AddLineAsync → wait on _lock → _lock is
-    /// held by the flush loop waiting on a blocked InvokeAsync.
+    /// Verifies that when OnFlush blocks (simulating a SignalR invocation waiting for
+    /// reconnection), subsequent AddLineAsync calls complete immediately because the
+    /// buffer lock is released before the send phase.
     /// </summary>
     [Fact]
-    public async Task WhenOnFlushBlocks_AddLineAsyncIsBlockedForAllCallers()
+    public async Task WhenOnFlushBlocks_AddLineAsyncIsNotBlocked()
     {
         var flushStarted = new TaskCompletionSource();
         var flushCanComplete = new TaskCompletionSource();
@@ -51,55 +33,40 @@ public class OutputBatcherSignalRBlockingTests
         for (var i = 0; i < 49; i++)
             await batcher.AddLineAsync($"line-{i}");
 
-        // The 50th line triggers FlushInternalAsync which will block in OnFlush.
-        // Must be in Task.Run since it won't return until flush completes.
+        // The 50th line triggers flush which will block in OnFlush.
         var addLine50Task = Task.Run(async () => await batcher.AddLineAsync("line-49"));
 
-        // Wait for the flush to start (proves the lock is now held by addLine50Task)
+        // Wait for the flush to start (proves the send phase has begun)
         var flushStartedInTime = await Task.WhenAny(flushStarted.Task, Task.Delay(TimeSpan.FromSeconds(3)));
         flushStartedInTime.Should().Be(flushStarted.Task, "flush should start when 50th line is added");
 
-        // Now simulate parallel review agents trying to add output lines.
-        // They should all block on _lock.WaitAsync because the flush holds the lock.
-        using var blockedCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        // Parallel agents adding output lines should complete immediately
+        // because the buffer lock is released before the send phase.
         var parallelAgent1 = Task.Run(async () =>
-            await batcher.AddLineAsync("agent-1-output", blockedCts.Token));
+            await batcher.AddLineAsync("agent-1-output"));
         var parallelAgent2 = Task.Run(async () =>
-            await batcher.AddLineAsync("agent-2-output", blockedCts.Token));
+            await batcher.AddLineAsync("agent-2-output"));
         var parallelAgent3 = Task.Run(async () =>
-            await batcher.AddLineAsync("agent-3-output", blockedCts.Token));
+            await batcher.AddLineAsync("agent-3-output"));
 
-        // Give the agents time to reach the lock wait
-        await Task.Delay(200);
-
-        // All agents should still be blocked (not completed)
-        parallelAgent1.IsCompleted.Should().BeFalse("agent 1 should be blocked waiting on the lock");
-        parallelAgent2.IsCompleted.Should().BeFalse("agent 2 should be blocked waiting on the lock");
-        parallelAgent3.IsCompleted.Should().BeFalse("agent 3 should be blocked waiting on the lock");
-
-        // Now let the flush complete (simulating SignalR reconnection completing)
-        flushCanComplete.SetResult();
-
-        // The original addLine50 should now complete
-        await addLine50Task;
-
-        // All blocked agents should now proceed
+        // All agents should complete quickly (not blocked by the flush)
         var allAgents = Task.WhenAll(parallelAgent1, parallelAgent2, parallelAgent3);
         var completed = await Task.WhenAny(allAgents, Task.Delay(TimeSpan.FromSeconds(2)));
-        completed.Should().Be(allAgents, "all agents should unblock after flush completes");
+        completed.Should().Be(allAgents,
+            "all agents should complete immediately — AddLineAsync does not block on network I/O");
+
+        // Cleanup
+        flushCanComplete.SetResult();
+        await addLine50Task;
     }
 
     /// <summary>
-    /// Demonstrates that the timer-based flush loop also acquires the lock, meaning if the
-    /// lock is held by a blocking flush, the periodic timer ticks accumulate without
-    /// processing — effectively disabling the batcher's time-based flush mechanism.
-    ///
-    /// This is relevant because: if one parallel agent's batch-size flush blocks,
-    /// the timer-based flush for OTHER agents' output also stops, preventing any output
-    /// from being delivered even if those other agents have pending lines.
+    /// Verifies that when the flush handler blocks, the timer-based flush loop can still
+    /// extract batches from the buffer. The timer flush will queue behind the flush gate
+    /// for sending, but buffer extraction is not stalled.
     /// </summary>
     [Fact]
-    public async Task WhenFlushBlocks_TimerBasedFlushAlsoStalls()
+    public async Task WhenOnFlushBlocks_TimerBasedFlushStillOperates()
     {
         var flushStarted = new TaskCompletionSource();
         var flushCanComplete = new TaskCompletionSource();
@@ -128,39 +95,24 @@ public class OutputBatcherSignalRBlockingTests
         var started = await Task.WhenAny(flushStarted.Task, Task.Delay(TimeSpan.FromSeconds(3)));
         started.Should().Be(flushStarted.Task, "flush should start");
 
-        // Wait for timer ticks to accumulate (500ms = ~2 timer ticks at 250ms interval)
-        // The timer loop is also blocked on _lock.WaitAsync
-        await Task.Delay(600);
+        // Add more lines — these should be accepted immediately (lock is free)
+        await batcher.AddLineAsync("extra-1");
 
-        // Only 1 flush should have occurred (the blocked one)
-        // Timer-based flushes are stalled behind the lock
-        Interlocked.CompareExchange(ref flushCount, 0, 0).Should().Be(1,
-            "timer-based flushes should be blocked while the lock is held by a blocking flush");
-
-        // Unblock
+        // Unblock the first flush
         flushCanComplete.SetResult();
         await triggerTask;
 
-        // Add more lines and wait for timer to flush them
-        await batcher.AddLineAsync("extra-1");
-        await Task.Delay(500); // let timer catch up
+        // Wait for timer to flush the extra line
+        await Task.Delay(500);
 
-        // Now subsequent flushes should have fired
+        // Both flushes should have fired: the threshold flush and the timer flush
         Interlocked.CompareExchange(ref flushCount, 0, 0).Should().BeGreaterThan(1,
-            "timer-based flushes should resume after the blocking flush completes");
+            "timer-based flushes should operate independently of a blocked send");
     }
 
     /// <summary>
-    /// Demonstrates that the OnFlush handler in AgentWorkerService uses a raw InvokeAsync
-    /// without any timeout or CancellationToken. If InvokeAsync hangs (unlikely but possible
-    /// during certain connection states), the flush holds the lock indefinitely.
-    ///
-    /// This test proves that adding a CancellationToken with a timeout to the OnFlush handler
-    /// would prevent the cascade failure. The pattern should be:
-    ///   using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    ///   await connection.InvokeAsync("ReportOutputLines", jobId, lines, cts.Token);
-    ///
-    /// Without this, a single stuck InvokeAsync can freeze the entire agent worker.
+    /// Verifies that the flush timeout mechanism prevents indefinite blocking
+    /// of the send phase, allowing subsequent batches to be delivered.
     /// </summary>
     [Fact]
     public async Task FlushHandlerWithTimeout_PreventsIndefiniteBlocking()
