@@ -151,6 +151,32 @@ public sealed class HeartbeatMonitorService : BackgroundService
 
             _registry.Deregister(agent.AgentId);
         }
+
+        // Phase 3: Detect orphaned runs (agent fully deregistered)
+        var activeRuns = _runService.GetActiveRuns();
+        foreach (var run in activeRuns)
+        {
+            if (string.IsNullOrEmpty(run.AgentId))
+                continue;
+
+            if (_registry.GetByAgentId(run.AgentId) is not null)
+                continue;
+
+            // Agent gone from registry entirely — orphaned run
+            run.FailureReason = "Agent deregistered (orphaned run)";
+            run.CompletedAt = DateTime.UtcNow;
+            run.CurrentStep = PipelineStep.Failed;
+
+            _historyService.AddRunToHistory(run);
+            _runService.RemoveRun(run.RunId);
+            _dispatcher.MarkIssueComplete(run.IssueIdentifier);
+
+            await TrySwapLabelToErrorAsync(run, ct);
+
+            _logger.Warning(
+                "Orphaned run {RunId} for issue {IssueIdentifier} — agent {AgentId} no longer in registry, marking Failed",
+                run.RunId, run.IssueIdentifier, run.AgentId);
+        }
     }
 
     /// <summary>
