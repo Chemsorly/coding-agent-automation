@@ -16,9 +16,11 @@ stateDiagram-v2
 
     [*] --> Created
     Created --> CloningRepository
-    CloningRepository --> SyncingBrainRepoPreRun
+    CloningRepository --> RunningEnvironmentSetup
+    RunningEnvironmentSetup --> SyncingBrainRepoPreRun
     SyncingBrainRepoPreRun --> CreatingBranch
-    CreatingBranch --> AnalyzingCode
+    CreatingBranch --> VerifyingBaseline
+    VerifyingBaseline --> AnalyzingCode
     AnalyzingCode --> PostingAnalysis
 
     state ConfidenceGate <<choice>>
@@ -71,8 +73,8 @@ stateDiagram-v2
 ## Pipeline Steps
 
 ```
-Created → CloningRepository → SyncingBrainRepoPreRun → CreatingBranch
-  → AnalyzingCode → PostingAnalysis → [Confidence Gate]
+Created → CloningRepository → RunningEnvironmentSetup → SyncingBrainRepoPreRun → CreatingBranch
+  → VerifyingBaseline → AnalyzingCode → PostingAnalysis → [Confidence Gate]
   → GeneratingCode → ReviewingCode → RunningQualityGates → [Quality Gate Decision]
   → PreparingForPullRequest → [Final Quality Gate]
   → CreatingPullRequest → ReflectingOnRun → SyncingBrainRepoPostRun → Completed
@@ -86,8 +88,10 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 |------|-------------|
 | **Created** | Run initialized, providers resolved and validated |
 | **CloningRepository** | Repository cloned to a fresh workspace directory. Label swapped to `agent:in-progress` |
+| **RunningEnvironmentSetup** | Executes provider-defined setup steps (e.g., package restore, auth configuration) with injected secrets. Non-fatal steps abort the run on non-zero exit |
 | **SyncingBrainRepoPreRun** | Brain repository synced into workspace (if configured). Non-fatal on failure |
 | **CreatingBranch** | Feature branch created from default branch (format: `feature/auto-{issueNumber}-{slug}-{runId}`) |
+| **VerifyingBaseline** | Baseline health check — runs build/tests on the default branch before the agent writes code. Catches broken base branches early. Skipped when `BaselineHealthCheckEnabled` is false |
 | **AnalyzingCode** | Agent analyzes the issue and codebase, writes `analysis.md` and `analysis-assessment.json` |
 | **PostingAnalysis** | Analysis comment posted to the GitHub issue |
 | **GeneratingCode** | Agent implements the changes. Also used during quality gate retries |

@@ -195,11 +195,12 @@ Detailed documentation lives in the [`docs/`](docs/) folder. Suggested reading o
 - **Real-time web UI** — Live output streaming, pipeline step sidebar, agent monitoring
 - **Agent chat** — Interactive agent sessions dispatched to available workers via the web UI
 - **Model selection** — Configurable LLM model per agent provider
-- **Agent effort level** — Configurable reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`) per agent provider, controlling depth vs. speed tradeoffs
+- **Agent effort level** — Configurable reasoning effort (`auto`, `low`, `medium`, `high`, `xhigh`, `max`) per agent provider, controlling depth vs. speed tradeoffs
 - **Parallelized code review** — Review agents execute concurrently (for providers that support it), reducing review wall-clock time
 - **Pipeline projects** — Multi-repository grouping with shared configuration and project-level context
 - **MCP server injection** — Agents receive MCP server configs for tool access (written to workspace before execution)
 - **Steering injection** — Pipeline context and conventions written to agent workspaces (`.kiro/steering/` for Kiro, `AGENTS.md` for OpenCode)
+- **Environment setup steps** — Per-repository shell commands (package restore, auth, tool install) executed after clone with injected secrets, before agent execution
 - **Agent health monitoring** — Heartbeat-based liveness detection, stall warnings, automatic reconnection after pod rollover
 - **Token vending** — Orchestrator generates short-lived GitHub installation tokens for agents (private keys never leave the orchestrator)
 - **HMAC-derived agent keys** — Each agent derives its own auth key from the shared master secret via HMAC(key, agent_id), enabling per-agent revocation without rotating the master key

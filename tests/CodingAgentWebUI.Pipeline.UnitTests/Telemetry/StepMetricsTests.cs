@@ -102,11 +102,12 @@ public class StepMetricsTests : IDisposable
 
         run.AccumulateTokenUsage(result);
 
-        _counters.Should().ContainSingle(c => c.Name == "agent.tokens.used");
-        var counter = _counters.First(c => c.Name == "agent.tokens.used");
+        // Filter by tags to isolate from parallel test classes sharing the static Meter
+        var counter = _counters.Should().Contain(c => c.Name == "agent.tokens.used"
+            && c.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "proj-1")))
+            .Which;
         counter.Value.Should().Be(150);
         counter.Tags.Should().Contain(new KeyValuePair<string, object?>("run_type", "implementation"));
-        counter.Tags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_id", "proj-1"));
         counter.Tags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_name", "TestProj"));
     }
 

@@ -103,6 +103,56 @@ These environment variables are used by the Docker containers:
 | `AGENT_API_KEY` | Must match the orchestrator's key |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
 
+## Environment Setup Steps
+
+Repository providers can define shell commands that run in the agent workspace after clone but before the agent starts. This is useful for package restore, private feed authentication, or tool installation.
+
+Setup steps are configured on the **Repository Provider** in Settings → Providers → Repository → (select provider):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Secrets` | Dictionary | Key-value pairs injected as environment variables during setup step execution. Values are plaintext and masked in pipeline output (values ≥ 4 characters are redacted). |
+| `SetupSteps` | List | Ordered shell commands executed sequentially via `/bin/bash -c`. Each step has a `Name` (display label) and a `Command` (the shell command). |
+
+### Example Configuration
+
+```json
+{
+  "providerType": "GitHub",
+  "settings": { ... },
+  "Secrets": {
+    "NUGET_TOKEN": "ghp_xxxxxxxxxxxx",
+    "PRIVATE_FEED_URL": "https://nuget.pkg.github.com/my-org/index.json"
+  },
+  "SetupSteps": [
+    {
+      "Name": "Configure NuGet feed",
+      "Command": "dotnet nuget add source $PRIVATE_FEED_URL --name private --username bot --password $NUGET_TOKEN --store-password-in-clear-text"
+    },
+    {
+      "Name": "Restore packages",
+      "Command": "dotnet restore"
+    }
+  ]
+}
+```
+
+### Behavior
+
+- Steps execute in order; if any step returns a non-zero exit code, the run aborts with `Failed`
+- Secrets are merged: project-level secrets as base, repo-level secrets overlay (repo wins on key collision)
+- Secret values ≥ 4 characters are automatically masked in all subsequent pipeline output
+- The step runs in the cloned workspace directory
+- The pipeline step `RunningEnvironmentSetup` appears in the UI during execution
+
+## Agent Steering Content
+
+Repository providers can include custom markdown steering content that is written to the agent workspace before each run. This provides project-specific conventions, coding guidelines, or architectural context to the agent.
+
+Configure via Settings → Providers → Repository → Steering Content field. The content is written to:
+- `.kiro/steering/pipeline-context.md` for Kiro agents
+- `AGENTS.md` for OpenCode agents
+
 ## MCP Server Support
 
 The agent CLI supports [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) servers for extending agent capabilities. The Docker images include `uv`/`uvx` (Python) and `npm`/`npx` (Node.js) for running MCP servers.
