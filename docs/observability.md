@@ -269,7 +269,8 @@ All resilience pipelines (`ResiliencePipelineFactory` and `TokenVendingService` 
 | Tag | Description |
 |-----|-------------|
 | `attempt` | Retry attempt number (1-based) |
-| `exception_type` | Exception type name that triggered the retry |
+| `exception.type` | Exception type name that triggered the retry |
+| `exception.message` | Exception message (truncated to 200 chars) |
 
 ### Background Service Spans
 
