@@ -23,7 +23,7 @@ public sealed partial class AgentJobDispatcher
         ArgumentNullException.ThrowIfNull(initiatedBy);
 
         // Check if already being processed
-        if (_orchestration.IsIssueBeingProcessed(issueIdentifier) || _dispatcher.IsIssueQueued(issueIdentifier))
+        if (_orchestration.IsIssueBeingProcessed(issueIdentifier, issueProviderId) || _dispatcher.IsIssueQueued(issueIdentifier, issueProviderId))
         {
             _logger.Information("Issue {IssueIdentifier} already being processed or queued, skipping dispatch", issueIdentifier);
             return false;
@@ -59,7 +59,7 @@ public sealed partial class AgentJobDispatcher
         ArgumentNullException.ThrowIfNull(request);
 
         // Check if already being processed
-        if (IsIssueBeingProcessedOrQueued(request.PrIdentifier))
+        if (IsIssueBeingProcessedOrQueued(request.PrIdentifier, request.IssueProviderId))
         {
             _logger.Information("PR {PrIdentifier} already being processed or queued, skipping review dispatch", request.PrIdentifier);
             return false;
@@ -116,7 +116,7 @@ public sealed partial class AgentJobDispatcher
             throw new ArgumentOutOfRangeException(nameof(phaseType), phaseType, "Must be DecompositionAnalysis or Decomposition");
 
         // Check if already being processed
-        if (_orchestration.IsIssueBeingProcessed(epicIdentifier) || _dispatcher.IsIssueQueued(epicIdentifier))
+        if (_orchestration.IsIssueBeingProcessed(epicIdentifier, issueProviderId) || _dispatcher.IsIssueQueued(epicIdentifier, issueProviderId))
         {
             _logger.Information("Epic {EpicIdentifier} already being processed or queued, skipping decomposition dispatch", epicIdentifier);
             return false;

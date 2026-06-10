@@ -588,7 +588,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>(),
                 It.IsAny<PipelineProject?>()))
             .ReturnsAsync(true);
-        mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>()))
+        mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>(), It.IsAny<string>()))
             .Returns(false);
 
         var svc = CreateService(mockDispatcher.Object);

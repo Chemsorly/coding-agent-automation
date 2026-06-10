@@ -185,19 +185,19 @@ public class JobDispatcherServiceExtendedTests
     {
         _dispatcher.EnqueueJob(CreatePendingJob("org/repo#1"));
 
-        _dispatcher.IsIssueQueued("org/repo#1").Should().BeTrue();
+        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeTrue();
     }
 
     [Fact]
     public void IsIssueQueued_NotQueued_ReturnsFalse()
     {
-        _dispatcher.IsIssueQueued("org/repo#1").Should().BeFalse();
+        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeFalse();
     }
 
     [Fact]
     public void IsIssueQueued_NullIdentifier_ThrowsArgumentNull()
     {
-        Assert.Throws<ArgumentNullException>(() => _dispatcher.IsIssueQueued(null!));
+        Assert.Throws<ArgumentNullException>(() => _dispatcher.IsIssueQueued(null!, "ip-1"));
     }
 
     // ── RemoveFromQueue ─────────────────────────────────────────────────
@@ -207,17 +207,17 @@ public class JobDispatcherServiceExtendedTests
     {
         _dispatcher.EnqueueJob(CreatePendingJob("org/repo#1"));
 
-        var result = _dispatcher.RemoveFromQueue("org/repo#1");
+        var result = _dispatcher.RemoveFromQueue("org/repo#1", "ip-1");
 
         result.Should().BeTrue();
         _dispatcher.QueueLength.Should().Be(0);
-        _dispatcher.IsIssueQueued("org/repo#1").Should().BeFalse();
+        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeFalse();
     }
 
     [Fact]
     public void RemoveFromQueue_NotQueued_ReturnsFalse()
     {
-        var result = _dispatcher.RemoveFromQueue("org/repo#1");
+        var result = _dispatcher.RemoveFromQueue("org/repo#1", "ip-1");
 
         result.Should().BeFalse();
     }
@@ -225,7 +225,7 @@ public class JobDispatcherServiceExtendedTests
     [Fact]
     public void RemoveFromQueue_NullIdentifier_ThrowsArgumentNull()
     {
-        Assert.Throws<ArgumentNullException>(() => _dispatcher.RemoveFromQueue(null!));
+        Assert.Throws<ArgumentNullException>(() => _dispatcher.RemoveFromQueue(null!, "ip-1"));
     }
 
     [Fact]
@@ -235,11 +235,11 @@ public class JobDispatcherServiceExtendedTests
         _dispatcher.EnqueueJob(CreatePendingJob("org/repo#2"));
         _dispatcher.EnqueueJob(CreatePendingJob("org/repo#3"));
 
-        _dispatcher.RemoveFromQueue("org/repo#2");
+        _dispatcher.RemoveFromQueue("org/repo#2", "ip-1");
 
         _dispatcher.QueueLength.Should().Be(2);
-        _dispatcher.IsIssueQueued("org/repo#1").Should().BeTrue();
-        _dispatcher.IsIssueQueued("org/repo#3").Should().BeTrue();
+        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeTrue();
+        _dispatcher.IsIssueQueued("org/repo#3", "ip-1").Should().BeTrue();
     }
 
     // ── MarkIssueComplete ───────────────────────────────────────────────
@@ -249,15 +249,15 @@ public class JobDispatcherServiceExtendedTests
     {
         _dispatcher.EnqueueJob(CreatePendingJob("org/repo#1"));
 
-        _dispatcher.MarkIssueComplete("org/repo#1");
+        _dispatcher.MarkIssueComplete("org/repo#1", "ip-1");
 
-        _dispatcher.IsIssueQueued("org/repo#1").Should().BeFalse();
+        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeFalse();
     }
 
     [Fact]
     public void MarkIssueComplete_NullIdentifier_ThrowsArgumentNull()
     {
-        Assert.Throws<ArgumentNullException>(() => _dispatcher.MarkIssueComplete(null!));
+        Assert.Throws<ArgumentNullException>(() => _dispatcher.MarkIssueComplete(null!, "ip-1"));
     }
 
     // ── GetQueuedJobs ───────────────────────────────────────────────────

@@ -83,16 +83,18 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// <summary>
     /// Checks whether the given issue is being processed by any active run (local or agent).
     /// </summary>
-    public bool IsIssueBeingProcessed(string issueIdentifier)
+    public bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
 
         // Check local run
-        if (ActiveRun != null && ActiveRun.IssueIdentifier == issueIdentifier && IsRunning)
+        if (ActiveRun != null && ActiveRun.IssueIdentifier == issueIdentifier
+            && ActiveRun.IssueProviderConfigId == issueProviderConfigId && IsRunning)
             return true;
 
         // Check agent runs via OrchestratorRunService
-        return _runService?.IsIssueBeingProcessed(issueIdentifier) == true;
+        return _runService?.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId) == true;
     }
 
     // ── State Transition Methods ────────────────────────────────────────
@@ -229,7 +231,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         if (_runService is null)
             throw new InvalidOperationException("OrchestratorRunService is not configured. Cannot register dispatched runs.");
 
-        if (IsIssueBeingProcessed(run.IssueIdentifier))
+        if (IsIssueBeingProcessed(run.IssueIdentifier, run.IssueProviderConfigId))
         {
             _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping registration",
                 run.IssueIdentifier);

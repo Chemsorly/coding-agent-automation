@@ -47,7 +47,7 @@ public sealed partial class AgentHub
         if (run is not null)
         {
             _facade.RemoveRun(jobId);
-            _facade.MarkIssueComplete(run.IssueIdentifier);
+            _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
             _logger.Warning("Cleaned up rejected run {JobId} for issue {IssueIdentifier} (step={Step}, agent={AgentId}). " +
                 "This indicates a dispatch race condition — investigate if recurring.",
                 jobId, run.IssueIdentifier, run.CurrentStep, run.AgentId);
@@ -137,7 +137,7 @@ public sealed partial class AgentHub
 
             // Mark issue as no longer processing in the dispatcher
             if (run is not null)
-                _facade.MarkIssueComplete(run.IssueIdentifier);
+                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
             // Signal the drain service to attempt dispatch for this now-idle agent
             _facade.Signal();

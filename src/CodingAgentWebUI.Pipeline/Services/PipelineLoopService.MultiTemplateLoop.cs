@@ -598,12 +598,12 @@ public sealed partial class PipelineLoopService
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedFilteredByLabel));
                             continue;
                         }
-                        if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
+                        if (_orchestration.IsIssueBeingProcessed(candidate.Identifier, template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
                         }
-                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier))
+                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier, template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
@@ -690,12 +690,12 @@ public sealed partial class PipelineLoopService
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedFilteredByLabel));
                             continue;
                         }
-                        if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
+                        if (_orchestration.IsIssueBeingProcessed(candidate.Identifier, template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
                         }
-                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier))
+                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier, template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
@@ -767,12 +767,12 @@ public sealed partial class PipelineLoopService
                         var candidate = queue[0];
                         queue.RemoveAt(0);
 
-                        if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier))
+                        if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier, template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
                         }
-                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier))
+                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier, template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
@@ -839,12 +839,12 @@ public sealed partial class PipelineLoopService
 
                         // Deduplication: skip if already being processed or queued
                         // (may have been picked up by template-level polling of the same issue)
-                        if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier))
+                        if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier, candidate.Template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
                         }
-                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier))
+                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier, candidate.Template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;

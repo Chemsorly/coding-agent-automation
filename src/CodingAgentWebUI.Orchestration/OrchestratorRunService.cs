@@ -38,10 +38,12 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// <summary>
     /// Checks whether the given issue identifier is being processed by any active run.
     /// </summary>
-    public bool IsIssueBeingProcessed(string issueIdentifier)
+    public bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
-        return _activeRuns.Values.Any(r => r.IssueIdentifier == issueIdentifier);
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+        var compositeKey = $"{issueProviderConfigId}:{issueIdentifier}";
+        return _activeRuns.Values.Any(r => $"{r.IssueProviderConfigId}:{r.IssueIdentifier}" == compositeKey);
     }
 
     /// <summary>

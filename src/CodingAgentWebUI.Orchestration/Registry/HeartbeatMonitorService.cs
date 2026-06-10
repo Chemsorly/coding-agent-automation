@@ -170,7 +170,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
                     _runService.RemoveRun(agent.ActiveJobId);
 
                     // Mark issue as no longer processing in the dispatcher
-                    _dispatcher.MarkIssueComplete(run.IssueIdentifier);
+                    _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
                     // Swap label to agent:error via issue provider
                     await TrySwapLabelToErrorAsync(run, ct);

@@ -443,7 +443,7 @@
                                     }
                                 </td>
                                 <td>
-                                    <button class="btn-cancel-small" @onclick="() => RemoveFromQueue(job.IssueIdentifier)">
+                                    <button class="btn-cancel-small" @onclick="() => RemoveFromQueue(job.IssueIdentifier, job.IssueProviderId)">
                                         Remove
                                     </button>
                                 </td>
@@ -917,9 +917,9 @@
         await PipelineService.CancelPipelineAsync();
     }
 
-    private void RemoveFromQueue(string issueIdentifier)
+    private void RemoveFromQueue(string issueIdentifier, string issueProviderId)
     {
-        Dispatcher.RemoveFromQueue(issueIdentifier);
+        Dispatcher.RemoveFromQueue(issueIdentifier, issueProviderId);
         RefreshData();
         StateHasChanged();
     }

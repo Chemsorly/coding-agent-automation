@@ -111,7 +111,8 @@ public sealed class JobDispatcherService : IJobDeduplicationGuard
     {
         ArgumentNullException.ThrowIfNull(job);
 
-        if (!_processingIssues.TryAdd(job.IssueIdentifier, true))
+        var compositeKey = $"{job.IssueProviderId}:{job.IssueIdentifier}";
+        if (!_processingIssues.TryAdd(compositeKey, true))
         {
             _logger.Warning(
                 "Job for issue {IssueIdentifier} rejected — already queued or processing",
@@ -163,21 +164,25 @@ public sealed class JobDispatcherService : IJobDeduplicationGuard
     /// <summary>
     /// Checks whether the given issue identifier is already queued for processing.
     /// </summary>
-    public bool IsIssueQueued(string issueIdentifier)
+    public bool IsIssueQueued(string issueIdentifier, string issueProviderConfigId)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
-        return _processingIssues.ContainsKey(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+        var compositeKey = $"{issueProviderConfigId}:{issueIdentifier}";
+        return _processingIssues.ContainsKey(compositeKey);
     }
 
     /// <summary>
     /// Removes a queued issue (e.g., when the UI cancels a pending job).
     /// Removes from both the dedup dictionary and the queue.
     /// </summary>
-    public bool RemoveFromQueue(string issueIdentifier)
+    public bool RemoveFromQueue(string issueIdentifier, string issueProviderConfigId)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
 
-        if (!_processingIssues.TryRemove(issueIdentifier, out _))
+        var compositeKey = $"{issueProviderConfigId}:{issueIdentifier}";
+        if (!_processingIssues.TryRemove(compositeKey, out _))
             return false;
 
         lock (_queueLock)
@@ -188,7 +193,7 @@ public sealed class JobDispatcherService : IJobDeduplicationGuard
                 if (!_jobQueue.TryDequeue(out var job))
                     break;
 
-                if (job.IssueIdentifier != issueIdentifier)
+                if (!(job.IssueIdentifier == issueIdentifier && job.IssueProviderId == issueProviderConfigId))
                 {
                     _jobQueue.Enqueue(job);
                 }
@@ -202,10 +207,12 @@ public sealed class JobDispatcherService : IJobDeduplicationGuard
     /// <summary>
     /// Marks an issue as no longer being processed (call after job completion or failure).
     /// </summary>
-    public void MarkIssueComplete(string issueIdentifier)
+    public void MarkIssueComplete(string issueIdentifier, string issueProviderConfigId)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
-        _processingIssues.TryRemove(issueIdentifier, out _);
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+        var compositeKey = $"{issueProviderConfigId}:{issueIdentifier}";
+        _processingIssues.TryRemove(compositeKey, out _);
     }
 
     /// <summary>
