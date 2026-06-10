@@ -61,11 +61,10 @@ internal class BrainSyncService : IBrainSyncService
             _logger.Information("Pipeline {RunId} added .brain/ to .gitignore", run.RunId);
         }
 
-        // Count knowledge files
-        var brainFiles = Directory.Exists(brainPath)
-            ? Directory.GetFiles(brainPath, "*.md", SearchOption.AllDirectories)
-            : Array.Empty<string>();
-        run.BrainKnowledgeFileCount = brainFiles.Length;
+        // Count knowledge files (lazy enumeration avoids string[] allocation)
+        run.BrainKnowledgeFileCount = Directory.Exists(brainPath)
+            ? Directory.EnumerateFiles(brainPath, "*.md", SearchOption.AllDirectories).Count()
+            : 0;
         run.BrainContextLoaded = true;
 
         _logger.Information(
