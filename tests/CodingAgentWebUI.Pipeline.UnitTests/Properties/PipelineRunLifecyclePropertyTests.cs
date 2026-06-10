@@ -219,7 +219,8 @@ public class PipelineRunLifecyclePropertyTests
     /// <summary>
     /// Property 7: TransitionTo Postconditions
     /// For any PipelineRun and PipelineStep, after TransitionTo:
-    /// CurrentStep equals new step, HighWaterMark updated if non-terminal and exceeds current, OnChange invoked.
+    /// CurrentStep equals new step, HighWaterMark updated if non-terminal and exceeds current
+    /// (using StepOrder logical ordering, not enum ordinals), OnChange invoked.
     /// **Validates: Requirements 3.1, 3.2**
     /// </summary>
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
@@ -237,10 +238,12 @@ public class PipelineRunLifecyclePropertyTests
         var stepCorrect = run.CurrentStep == input.TargetStep;
 
         // (b) HighWaterMark updated if step is not Failed/Cancelled and exceeds current
-        // Note: Completed IS allowed to update HighWaterMark (only Failed/Cancelled are excluded)
+        // Uses StepOrder.GetOrder (logical execution order) — NOT enum ordinals.
+        // Steps from different pipeline types may have overlapping orders; the production
+        // code uses StepOrder for comparison and so must this assertion.
         bool hwmCorrect;
         var hwmExcluded = input.TargetStep is PipelineStep.Failed or PipelineStep.Cancelled;
-        if (!hwmExcluded && (int)input.TargetStep > (int)initialHighWaterMark)
+        if (!hwmExcluded && StepOrder.GetOrder(input.TargetStep) > StepOrder.GetOrder(initialHighWaterMark))
             hwmCorrect = run.HighWaterMark == input.TargetStep;
         else
             hwmCorrect = run.HighWaterMark == initialHighWaterMark;

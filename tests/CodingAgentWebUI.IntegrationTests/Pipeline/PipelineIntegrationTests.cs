@@ -195,6 +195,9 @@ public class PipelineIntegrationTests : IntegrationTestBase
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         service.GetRunHistory().Should().ContainSingle(s => s.RunId == run.RunId);
 
+        // Allow fire-and-forget persist to flush to disk
+        await Task.Delay(500);
+
         // Simulate restart: create a brand new service pointing at the same runs directory
         await using var service2 = new PipelineOrchestrationService(
             ConfigStore,
