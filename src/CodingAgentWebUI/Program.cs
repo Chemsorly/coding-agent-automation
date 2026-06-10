@@ -111,11 +111,23 @@ lifetime.ApplicationStopping.Register(() =>
     var lifecycle = app.Services.GetRequiredService<PipelineRunLifecycleService>();
     var pipeline = app.Services.GetRequiredService<PipelineOrchestrationService>();
 
-    if (lifecycle.IsRunning)
-        lifecycle.CancelPipelineAsync().GetAwaiter().GetResult();
+    try
+    {
+        var completed = Task.Run(async () =>
+        {
+            if (lifecycle.IsRunning)
+                await lifecycle.CancelPipelineAsync();
 
-    // Label swaps require providers → stays on orchestration
-    pipeline.CancelActiveAgentRunsAsync().GetAwaiter().GetResult();
+            await pipeline.CancelActiveAgentRunsAsync();
+        }).Wait(TimeSpan.FromSeconds(15));
+
+        if (!completed)
+            Log.Warning("Graceful shutdown timed out after 15s — proceeding with exit");
+    }
+    catch (AggregateException ex)
+    {
+        Log.Warning(ex.InnerException ?? ex, "Error during graceful shutdown cancellation");
+    }
 });
 
 // Kubernetes-style health probes — anonymous, no auth required
