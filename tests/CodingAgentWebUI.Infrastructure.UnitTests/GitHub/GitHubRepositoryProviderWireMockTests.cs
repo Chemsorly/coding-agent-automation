@@ -93,11 +93,12 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
     [Fact]
     public async Task GetAgentPullRequestsAsync_NoMatchingBranches_ReturnsEmpty()
     {
-        // PRs exist but none match the expected branch prefix
-        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls"), new[]
+        // Search returns no matching PRs
+        StubGet(ApiPath("/search/issues"), new
         {
-            BuildDetailedPullRequestJson(1, "feature/unrelated-branch", false, true),
-            BuildDetailedPullRequestJson(2, "fix/something-else", false, true)
+            total_count = 0,
+            incomplete_results = false,
+            items = Array.Empty<object>()
         });
 
         await using var provider = CreateProvider();
@@ -110,9 +111,11 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
     public async Task GetAgentPullRequestsAsync_MatchingBranch_ReturnsLinkedPullRequest()
     {
         var branchName = "feature/auto-42-abc123";
-        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls"), new[]
+        StubGet(ApiPath("/search/issues"), new
         {
-            BuildDetailedPullRequestJson(10, branchName, true, true)
+            total_count = 1,
+            incomplete_results = false,
+            items = new[] { BuildSearchIssueJson(10, branchName) }
         });
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/10"),
             BuildDetailedPullRequestJson(10, branchName, true, true));
@@ -138,11 +141,12 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
     [Fact]
     public async Task GetAgentPullRequestsAsync_FiltersOnlyMatchingPrefix()
     {
-        // Two PRs: one matches prefix "feature/auto-99-", one doesn't
-        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls"), new[]
+        // Search API returns only matching PRs server-side; we verify only PR 5 is fetched
+        StubGet(ApiPath("/search/issues"), new
         {
-            BuildDetailedPullRequestJson(5, "feature/auto-99-impl", false, true),
-            BuildDetailedPullRequestJson(6, "feature/auto-100-other", false, true)
+            total_count = 1,
+            incomplete_results = false,
+            items = new[] { BuildSearchIssueJson(5, "feature/auto-99-impl") }
         });
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/5"),
             BuildDetailedPullRequestJson(5, "feature/auto-99-impl", false, true));
@@ -160,9 +164,11 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
     public async Task GetAgentPullRequestsAsync_FiltersPipelineGeneratedComments()
     {
         var branchName = "feature/auto-7-fix";
-        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls"), new[]
+        StubGet(ApiPath("/search/issues"), new
         {
-            BuildDetailedPullRequestJson(3, branchName, false, true)
+            total_count = 1,
+            incomplete_results = false,
+            items = new[] { BuildSearchIssueJson(3, branchName) }
         });
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/3"),
             BuildDetailedPullRequestJson(3, branchName, false, true));
@@ -250,6 +256,19 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
     #endregion
 
     #region Helpers
+
+    private static object BuildSearchIssueJson(int number, string headRef) => new
+    {
+        id = number * 100,
+        number,
+        title = $"PR #{number}",
+        state = "open",
+        user = new { login = "testuser", id = 1 },
+        labels = Array.Empty<object>(),
+        pull_request = new { html_url = $"https://github.com/test-owner/test-repo/pull/{number}" },
+        created_at = "2026-01-01T00:00:00Z",
+        updated_at = "2026-01-01T00:00:00Z"
+    };
 
     private static object BuildDetailedPullRequestJson(int number, string headRef, bool draft, bool? mergeable) => new
     {
