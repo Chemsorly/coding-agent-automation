@@ -129,6 +129,46 @@ public class StepMetricsTests : IDisposable
     }
 
     [Fact]
+    public void AccumulateTokenUsage_WithCost_EmitsCostUsdCounter()
+    {
+        var run = CreateRun(PipelineRunType.Implementation, "proj-1", "TestProj");
+        var result = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = new TokenUsage { InputTokens = 100, OutputTokens = 50 },
+            Cost = 0.05m
+        };
+
+        run.AccumulateTokenUsage(result);
+
+        // Counter<double> measurements route to _histograms via SetMeasurementEventCallback<double>
+        var metric = _histograms.Should().Contain(h => h.Name == "agent.cost.usd"
+            && h.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "proj-1")))
+            .Which;
+        metric.Value.Should().Be(0.05);
+        metric.Tags.Should().Contain(new KeyValuePair<string, object?>("run_type", "implementation"));
+        metric.Tags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_name", "TestProj"));
+    }
+
+    [Fact]
+    public void AccumulateTokenUsage_NullCost_DoesNotEmitCostUsd()
+    {
+        var run = CreateRun(PipelineRunType.Implementation, "proj-1", "TestProj");
+        var result = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = new TokenUsage { InputTokens = 100, OutputTokens = 50 },
+            Cost = null
+        };
+
+        run.AccumulateTokenUsage(result);
+
+        _histograms.Should().NotContain(h => h.Name == "agent.cost.usd");
+    }
+
+    [Fact]
     public void BuildStepTags_IncludesAllExpectedTags()
     {
         var run = CreateRun(PipelineRunType.Review, "p1", "Proj");
