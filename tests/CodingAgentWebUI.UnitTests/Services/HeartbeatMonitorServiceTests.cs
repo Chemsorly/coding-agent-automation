@@ -272,6 +272,84 @@ public class HeartbeatMonitorServiceTests : IDisposable
             "rp-1", "org/repo#42", AgentLabels.Error, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task SweepAsync_OrphanedRun_AgentNotInRegistry_MarksRunFailedAndSwapsLabel()
+    {
+        // Run assigned to an agent that is NOT in the registry (orphaned)
+        var run = new PipelineRun
+        {
+            RunId = "orphan-1",
+            IssueIdentifier = "org/repo#99",
+            IssueTitle = "Orphaned",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = "agent-gone",
+            RunType = PipelineRunType.Implementation
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Run should be removed from active runs
+        _runService.GetRun("orphan-1").Should().BeNull();
+
+        // History should have been called with correct failure reason
+        _mockHistoryService.Verify(h => h.AddRunToHistory(It.Is<PipelineRun>(r =>
+            r.RunId == "orphan-1" &&
+            r.FailureReason == "Agent deregistered (orphaned run)" &&
+            r.CurrentStep == PipelineStep.Failed)), Times.Once);
+
+        // Label should be swapped to error via issue provider
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#99", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SweepAsync_RunWithNullAgentId_NotTreatedAsOrphan()
+    {
+        // Local run with no agent — should NOT be cleaned up by Phase 3
+        var run = new PipelineRun
+        {
+            RunId = "local-1",
+            IssueIdentifier = "org/repo#10",
+            IssueTitle = "Local",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = null
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Run should still be active
+        _runService.GetRun("local-1").Should().NotBeNull();
+        _mockHistoryService.Verify(h => h.AddRunToHistory(It.IsAny<PipelineRun>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SweepAsync_RunWithAgentStillInRegistry_NotTreatedAsOrphan()
+    {
+        // Agent is registered (even if disconnected) — Phase 3 should skip it
+        RegisterAgent("agent-alive", "conn-1");
+        _registry.TransitionStatus("agent-alive", AgentStatus.Disconnected);
+
+        var run = new PipelineRun
+        {
+            RunId = "active-1",
+            IssueIdentifier = "org/repo#20",
+            IssueTitle = "Active",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = "agent-alive"
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Run should still be active (not cleaned by Phase 3)
+        _runService.GetRun("active-1").Should().NotBeNull();
+    }
+
     private AgentEntry RegisterAgent(string agentId, string connectionId)
     {
         return _registry.Register(new AgentRegistrationMessage
