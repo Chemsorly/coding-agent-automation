@@ -17,16 +17,31 @@ public static class ResiliencePipelineFactory
 {
     private const int DefaultMaxRetryAttempts = 3;
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan DefaultOuterTimeout = TimeSpan.FromMinutes(5);
     internal static readonly TimeSpan GitNetworkTimeout = TimeSpan.FromSeconds(120);
     internal static readonly TimeSpan SignalRTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Creates a resilience pipeline for GitHub API (Octokit) calls.
-    /// Retries on transient errors (5xx, rate limits, network) with exponential backoff + jitter.
+    /// Uses an outer timeout (default: 5 minutes) that wraps the entire retry sequence including
+    /// rate-limit delays, and a per-attempt timeout (default: 30s) for individual API calls.
+    /// Pattern: outer timeout → retry (with rate-limit-aware backoff) → per-attempt timeout.
     /// </summary>
     public static ResiliencePipeline CreateGitHubApiPipeline(ILogger logger)
+        => CreateGitHubApiPipeline(logger, DefaultOuterTimeout, DefaultTimeout);
+
+    internal static ResiliencePipeline CreateGitHubApiPipeline(
+        ILogger logger,
+        TimeSpan? outerTimeout = null,
+        TimeSpan? perAttemptTimeout = null)
     {
+        var outer = outerTimeout ?? DefaultOuterTimeout;
+        var perAttempt = perAttemptTimeout ?? DefaultTimeout;
+
         return new ResiliencePipelineBuilder()
+            // Outer timeout: caps total time including all retries and rate-limit delays.
+            // If a rate-limit reset exceeds this, the operation fails with TimeoutRejectedException.
+            .AddTimeout(outer)
             .AddRetry(new RetryStrategyOptions
             {
                 MaxRetryAttempts = DefaultMaxRetryAttempts,
@@ -57,7 +72,8 @@ public static class ResiliencePipelineFactory
                     return ValueTask.CompletedTask;
                 }
             })
-            .AddTimeout(DefaultTimeout)
+            // Per-attempt timeout: caps each individual API call (existing 30s behavior).
+            .AddTimeout(perAttempt)
             .Build();
     }
 
@@ -339,6 +355,8 @@ public static class ResiliencePipelineFactory
 
     /// <summary>
     /// Extracts rate limit delay from exception headers when available.
+    /// The delay may exceed the outer timeout — in that case, the outer timeout strategy
+    /// will cancel the wait with TimeoutRejectedException, which is the correct fail-fast behaviour.
     /// </summary>
     private static ValueTask<TimeSpan?> GetRateLimitDelay(RetryDelayGeneratorArguments<object> args)
     {

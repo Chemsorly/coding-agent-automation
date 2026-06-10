@@ -335,15 +335,21 @@ public class PipelineRunLifecyclePropertyTests
         var runServiceMock = new Mock<IOrchestratorRunService>();
         runServiceMock.Setup(r => r.GetActiveRuns()).Returns(agentRuns.AsReadOnly());
 
+        var removedRunIds = new List<string>();
+        runServiceMock.Setup(r => r.RemoveRun(It.IsAny<string>()))
+            .Callback<string>(id => removedRunIds.Add(id));
+
         var service = CreateService(historyMock: historyMock, runServiceMock: runServiceMock);
 
-        service.MarkAgentRunsCancelled().GetAwaiter().GetResult();
+        var cancelledIssues = service.MarkAgentRunsCancelled().GetAwaiter().GetResult();
 
         var allCompleted = agentRuns.All(r => r.CompletedAt != null);
         var allCancelled = agentRuns.All(r => r.CurrentStep == PipelineStep.Cancelled);
         var allInHistory = agentRuns.All(r => addedRuns.Contains(r));
+        var allRemoved = agentRuns.All(r => removedRunIds.Contains(r.RunId));
+        var returnedIssues = cancelledIssues.SequenceEqual(agentRuns.Select(r => r.IssueIdentifier));
 
-        return allCompleted && allCancelled && allInHistory;
+        return allCompleted && allCancelled && allInHistory && allRemoved && returnedIssues;
     }
 
     // ── Property 11: RegisterDispatchedRun Success ──────────────────────

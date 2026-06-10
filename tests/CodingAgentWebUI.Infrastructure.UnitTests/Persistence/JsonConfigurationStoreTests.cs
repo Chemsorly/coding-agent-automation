@@ -269,6 +269,40 @@ public class JsonConfigurationStoreTests : IDisposable
     }
 
     [Fact]
+    public void Constructor_CleansUpOrphanedTmpFiles()
+    {
+        // Arrange — create .tmp files in the base directory and subdirectories
+        var tmpFile1 = Path.Combine(_tempDir, "pipeline-config.json.abc123.tmp");
+        var tmpFile2 = Path.Combine(_tempDir, "providers", "issue", "some-file.json.def456.tmp");
+        Directory.CreateDirectory(Path.GetDirectoryName(tmpFile2)!);
+        File.WriteAllText(tmpFile1, "orphaned content");
+        File.WriteAllText(tmpFile2, "orphaned content");
+
+        // Also create a real json file that should NOT be deleted
+        var realFile = Path.Combine(_tempDir, "pipeline-config.json");
+        File.WriteAllText(realFile, "{}");
+
+        // Act — constructing a new store triggers cleanup
+        var _ = new JsonConfigurationStore(_tempDir);
+
+        // Assert — tmp files are deleted, real file remains
+        File.Exists(tmpFile1).Should().BeFalse("orphaned .tmp file should be cleaned up");
+        File.Exists(tmpFile2).Should().BeFalse("orphaned .tmp file in subdirectory should be cleaned up");
+        File.Exists(realFile).Should().BeTrue("non-tmp files should not be deleted");
+    }
+
+    [Fact]
+    public void Constructor_NonExistentDirectory_DoesNotThrow()
+    {
+        // Arrange — use a directory that doesn't exist
+        var nonExistentDir = Path.Combine(Path.GetTempPath(), $"non-existent-{Guid.NewGuid()}");
+
+        // Act & Assert — should not throw
+        var store = new JsonConfigurationStore(nonExistentDir);
+        Assert.NotNull(store);
+    }
+
+    [Fact]
     public async Task SaveAgentProfileAsync_SerializesWithCorrectFilenameBasedOnId()
     {
         // Arrange

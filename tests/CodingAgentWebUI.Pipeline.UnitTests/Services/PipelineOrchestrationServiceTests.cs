@@ -3438,6 +3438,107 @@ public class PipelineOrchestrationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CancelActiveAgentRunsAsync_SendsCancelJobToAgents_BeforeLabelSwap()
+    {
+        // Arrange: set up a service with agent runs and a cancellation sender
+        var mockRunService = new Mock<IOrchestratorRunService>();
+        var agentRun = new PipelineRun
+        {
+            RunId = "agent-run-1",
+            IssueIdentifier = "99",
+            IssueTitle = "Agent Issue",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-1",
+            CurrentStep = PipelineStep.GeneratingCode,
+            HighWaterMark = PipelineStep.GeneratingCode,
+            StartedAt = DateTime.UtcNow,
+            AgentId = "agent-worker-1"
+        };
+        mockRunService.Setup(r => r.GetActiveRuns()).Returns(new List<PipelineRun> { agentRun }.AsReadOnly());
+        mockRunService.Setup(r => r.HasActiveRuns).Returns(true);
+
+        var mockHistoryService = new Mock<IPipelineRunHistoryService>();
+        var lifecycle = new PipelineRunLifecycleService(
+            mockHistoryService.Object, mockRunService.Object, _mockLogger.Object);
+
+        var mockCancellation = new Mock<IAgentCancellationSender>();
+
+        var service = new PipelineOrchestrationService(
+            _mockConfigStore.Object,
+            _mockFactory.Object,
+            new IssueDescriptionParser(),
+            new AgentPhaseExecutor(_mockLogger.Object),
+            new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
+            _mockLogger.Object,
+            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+            historyService: mockHistoryService.Object,
+            runService: mockRunService.Object,
+            lifecycle: lifecycle,
+            labelSwapper: new Orchestration.LabelSwapper(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object),
+            agentCancellation: mockCancellation.Object);
+
+        // Act
+        await service.CancelActiveAgentRunsAsync();
+
+        // Assert: CancelJob was sent to agent
+        mockCancellation.Verify(
+            c => c.SendCancelJobAsync("agent-worker-1", "agent-run-1", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelActiveAgentRunsAsync_CancelJobFailure_DoesNotPreventCancellation()
+    {
+        // Arrange: set up agent cancellation that throws
+        var mockRunService = new Mock<IOrchestratorRunService>();
+        var agentRun = new PipelineRun
+        {
+            RunId = "agent-run-2",
+            IssueIdentifier = "100",
+            IssueTitle = "Agent Issue 2",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-1",
+            CurrentStep = PipelineStep.GeneratingCode,
+            HighWaterMark = PipelineStep.GeneratingCode,
+            StartedAt = DateTime.UtcNow,
+            AgentId = "agent-worker-2"
+        };
+        mockRunService.Setup(r => r.GetActiveRuns()).Returns(new List<PipelineRun> { agentRun }.AsReadOnly());
+        mockRunService.Setup(r => r.HasActiveRuns).Returns(true);
+
+        var mockHistoryService = new Mock<IPipelineRunHistoryService>();
+        var lifecycle = new PipelineRunLifecycleService(
+            mockHistoryService.Object, mockRunService.Object, _mockLogger.Object);
+
+        // Cancellation sender that throws — simulates disconnected agent
+        var mockCancellation = new Mock<IAgentCancellationSender>();
+        mockCancellation
+            .Setup(c => c.SendCancelJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Agent disconnected"));
+
+        var service = new PipelineOrchestrationService(
+            _mockConfigStore.Object,
+            _mockFactory.Object,
+            new IssueDescriptionParser(),
+            new AgentPhaseExecutor(_mockLogger.Object),
+            new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
+            _mockLogger.Object,
+            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+            historyService: mockHistoryService.Object,
+            runService: mockRunService.Object,
+            lifecycle: lifecycle,
+            labelSwapper: new Orchestration.LabelSwapper(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object),
+            agentCancellation: mockCancellation.Object);
+
+        // Act — should not throw despite cancellation sender failure
+        await service.CancelActiveAgentRunsAsync();
+
+        // Assert: state cleanup still happened
+        agentRun.CurrentStep.Should().Be(PipelineStep.Cancelled);
+        agentRun.CompletedAt.Should().NotBeNull();
+    }
+
+    [Fact]
     public async Task CancelActiveAgentRunsAsync_CallsMarkAgentRunsCancelled_ThenPerformsLabelSwaps()
     {
         // Set up a service with a run service that has active agent runs

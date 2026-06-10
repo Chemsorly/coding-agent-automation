@@ -131,6 +131,7 @@ public sealed partial class AgentHub
         if (agent is not null)
         {
             agent.ActiveJobId = null;
+            agent.OrphanRestoredAt = null;
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
@@ -167,6 +168,16 @@ public sealed partial class AgentHub
 
             _logger.Debug("Job {JobId} step transition → {Step}", jobId, step);
             _orchestration.NotifyChange();
+        }
+
+        // Clear orphan-restored flag: agent is actively progressing on this job
+        var agent = _facade.GetByConnectionId(Context.ConnectionId);
+        if (agent is { OrphanRestoredAt: not null })
+        {
+            _logger.Information(
+                "Agent {AgentId} reported progress on job {JobId}, clearing orphan-restored state",
+                agent.AgentId, jobId);
+            agent.OrphanRestoredAt = null;
         }
 
         return Task.CompletedTask;

@@ -275,6 +275,7 @@ public sealed class LocalPipelineExecutor
             IssueProviderConfigId = string.Empty, // Agent doesn't have issue provider
             RepoProviderConfigId = job.RepoProviderConfigId,
             StartedAt = DateTime.UtcNow,
+            StartedAtOffset = DateTimeOffset.UtcNow,
             CurrentStep = PipelineStep.Created,
             RepositoryName = repoProvider.RepositoryFullName,
             ModelName = agentProvider is KiroCliAgentProvider kp ? kp.Model : null,
@@ -382,6 +383,7 @@ public sealed class LocalPipelineExecutor
                 && run.CurrentStep is not PipelineStep.Failed and not PipelineStep.Cancelled)
             {
                 run.CompletedAt = DateTime.UtcNow;
+                run.CompletedAtOffset = DateTimeOffset.UtcNow;
                 run.CurrentStep = PipelineStep.Completed;
                 run.FinalLabel ??= AgentLabels.Done;
             }
@@ -391,6 +393,7 @@ public sealed class LocalPipelineExecutor
         catch (OperationCanceledException)
         {
             run.CompletedAt = DateTime.UtcNow;
+            run.CompletedAtOffset = DateTimeOffset.UtcNow;
 
             TransitionTo(PipelineStep.Cancelled);
             EmitOutputLine("🚫 Pipeline cancelled");
@@ -681,6 +684,7 @@ public sealed class LocalPipelineExecutor
             {
                 run.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";
                 run.CompletedAt = DateTime.UtcNow;
+                run.CompletedAtOffset = DateTimeOffset.UtcNow;
                 run.CurrentStep = PipelineStep.Failed;
                 return;
             }
@@ -711,6 +715,7 @@ public sealed class LocalPipelineExecutor
             }
 
             run.CompletedAt = DateTime.UtcNow;
+            run.CompletedAtOffset = DateTimeOffset.UtcNow;
             run.CurrentStep = finalStep;
             run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
         }

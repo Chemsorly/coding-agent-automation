@@ -1,11 +1,13 @@
 using System.Diagnostics;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.Extensions.Hosting;
 using OpenTelemetry.Trace;
 using Serilog;
 using ILogger = Serilog.ILogger;
+using ProviderKind = CodingAgentWebUI.Pipeline.Models.ProviderKind;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
@@ -33,6 +35,7 @@ public sealed class JobQueueDrainService : BackgroundService
     private readonly JobDispatcherService _dispatcher;
     private readonly AgentRegistryService _registry;
     private readonly IJobDispatcher _jobDispatcher;
+    private readonly IConfigurationStore _configStore;
     private readonly ConsolidationQueueService _consolidationQueue;
     private readonly IConsolidationService _consolidationService;
     private readonly IConsolidationDispatcher _consolidationDispatcher;
@@ -49,6 +52,7 @@ public sealed class JobQueueDrainService : BackgroundService
         JobDispatcherService dispatcher,
         AgentRegistryService registry,
         IJobDispatcher jobDispatcher,
+        IConfigurationStore configStore,
         ConsolidationQueueService consolidationQueue,
         IConsolidationService consolidationService,
         IConsolidationDispatcher consolidationDispatcher,
@@ -57,6 +61,7 @@ public sealed class JobQueueDrainService : BackgroundService
         ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(jobDispatcher);
+        ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(consolidationQueue);
         ArgumentNullException.ThrowIfNull(consolidationService);
         ArgumentNullException.ThrowIfNull(consolidationDispatcher);
@@ -65,6 +70,7 @@ public sealed class JobQueueDrainService : BackgroundService
         _dispatcher = dispatcher;
         _registry = registry;
         _jobDispatcher = jobDispatcher;
+        _configStore = configStore;
         _consolidationQueue = consolidationQueue;
         _consolidationService = consolidationService;
         _consolidationDispatcher = consolidationDispatcher;
@@ -180,61 +186,21 @@ public sealed class JobQueueDrainService : BackgroundService
 
             try
             {
-                // Clear the dedup entry so TryDispatchAsync doesn't reject it
-                _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier);
+                // Resolve required labels for the job
+                var config = await _configStore.LoadPipelineConfigAsync(ct);
+                var repoConfig = await _configStore.GetProviderConfigByIdAsync(
+                    pendingJob.RepoProviderId, ProviderKind.Repository, ct);
+                var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
 
-                bool dispatched;
-                if (pendingJob.RunType == Pipeline.Models.PipelineRunType.Review)
-                {
-                    dispatched = await _jobDispatcher.TryDispatchReviewAsync(
-                        new Pipeline.Models.ReviewDispatchRequest
-                        {
-                            PrIdentifier = pendingJob.IssueIdentifier,
-                            PrBranchName = pendingJob.PrBranchName!,
-                            PrTitle = pendingJob.IssueTitle ?? $"PR #{pendingJob.IssueIdentifier}",
-                            PrDescription = pendingJob.PrDescription ?? string.Empty,
-                            PrAuthor = pendingJob.PrAuthor,
-                            PrUrl = pendingJob.PrUrl ?? string.Empty,
-                            PrTargetBranch = pendingJob.PrTargetBranch ?? "main",
-                            IssueProviderId = pendingJob.IssueProviderId,
-                            RepoProviderId = pendingJob.RepoProviderId,
-                            BrainProviderId = pendingJob.BrainProviderId,
-                            InitiatedBy = pendingJob.InitiatedBy
-                        },
-                        ct,
-                        project: pendingJob.Project);
-                }
-                else if (pendingJob.RunType is Pipeline.Models.PipelineRunType.DecompositionAnalysis
-                         or Pipeline.Models.PipelineRunType.Decomposition)
-                {
-                    dispatched = await _jobDispatcher.TryDispatchDecompositionAsync(
-                        pendingJob.IssueIdentifier,
-                        pendingJob.IssueTitle ?? $"Epic #{pendingJob.IssueIdentifier}",
-                        pendingJob.RunType,
-                        pendingJob.IssueProviderId,
-                        pendingJob.RepoProviderId,
-                        pendingJob.BrainProviderId,
-                        pendingJob.InitiatedBy,
-                        ct,
-                        decompositionSource: pendingJob.DecompositionSource,
-                        project: pendingJob.Project);
-                }
-                else
-                {
-                    dispatched = await _jobDispatcher.TryDispatchAsync(
-                        pendingJob.IssueIdentifier,
-                        pendingJob.IssueProviderId,
-                        pendingJob.RepoProviderId,
-                        pendingJob.BrainProviderId,
-                        pendingJob.PipelineProviderId,
-                        pendingJob.InitiatedBy,
-                        ct,
-                        issueTitle: pendingJob.IssueTitle,
-                        project: pendingJob.Project);
-                }
+                // Agent already selected by DequeueForAgent — dispatch directly
+                var dispatched = await _jobDispatcher.DispatchToAgentDirectAsync(
+                    agent, pendingJob, requiredLabels, ct);
 
                 if (dispatched)
                 {
+                    // Run is now tracked by OrchestratorRunService.IsIssueBeingProcessed
+                    // Remove from queue dedup since run service provides the guard now
+                    _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier);
                     dispatchedCount++;
                 }
                 else
@@ -242,7 +208,8 @@ public sealed class JobQueueDrainService : BackgroundService
                     _logger.Warning(
                         "Drain: failed to dispatch job for issue {IssueIdentifier}, re-enqueuing",
                         pendingJob.IssueIdentifier);
-                    _dispatcher.EnqueueJob(pendingJob);
+                    // Re-enqueue at the back — no TryAdd needed, entry stays in _processingIssues
+                    _dispatcher.ReEnqueue(pendingJob);
                 }
             }
             catch (Exception ex)
@@ -250,7 +217,8 @@ public sealed class JobQueueDrainService : BackgroundService
                 _logger.Error(ex,
                     "Drain: exception dispatching job for issue {IssueIdentifier} to agent {AgentId}, re-enqueuing",
                     pendingJob.IssueIdentifier, agent.AgentId);
-                _dispatcher.EnqueueJob(pendingJob);
+                // Re-enqueue at the back — entry stays in _processingIssues
+                _dispatcher.ReEnqueue(pendingJob);
             }
         }
 
@@ -353,4 +321,5 @@ public sealed class JobQueueDrainService : BackgroundService
 
         return dispatchedCount;
     }
+
 }

@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Persistence;
 
 namespace CodingAgentWebUI.Infrastructure.Persistence;
 
@@ -51,19 +52,17 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
         ArgumentNullException.ThrowIfNull(run);
         var summary = run.ToSummary();
         lock (_lock) { _runHistory.Insert(0, summary); }
-        PersistRunSummary(summary);
+        // Fire-and-forget: existing behavior is non-blocking persist
+        _ = PersistRunSummaryAsync(summary);
     }
 
-    private void PersistRunSummary(PipelineRunSummary summary)
+    private async Task PersistRunSummaryAsync(PipelineRunSummary summary)
     {
         try
         {
-            if (!Directory.Exists(_runsDirectory))
-                Directory.CreateDirectory(_runsDirectory);
-
             var path = Path.Combine(_runsDirectory, $"{summary.RunId}.json");
             var json = System.Text.Json.JsonSerializer.Serialize(summary, JsonOptions);
-            File.WriteAllText(path, json);
+            await AtomicFileWriter.WriteAsync(path, json, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -150,7 +149,7 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
         if (config.FailedWorkspaceRetentionDays < 0)
             return;
 
-        var cutoff = DateTime.UtcNow.AddDays(-config.FailedWorkspaceRetentionDays);
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-config.FailedWorkspaceRetentionDays);
 
         List<PipelineRunSummary> snapshot;
         lock (_lock) { snapshot = _runHistory.ToList(); }
@@ -160,7 +159,12 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
             if (summary.FinalStep == PipelineStep.Completed)
                 continue;
 
-            if (summary.CompletedAt == null || summary.CompletedAt > cutoff)
+            #pragma warning disable CS0618 // Fallback to legacy CompletedAt for older persisted summaries without CompletedAtOffset
+            var completedOffset = summary.CompletedAtOffset
+                ?? (summary.CompletedAt.HasValue ? new DateTimeOffset(summary.CompletedAt.Value, TimeSpan.Zero) : (DateTimeOffset?)null);
+            #pragma warning restore CS0618
+
+            if (completedOffset == null || completedOffset > cutoff)
                 continue;
 
             if (activeRunId != null && activeRunId == summary.RunId)

@@ -41,17 +41,23 @@ public class QueueWaitTimeMetricsTests : IDisposable
         _dispatcher = new JobDispatcherService(_registry, logger);
         _mockJobDispatcher = new Mock<IJobDispatcher>();
 
-        _mockJobDispatcher.Setup(d => d.TryDispatchAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-            It.IsAny<string?>(), It.IsAny<string?>(),
-            It.IsAny<string>(), It.IsAny<CancellationToken>(),
-            It.IsAny<string?>(), It.IsAny<PipelineProject?>()))
+        _mockJobDispatcher.Setup(d => d.DispatchToAgentDirectAsync(
+            It.IsAny<AgentEntry>(), It.IsAny<PendingJob>(),
+            It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        mockConfigStore
+            .Setup(c => c.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
 
         var consolidationQueue = new ConsolidationQueueService(logger);
         _drainService = new JobQueueDrainService(
             _dispatcher, _registry, _mockJobDispatcher.Object,
-            consolidationQueue, new Mock<IConsolidationService>().Object,
+            mockConfigStore.Object, consolidationQueue, new Mock<IConsolidationService>().Object,
             new Mock<IConsolidationDispatcher>().Object, logger);
     }
 

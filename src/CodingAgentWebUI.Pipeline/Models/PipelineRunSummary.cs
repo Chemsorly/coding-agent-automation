@@ -6,8 +6,19 @@ public sealed class PipelineRunSummary
     public required string IssueIdentifier { get; init; }
     public required string IssueTitle { get; init; }
     public required PipelineStep FinalStep { get; init; }
-    public required DateTime StartedAt { get; init; }
+
+    [Obsolete("Use StartedAtOffset for timezone-safe comparisons")]
+    public DateTime StartedAt { get; init; }
+
+    [Obsolete("Use CompletedAtOffset for timezone-safe comparisons")]
     public DateTime? CompletedAt { get; init; }
+
+    /// <summary>Timezone-safe shadow of <see cref="StartedAt"/>. Set alongside the original property.</summary>
+    public DateTimeOffset StartedAtOffset { get; init; }
+
+    /// <summary>Timezone-safe shadow of <see cref="CompletedAt"/>. Set alongside the original property.</summary>
+    public DateTimeOffset? CompletedAtOffset { get; init; }
+
     public int RetryCount { get; init; }
     public string? PullRequestUrl { get; init; }
 

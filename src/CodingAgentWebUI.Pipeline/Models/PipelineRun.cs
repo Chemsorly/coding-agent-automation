@@ -15,8 +15,18 @@ public sealed class PipelineRun
 
     /// <summary>Highest pipeline step ever reached during this run (excludes terminal states). Used by the sidebar to show revisited steps.</summary>
     public PipelineStep HighWaterMark { get; set; }
+
+    [Obsolete("Use StartedAtOffset for timezone-safe comparisons")]
     public DateTime StartedAt { get; init; }
+
+    [Obsolete("Use CompletedAtOffset for timezone-safe comparisons")]
     public DateTime? CompletedAt { get; set; }
+
+    /// <summary>Timezone-safe shadow of <see cref="StartedAt"/>. Set alongside the original property.</summary>
+    public DateTimeOffset StartedAtOffset { get; init; }
+
+    /// <summary>Timezone-safe shadow of <see cref="CompletedAt"/>. Set alongside the original property.</summary>
+    public DateTimeOffset? CompletedAtOffset { get; set; }
     public string? WorkspacePath { get; set; }
     public string? BranchName { get; set; }
     public string? FailureReason { get; set; }
@@ -249,6 +259,7 @@ public sealed class PipelineRun
 
     /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
     // NOTE: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
+    #pragma warning disable CS0618 // Obsolete members used intentionally for backward-compat serialization
     public PipelineRunSummary ToSummary() => new()
     {
         RunId = RunId,
@@ -257,6 +268,8 @@ public sealed class PipelineRun
         FinalStep = CurrentStep,
         StartedAt = StartedAt,
         CompletedAt = CompletedAt,
+        StartedAtOffset = StartedAtOffset,
+        CompletedAtOffset = CompletedAtOffset,
         RetryCount = RetryCount,
         PullRequestUrl = PullRequestUrl,
         RunType = RunType,
@@ -281,4 +294,5 @@ public sealed class PipelineRun
         ProjectName = ProjectName,
         DecompositionSource = DecompositionSource
     };
+    #pragma warning restore CS0618
 }

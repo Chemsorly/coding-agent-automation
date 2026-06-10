@@ -814,6 +814,307 @@ public class AgentJobDispatcherTests : IDisposable
 
     #endregion
 
+    #region DispatchToAgentDirectAsync
+
+    [Fact]
+    public async Task DispatchToAgentDirectAsync_NullAgent_Throws()
+    {
+        var dispatcher = CreateDispatcher();
+        var act = () => dispatcher.DispatchToAgentDirectAsync(
+            null!,
+            new PendingJob
+            {
+                IssueIdentifier = "issue-1",
+                IssueProviderId = "ip",
+                RepoProviderId = "rp",
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = "test"
+            },
+            Array.Empty<string>(),
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    [Fact]
+    public async Task DispatchToAgentDirectAsync_NullJob_Throws()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-direct-null",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-direct-null");
+
+        var dispatcher = CreateDispatcher();
+        var act = () => dispatcher.DispatchToAgentDirectAsync(
+            agent, null!, Array.Empty<string>(), CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    [Fact]
+    public async Task DispatchToAgentDirectAsync_NullRequiredLabels_Throws()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-direct-nrl",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-direct-nrl");
+
+        var dispatcher = CreateDispatcher();
+        var act = () => dispatcher.DispatchToAgentDirectAsync(
+            agent,
+            new PendingJob
+            {
+                IssueIdentifier = "issue-1",
+                IssueProviderId = "ip",
+                RepoProviderId = "rp",
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = "test"
+            },
+            null!,
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    [Fact]
+    public async Task DispatchToAgentDirectAsync_ImplementationRunType_DispatchesViaDispatchToAgentAsync()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-direct-impl",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-direct-impl");
+
+        SetupHappyPathMocks("agent-provider-1");
+        SetupIssueProviderMock(new List<IssueComment>());
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.DispatchToAgentDirectAsync(
+            agent,
+            new PendingJob
+            {
+                IssueIdentifier = "issue-direct",
+                IssueProviderId = "ip",
+                RepoProviderId = "rp",
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = "user",
+                RunType = PipelineRunType.Implementation
+            },
+            Array.Empty<string>(),
+            CancellationToken.None);
+
+        result.Should().BeTrue();
+        agent.Status.Should().Be(AgentStatus.Busy);
+        _mockAgentComm.Verify(c => c.AssignJobAsync("conn-direct-impl", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchToAgentDirectAsync_ReviewRunType_DispatchesViaReviewPath()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-direct-rev",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-direct-rev");
+
+        SetupHappyPathMocks("agent-provider-1");
+
+        // Mock ExtractLinkedIssuesAsync for review dispatch path
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(r => r.RepositoryFullName).Returns("org/repo");
+        mockRepoProvider.Setup(r => r.ExtractLinkedIssuesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
+        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.DispatchToAgentDirectAsync(
+            agent,
+            new PendingJob
+            {
+                IssueIdentifier = "42",
+                IssueTitle = "PR Title",
+                IssueProviderId = "ip",
+                RepoProviderId = "rp",
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = "user",
+                RunType = PipelineRunType.Review,
+                PrBranchName = "feature/direct",
+                PrDescription = "Direct dispatch review",
+                PrUrl = "https://github.com/org/repo/pull/42",
+                PrTargetBranch = "main",
+                PrAuthor = "dev"
+            },
+            Array.Empty<string>(),
+            CancellationToken.None);
+
+        result.Should().BeTrue();
+        agent.Status.Should().Be(AgentStatus.Busy);
+        _mockAgentComm.Verify(c => c.AssignJobAsync("conn-direct-rev", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "rp", "42", AgentLabels.InProgress, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchToAgentDirectAsync_DecompositionRunType_DispatchesViaDecompositionPath()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-direct-decomp",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-direct-decomp");
+
+        SetupHappyPathMocks("agent-provider-1");
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.DispatchToAgentDirectAsync(
+            agent,
+            new PendingJob
+            {
+                IssueIdentifier = "epic-direct",
+                IssueTitle = "Epic Title",
+                IssueProviderId = "ip",
+                RepoProviderId = "rp",
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = "user",
+                RunType = PipelineRunType.DecompositionAnalysis
+            },
+            Array.Empty<string>(),
+            CancellationToken.None);
+
+        result.Should().BeTrue();
+        agent.Status.Should().Be(AgentStatus.Busy);
+        _mockAgentComm.Verify(c => c.AssignJobAsync("conn-direct-decomp", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "ip", "epic-direct", AgentLabels.InProgress, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchToAgentDirectAsync_SkipsDedupChecks_DispatchesEvenWhenIssueQueued()
+    {
+        // Enqueue the issue first — TryDispatchAsync would reject this
+        _dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = "issue-dedup",
+            IssueProviderId = "ip",
+            RepoProviderId = "rp",
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            InitiatedBy = "test"
+        });
+
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-direct-dedup",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-direct-dedup");
+
+        SetupHappyPathMocks("agent-provider-1");
+        SetupIssueProviderMock(new List<IssueComment>());
+
+        var dispatcher = CreateDispatcher();
+
+        // Verify TryDispatchAsync WOULD reject this
+        var tryResult = await dispatcher.TryDispatchAsync(
+            "issue-dedup", "ip", "rp", null, null, "test", CancellationToken.None);
+        tryResult.Should().BeFalse();
+
+        // But DispatchToAgentDirectAsync skips that check
+        var directResult = await dispatcher.DispatchToAgentDirectAsync(
+            agent,
+            new PendingJob
+            {
+                IssueIdentifier = "issue-dedup",
+                IssueProviderId = "ip",
+                RepoProviderId = "rp",
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = "user",
+                RunType = PipelineRunType.Implementation
+            },
+            Array.Empty<string>(),
+            CancellationToken.None);
+
+        directResult.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task DispatchToAgentDirectAsync_FailedDispatch_ReturnsFalseAndResetsAgent()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-direct-fail",
+            Hostname = "host",
+            AgentType = "kiro",
+            Labels = new[] { "dotnet" }
+        }, "conn-direct-fail");
+
+        // Setup profile but no issue provider config → dispatch fails
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                new AgentProfile
+                {
+                    Id = "profile-1",
+                    DisplayName = "Test Profile",
+                    AgentProviderConfigId = "agent-provider-1",
+                    MatchLabels = Array.Empty<string>()
+                }
+            });
+        _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new ProviderConfig { Id = "rp", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" } });
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new ProviderConfig { Id = "agent-provider-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Agent", Settings = new Dictionary<string, string> { ["model"] = "auto" } } });
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ProviderConfig>());
+        // No issue provider setup → PrepareIssueContextAsync returns null → dispatch fails
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(r => r.RepositoryFullName).Returns("org/repo");
+        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.DispatchToAgentDirectAsync(
+            agent,
+            new PendingJob
+            {
+                IssueIdentifier = "issue-fail",
+                IssueProviderId = "ip",
+                RepoProviderId = "rp",
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = "user",
+                RunType = PipelineRunType.Implementation
+            },
+            Array.Empty<string>(),
+            CancellationToken.None);
+
+        result.Should().BeFalse();
+        agent.Status.Should().Be(AgentStatus.Idle);
+    }
+
+    #endregion
+
     #region Helpers
 
     /// <summary>

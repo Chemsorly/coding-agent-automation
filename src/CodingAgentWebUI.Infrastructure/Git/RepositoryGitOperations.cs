@@ -328,6 +328,7 @@ internal static class RepositoryGitOperations
             headBranchName, headSha, baseBranchName);
 
         // Fetch latest origin/main to ensure we rebase onto the absolute latest base branch.
+        // Wrapped in the resilience pipeline to retry transient network failures.
         var remote = repo.Network.Remotes["origin"];
         var fetchOptions = new FetchOptions
         {
@@ -335,7 +336,11 @@ internal static class RepositoryGitOperations
                 new UsernamePasswordCredentials { Username = tokenUsername, Password = token }
         };
         var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
-        Commands.Fetch(repo, remote.Name, refSpecs, fetchOptions, null);
+        await pipeline.ExecuteAsync(async _ =>
+        {
+            await Task.CompletedTask;
+            Commands.Fetch(repo, remote.Name, refSpecs, fetchOptions, null);
+        }, ct);
 
         var baseBranch = repo.Branches[$"origin/{baseBranchName}"];
         if (baseBranch == null)

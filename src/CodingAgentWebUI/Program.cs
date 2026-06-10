@@ -104,19 +104,8 @@ _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.jobs.active",
 _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
     () => agentRegistry.GetAllAgents().Count, "{connection}", "Total registered agents");
 
-// Graceful shutdown: swap to agent:cancelled label before exit
-var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
-lifetime.ApplicationStopping.Register(() =>
-{
-    var lifecycle = app.Services.GetRequiredService<PipelineRunLifecycleService>();
-    var pipeline = app.Services.GetRequiredService<PipelineOrchestrationService>();
-
-    if (lifecycle.IsRunning)
-        lifecycle.CancelPipelineAsync().GetAwaiter().GetResult();
-
-    // Label swaps require providers → stays on orchestration
-    pipeline.CancelActiveAgentRunsAsync().GetAwaiter().GetResult();
-});
+// Graceful shutdown is handled by ShutdownService (IHostedLifecycleService)
+// — async, with 15s timeout, non-blocking (Req 12)
 
 // Kubernetes-style health probes — anonymous, no auth required
 app.MapGet("/healthz", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }))

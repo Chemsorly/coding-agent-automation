@@ -4,7 +4,9 @@ using FsCheck.Fluent;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using Moq;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.GitLab;
 
@@ -22,7 +24,12 @@ public class GitLabFactoryRegistrationTests
     ];
 
     private static ProviderFactory CreateFactory()
-        => new(new PipelineConfiguration());
+    {
+        var mockConfigStore = new Mock<IPipelineConfigStore>();
+        mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        return new ProviderFactory(mockConfigStore.Object);
+    }
 
     #region Property 1: Factory validation reports all missing settings
 

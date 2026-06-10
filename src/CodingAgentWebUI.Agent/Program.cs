@@ -94,6 +94,9 @@ try
     var defaultPipelineConfig = new PipelineConfiguration();
     builder.Services.AddSingleton(defaultPipelineConfig);
 
+    // ── Null-safe history service (agent doesn't maintain run history) ──
+    builder.Services.AddSingleton<IPipelineRunHistoryService, NullPipelineRunHistoryService>();
+
     // ── Shared pipeline services (IQualityGateValidator, IBrainUpdateService, IAgentPhaseExecutor, IQualityGateExecutor) ──
     builder.Services.AddPipelineServices(Log.Logger);
 
@@ -127,7 +130,9 @@ try
 
     // ── Hub connection manager ──
     builder.Services.AddSingleton(sp =>
-        new HubConnectionManager(orchestratorUrl, agentId, agentApiKey, Log.Logger));
+        new HubConnectionManagerFactory(orchestratorUrl, agentId, agentApiKey, Log.Logger));
+    builder.Services.AddSingleton(sp =>
+        sp.GetRequiredService<HubConnectionManagerFactory>().Create());
 
     // ── Pipeline executor ──
     builder.Services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
@@ -150,6 +155,7 @@ try
     // ── Agent worker service (BackgroundService) ──
     builder.Services.AddSingleton(sp => new AgentWorkerService(
         sp.GetRequiredService<HubConnectionManager>(),
+        sp.GetRequiredService<HubConnectionManagerFactory>(),
         sp.GetRequiredService<LocalPipelineExecutor>(),
         sp.GetRequiredService<LocalConsolidationExecutor>(),
         sp.GetRequiredService<IKiroCliOrchestrator>(),

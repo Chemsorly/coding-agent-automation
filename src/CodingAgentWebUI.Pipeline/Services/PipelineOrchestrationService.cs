@@ -20,7 +20,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 // RemoveAllAgentLabels, and CreatePullRequest. A separate facade would add indirection
 // without meaningful simplification. Revisit if pipeline steps accumulate more
 // provider-operation parameters beyond what IPipelineCallbacks covers.
-public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
+public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrchestrationShutdownAction
 {
     private readonly PipelineRunLifecycleService _lifecycle;
     private readonly IConfigurationStore _configStore;
@@ -35,6 +35,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     private readonly IQualityGateExecutor _qualityGates;
     private readonly Interfaces.IQualityGateValidator? _qualityGateValidator;
     private readonly FeedbackService _feedbackService;
+    private readonly IJobDeduplicationGuard? _dedupGuard;
+    private readonly IAgentCancellationSender? _agentCancellation;
     private readonly Serilog.ILogger _logger;
 
     private readonly SemaphoreSlim _startLock = new(1, 1);
@@ -116,7 +118,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         FeedbackService? feedbackService = null,
         PullRequestOrchestrator? prOrchestrator = null,
         PullRequestFinalizationService? finalization = null,
-        IBrainSyncService? brainSync = null)
+        IBrainSyncService? brainSync = null,
+        IJobDeduplicationGuard? dedupGuard = null,
+        IAgentCancellationSender? agentCancellation = null)
     {
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
@@ -141,6 +145,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
         _prOrchestrator = prOrchestrator ?? new PullRequestOrchestrator(logger);
         _finalization = finalization ?? new PullRequestFinalizationService(logger);
         _historyService = historyService ?? throw new ArgumentNullException(nameof(historyService));
+        _dedupGuard = dedupGuard;
+        _agentCancellation = agentCancellation;
 
         // Use provided lifecycle service or create one internally for backward compatibility
         _lifecycle = lifecycle ?? new PipelineRunLifecycleService(
@@ -205,6 +211,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 IssueProviderConfigId = issueProviderId,
                 RepoProviderConfigId = repoProviderId,
                 StartedAt = DateTime.UtcNow,
+                StartedAtOffset = DateTimeOffset.UtcNow,
                 CurrentStep = PipelineStep.Created,
                 RepositoryName = _providerManager.ActiveRepoProvider!.RepositoryFullName,
                 ModelName = configuredModel,
@@ -284,6 +291,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             IssueProviderConfigId = issueProviderId,
             RepoProviderConfigId = repoProviderId,
             StartedAt = DateTime.UtcNow,
+            StartedAtOffset = DateTimeOffset.UtcNow,
             CurrentStep = PipelineStep.Created,
             RepositoryName = tempRepoProvider.RepositoryFullName,
             ModelName = configuredModel,
@@ -360,6 +368,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
             {
                 _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
                 run.CompletedAt = DateTime.UtcNow;
+                run.CompletedAtOffset = DateTimeOffset.UtcNow;
                 await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
                 _lifecycle.EmitOutputLine("🚫 Pipeline cancelled");
                 _lifecycle.TransitionTo(run, PipelineStep.Cancelled);
@@ -430,6 +439,22 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
 
         if (allRuns.Count == 0) return;
 
+        // Send CancelJob to each agent in parallel (2s per-agent timeout)
+        // Non-fatal — agent may already be disconnected
+        if (_agentCancellation is not null)
+        {
+            try
+            {
+                var cancelTasks = allRuns.Select(run =>
+                    _agentCancellation.SendCancelJobAsync(run.AgentId!, run.RunId, CancellationToken.None));
+                await Task.WhenAll(cancelTasks);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "One or more CancelJob sends failed during shutdown — proceeding with cleanup");
+            }
+        }
+
         foreach (var run in allRuns)
         {
             var targetKind = run.RunType == PipelineRunType.Review
@@ -443,8 +468,17 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
                 providerConfigId, run.IssueIdentifier, AgentLabels.Cancelled, targetKind, CancellationToken.None);
         }
 
-        // Delegate state changes to lifecycle
-        await _lifecycle.MarkAgentRunsCancelled();
+        // Delegate state changes to lifecycle — returns cancelled issue identifiers
+        var cancelledIssues = await _lifecycle.MarkAgentRunsCancelled();
+
+        // Release dedup guards so issues become re-dispatchable after restart
+        if (_dedupGuard is not null)
+        {
+            foreach (var issueId in cancelledIssues)
+            {
+                _dedupGuard.MarkIssueComplete(issueId);
+            }
+        }
     }
 
     /// <summary>Returns the in-memory run history.</summary>
@@ -654,6 +688,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable
     {
         run.FailureReason = reason;
         run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
         await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Error, ct);
         _lifecycle.EmitOutputLine($"❌ Pipeline failed: {reason}");
         _lifecycle.TransitionTo(run, PipelineStep.Failed);
