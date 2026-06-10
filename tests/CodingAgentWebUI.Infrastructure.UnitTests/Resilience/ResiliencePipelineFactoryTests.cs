@@ -160,6 +160,81 @@ public class ResiliencePipelineFactoryTests
     }
 
     [Fact]
+    public void TruncateMessage_Null_ReturnsUnknown()
+    {
+        ResiliencePipelineFactory.TruncateMessage(null).Should().Be("unknown");
+    }
+
+    [Fact]
+    public void TruncateMessage_ShortMessage_ReturnsSameMessage()
+    {
+        ResiliencePipelineFactory.TruncateMessage("short error").Should().Be("short error");
+    }
+
+    [Fact]
+    public void TruncateMessage_Exactly200Chars_ReturnsSameMessage()
+    {
+        var message = new string('x', 200);
+        ResiliencePipelineFactory.TruncateMessage(message).Should().Be(message);
+    }
+
+    [Fact]
+    public void TruncateMessage_Over200Chars_TruncatesWithEllipsis()
+    {
+        var message = new string('x', 250);
+        var result = ResiliencePipelineFactory.TruncateMessage(message);
+        result.Should().HaveLength(201); // 200 chars + ellipsis
+        result.Should().EndWith("…");
+        result.Should().StartWith("xxxxx");
+    }
+
+    [Fact]
+    public async Task HttpPipeline_OnRetry_AddsActivityEventWithExceptionMessage()
+    {
+        using var activity = new System.Diagnostics.Activity("test").Start();
+        var pipeline = ResiliencePipelineFactory.CreateHttpPipeline(Log.Logger);
+        var callCount = 0;
+
+        await Assert.ThrowsAsync<HttpRequestException>(async () =>
+        {
+            await pipeline.ExecuteAsync(async _ =>
+            {
+                callCount++;
+                throw new HttpRequestException("Connection refused");
+            }, CancellationToken.None);
+        });
+
+        callCount.Should().BeGreaterThan(1); // At least one retry occurred
+        var events = activity.Events.ToList();
+        events.Should().NotBeEmpty();
+        var retryEvent = events.First();
+        retryEvent.Name.Should().Be("retry");
+        var tags = retryEvent.Tags.ToDictionary(t => t.Key, t => t.Value);
+        tags.Should().ContainKey("attempt");
+        tags.Should().ContainKey("exception.type");
+        tags["exception.type"].Should().Be("HttpRequestException");
+        tags.Should().ContainKey("exception.message");
+        tags["exception.message"].Should().Be("Connection refused");
+    }
+
+    [Fact]
+    public async Task HttpPipeline_OnRetry_NoNullReferenceWhenNoActivity()
+    {
+        // Ensure Activity.Current is null
+        System.Diagnostics.Activity.Current = null;
+        var pipeline = ResiliencePipelineFactory.CreateHttpPipeline(Log.Logger);
+
+        // Should not throw NullReferenceException
+        await Assert.ThrowsAsync<HttpRequestException>(async () =>
+        {
+            await pipeline.ExecuteAsync(async _ =>
+            {
+                throw new HttpRequestException("test");
+            }, CancellationToken.None);
+        });
+    }
+
+    [Fact]
     public async Task CreateGitHubApiPipeline_OuterTimeoutCancelsRateLimitWait()
     {
         // Arrange: create pipeline with a short outer timeout (1s) to verify it fires during rate-limit delay

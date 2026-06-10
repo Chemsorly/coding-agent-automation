@@ -289,7 +289,9 @@ public sealed class LocalPipelineExecutor
             ReviewPrTargetBranch = job.ReviewPrTargetBranch,
             ReviewPrDescription = job.ReviewPrDescription,
             ReviewPrAuthor = job.ReviewPrAuthor,
-            LinkedIssueContexts = job.LinkedIssueContexts
+            LinkedIssueContexts = job.LinkedIssueContexts,
+            ProjectId = job.ProjectId,
+            ProjectName = job.ProjectName
         };
 
         run.IssueLabels = job.IssueDetail.Labels;

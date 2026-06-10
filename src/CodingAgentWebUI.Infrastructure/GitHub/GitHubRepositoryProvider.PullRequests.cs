@@ -57,10 +57,12 @@ public partial class GitHubRepositoryProvider
                     "GetAgentPullRequests.Get", ct);
 
                 var reviewComments = await ExecuteWithResilienceAsync(
-                    client => client.PullRequest.ReviewComment.GetAll(Owner, Repo, item.Number),
+                    client => client.PullRequest.ReviewComment.GetAll(Owner, Repo, item.Number,
+                        new ApiOptions { PageSize = PipelineConstants.DefaultPageSize, PageCount = PipelineConstants.MaxPrCommentPages }),
                     "GetAgentPullRequests.ReviewComments", ct);
                 var conversationComments = await ExecuteWithResilienceAsync(
-                    client => client.Issue.Comment.GetAllForIssue(Owner, Repo, item.Number),
+                    client => client.Issue.Comment.GetAllForIssue(Owner, Repo, item.Number,
+                        new ApiOptions { PageSize = PipelineConstants.DefaultPageSize, PageCount = PipelineConstants.MaxPrCommentPages }),
                     "GetAgentPullRequests.ConversationComments", ct);
 
                 var allComments = reviewComments
@@ -272,7 +274,8 @@ public partial class GitHubRepositoryProvider
         try
         {
             var events = await ExecuteWithResilienceAsync(
-                client => client.Issue.Timeline.GetAllForIssue(Owner, Repo, prNumber),
+                client => client.Issue.Timeline.GetAllForIssue(Owner, Repo, prNumber,
+                    new ApiOptions { PageSize = PipelineConstants.DefaultPageSize, PageCount = PipelineConstants.MaxTimelineEventPages }),
                 "ExtractLinkedIssues.Timeline", ct);
 
             foreach (var evt in events)
@@ -318,7 +321,8 @@ public partial class GitHubRepositoryProvider
 
         // Fetch general discussion comments (issue comments on the PR)
         var issueComments = await ExecuteWithResilienceAsync(
-            client => client.Issue.Comment.GetAllForIssue(Owner, Repo, prNumber),
+            client => client.Issue.Comment.GetAllForIssue(Owner, Repo, prNumber,
+                new ApiOptions { PageSize = PipelineConstants.DefaultPageSize, PageCount = PipelineConstants.MaxPrCommentPages }),
             "ListPrComments.IssueComments", ct);
 
         foreach (var c in issueComments)
@@ -339,7 +343,8 @@ public partial class GitHubRepositoryProvider
 
         // Fetch review comments (inline comments on specific code lines)
         var reviewComments = await ExecuteWithResilienceAsync(
-            client => client.PullRequest.ReviewComment.GetAll(Owner, Repo, prNumber),
+            client => client.PullRequest.ReviewComment.GetAll(Owner, Repo, prNumber,
+                new ApiOptions { PageSize = PipelineConstants.DefaultPageSize, PageCount = PipelineConstants.MaxPrCommentPages }),
             "ListPrComments.ReviewComments", ct);
 
         foreach (var c in reviewComments)
