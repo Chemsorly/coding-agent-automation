@@ -52,6 +52,10 @@ public static class TestPipelineConfig
         DecompositionTimeout = TimeSpan.FromMinutes(15),
         MaxOpenIssuesForContext = 50,
         RefactoringOutcomeLookback = TimeSpan.FromDays(90),
+        OutputLinesCapacity = 5_000,
+        ChatHistoryCapacity = 200,
+        QualityGateHistoryCapacity = 50,
+        RetryErrorsCapacity = 100,
     };
 
     /// <summary>
@@ -94,6 +98,10 @@ public static class TestPipelineConfig
         DecompositionTimeout = TimeSpan.FromMinutes(15),
         MaxOpenIssuesForContext = 50,
         RefactoringOutcomeLookback = TimeSpan.FromDays(90),
+        OutputLinesCapacity = 5_000,
+        ChatHistoryCapacity = 200,
+        QualityGateHistoryCapacity = 50,
+        RetryErrorsCapacity = 100,
     };
 
     /// <summary>

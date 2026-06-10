@@ -77,6 +77,10 @@ public sealed record AgentConfiguration
     public string? DefaultRequiredAgentLabels { get; init; }
     public TimeSpan AgentDisconnectGracePeriod { get; init; } = PipelineConstants.DefaultAgentDisconnectGracePeriod;
     public int OutputBufferCapacity { get; init; } = PipelineConstants.DefaultOutputBufferCapacity;
+    public int OutputLinesCapacity { get; init; } = PipelineConstants.DefaultOutputLinesCapacity;
+    public int ChatHistoryCapacity { get; init; } = PipelineConstants.DefaultChatHistoryCapacity;
+    public int QualityGateHistoryCapacity { get; init; } = PipelineConstants.DefaultQualityGateHistoryCapacity;
+    public int RetryErrorsCapacity { get; init; } = PipelineConstants.DefaultRetryErrorsCapacity;
     public int BrainPushMaxRetries { get; init; } = 3;
     public bool BrainReadOnly { get; init; } = false;
 }

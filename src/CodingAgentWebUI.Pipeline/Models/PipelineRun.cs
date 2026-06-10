@@ -1,5 +1,5 @@
-using System.Collections.Concurrent;
 using System.Threading;
+using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Pipeline.Models;
 
@@ -84,16 +84,16 @@ public sealed class PipelineRun
     public Dictionary<string, string> CodeReviewAgentFindings { get; } = new();
 
     /// <summary>Thread-safe collections — mutated by orchestration service while UI reads via OnChange.</summary>
-    public ConcurrentBag<string> RetryErrors { get; init; } = new();
-    public ConcurrentQueue<ChatEntry> ChatHistory { get; init; } = new();
+    public BoundedConcurrentQueue<string> RetryErrors { get; init; } = new(PipelineConstants.DefaultRetryErrorsCapacity);
+    public BoundedConcurrentQueue<ChatEntry> ChatHistory { get; init; } = new(PipelineConstants.DefaultChatHistoryCapacity);
     public QualityGateReport? LatestQualityReport { get; set; }
-    public ConcurrentQueue<string> OutputLines { get; init; } = new();
+    public BoundedConcurrentQueue<string> OutputLines { get; init; } = new(PipelineConstants.DefaultOutputLinesCapacity);
 
     /// <summary>Issue labels, populated when the issue is fetched.</summary>
     public IReadOnlyList<string> IssueLabels { get; set; } = Array.Empty<string>();
 
     /// <summary>History of quality gate reports across retry attempts.</summary>
-    public ConcurrentQueue<QualityGateReport> QualityGateHistory { get; init; } = new();
+    public BoundedConcurrentQueue<QualityGateReport> QualityGateHistory { get; init; } = new(PipelineConstants.DefaultQualityGateHistoryCapacity);
 
     /// <summary>Whether the baseline health check passed (null if step was skipped/disabled).</summary>
     public bool? BaselineHealthPassed { get; set; }

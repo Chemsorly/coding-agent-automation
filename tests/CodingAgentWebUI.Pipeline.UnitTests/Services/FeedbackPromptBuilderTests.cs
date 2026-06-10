@@ -1,6 +1,5 @@
 // Feature: 020-agent-feedback-loops, Property 6: Success feedback section includes retry context and categories
 // Unit tests for FeedbackPromptBuilder content verification
-using System.Collections.Concurrent;
 using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Fluent;
@@ -177,7 +176,7 @@ public class SuccessFeedbackSectionArbitraries
 
         foreach (var error in retryErrors)
         {
-            run.RetryErrors.Add(error);
+            run.RetryErrors.Enqueue(error);
         }
 
         return run;
@@ -206,7 +205,7 @@ public class FeedbackPromptBuilderContentTests
 
         foreach (var error in retryErrors)
         {
-            run.RetryErrors.Add(error);
+            run.RetryErrors.Enqueue(error);
         }
 
         return run;

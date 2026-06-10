@@ -602,7 +602,7 @@ public class PromptBuilderTests
     public void BuildReflectionPrompt_WithRetryErrors_ShowsErrors()
     {
         var run = CreatePipelineRun();
-        run.RetryErrors.Add("Build failed: missing reference");
+        run.RetryErrors.Enqueue("Build failed: missing reference");
         var result = PromptBuilder.BuildReflectionPrompt(run);
         result.Should().Contain("Build failed: missing reference");
     }
