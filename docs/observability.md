@@ -27,7 +27,8 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `agent.reconnections` | Counter | — | — | Agent reconnection events |
 | `pipeline.step.duration` | Histogram | seconds | `step_name`, `run_type` | Duration of individual pipeline steps |
 | `pipeline.step.count` | Counter | — | `step_name`, `run_type` | Pipeline step execution count |
-| `agent.tokens.used` | Counter | — | `run_type` | Agent tokens consumed |
+| `agent.tokens.used` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Agent tokens consumed |
+| `agent.cost.usd` | Counter | USD | `run_type`, `pipeline.project_id`, `pipeline.project_name` | LLM cost in USD |
 | `quality_gate.retries` | Counter | — | `run_type` | Quality gate retry attempts |
 | `quality_gate.duration` | Histogram | seconds | `run_type` | Total time in quality gate phase |
 | `quality_gate.evaluations` | Counter | — | `gate_name`, `result` | Individual gate evaluation events |

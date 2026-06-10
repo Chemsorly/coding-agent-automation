@@ -34,6 +34,8 @@ public static class PipelineTelemetry
         "pipeline.step.count", "{step}", "Pipeline step execution count");
     public static readonly Counter<long> TokensUsed = Meter.CreateCounter<long>(
         "agent.tokens.used", "{token}", "Agent tokens consumed");
+    public static readonly Counter<double> CostUsd = Meter.CreateCounter<double>(
+        "agent.cost.usd", "USD", "LLM cost in USD");
 
     public static readonly Counter<long> QualityGateRetries = Meter.CreateCounter<long>(
         "quality_gate.retries", "{retry}", "Quality gate retry attempts");

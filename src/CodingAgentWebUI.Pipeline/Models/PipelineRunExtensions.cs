@@ -33,7 +33,11 @@ public static class PipelineRunExtensions
         if (result?.Usage is null) return;
         run.TotalTokens += result.Usage.TotalTokens;
         if (result.Cost is not null)
+        {
             run.TotalCost = (run.TotalCost ?? 0m) + result.Cost.Value;
+            PipelineTelemetry.CostUsd.Add((double)result.Cost.Value,
+                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
+        }
 
         PipelineTelemetry.TokensUsed.Add(result.Usage.TotalTokens,
             PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
