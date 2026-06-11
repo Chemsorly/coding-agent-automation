@@ -8,22 +8,26 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// </summary>
 public static class AgentLabelOperations
 {
-    /// <summary>Removes all agent labels except <paramref name="newLabel"/>, then adds it.</summary>
+    /// <summary>Adds <paramref name="newLabel"/> first, then removes all other agent labels.
+    /// Add-first ordering ensures the target label is present even if the process is
+    /// interrupted mid-swap (e.g., Docker SIGKILL during shutdown).</summary>
     public static async Task SwapAsync(
         Func<string, CancellationToken, Task> removeLabel,
         Func<string, CancellationToken, Task> addLabel,
         string newLabel,
         CancellationToken ct)
     {
+        // Add the target label first so the issue is never left without a status label
+        // if the operation is interrupted partway through.
+        if (!string.IsNullOrEmpty(newLabel))
+            await addLabel(newLabel, ct);
+
         foreach (var label in AgentLabels.All)
         {
             if (string.Equals(label, newLabel, StringComparison.Ordinal))
                 continue;
             await removeLabel(label, ct);
         }
-
-        if (!string.IsNullOrEmpty(newLabel))
-            await addLabel(newLabel, ct);
     }
 
     /// <summary>Removes all agent labels.</summary>

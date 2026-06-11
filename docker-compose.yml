@@ -15,6 +15,7 @@ services:
     build:
       context: .
       dockerfile: dockerfiles/webui.Dockerfile
+    stop_grace_period: 30s
     ports:
       - "8080:8080"
     volumes:
