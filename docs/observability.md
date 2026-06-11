@@ -49,13 +49,7 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 
 ### Histogram Bucket Boundaries
 
-The `pipeline.jobs.duration` histogram uses custom bucket boundaries configured via `AddView`:
-
-```
-[30, 60, 120, 300, 600, 900, 1800, 3600] seconds
-```
-
-These boundaries are configured identically in both the orchestrator and agent worker services.
+The `pipeline.jobs.duration` and other histogram metrics use the OpenTelemetry SDK's default bucket boundaries. No custom bucket views are configured.
 
 ## Traces
 

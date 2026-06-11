@@ -81,6 +81,16 @@ public class DecompositionAnalysisStepTests
     }
 
     [Fact]
+    public void BuildAnalysisPrompt_ContainsGateRejectionConcernsInstruction()
+    {
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
+
+        prompt.Should().Contain("agent:gate-rejection");
+        prompt.Should().Contain("hard constraint");
+        prompt.Should().Contain("which sub-issue handles it");
+    }
+
+    [Fact]
     public void BuildDecompositionPrompt_ContainsJsonSchemaInstruction()
     {
         var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(5);

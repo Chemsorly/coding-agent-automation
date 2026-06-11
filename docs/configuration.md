@@ -157,7 +157,7 @@ Configure via Settings → Providers → Repository → Steering Content field. 
 
 The agent CLI supports [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) servers for extending agent capabilities. The Docker images include `uv`/`uvx` (Python) and `npm`/`npx` (Node.js) for running MCP servers.
 
-Configure MCP servers in the agent's settings directory (mounted at `/home/ubuntu/.kiro/settings/mcp.json`):
+Configure MCP servers in the agent's settings directory (written at runtime by `WriteMcpConfigStep` to `/home/ubuntu/.kiro/settings/mcp.json`):
 
 ```json
 {

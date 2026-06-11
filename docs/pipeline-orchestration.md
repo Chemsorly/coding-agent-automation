@@ -21,14 +21,14 @@ stateDiagram-v2
     SyncingBrainRepoPreRun --> CreatingBranch
     CreatingBranch --> VerifyingBaseline
     VerifyingBaseline --> AnalyzingCode
-    AnalyzingCode --> PostingAnalysis
+    AnalyzingCode --> ReviewingAnalysis
+    ReviewingAnalysis --> PostingAnalysis
 
     state ConfidenceGate <<choice>>
     PostingAnalysis --> ConfidenceGate
     ConfidenceGate --> GeneratingCode : ready
     ConfidenceGate --> Failed : not_ready (needs-refinement)
     ConfidenceGate --> Completed : wont_do (wont-do)
-
     GeneratingCode --> ReviewingCode
     ReviewingCode --> RunningQualityGates
 
@@ -74,7 +74,7 @@ stateDiagram-v2
 
 ```
 Created → CloningRepository → RunningEnvironmentSetup → SyncingBrainRepoPreRun → CreatingBranch
-  → VerifyingBaseline → AnalyzingCode → PostingAnalysis → [Confidence Gate]
+  → VerifyingBaseline → AnalyzingCode → ReviewingAnalysis → PostingAnalysis → [Confidence Gate]
   → GeneratingCode → ReviewingCode → RunningQualityGates → [Quality Gate Decision]
   → PreparingForPullRequest → [Final Quality Gate]
   → CreatingPullRequest → ReflectingOnRun → SyncingBrainRepoPostRun → Completed
@@ -93,6 +93,7 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 | **CreatingBranch** | Feature branch created from default branch (format: `feature/auto-{issueNumber}-{slug}-{runId}`) |
 | **VerifyingBaseline** | Baseline health check — runs build/tests on the default branch before the agent writes code. Catches broken base branches early. Skipped when `BaselineHealthCheckEnabled` is false |
 | **AnalyzingCode** | Agent analyzes the issue and codebase, writes `analysis.md` and `analysis-assessment.json` |
+| **ReviewingAnalysis** | Adversarial review of the analysis — validates completeness, flags gaps (when `AnalysisReviewEnabled` is true) |
 | **PostingAnalysis** | Analysis comment posted to the GitHub issue |
 | **GeneratingCode** | Agent implements the changes. Also used during quality gate retries |
 | **ReviewingCode** | Multi-agent code review: each review agent writes findings, then a fix agent addresses `[CRITICAL]` items |
@@ -217,28 +218,32 @@ flowchart TD
     
     subgraph "PR Review Step Sequence"
         I --> S1[1. CloneRepositoryStep]
-        S1 --> S2[2. CreateBranchStep<br/>checkout PR branch, no merge]
-        S2 --> S3[3. SyncBrainPreRunStep<br/>optional]
-        S3 --> S4[4. ExtractLinkedIssuesStep]
-        S4 --> S4b[5. WritePrConversationContextStep]
-        S4b --> S5[6. ReviewCodeStep]
-        S5 --> S6[7. PostReviewFindingsStep]
+        S1 --> S1b[2. EnsureAgentGitignoreStep]
+        S1b --> S1c[3. WriteMcpConfigStep]
+        S1c --> S1d[4. WriteSteeringStep]
+        S1d --> S2[5. CreateBranchStep<br/>checkout PR branch, no merge]
+        S2 --> S3[6. SyncBrainPreRunStep<br/>optional]
+        S3 --> S4[7. ExtractLinkedIssuesStep<br/>includes PR conversation context]
+        S4 --> S5[8. ReviewCodeStep]
+        S5 --> S6[9. PostReviewFindingsStep]
     end
 ```
 
 ### Review Step Sequence
 
-The PR review pipeline executes 7 steps (compared to 10+ for implementation):
+The PR review pipeline executes 9 steps (compared to 15+ for implementation):
 
 | # | Step | Reuses Existing | Description |
 |---|------|:---:|-------------|
 | 1 | `CloneRepositoryStep` | ✅ | Clone the repository to a fresh workspace |
-| 2 | `CreateBranchStep` | ✅ | Check out the PR branch (rework path, skip merge from base) |
-| 3 | `SyncBrainPreRunStep` | ✅ | Sync brain repository if configured (non-fatal on failure) |
-| 4 | `ExtractLinkedIssuesStep` | ❌ | Extract linked issues, write context files, synthesize issue context |
-| 5 | `WritePrConversationContextStep` | ❌ | Write PR conversation history and prior review comments to workspace for reviewer context |
-| 6 | `ReviewCodeStep` | ✅ | Resolve reviewer configs and execute multi-agent code review |
-| 7 | `PostReviewFindingsStep` | ❌ | Format findings and post as PR review comment |
+| 2 | `EnsureAgentGitignoreStep` | ✅ | Ensure `.agent/` is in `.gitignore` |
+| 3 | `WriteMcpConfigStep` | ✅ | Write MCP server configuration for the agent |
+| 4 | `WriteSteeringStep` | ✅ | Write pipeline steering content to the workspace |
+| 5 | `CreateBranchStep` | ✅ | Check out the PR branch (rework path, skip merge from base) |
+| 6 | `SyncBrainPreRunStep` | ✅ | Sync brain repository if configured (non-fatal on failure) |
+| 7 | `ExtractLinkedIssuesStep` | ❌ | Extract linked issues, write context files, write PR conversation context |
+| 8 | `ReviewCodeStep` | ✅ | Resolve reviewer configs and execute multi-agent code review |
+| 9 | `PostReviewFindingsStep` | ❌ | Format findings and post as PR review comment |
 
 Key differences from the implementation pipeline:
 - **No analysis step** — the PR already contains the implementation
@@ -246,6 +251,8 @@ Key differences from the implementation pipeline:
 - **No quality gates** — build/test feedback comes from existing CI
 - **No merge from base** — the PR branch is reviewed as-is
 - **No post-run brain sync** — reviews don't produce new knowledge to persist
+- **Adds infrastructure steps** — EnsureAgentGitignore, WriteMcpConfig, and WriteSteering run before branch checkout
+- **PR conversation context** — written within `ExtractLinkedIssuesStep` (not a separate step)
 
 ### Review Run State Machine
 
@@ -266,6 +273,8 @@ stateDiagram-v2
     ReviewingCode --> Failed
     Created --> Cancelled
 ```
+
+> **Note:** Infrastructure steps (EnsureAgentGitignore, WriteMcpConfig, WriteSteering) execute between Clone and CreateBranch but do not have dedicated `PipelineStep` enum values — they run transparently within the `CloningRepository` phase.
 
 ### PR Label Lifecycle
 
@@ -619,6 +628,7 @@ bool SupportsInlineReviewComments => false; // default: conservative
 ```
 
 - **GitHub provider** returns `true` — supports inline comments and review dismissal
+- **GitLab provider** returns `true` — supports inline comments via merge request discussions
 - **Default** returns `false` — providers that haven't opted in get body-only behavior
 
 When `SupportsInlineReviewComments` is `false` but the `FindingsParser` extracted findings with location metadata, the pipeline appends a **"📍 Findings by Location"** section to the body comment. Findings are grouped by file path (alphabetical), with each finding as a bullet point showing severity emoji, line number, and message:

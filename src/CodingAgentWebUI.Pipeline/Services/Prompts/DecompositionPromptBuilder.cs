@@ -52,6 +52,21 @@ public static class DecompositionPromptBuilder
         sb.AppendLine("Address all feedback points in your revised plan.");
         sb.AppendLine();
 
+        // Gate rejection concerns
+        sb.AppendLine("## Gate Rejection Concerns");
+        sb.AppendLine();
+        sb.AppendLine("If `.agent/issue-context.md` contains analysis gate comments (marked with `<!-- agent:gate-rejection -->`),");
+        sb.AppendLine("treat each concern listed in the 'Blocking Issues' or 'Concerns' section as a **hard constraint**.");
+        sb.AppendLine("Your decomposition plan must explicitly address how each concern is resolved:");
+        sb.AppendLine();
+        sb.AppendLine("- For each gate concern, state which sub-issue handles it and how");
+        sb.AppendLine("- If a concern spans multiple sub-issues, explain the handoff between them");
+        sb.AppendLine("- If you believe a concern is invalid, explain why with evidence from the codebase");
+        sb.AppendLine();
+        sb.AppendLine("Do NOT treat gate concerns as generic \"split it up\" guidance — they identify specific");
+        sb.AppendLine("technical risks that must be individually mitigated in your plan.");
+        sb.AppendLine();
+
         // Sizing constraints
         sb.AppendLine("## Sub-Issue Sizing Constraints");
         sb.AppendLine();
