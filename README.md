@@ -147,7 +147,7 @@ After Phase 1 posts the decomposition plan:
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `DecompositionEnabled` | `bool` | `false` | Enable decomposition polling for this template |
-| `MaxDecompositionSubIssues` | `int` | `5` | Maximum sub-issues per epic (range: 1–20) |
+| `MaxDecompositionSubIssues` | `int` | `10` | Maximum sub-issues per epic (range: 1–20) |
 | `MaxConcurrentDecompositions` | `int` | `2` | Maximum simultaneous decomposition runs |
 | `DecompositionTimeout` | `TimeSpan` | `15 min` | Timeout for each decomposition phase |
 | `MaxOpenIssuesForContext` | `int` | `50` | Open issues downloaded for deduplication context |
@@ -195,11 +195,15 @@ Detailed documentation lives in the [`docs/`](docs/) folder. Suggested reading o
 - **Real-time web UI** — Live output streaming, pipeline step sidebar, agent monitoring
 - **Agent chat** — Interactive agent sessions dispatched to available workers via the web UI
 - **Model selection** — Configurable LLM model per agent provider
+- **Agent effort level** — Configurable reasoning effort (`auto`, `low`, `medium`, `high`, `xhigh`, `max`) per agent provider, controlling depth vs. speed tradeoffs
+- **Parallelized code review** — Review agents execute concurrently (for providers that support it), reducing review wall-clock time
 - **Pipeline projects** — Multi-repository grouping with shared configuration and project-level context
 - **MCP server injection** — Agents receive MCP server configs for tool access (written to workspace before execution)
 - **Steering injection** — Pipeline context and conventions written to agent workspaces (`.kiro/steering/` for Kiro, `AGENTS.md` for OpenCode)
+- **Environment setup steps** — Per-repository shell commands (package restore, auth, tool install) executed after clone with injected secrets, before agent execution
 - **Agent health monitoring** — Heartbeat-based liveness detection, stall warnings, automatic reconnection after pod rollover
 - **Token vending** — Orchestrator generates short-lived GitHub installation tokens for agents (private keys never leave the orchestrator)
+- **HMAC-derived agent keys** — Each agent derives its own auth key from the shared master secret via HMAC(key, agent_id), enabling per-agent revocation without rotating the master key
 - **Baseline health check** — Validates build/tests pass before the agent writes code (catches broken base branches early)
 - **Inline review comments** — Code review findings posted as native inline comments at specific file:line positions in the PR diff
 
@@ -216,7 +220,7 @@ Detailed documentation lives in the [`docs/`](docs/) folder. Suggested reading o
 
 ```bash
 # 1. Create a .env file with a shared secret for orchestrator↔agent authentication
-#    (any random string works — it's a symmetric key for internal API auth)
+#    (used as the master key — each agent derives its own key via HMAC(master, agent_id))
 echo "AGENT_API_KEY=$(openssl rand -hex 32)" > .env
 
 # 2. Start the orchestrator and all agent containers
@@ -225,7 +229,7 @@ docker compose up --build
 
 Open `http://localhost:8080` in your browser.
 
-The `docker-compose.yml` defines 5 services: 1 orchestrator + 2 .NET agents + 1 Python agent + 1 Java agent. To add more agents, copy a service definition with a new name and volume — don't use `--scale` (each agent needs its own named volume to avoid SQLite corruption).
+The `docker-compose.yml` defines 8 services: 1 orchestrator + 2 Kiro .NET agents + 1 Kiro Python agent + 1 Kiro Java agent + 1 OpenCode .NET agent + 1 OpenCode Python agent + 1 OpenCode Java agent. To add more agents, copy a service definition with a new name and volume — don't use `--scale` (each agent needs its own named volume to avoid SQLite corruption).
 
 ### First-Time Setup
 

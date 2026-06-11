@@ -2,6 +2,7 @@ using System.Text.Json;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Persistence;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -20,6 +21,37 @@ public class JsonConfigurationStore : IConfigurationStore
     {
         ArgumentNullException.ThrowIfNull(baseDirectory);
         _baseDirectory = baseDirectory;
+        CleanupOrphanedTempFiles();
+    }
+
+    /// <summary>
+    /// Deletes any orphaned .tmp files left by crashed atomic write operations.
+    /// </summary>
+    private void CleanupOrphanedTempFiles()
+    {
+        if (!Directory.Exists(_baseDirectory))
+            return;
+
+        try
+        {
+            var tmpFiles = Directory.GetFiles(_baseDirectory, "*.tmp", SearchOption.AllDirectories);
+            foreach (var tmpFile in tmpFiles)
+            {
+                try
+                {
+                    File.Delete(tmpFile);
+                    _logger.Information("Cleaned up orphaned temp file: {FilePath}", tmpFile);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _logger.Warning("Failed to clean up orphaned temp file: {FilePath}: {Error}", tmpFile, ex.Message);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.Warning("Failed to enumerate temp files in config directory: {Error}", ex.Message);
+        }
     }
 
     public async Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct)
@@ -301,7 +333,7 @@ public class JsonConfigurationStore : IConfigurationStore
         }
         catch (JsonException)
         {
-            // Return null so callers fall back to defaults
+            _logger.Warning("Configuration file corrupt or empty: {Path}", path);
             return null;
         }
     }
@@ -332,12 +364,8 @@ public class JsonConfigurationStore : IConfigurationStore
     {
         try
         {
-            var directory = Path.GetDirectoryName(path);
-            if (directory is not null && !Directory.Exists(directory))
-                Directory.CreateDirectory(directory);
-
             var json = JsonSerializer.Serialize(value, JsonOptions);
-            await File.WriteAllTextAsync(path, json, ct);
+            await AtomicFileWriter.WriteAsync(path, json, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

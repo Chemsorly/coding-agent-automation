@@ -13,6 +13,18 @@ public static class PipelineConstants
     /// <summary>Default page size for paginated API calls (issue listing).</summary>
     public const int DefaultPageSize = 100;
 
+    /// <summary>Maximum pages to fetch for issue/PR comments (300 comments at 100/page).</summary>
+    public const int MaxCommentPages = 3;
+
+    /// <summary>Maximum pages to fetch for timeline events (200 events at 100/page).</summary>
+    public const int MaxTimelineEventPages = 2;
+
+    /// <summary>Maximum pages to fetch for PR reviews (100 reviews at 100/page).</summary>
+    public const int MaxReviewPages = 1;
+
+    /// <summary>Maximum pages to fetch for PR discussion/review comments (200 at 100/page).</summary>
+    public const int MaxPrCommentPages = 2;
+
     /// <summary>Maximum total length of a generated branch name.</summary>
     public const int MaxBranchNameLength = 100;
 

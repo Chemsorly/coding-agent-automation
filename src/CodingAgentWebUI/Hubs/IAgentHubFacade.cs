@@ -75,12 +75,17 @@ public interface IAgentHubFacade
     /// </summary>
     void RemoveRun(string jobId);
 
+    /// <summary>
+    /// Returns all active runs assigned to the specified agent.
+    /// </summary>
+    IReadOnlyList<PipelineRun> GetActiveRunsByAgent(string agentId);
+
     // ── Dispatch operations ─────────────────────────────────────────────
 
     /// <summary>
     /// Marks an issue as no longer being processed in the dispatcher.
     /// </summary>
-    void MarkIssueComplete(string issueIdentifier);
+    void MarkIssueComplete(string issueIdentifier, string issueProviderConfigId);
 
     /// <summary>
     /// Signals the drain service to attempt dispatch for idle agents.

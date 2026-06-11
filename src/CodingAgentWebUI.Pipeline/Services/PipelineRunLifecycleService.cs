@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// Single source of truth for pipeline run state, lifecycle transitions, events, and cancellation.
 /// Registered as a singleton. Consumers inject this for state/event access.
 /// </summary>
-public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable
+public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifecycleShutdownAction
 {
     // ── Dependencies ────────────────────────────────────────────────────
     private readonly IPipelineRunHistoryService _historyService;
@@ -83,16 +83,18 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable
     /// <summary>
     /// Checks whether the given issue is being processed by any active run (local or agent).
     /// </summary>
-    public bool IsIssueBeingProcessed(string issueIdentifier)
+    public bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
 
         // Check local run
-        if (ActiveRun != null && ActiveRun.IssueIdentifier == issueIdentifier && IsRunning)
+        if (ActiveRun != null && ActiveRun.IssueIdentifier == issueIdentifier
+            && ActiveRun.IssueProviderConfigId == issueProviderConfigId && IsRunning)
             return true;
 
         // Check agent runs via OrchestratorRunService
-        return _runService?.IsIssueBeingProcessed(issueIdentifier) == true;
+        return _runService?.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId) == true;
     }
 
     // ── State Transition Methods ────────────────────────────────────────
@@ -106,7 +108,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable
         run.CurrentStep = step;
 
         if (step is not (PipelineStep.Failed or PipelineStep.Cancelled)
-            && (int)step > (int)run.HighWaterMark)
+            && StepOrder.GetOrder(step) > StepOrder.GetOrder(run.HighWaterMark))
             run.HighWaterMark = step;
 
         _logger.Information("Pipeline {RunId} transitioned from {PreviousStep} to {Step}",
@@ -121,6 +123,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable
     {
         run.FailureReason = reason;
         run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
         EmitOutputLine($"❌ Pipeline failed: {reason}");
         TransitionTo(run, PipelineStep.Failed);
         AddRunToHistory(run);
@@ -182,6 +185,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable
 
         _cancellationTokenSource?.Cancel();
         run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
         EmitOutputLine("🚫 Pipeline cancelled");
         TransitionTo(run, PipelineStep.Cancelled);
         AddRunToHistory(run);
@@ -190,25 +194,30 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// Marks all agent-dispatched runs as cancelled. Sets CompletedAt, transitions to Cancelled, adds to history.
+    /// Marks all agent-dispatched runs as cancelled. Sets CompletedAt, transitions to Cancelled, adds to history,
+    /// and removes runs from active tracking. Returns list of cancelled issue identifiers for caller to release dedup.
     /// No-op if no run service is configured.
     /// </summary>
-    public Task MarkAgentRunsCancelled()
+    public Task<IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId)>> MarkAgentRunsCancelled()
     {
-        if (_runService is null) return Task.CompletedTask;
+        if (_runService is null) return Task.FromResult<IReadOnlyList<(string, string)>>([]);
 
         var activeRuns = _runService.GetActiveRuns();
-        if (activeRuns.Count == 0) return Task.CompletedTask;
+        if (activeRuns.Count == 0) return Task.FromResult<IReadOnlyList<(string, string)>>([]);
 
+        var cancelledIssues = new List<(string IssueIdentifier, string IssueProviderConfigId)>();
         foreach (var run in activeRuns)
         {
             run.CompletedAt = DateTime.UtcNow;
+            run.CompletedAtOffset = DateTimeOffset.UtcNow;
             run.CurrentStep = PipelineStep.Cancelled;
             AddRunToHistory(run);
+            _runService.RemoveRun(run.RunId);
+            cancelledIssues.Add((run.IssueIdentifier, run.IssueProviderConfigId));
         }
 
         NotifyChange();
-        return Task.CompletedTask;
+        return Task.FromResult<IReadOnlyList<(string, string)>>(cancelledIssues);
     }
 
     // ── Dispatched Run Registration ─────────────────────────────────────
@@ -222,7 +231,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable
         if (_runService is null)
             throw new InvalidOperationException("OrchestratorRunService is not configured. Cannot register dispatched runs.");
 
-        if (IsIssueBeingProcessed(run.IssueIdentifier))
+        if (IsIssueBeingProcessed(run.IssueIdentifier, run.IssueProviderConfigId))
         {
             _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping registration",
                 run.IssueIdentifier);

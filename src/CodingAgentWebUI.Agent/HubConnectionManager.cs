@@ -14,10 +14,10 @@ namespace CodingAgentWebUI.Agent;
 /// <remarks>
 /// <para>
 /// <b>Reconnection Strategy &amp; State Machine:</b> Uses SignalR's built-in
-/// <c>WithAutomaticReconnect</c> with a fixed retry delay sequence:
-/// 1s → 2s → 5s → 10s → 30s. After exhausting all retries, the connection enters
-/// the <c>Closed</c> state and the agent process should terminate (handled by
-/// <see cref="AgentWorkerService"/>).
+/// <c>WithAutomaticReconnect</c> with an <see cref="InfiniteRetryPolicy"/> that
+/// provides exponential backoff (1s → 2s → 4s → ... → 120s cap) with random jitter.
+/// The connection will retry indefinitely; it never enters the terminal <c>Closed</c>
+/// state due to retry exhaustion.
 /// </para>
 /// <para>
 /// <b>Connection States:</b>
@@ -36,15 +36,6 @@ namespace CodingAgentWebUI.Agent;
 /// </remarks>
 public sealed class HubConnectionManager : IAsyncDisposable
 {
-    private static readonly TimeSpan[] ReconnectDelays =
-    [
-        TimeSpan.FromSeconds(1),
-        TimeSpan.FromSeconds(2),
-        TimeSpan.FromSeconds(5),
-        TimeSpan.FromSeconds(10),
-        TimeSpan.FromSeconds(30)
-    ];
-
     private readonly HubConnection _connection;
     private readonly Serilog.ILogger _logger;
 
@@ -86,6 +77,13 @@ public sealed class HubConnectionManager : IAsyncDisposable
     public event Func<ConsolidationJobMessage, Task>? OnAssignConsolidationJob;
 
     /// <summary>
+    /// Fired when the SignalR connection enters the terminal Closed state.
+    /// Subscribers can use this to trigger a fresh reconnection from scratch.
+    /// The exception parameter is non-null if the closure was due to an error.
+    /// </summary>
+    public event Func<Exception?, Task>? OnClosed;
+
+    /// <summary>
     /// The underlying SignalR hub connection for invoking server methods.
     /// </summary>
     public HubConnection Connection => _connection;
@@ -108,7 +106,7 @@ public sealed class HubConnectionManager : IAsyncDisposable
                 options.AccessTokenProvider = () => Task.FromResult<string?>(derivedKey);
             })
             .AddMessagePackProtocol()
-            .WithAutomaticReconnect(ReconnectDelays)
+            .WithAutomaticReconnect(new InfiniteRetryPolicy())
             .Build();
 
         // Wire up connection lifecycle events
@@ -134,13 +132,24 @@ public sealed class HubConnectionManager : IAsyncDisposable
             }
         };
 
-        _connection.Closed += error =>
+        _connection.Closed += async error =>
         {
             if (error is not null)
                 _logger.Error(error, "SignalR connection closed with error");
             else
                 _logger.Information("SignalR connection closed");
-            return Task.CompletedTask;
+
+            if (OnClosed is not null)
+            {
+                try
+                {
+                    await OnClosed(error);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "OnClosed handler failed");
+                }
+            }
         };
 
         // Register client-side handlers (Orchestrator → Agent)
@@ -231,5 +240,29 @@ public sealed class HubConnectionManager : IAsyncDisposable
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(masterKey));
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(agentId));
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Retry policy that never gives up. Uses exponential backoff (2^n seconds, capped at 2 minutes)
+    /// with random jitter (0–1s) to prevent thundering herd on reconnection storms.
+    /// </summary>
+    /// <remarks>
+    /// Delay sequence: 1s, 2s, 4s, 8s, 16s, 32s, 64s, 120s (cap), 120s, 120s, ...
+    /// Always returns a non-null TimeSpan — connection will retry indefinitely.
+    /// </remarks>
+    private sealed class InfiniteRetryPolicy : IRetryPolicy
+    {
+        private static readonly TimeSpan MaxDelay = TimeSpan.FromSeconds(120);
+
+        public TimeSpan? NextRetryDelay(RetryContext retryContext)
+        {
+            // Exponential backoff: 2^min(retryCount, 7) → 1, 2, 4, 8, 16, 32, 64, 128 → capped at 120
+            var delay = TimeSpan.FromSeconds(Math.Pow(2, Math.Min(retryContext.PreviousRetryCount, 7)));
+            if (delay > MaxDelay) delay = MaxDelay;
+
+            // Add random jitter (0–1000ms) to avoid thundering herd
+            delay += TimeSpan.FromMilliseconds(Random.Shared.Next(0, 1000));
+            return delay;
+        }
     }
 }

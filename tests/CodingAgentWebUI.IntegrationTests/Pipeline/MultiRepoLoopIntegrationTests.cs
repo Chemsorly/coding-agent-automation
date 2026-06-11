@@ -59,6 +59,14 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         foreach (var pc in repoProviderConfigs)
             await ConfigStore.SaveProviderConfigAsync(pc, CancellationToken.None);
 
+        // Save Default project containing all templates
+        await ConfigStore.SaveProjectAsync(new PipelineProject
+        {
+            Id = WellKnownIds.DefaultProjectId,
+            Name = "Default",
+            TemplateIds = templates.Select(t => t.Id).ToList()
+        }, CancellationToken.None);
+
         // Setup mock providers
         var healthyProvider = new Mock<IIssueProvider>();
         healthyProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),

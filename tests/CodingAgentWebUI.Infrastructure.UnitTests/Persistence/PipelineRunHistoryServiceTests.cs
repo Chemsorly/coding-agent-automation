@@ -28,6 +28,13 @@ public class PipelineRunHistoryServiceTests : IDisposable
             Directory.Delete(_tempDir, recursive: true);
     }
 
+    private static async Task WaitForFileAsync(string path, int timeoutMs = 2000)
+    {
+        var deadline = Environment.TickCount64 + timeoutMs;
+        while (!File.Exists(path) && Environment.TickCount64 < deadline)
+            await Task.Delay(25);
+    }
+
     [Fact]
     public void CleanupExpiredWorkspaces_DeletesExpiredFailedRunWorkspaces()
     {
@@ -226,7 +233,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public void AddRunToHistory_PersistsRunToConfiguredDirectory()
+    public async Task AddRunToHistory_PersistsRunToConfiguredDirectory()
     {
         Directory.CreateDirectory(_tempDir);
         var service = new PipelineRunHistoryService(_mockLogger.Object, _tempDir);
@@ -245,7 +252,10 @@ public class PipelineRunHistoryServiceTests : IDisposable
 
         service.AddRunToHistory(run);
 
+        // Persist is now fire-and-forget async — wait briefly for write to complete
         var expectedFile = Path.Combine(_tempDir, "persist-test-run.json");
+        await WaitForFileAsync(expectedFile);
+
         File.Exists(expectedFile).Should().BeTrue();
 
         var json = File.ReadAllText(expectedFile);
@@ -346,7 +356,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public void AddRunToHistory_CreatesTargetDirectory_IfItDoesNotExist()
+    public async Task AddRunToHistory_CreatesTargetDirectory_IfItDoesNotExist()
     {
         var nonExistentDir = Path.Combine(_tempDir, "nested", "runs");
         Directory.Exists(nonExistentDir).Should().BeFalse();
@@ -367,7 +377,64 @@ public class PipelineRunHistoryServiceTests : IDisposable
 
         service.AddRunToHistory(run);
 
+        // Persist is now fire-and-forget async — wait briefly for write to complete
+        var expectedFile = Path.Combine(nonExistentDir, "dir-create-test.json");
+        await WaitForFileAsync(expectedFile);
+
         Directory.Exists(nonExistentDir).Should().BeTrue();
-        File.Exists(Path.Combine(nonExistentDir, "dir-create-test.json")).Should().BeTrue();
+        File.Exists(expectedFile).Should().BeTrue();
+    }
+
+    [Fact]
+    public void CleanupExpiredWorkspaces_UsesCompletedAtOffset_OverLegacyCompletedAt()
+    {
+        // Arrange: run has CompletedAtOffset set (new path) — verify DateTimeOffset comparison is used
+        var workspaceBase = Path.Combine(Path.GetTempPath(), $"ws-dto-{Guid.NewGuid()}");
+        var expiredRunId = Guid.NewGuid().ToString();
+        var nonExpiredRunId = Guid.NewGuid().ToString();
+        Directory.CreateDirectory(Path.Combine(workspaceBase, expiredRunId));
+        Directory.CreateDirectory(Path.Combine(workspaceBase, nonExpiredRunId));
+        var runsDir = Path.Combine(Path.GetTempPath(), $"test-runs-dto-{Guid.NewGuid()}");
+        Directory.CreateDirectory(runsDir);
+        try
+        {
+            // Expired run: CompletedAtOffset is 10 days ago, legacy CompletedAt intentionally null
+            // to prove the new CompletedAtOffset path is exercised
+            var expiredSummary = new PipelineRunSummary
+            {
+                RunId = expiredRunId,
+                IssueIdentifier = "1",
+                IssueTitle = "Expired via DateTimeOffset",
+                FinalStep = PipelineStep.Failed,
+                StartedAt = DateTime.UtcNow.AddDays(-10),
+                CompletedAtOffset = DateTimeOffset.UtcNow.AddDays(-10)
+            };
+
+            // Non-expired run: CompletedAtOffset is 1 day ago
+            var recentSummary = new PipelineRunSummary
+            {
+                RunId = nonExpiredRunId,
+                IssueIdentifier = "2",
+                IssueTitle = "Recent via DateTimeOffset",
+                FinalStep = PipelineStep.Failed,
+                StartedAt = DateTime.UtcNow.AddDays(-1),
+                CompletedAtOffset = DateTimeOffset.UtcNow.AddDays(-1)
+            };
+
+            File.WriteAllText(Path.Combine(runsDir, $"{expiredRunId}.json"), JsonSerializer.Serialize(expiredSummary, JsonOptions));
+            File.WriteAllText(Path.Combine(runsDir, $"{nonExpiredRunId}.json"), JsonSerializer.Serialize(recentSummary, JsonOptions));
+
+            var historyService = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
+            historyService.CleanupExpiredWorkspaces(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase, FailedWorkspaceRetentionDays = 7 });
+
+            // Assert: expired workspace deleted, recent workspace retained — proves DateTimeOffset path works
+            Directory.Exists(Path.Combine(workspaceBase, expiredRunId)).Should().BeFalse();
+            Directory.Exists(Path.Combine(workspaceBase, nonExpiredRunId)).Should().BeTrue();
+        }
+        finally
+        {
+            if (Directory.Exists(runsDir)) Directory.Delete(runsDir, true);
+            if (Directory.Exists(workspaceBase)) Directory.Delete(workspaceBase, true);
+        }
     }
 }

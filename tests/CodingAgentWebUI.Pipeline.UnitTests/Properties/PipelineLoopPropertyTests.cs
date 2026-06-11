@@ -376,6 +376,11 @@ public class PipelineLoopPropertyTests
 
     private static void SetupProviderConfigs(Mock<IConfigurationStore> mockStore, List<PipelineJobTemplate> templates)
     {
+        mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = templates.Select(t => t.Id).ToList() }
+            });
         mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates.Select(t => new ProviderConfig
             {

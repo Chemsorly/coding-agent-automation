@@ -117,16 +117,21 @@ Set `useResume: false` to start a fresh conversation, or `useResume: true` to co
 ```
 KiroCliLib/
 ├── Configuration/
-│   └── Configuration.cs        — Settings (CLI path, WSL mode, timeout)
+│   ├── Configuration.cs        — Settings (CLI path, WSL mode, timeout)
+│   └── KiroCliConstants.cs     — Centralized constants (timeouts, paths)
 ├── Core/
 │   ├── IKiroCliOrchestrator.cs — Public API interface
 │   ├── KiroCliOrchestrator.cs  — Orchestrates execution workflow
+│   ├── IProcessWrapper.cs      — Process wrapper interface (for testing)
 │   ├── ProcessWrapper.cs       — Manages CLI process lifecycle + WSL integration
-│   ├── OutputParser.cs         — Parses CLI output for state/file/test detection
+│   ├── IOutputParser.cs        — Output parser interface
+│   ├── OutputParser.cs         — Parses CLI output for state/test detection
+│   ├── IFileSystemMonitor.cs   — File system monitor interface (for testing)
 │   ├── FileSystemMonitor.cs    — Before/after workspace snapshot comparison
 │   ├── CallbackHandler.cs      — Event registration and invocation with error isolation
 │   ├── AnsiStripper.cs         — Strips ANSI escape codes from output
-│   └── ExitCodes.cs             — Well-known exit code constants
+│   ├── GracefulShutdownHelper.cs — Async shutdown with timeout + logging
+│   └── ExitCodes.cs            — Well-known exit code constants (shared with pipeline)
 └── Models/
     ├── KiroState.cs            — Execution state enum (9 states)
     ├── CallbackContext.cs      — Context passed to callbacks
@@ -166,6 +171,7 @@ ExecutePromptAsync(prompt, workspace, useResume, ct)
 |------|----------|---------|
 | 0 | `ExitCodes.Success` | Prompt completed successfully |
 | 1 | `ExitCodes.GeneralFailure` | Unspecified error |
+| 124 | `ExitCodes.Timeout` | Execution exceeded the configured timeout |
 | 130 | `ExitCodes.Cancelled` | Execution was cancelled (SIGINT) |
 
 ## Execution States

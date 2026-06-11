@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Persistence;
 using Serilog;
 
 namespace CodingAgentWebUI.Pipeline.Services;
@@ -137,8 +138,19 @@ public sealed class ConsolidationService : IConsolidationService
             await PrepareFeedbackDataAsync(run, ct);
         }
 
-        // Persist the run record
-        await PersistRunAsync(run, ct);
+        // Persist the run record — rollback in-memory state on failure to prevent orphaned entries
+        try
+        {
+            await PersistRunAsync(run, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex,
+                "Failed to persist consolidation run {RunId} for {Type}/{TemplateName} — rolling back in-memory state",
+                run.RunId, type, templateName);
+            _runningRuns.TryRemove(key, out _);
+            return null;
+        }
 
         // Dispatch the job to an idle agent (wrapped in try-catch to prevent concurrency state leak)
         if (_dispatcher is not null)
@@ -564,12 +576,9 @@ public sealed class ConsolidationService : IConsolidationService
     {
         try
         {
-            if (!Directory.Exists(_consolidationRunsDirectory))
-                Directory.CreateDirectory(_consolidationRunsDirectory);
-
             var filePath = Path.Combine(_consolidationRunsDirectory, $"{run.RunId}.json");
             var json = JsonSerializer.Serialize(run, PipelineJsonOptions.Default);
-            await File.WriteAllTextAsync(filePath, json, ct);
+            await AtomicFileWriter.WriteAsync(filePath, json, ct);
         }
         catch (Exception ex)
         {
@@ -690,12 +699,9 @@ public sealed class ConsolidationService : IConsolidationService
     /// <summary>
     /// Resolves a template by ID from projects via IProjectStore.
     /// Flattens all enabled projects' templates and finds the matching template.
-    /// Falls back to PipelineConfiguration.PipelineJobTemplates for templates not yet
-    /// assigned to projects (pre-migration scenario).
     /// </summary>
     private async Task<PipelineJobTemplate?> ResolveTemplateAsync(string templateId, CancellationToken ct)
     {
-        // Primary: look up from projects (project-based ownership)
         var projects = await _projectStore.LoadProjectsAsync(ct);
         var templateLookup = _config.PipelineJobTemplates.ToDictionary(t => t.Id);
 
@@ -705,30 +711,16 @@ public sealed class ConsolidationService : IConsolidationService
                 return template;
         }
 
-        // Fallback: check global config directly (handles pre-migration or orphaned templates)
-        if (templateLookup.TryGetValue(templateId, out var fallbackTemplate))
-        {
-            _logger.Warning("Template '{TemplateId}' not found in any enabled project, using fallback from global config", templateId);
-            return fallbackTemplate;
-        }
-
         return null;
     }
 
     /// <summary>
     /// Returns all enabled templates from all enabled projects, resolved via IProjectStore.
-    /// Falls back to PipelineConfiguration.PipelineJobTemplates when no projects exist (pre-migration).
     /// </summary>
     internal async Task<IReadOnlyList<PipelineJobTemplate>> GetEnabledTemplatesFromProjectsAsync(CancellationToken ct)
     {
         var projects = await _projectStore.LoadProjectsAsync(ct);
         var templateLookup = _config.PipelineJobTemplates.ToDictionary(t => t.Id);
-
-        if (projects.Count == 0)
-        {
-            // Pre-migration fallback: use global config directly
-            return _config.PipelineJobTemplates.Where(t => t.Enabled).ToList();
-        }
 
         var result = new List<PipelineJobTemplate>();
         foreach (var project in projects.Where(p => p.Enabled).OrderBy(p => p.Name, StringComparer.Ordinal))

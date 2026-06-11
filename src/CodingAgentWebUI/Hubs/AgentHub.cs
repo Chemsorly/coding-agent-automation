@@ -78,8 +78,8 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         {
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Disconnected);
             _logger.Information(
-                "Agent {AgentId} disconnected (connectionId={ConnectionId}, exception={Exception})",
-                agent.AgentId, Context.ConnectionId, exception?.Message ?? "none");
+                "Agent {AgentId} disconnected (connectionId={ConnectionId}, activeJobId={ActiveJobId}, exception={Exception})",
+                agent.AgentId, Context.ConnectionId, agent.ActiveJobId ?? "none", exception?.Message ?? "none");
         }
 
         return base.OnDisconnectedAsync(exception);
@@ -116,6 +116,55 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         }
 
         _facade.Register(message, Context.ConnectionId);
+
+        // Detect orphaned runs: if the orchestrator tracks active runs for this agent
+        // but the agent registered without an active job, restore the ActiveJobId on the
+        // registry entry so the HeartbeatMonitor grace period logic can handle cleanup.
+        // This avoids immediately failing runs when an agent has a brief network blip.
+        var entry = _facade.GetByAgentId(message.AgentId);
+        if (entry is { ActiveJobId: null })
+        {
+            var orphanedRuns = _facade.GetActiveRunsByAgent(message.AgentId);
+            if (orphanedRuns.Count > 0)
+            {
+                // Re-check: another thread (DrainService) may have assigned a job between
+                // the Register call and now. If so, don't overwrite.
+                if (entry.ActiveJobId is not null)
+                {
+                    _logger.Information(
+                        "Agent {AgentId} acquired job {ActiveJobId} between registration and orphan check, skipping orphan restoration",
+                        message.AgentId, entry.ActiveJobId);
+                }
+                else
+                {
+                    // Restore the most recent orphaned run as the active job so the
+                    // disconnect grace period timer applies. If the agent truly lost the job,
+                    // the HeartbeatMonitor will fail it after the grace period expires.
+                    var mostRecent = orphanedRuns[^1];
+                    entry.ActiveJobId = mostRecent.RunId;
+                    entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
+                    _facade.TransitionStatus(message.AgentId, AgentStatus.Busy);
+
+                    _logger.Warning(
+                        "Agent {AgentId} re-registered without active job but orchestrator tracks {OrphanCount} orphaned run(s). " +
+                        "Restoring run {RunId} (issue {IssueIdentifier}) as active — HeartbeatMonitor will clean up if agent does not resume.",
+                        message.AgentId, orphanedRuns.Count, mostRecent.RunId, mostRecent.IssueIdentifier);
+                }
+            }
+            else
+            {
+                _logger.Information(
+                    "Agent {AgentId} registered with no active job and no orphaned runs (status={Status})",
+                    message.AgentId, entry.Status);
+            }
+        }
+        else if (entry is { ActiveJobId: not null })
+        {
+            _logger.Information(
+                "Agent {AgentId} registered with active job {ActiveJobId} (status={Status})",
+                message.AgentId, entry.ActiveJobId, entry.Status);
+        }
+
         return Task.CompletedTask;
     }
 

@@ -505,4 +505,5 @@ public sealed record PipelineConfiguration
     /// Default: 90 days.
     /// </summary>
     public TimeSpan RefactoringOutcomeLookback { get; init; } = TimeSpan.FromDays(90);
+
 }

@@ -30,7 +30,7 @@ public sealed class AgentHubFacadeTests
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
         _drainService = new JobQueueDrainService(_dispatcher, _registry, Mock.Of<IJobDispatcher>(),
-            new ConsolidationQueueService(_mockLogger.Object), Mock.Of<IConsolidationService>(), Mock.Of<IConsolidationDispatcher>(), _mockLogger.Object);
+            Mock.Of<IConfigurationStore>(), new ConsolidationQueueService(_mockLogger.Object), Mock.Of<IConsolidationService>(), Mock.Of<IConsolidationDispatcher>(), _mockLogger.Object);
 
         _facade = new AgentHubFacade(
             _registry,
@@ -183,7 +183,7 @@ public sealed class AgentHubFacadeTests
     public void MarkIssueComplete_DelegatesToDispatcher()
     {
         // Should not throw
-        _facade.MarkIssueComplete("org/repo#1");
+        _facade.MarkIssueComplete("org/repo#1", "provider-1");
     }
 
     [Fact]

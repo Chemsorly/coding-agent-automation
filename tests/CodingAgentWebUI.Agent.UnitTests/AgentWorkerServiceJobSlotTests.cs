@@ -226,11 +226,13 @@ public class AgentWorkerServiceJobSlotTests
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
-        var hubManager = new HubConnectionManager(
+        var hubManagerFactory = new HubConnectionManagerFactory(
             "http://localhost:9999",
             "test-agent",
             "test-api-key",
             mockLogger.Object);
+
+        var hubManager = hubManagerFactory.Create();
 
         var mockHttpClientFactory = new Mock<IHttpClientFactory>();
         var mockQualityGateValidator = new Mock<Pipeline.Interfaces.IQualityGateValidator>();
@@ -249,6 +251,7 @@ public class AgentWorkerServiceJobSlotTests
 
         return new AgentWorkerService(
             hubManager,
+            hubManagerFactory,
             executor,
             consolidationExecutor,
             mockOrchestrator.Object,

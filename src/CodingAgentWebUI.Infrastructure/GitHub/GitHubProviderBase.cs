@@ -65,6 +65,23 @@ public abstract class GitHubProviderBase : IAsyncDisposable
     /// <summary>API base URL from the client provider.</summary>
     protected string? ApiUrl => _clientProvider.ApiUrl;
 
+    /// <summary>
+    /// Derives the GraphQL endpoint URI from the configured API URL.
+    /// For GitHub.com (api.github.com) → https://api.github.com/graphql.
+    /// For GHE (e.g. https://github.example.com/api/v3) → https://github.example.com/api/graphql.
+    /// </summary>
+    protected Uri DeriveGraphQlUri()
+    {
+        var apiUrl = ApiUrl ?? "https://api.github.com";
+
+        if (apiUrl.EndsWith("/api/v3", StringComparison.OrdinalIgnoreCase))
+        {
+            return new Uri(apiUrl[..^"/api/v3".Length] + "/api/graphql");
+        }
+
+        return new Uri(apiUrl.TrimEnd('/') + "/graphql");
+    }
+
     /// <summary>Returns a GitHubClient configured with a current token.</summary>
     protected Task<IGitHubClient> GetClientAsync(CancellationToken ct)
         => _clientProvider.GetClientAsync(ct);

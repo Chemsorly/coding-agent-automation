@@ -87,13 +87,29 @@ public class ConsolidationServicePropertyTests : IDisposable
     public void GetLastRunAsync_ReturnsOnlyMostRecentMatchingPair(PositiveInt runCount)
     {
         var runsDir = Path.Combine(_tempDir, $"runs-{Guid.NewGuid():N}");
-        var config = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir };
+        var config = new PipelineConfiguration
+        {
+            WorkspaceBaseDirectory = _tempDir,
+            PipelineJobTemplates = new List<PipelineJobTemplate>
+            {
+                new() { Id = "tmpl-A", Name = "A", IssueProviderId = "ip", RepoProviderId = "rp" },
+                new() { Id = "tmpl-B", Name = "B", IssueProviderId = "ip", RepoProviderId = "rp" }
+            }
+        };
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(h => h.GetRunHistory()).Returns([]);
 
         var mockProjectStore = new Mock<IProjectStore>();
         mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject>());
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new()
+                {
+                    Id = WellKnownIds.DefaultProjectId,
+                    Name = "Default",
+                    TemplateIds = new List<string> { "tmpl-A", "tmpl-B" }
+                }
+            });
 
         var sut = new ConsolidationService(
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,

@@ -189,7 +189,8 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         var issueNumber = ParseIssueIdentifier(identifier);
 
         var comments = await ExecuteWithResilienceAsync(
-            client => client.Issue.Comment.GetAllForIssue(Owner, Repo, issueNumber),
+            client => client.Issue.Comment.GetAllForIssue(Owner, Repo, issueNumber,
+                new ApiOptions { PageSize = PipelineConstants.DefaultPageSize, PageCount = PipelineConstants.MaxCommentPages }),
             "ListComments", ct);
 
         return comments

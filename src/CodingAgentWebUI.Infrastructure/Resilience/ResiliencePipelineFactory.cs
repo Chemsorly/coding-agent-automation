@@ -17,16 +17,31 @@ public static class ResiliencePipelineFactory
 {
     private const int DefaultMaxRetryAttempts = 3;
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan DefaultOuterTimeout = TimeSpan.FromMinutes(5);
     internal static readonly TimeSpan GitNetworkTimeout = TimeSpan.FromSeconds(120);
     internal static readonly TimeSpan SignalRTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Creates a resilience pipeline for GitHub API (Octokit) calls.
-    /// Retries on transient errors (5xx, rate limits, network) with exponential backoff + jitter.
+    /// Uses an outer timeout (default: 5 minutes) that wraps the entire retry sequence including
+    /// rate-limit delays, and a per-attempt timeout (default: 30s) for individual API calls.
+    /// Pattern: outer timeout → retry (with rate-limit-aware backoff) → per-attempt timeout.
     /// </summary>
     public static ResiliencePipeline CreateGitHubApiPipeline(ILogger logger)
+        => CreateGitHubApiPipeline(logger, DefaultOuterTimeout, DefaultTimeout);
+
+    internal static ResiliencePipeline CreateGitHubApiPipeline(
+        ILogger logger,
+        TimeSpan? outerTimeout = null,
+        TimeSpan? perAttemptTimeout = null)
     {
+        var outer = outerTimeout ?? DefaultOuterTimeout;
+        var perAttempt = perAttemptTimeout ?? DefaultTimeout;
+
         return new ResiliencePipelineBuilder()
+            // Outer timeout: caps total time including all retries and rate-limit delays.
+            // If a rate-limit reset exceeds this, the operation fails with TimeoutRejectedException.
+            .AddTimeout(outer)
             .AddRetry(new RetryStrategyOptions
             {
                 MaxRetryAttempts = DefaultMaxRetryAttempts,
@@ -43,21 +58,12 @@ public static class ResiliencePipelineFactory
                 DelayGenerator = args => GetRateLimitDelay(args),
                 OnRetry = args =>
                 {
-                    System.Diagnostics.Activity.Current?.AddEvent(new System.Diagnostics.ActivityEvent("retry", tags: new System.Diagnostics.ActivityTagsCollection
-                    {
-                        { "attempt", args.AttemptNumber + 1 },
-                        { "exception_type", args.Outcome.Exception?.GetType().Name ?? "unknown" }
-                    }));
-                    logger.Warning(
-                        "{Operation} retry {Attempt}/{MaxAttempts} after {Exception}",
-                        args.Context.OperationKey ?? "GitHubApi",
-                        args.AttemptNumber + 1,
-                        DefaultMaxRetryAttempts,
-                        args.Outcome.Exception?.GetType().Name ?? "unknown");
+                    RecordRetryEvent(args, logger, "GitHubApi", DefaultMaxRetryAttempts);
                     return ValueTask.CompletedTask;
                 }
             })
-            .AddTimeout(DefaultTimeout)
+            // Per-attempt timeout: caps each individual API call (existing 30s behavior).
+            .AddTimeout(perAttempt)
             .Build();
     }
 
@@ -84,17 +90,7 @@ public static class ResiliencePipelineFactory
                     .Handle<AbuseException>(),
                 OnRetry = args =>
                 {
-                    System.Diagnostics.Activity.Current?.AddEvent(new System.Diagnostics.ActivityEvent("retry", tags: new System.Diagnostics.ActivityTagsCollection
-                    {
-                        { "attempt", args.AttemptNumber + 1 },
-                        { "exception_type", args.Outcome.Exception?.GetType().Name ?? "unknown" }
-                    }));
-                    logger.Warning(
-                        "{Operation} retry {Attempt}/{MaxAttempts} after {Exception}",
-                        args.Context.OperationKey ?? "GitHubActionsLogs",
-                        args.AttemptNumber + 1,
-                        DefaultMaxRetryAttempts,
-                        args.Outcome.Exception?.GetType().Name ?? "unknown");
+                    RecordRetryEvent(args, logger, "GitHubActionsLogs", DefaultMaxRetryAttempts);
                     return ValueTask.CompletedTask;
                 }
             })
@@ -121,17 +117,7 @@ public static class ResiliencePipelineFactory
                     .Handle<LibGit2SharpException>(ex => IsTransientGitException(ex)),
                 OnRetry = args =>
                 {
-                    System.Diagnostics.Activity.Current?.AddEvent(new System.Diagnostics.ActivityEvent("retry", tags: new System.Diagnostics.ActivityTagsCollection
-                    {
-                        { "attempt", args.AttemptNumber + 1 },
-                        { "exception_type", args.Outcome.Exception?.GetType().Name ?? "unknown" }
-                    }));
-                    logger.Warning(
-                        "{Operation} retry {Attempt}/{MaxAttempts} after {Exception}",
-                        args.Context.OperationKey ?? "GitNetwork",
-                        args.AttemptNumber + 1,
-                        2,
-                        args.Outcome.Exception?.GetType().Name ?? "unknown");
+                    RecordRetryEvent(args, logger, "GitNetwork", 2);
                     return ValueTask.CompletedTask;
                 }
             })
@@ -157,17 +143,7 @@ public static class ResiliencePipelineFactory
                     .Handle<TaskCanceledException>(ex => ex.InnerException is TimeoutException),
                 OnRetry = args =>
                 {
-                    System.Diagnostics.Activity.Current?.AddEvent(new System.Diagnostics.ActivityEvent("retry", tags: new System.Diagnostics.ActivityTagsCollection
-                    {
-                        { "attempt", args.AttemptNumber + 1 },
-                        { "exception_type", args.Outcome.Exception?.GetType().Name ?? "unknown" }
-                    }));
-                    logger.Warning(
-                        "{Operation} retry {Attempt}/{MaxAttempts} after {Exception}",
-                        args.Context.OperationKey ?? "Http",
-                        args.AttemptNumber + 1,
-                        DefaultMaxRetryAttempts,
-                        args.Outcome.Exception?.GetType().Name ?? "unknown");
+                    RecordRetryEvent(args, logger, "Http", DefaultMaxRetryAttempts);
                     return ValueTask.CompletedTask;
                 }
             })
@@ -199,17 +175,7 @@ public static class ResiliencePipelineFactory
                         ex.Message.Contains("connection was stopped", StringComparison.OrdinalIgnoreCase)),
                 OnRetry = args =>
                 {
-                    System.Diagnostics.Activity.Current?.AddEvent(new System.Diagnostics.ActivityEvent("retry", tags: new System.Diagnostics.ActivityTagsCollection
-                    {
-                        { "attempt", args.AttemptNumber + 1 },
-                        { "exception_type", args.Outcome.Exception?.GetType().Name ?? "unknown" }
-                    }));
-                    logger.Warning(
-                        "{Operation} retry {Attempt}/{MaxAttempts} after {Exception}",
-                        args.Context.OperationKey ?? "SignalR",
-                        args.AttemptNumber + 1,
-                        DefaultMaxRetryAttempts,
-                        args.Outcome.Exception?.GetType().Name ?? "unknown");
+                    RecordRetryEvent(args, logger, "SignalR", DefaultMaxRetryAttempts);
                     return ValueTask.CompletedTask;
                 }
             })
@@ -237,17 +203,7 @@ public static class ResiliencePipelineFactory
                     .Handle<GitLabException>(ex => IsRetryableGitLabException(ex)),
                 OnRetry = args =>
                 {
-                    System.Diagnostics.Activity.Current?.AddEvent(new System.Diagnostics.ActivityEvent("retry", tags: new System.Diagnostics.ActivityTagsCollection
-                    {
-                        { "attempt", args.AttemptNumber + 1 },
-                        { "exception_type", args.Outcome.Exception?.GetType().Name ?? "unknown" }
-                    }));
-                    logger.Warning(
-                        "{Operation} retry {Attempt}/{MaxAttempts} after {Exception}",
-                        args.Context.OperationKey ?? "GitLabApi",
-                        args.AttemptNumber + 1,
-                        DefaultMaxRetryAttempts,
-                        args.Outcome.Exception?.GetType().Name ?? "unknown");
+                    RecordRetryEvent(args, logger, "GitLabApi", DefaultMaxRetryAttempts);
                     return ValueTask.CompletedTask;
                 }
             })
@@ -277,22 +233,47 @@ public static class ResiliencePipelineFactory
                     .Handle<GitLabException>(ex => (int)ex.StatusCode >= 500),
                 OnRetry = args =>
                 {
-                    System.Diagnostics.Activity.Current?.AddEvent(new System.Diagnostics.ActivityEvent("retry", tags: new System.Diagnostics.ActivityTagsCollection
-                    {
-                        { "attempt", args.AttemptNumber + 1 },
-                        { "exception_type", args.Outcome.Exception?.GetType().Name ?? "unknown" }
-                    }));
-                    logger.Warning(
-                        "Write operation {Operation} retry {Attempt}/{MaxAttempts}",
-                        args.Context.OperationKey ?? "GitLabWrite",
-                        args.AttemptNumber + 1,
-                        writeMaxRetryAttempts);
+                    RecordRetryEvent(args, logger, "GitLabWrite", writeMaxRetryAttempts);
                     return ValueTask.CompletedTask;
                 }
             })
             .AddTimeout(DefaultTimeout)
             .Build();
     }
+
+    /// <summary>
+    /// Records a retry event on the current Activity span and logs the retry attempt.
+    /// </summary>
+    private static void RecordRetryEvent(OnRetryArguments<object> args, ILogger logger, string defaultOperationKey, int maxAttempts)
+    {
+        var ex = args.Outcome.Exception;
+        var exType = ex?.GetType().Name ?? "unknown";
+        var exMessage = TruncateMessage(ex?.Message);
+
+        System.Diagnostics.Activity.Current?.AddEvent(new System.Diagnostics.ActivityEvent("retry",
+            tags: new System.Diagnostics.ActivityTagsCollection
+            {
+                { "attempt", args.AttemptNumber + 1 },
+                { "exception.type", exType },
+                { "exception.message", exMessage }
+            }));
+
+        logger.Warning(
+            "{Operation} retry {Attempt}/{MaxAttempts} after {ExceptionType}: {ExceptionMessage}",
+            args.Context.OperationKey ?? defaultOperationKey,
+            args.AttemptNumber + 1,
+            maxAttempts,
+            exType,
+            exMessage);
+    }
+
+    /// <summary>
+    /// Truncates a message to the specified maximum length to prevent log explosion.
+    /// </summary>
+    internal static string TruncateMessage(string? message, int maxLength = 200)
+        => message is null ? "unknown"
+           : message.Length <= maxLength ? message
+           : string.Concat(message.AsSpan(0, maxLength), "…");
 
     /// <summary>
     /// Determines if a <see cref="GitLabException"/> is retryable (5xx, 408 Request Timeout, 429 Too Many Requests).
@@ -339,6 +320,8 @@ public static class ResiliencePipelineFactory
 
     /// <summary>
     /// Extracts rate limit delay from exception headers when available.
+    /// The delay may exceed the outer timeout — in that case, the outer timeout strategy
+    /// will cancel the wait with TimeoutRejectedException, which is the correct fail-fast behaviour.
     /// </summary>
     private static ValueTask<TimeSpan?> GetRateLimitDelay(RetryDelayGeneratorArguments<object> args)
     {

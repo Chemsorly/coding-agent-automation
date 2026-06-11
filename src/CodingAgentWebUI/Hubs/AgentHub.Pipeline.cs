@@ -47,7 +47,7 @@ public sealed partial class AgentHub
         if (run is not null)
         {
             _facade.RemoveRun(jobId);
-            _facade.MarkIssueComplete(run.IssueIdentifier);
+            _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
             // Revert label to agent:error — not agent:next to avoid infinite dispatch loops
             // in case of misconfiguration. Human intervention needed to retry.
@@ -142,12 +142,13 @@ public sealed partial class AgentHub
         if (agent is not null)
         {
             agent.ActiveJobId = null;
+            agent.OrphanRestoredAt = null;
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
             // Mark issue as no longer processing in the dispatcher
             if (run is not null)
-                _facade.MarkIssueComplete(run.IssueIdentifier);
+                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
             // Signal the drain service to attempt dispatch for this now-idle agent
             _facade.Signal();
@@ -178,6 +179,16 @@ public sealed partial class AgentHub
 
             _logger.Debug("Job {JobId} step transition → {Step}", jobId, step);
             _orchestration.NotifyChange();
+        }
+
+        // Clear orphan-restored flag: agent is actively progressing on this job
+        var agent = _facade.GetByConnectionId(Context.ConnectionId);
+        if (agent is { OrphanRestoredAt: not null })
+        {
+            _logger.Information(
+                "Agent {AgentId} reported progress on job {JobId}, clearing orphan-restored state",
+                agent.AgentId, jobId);
+            agent.OrphanRestoredAt = null;
         }
 
         return Task.CompletedTask;

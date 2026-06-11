@@ -100,7 +100,8 @@ public partial class GitHubRepositoryProvider
 
         // Get all reviews on the PR. Octokit's GetAll handles pagination automatically.
         var allReviews = await ExecuteWithResilienceAsync(
-            client => client.PullRequest.Review.GetAll(Owner, Repo, prNumber),
+            client => client.PullRequest.Review.GetAll(Owner, Repo, prNumber,
+                new ApiOptions { PageSize = PipelineConstants.DefaultPageSize, PageCount = PipelineConstants.MaxReviewPages }),
             "DismissPreviousReview.GetAllReviews", ct);
 
         // Filter reviews that contain the marker in their body AND are in a dismissible state.
@@ -176,7 +177,8 @@ public partial class GitHubRepositoryProvider
         ArgumentNullException.ThrowIfNull(marker);
 
         var comments = await ExecuteWithResilienceAsync(
-            client => client.Issue.Comment.GetAllForIssue(Owner, Repo, prNumber),
+            client => client.Issue.Comment.GetAllForIssue(Owner, Repo, prNumber,
+                new ApiOptions { PageSize = PipelineConstants.DefaultPageSize, PageCount = PipelineConstants.MaxPrCommentPages }),
             "FindExistingReviewComment", ct);
 
         var match = comments.FirstOrDefault(c => c.Body?.Contains(marker, StringComparison.Ordinal) == true);

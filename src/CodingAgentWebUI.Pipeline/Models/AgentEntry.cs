@@ -1,3 +1,6 @@
+using System.Text.Json.Serialization;
+using MessagePack;
+
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
@@ -17,6 +20,16 @@ public enum AgentStatus
 /// </summary>
 public sealed record AgentEntry
 {
+    /// <summary>Per-entry lock object for thread-safe mutation of mutable properties.</summary>
+    [JsonIgnore]
+    [IgnoreMember]
+    private readonly object _syncRoot = new();
+
+    /// <summary>Lock object for synchronizing access to mutable properties of this entry.</summary>
+    [JsonIgnore]
+    [IgnoreMember]
+    internal object SyncRoot => _syncRoot;
+
     public required string AgentId { get; init; }
 
     /// <summary>SignalR connection ID — mutable to support reconnection with the same agentId.</summary>
@@ -54,4 +67,11 @@ public sealed record AgentEntry
     /// Resets to false on agent re-registration after orchestrator restart.
     /// </summary>
     public bool Disabled { get; set; } = false;
+
+    /// <summary>
+    /// Timestamp when an orphaned run was restored as the active job during re-registration.
+    /// Used by HeartbeatMonitor to fail the run if the agent doesn't resume progress
+    /// within the disconnect grace period. Cleared when the agent reports job progress.
+    /// </summary>
+    public DateTimeOffset? OrphanRestoredAt { get; set; }
 }

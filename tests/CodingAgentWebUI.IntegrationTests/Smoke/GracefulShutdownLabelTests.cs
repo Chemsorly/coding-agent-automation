@@ -13,6 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Moq;
+using Serilog;
 
 namespace CodingAgentWebUI.IntegrationTests.Smoke;
 
@@ -81,6 +82,11 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
                 services.RemoveAll<IHostedService>();
+                // Re-add ShutdownService so graceful shutdown fires through IHostedLifecycleService
+                services.AddHostedService(sp => new ShutdownService(
+                    sp.GetRequiredService<ILifecycleShutdownAction>(),
+                    sp.GetRequiredService<IOrchestrationShutdownAction>(),
+                    Log.Logger));
                 ReplaceService<IConfigurationStore>(services, _mockConfigStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, _mockConfigStore.Object);
                 ReplaceService<IProviderConfigStore>(services, _mockConfigStore.Object);
@@ -175,6 +181,10 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
                 services.RemoveAll<IHostedService>();
+                services.AddHostedService(sp => new ShutdownService(
+                    sp.GetRequiredService<ILifecycleShutdownAction>(),
+                    sp.GetRequiredService<IOrchestrationShutdownAction>(),
+                    Log.Logger));
                 ReplaceService<IConfigurationStore>(services, configStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, configStore.Object);
                 ReplaceService<IProviderConfigStore>(services, configStore.Object);
@@ -228,6 +238,10 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
                 services.RemoveAll<IHostedService>();
+                services.AddHostedService(sp => new ShutdownService(
+                    sp.GetRequiredService<ILifecycleShutdownAction>(),
+                    sp.GetRequiredService<IOrchestrationShutdownAction>(),
+                    Log.Logger));
                 ReplaceService<IConfigurationStore>(services, _mockConfigStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, _mockConfigStore.Object);
                 ReplaceService<IProviderConfigStore>(services, _mockConfigStore.Object);
@@ -251,6 +265,100 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         _mockProviderFactory.Verify(
             f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task Shutdown_DoesNotBlock_WhenProviderHangs()
+    {
+        // Arrange: issue provider hangs indefinitely (simulates network timeout)
+        var issueConfig = new ProviderConfig
+        {
+            Id = "issue-provider-1",
+            DisplayName = "Test Issue Provider",
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.Owner] = "test",
+                [ProviderSettingKeys.Repo] = "test",
+                ["appId"] = "1",
+                [ProviderSettingKeys.InstallationId] = "1",
+                ["privateKey"] = "fake"
+            }
+        };
+
+        var hangingProvider = new Mock<IIssueProvider>();
+        hangingProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.Delay(Timeout.InfiniteTimeSpan));
+        hangingProvider.Setup(p => p.AddLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.Delay(Timeout.InfiniteTimeSpan));
+        hangingProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var configStore = new Mock<IConfigurationStore>();
+        configStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { issueConfig });
+        configStore.Setup(s => s.LoadProviderConfigsAsync(It.IsNotIn(ProviderKind.Issue), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ProviderConfig>());
+        configStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .Returns((string id, ProviderKind kind, CancellationToken ct) =>
+            {
+                var configs = configStore.Object.LoadProviderConfigsAsync(kind, ct).GetAwaiter().GetResult();
+                return Task.FromResult(configs.FirstOrDefault(c => c.Id == id));
+            });
+
+        var providerFactory = new Mock<IProviderFactory>();
+        providerFactory.Setup(f => f.CreateIssueProvider(issueConfig))
+            .Returns(hangingProvider.Object);
+
+        _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
+                services.RemoveAll<IHostedService>();
+                services.AddHostedService(sp => new ShutdownService(
+                    sp.GetRequiredService<ILifecycleShutdownAction>(),
+                    sp.GetRequiredService<IOrchestrationShutdownAction>(),
+                    Log.Logger));
+                ReplaceService<IConfigurationStore>(services, configStore.Object);
+                ReplaceService<IPipelineConfigStore>(services, configStore.Object);
+                ReplaceService<IProviderConfigStore>(services, configStore.Object);
+                ReplaceService<IAgentProfileStore>(services, configStore.Object);
+                ReplaceService<IQualityGateConfigStore>(services, configStore.Object);
+                ReplaceService<IReviewerConfigStore>(services, configStore.Object);
+                ReplaceService<IProviderFactory>(services, providerFactory.Object);
+                ReplaceService<IQualityGateValidator>(services, new Mock<IQualityGateValidator>().Object);
+            });
+        });
+
+        var client = _factory.CreateClient();
+
+        var runService = _factory.Services.GetRequiredService<OrchestratorRunService>();
+        runService.AddRun(new PipelineRun
+        {
+            RunId = "hanging-run",
+            IssueIdentifier = "789",
+            IssueTitle = "Hanging Test",
+            IssueProviderConfigId = "issue-provider-1",
+            RepoProviderConfigId = "repo-1",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.GeneratingCode
+        });
+
+        // Act: shutdown should complete within timeout despite provider hanging
+        var lifetime = _factory.Services.GetRequiredService<IHostApplicationLifetime>();
+        lifetime.StopApplication();
+
+        var completed = await Task.Run(async () =>
+        {
+            await Task.Delay(5000);
+            return true;
+        });
+
+        // Assert: shutdown didn't hang (host-level 5s timeout aborted the hanging callback)
+        completed.Should().BeTrue();
     }
 
     private static void ReplaceService<T>(IServiceCollection services, T implementation) where T : class

@@ -19,13 +19,13 @@ public class ProviderFactory : IProviderFactory
     private readonly Dictionary<string, Func<ProviderConfig, IAgentProvider>> _agentFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Func<ProviderConfig, IPipelineProvider>> _pipelineFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, GitHubAppAuthService> _authServiceCache = new(StringComparer.Ordinal);
-    private readonly PipelineConfiguration _pipelineConfig;
+    private readonly IPipelineConfigStore _pipelineConfigStore;
 
-    public ProviderFactory(PipelineConfiguration pipelineConfig)
+    public ProviderFactory(IPipelineConfigStore pipelineConfigStore)
     {
-        ArgumentNullException.ThrowIfNull(pipelineConfig);
+        ArgumentNullException.ThrowIfNull(pipelineConfigStore);
 
-        _pipelineConfig = pipelineConfig;
+        _pipelineConfigStore = pipelineConfigStore;
 
         // Register built-in providers
         RegisterIssueProvider("GitHub", config =>
@@ -58,7 +58,8 @@ public class ProviderFactory : IProviderFactory
                 config.Settings[ProviderSettingKeys.ApiUrl],
                 config.Settings[ProviderSettingKeys.Owner],
                 config.Settings[ProviderSettingKeys.Repo]);
-            return new GitHubActionsPipelineProvider(connection, authService.GetTokenAsync, _pipelineConfig.ExternalCiPollInterval);
+            var currentConfig = _pipelineConfigStore.LoadPipelineConfigAsync(CancellationToken.None).GetAwaiter().GetResult();
+            return new GitHubActionsPipelineProvider(connection, authService.GetTokenAsync, currentConfig.ExternalCiPollInterval);
         });
 
         // Register GitLab providers
@@ -98,11 +99,12 @@ public class ProviderFactory : IProviderFactory
                 ProviderSettingKeys.AccessToken,
                 ProviderSettingKeys.ProjectId);
             var projectId = ParseProjectId(config);
+            var currentConfig = _pipelineConfigStore.LoadPipelineConfigAsync(CancellationToken.None).GetAwaiter().GetResult();
             return new GitLabCiPipelineProvider(
                 config.Settings[ProviderSettingKeys.ApiUrl],
                 config.Settings[ProviderSettingKeys.AccessToken],
                 projectId,
-                _pipelineConfig.ExternalCiPollInterval);
+                currentConfig.ExternalCiPollInterval);
         });
     }
 

@@ -8,6 +8,7 @@ using CodingAgentWebUI.Pipeline.Services.Steps;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
+using Serilog.Context;
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
@@ -275,6 +276,7 @@ public sealed class LocalPipelineExecutor
             IssueProviderConfigId = string.Empty, // Agent doesn't have issue provider
             RepoProviderConfigId = job.RepoProviderConfigId,
             StartedAt = DateTime.UtcNow,
+            StartedAtOffset = DateTimeOffset.UtcNow,
             CurrentStep = PipelineStep.Created,
             RepositoryName = repoProvider.RepositoryFullName,
             ModelName = agentProvider is KiroCliAgentProvider kp ? kp.Model : null,
@@ -288,7 +290,9 @@ public sealed class LocalPipelineExecutor
             ReviewPrTargetBranch = job.ReviewPrTargetBranch,
             ReviewPrDescription = job.ReviewPrDescription,
             ReviewPrAuthor = job.ReviewPrAuthor,
-            LinkedIssueContexts = job.LinkedIssueContexts
+            LinkedIssueContexts = job.LinkedIssueContexts,
+            ProjectId = job.ProjectId,
+            ProjectName = job.ProjectName
         };
 
         run.IssueLabels = job.IssueDetail.Labels;
@@ -316,6 +320,9 @@ public sealed class LocalPipelineExecutor
             var masked = MaskSecretsInOutput(line, context);
             _ = EmitOutputLineInternalAsync(run, outputBatcher, masked, ct);
         }
+
+        using var _runIdCtx = LogContext.PushProperty("PipelineRunId", run.RunId);
+        using var _issueCtx = LogContext.PushProperty("IssueIdentifier", run.IssueIdentifier);
 
         try
         {
@@ -382,6 +389,7 @@ public sealed class LocalPipelineExecutor
                 && run.CurrentStep is not PipelineStep.Failed and not PipelineStep.Cancelled)
             {
                 run.CompletedAt = DateTime.UtcNow;
+                run.CompletedAtOffset = DateTimeOffset.UtcNow;
                 run.CurrentStep = PipelineStep.Completed;
                 run.FinalLabel ??= AgentLabels.Done;
             }
@@ -391,6 +399,7 @@ public sealed class LocalPipelineExecutor
         catch (OperationCanceledException)
         {
             run.CompletedAt = DateTime.UtcNow;
+            run.CompletedAtOffset = DateTimeOffset.UtcNow;
 
             TransitionTo(PipelineStep.Cancelled);
             EmitOutputLine("🚫 Pipeline cancelled");
@@ -476,7 +485,7 @@ public sealed class LocalPipelineExecutor
             onStepChanged?.Invoke(step);
 
             var metadata = BuildStepMetadata(run, step);
-            await connection.InvokeAsync("ReportStepTransition", jobId, step, DateTimeOffset.UtcNow, metadata, ct);
+            await connection.InvokeAsync(HubMethodNames.ReportStepTransition, jobId, step, DateTimeOffset.UtcNow, metadata, ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", step); }
     }
@@ -503,7 +512,7 @@ public sealed class LocalPipelineExecutor
     internal async Task ReportQualityGateResultInternalAsync(
         HubConnection connection, string jobId, QualityGateReport report, CancellationToken ct)
     {
-        try { await connection.InvokeAsync("ReportQualityGateResult", jobId, report, ct); }
+        try { await connection.InvokeAsync(HubMethodNames.ReportQualityGateResult, jobId, report, ct); }
         catch (Exception ex) { _logger.Warning(ex, "Failed to report quality gate result"); }
     }
 
@@ -621,7 +630,7 @@ public sealed class LocalPipelineExecutor
             (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, inputs.PrContext, token),
             async (contextLoaded, fileCount) =>
             {
-                try { await inputs.Connection.InvokeAsync("ReportBrainSyncResult", inputs.Job.JobId, contextLoaded, fileCount, ct); }
+                try { await inputs.Connection.InvokeAsync(HubMethodNames.ReportBrainSyncResult, inputs.Job.JobId, contextLoaded, fileCount, ct); }
                 catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
             });
 
@@ -684,6 +693,7 @@ public sealed class LocalPipelineExecutor
             {
                 run.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";
                 run.CompletedAt = DateTime.UtcNow;
+                run.CompletedAtOffset = DateTimeOffset.UtcNow;
                 run.CurrentStep = PipelineStep.Failed;
                 return;
             }
@@ -714,6 +724,7 @@ public sealed class LocalPipelineExecutor
             }
 
             run.CompletedAt = DateTime.UtcNow;
+            run.CompletedAtOffset = DateTimeOffset.UtcNow;
             run.CurrentStep = finalStep;
             run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
         }
@@ -734,7 +745,7 @@ public sealed class LocalPipelineExecutor
         run.CurrentStep = step;
         try
         {
-            await connection.InvokeAsync("ReportStepTransition", jobId, step, DateTimeOffset.UtcNow, (Dictionary<string, string>?)null, ct);
+            await connection.InvokeAsync(HubMethodNames.ReportStepTransition, jobId, step, DateTimeOffset.UtcNow, (Dictionary<string, string>?)null, ct);
         }
         catch (Exception ex)
         {

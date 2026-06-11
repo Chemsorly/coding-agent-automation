@@ -126,7 +126,7 @@ public class OrchestratorRunServiceTests
         var service = CreateService();
         service.AddRun(CreateRun("run-1", "issue-42"));
 
-        service.IsIssueBeingProcessed("issue-42").Should().BeTrue();
+        service.IsIssueBeingProcessed("issue-42", "ip").Should().BeTrue();
     }
 
     [Fact]
@@ -135,7 +135,7 @@ public class OrchestratorRunServiceTests
         var service = CreateService();
         service.AddRun(CreateRun("run-1", "issue-42"));
 
-        service.IsIssueBeingProcessed("issue-99").Should().BeFalse();
+        service.IsIssueBeingProcessed("issue-99", "ip").Should().BeFalse();
     }
 
     [Fact]
@@ -145,7 +145,7 @@ public class OrchestratorRunServiceTests
         service.AddRun(CreateRun("run-1", "issue-42"));
         service.RemoveRun("run-1");
 
-        service.IsIssueBeingProcessed("issue-42").Should().BeFalse();
+        service.IsIssueBeingProcessed("issue-42", "ip").Should().BeFalse();
     }
 
     [Fact]
@@ -237,7 +237,7 @@ public class OrchestratorRunServiceTests
     public void IsIssueBeingProcessed_NullIdentifier_Throws()
     {
         var service = CreateService();
-        var act = () => service.IsIssueBeingProcessed(null!);
+        var act = () => service.IsIssueBeingProcessed(null!, "provider-1");
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -267,7 +267,7 @@ public class OrchestratorRunServiceTests
         for (var i = 0; i < threadCount; i++)
         {
             service.GetRun($"run-{i}").Should().NotBeNull();
-            service.IsIssueBeingProcessed($"issue-{i}").Should().BeTrue();
+            service.IsIssueBeingProcessed($"issue-{i}", "ip").Should().BeTrue();
         }
     }
 

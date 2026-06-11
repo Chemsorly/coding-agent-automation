@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Telemetry;
+using Serilog.Context;
 
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
@@ -21,6 +22,7 @@ internal static class PipelineStepRunner
 
         foreach (var step in steps)
         {
+            using var stepCtx = LogContext.PushProperty("StepName", step.StepName);
             var tags = PipelineTelemetry.BuildStepTags(step.StepName, context.Run);
             var sw = System.Diagnostics.Stopwatch.StartNew();
             StepResult result;

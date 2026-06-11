@@ -677,7 +677,7 @@
                 <div class="agent-history-list" style="max-height: calc(100vh - 320px); overflow-y: auto;">
                     @foreach (var issue in _filteredDrawerIssues)
                     {
-                        var isProcessing = JobDispatcher.IsIssueBeingProcessedOrQueued(issue.Identifier);
+                        var isProcessing = JobDispatcher.IsIssueBeingProcessedOrQueued(issue.Identifier, _drawerTemplate.IssueProviderId);
                         <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(_selectedDrawerIssue?.Identifier == issue.Identifier ? "drawer-issue-selected" : "")"
                              @onclick="() => SelectDrawerIssue(issue)"
                              data-testid="issue-row-@issue.Identifier"
@@ -773,7 +773,7 @@
                 <div class="agent-history-list" style="max-height: calc(100vh - 320px); overflow-y: auto;">
                     @foreach (var pr in _filteredDrawerPrs)
                     {
-                        var isProcessing = JobDispatcher.IsIssueBeingProcessedOrQueued(pr.Identifier);
+                        var isProcessing = JobDispatcher.IsIssueBeingProcessedOrQueued(pr.Identifier, _prDrawerTemplate.IssueProviderId);
                         <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(_selectedDrawerPr?.Identifier == pr.Identifier ? "drawer-issue-selected" : "")"
                              @onclick="() => SelectDrawerPr(pr)"
                              data-testid="pr-row-@pr.Identifier"
@@ -884,7 +884,7 @@
                 <div class="agent-history-list" style="max-height: calc(100vh - 320px); overflow-y: auto;">
                     @foreach (var issue in _filteredEpicDrawerIssues)
                     {
-                        var isProcessing = JobDispatcher.IsIssueBeingProcessedOrQueued(issue.Identifier);
+                        var isProcessing = JobDispatcher.IsIssueBeingProcessedOrQueued(issue.Identifier, _epicDrawerTemplate.IssueProviderId);
                         var isApproved = issue.Labels.Contains("agent:epic-approved", StringComparer.OrdinalIgnoreCase);
                         <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(_selectedEpicDrawerIssue?.Identifier == issue.Identifier ? "drawer-issue-selected" : "")"
                              @onclick="() => SelectEpicDrawerIssue(issue)"

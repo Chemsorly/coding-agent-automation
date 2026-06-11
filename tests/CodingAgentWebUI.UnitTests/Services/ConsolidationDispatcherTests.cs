@@ -43,7 +43,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
                 return Task.FromResult(configs.FirstOrDefault(c => c.Id == id));
             });
 
-        // Default: return empty projects (pre-migration fallback behavior)
+        // Default: return empty projects (no templates will resolve without project ownership)
         _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject>());
     }

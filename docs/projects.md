@@ -155,6 +155,13 @@ All settings below are nullable on the project. When `null`, the global default 
 |---------|------|-------------|
 | `MaxRefactoringProposals` | int? | Max refactoring proposals per run |
 
+### Secrets & Steering
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| `Secrets` | Dictionary? | Project-level secrets injected as environment variables for every run. Merged with repo-level secrets at dispatch time (repo wins on key collision). Keys must match POSIX env var pattern. |
+| `SteeringContent` | string? | Markdown steering content written to agent workspace before each run. Provides persistent behavioral instructions (code style, tool preferences, constraints). |
+
 ## The Default Project
 
 On first startup (or upgrade from a pre-projects version), the system automatically creates a **Default** project:

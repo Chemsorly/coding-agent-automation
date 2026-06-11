@@ -72,7 +72,7 @@ public class OrchestratorRunServiceExtendedTests
     {
         _service.AddRun(CreateRun("run-1", "org/repo#1"));
 
-        _service.IsIssueBeingProcessed("org/repo#1").Should().BeTrue();
+        _service.IsIssueBeingProcessed("org/repo#1", "ip-1").Should().BeTrue();
     }
 
     [Fact]
@@ -80,14 +80,14 @@ public class OrchestratorRunServiceExtendedTests
     {
         _service.AddRun(CreateRun("run-1", "org/repo#1"));
 
-        _service.IsIssueBeingProcessed("org/repo#2").Should().BeFalse();
+        _service.IsIssueBeingProcessed("org/repo#2", "ip-1").Should().BeFalse();
     }
 
     [Fact]
     public void IsIssueBeingProcessed_NullIdentifier_ThrowsArgumentNull()
     {
         Assert.Throws<ArgumentNullException>(() =>
-            _service.IsIssueBeingProcessed(null!));
+            _service.IsIssueBeingProcessed(null!, "provider-1"));
     }
 
     [Fact]
