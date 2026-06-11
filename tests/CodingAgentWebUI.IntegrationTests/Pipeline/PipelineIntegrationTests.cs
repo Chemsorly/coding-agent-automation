@@ -261,8 +261,9 @@ public class PipelineIntegrationTests : IntegrationTestBase
         steps.Should().Contain(PipelineStep.GeneratingCode);
         steps.Should().Contain(PipelineStep.Completed);
 
-        // Verify run was persisted to disk
+        // Verify run was persisted to disk (fire-and-forget write, allow brief settle)
         var runFile = Path.Combine(RunsDir, $"{run.RunId}.json");
+        await WaitForFileAsync(runFile);
         File.Exists(runFile).Should().BeTrue();
     }
 
@@ -383,5 +384,12 @@ public class PipelineIntegrationTests : IntegrationTestBase
         Directory.Exists(Path.Combine(WorkspaceBase, expiredRunId)).Should().BeFalse();
         // Recent workspace (1 day old, retention = 7) should be retained
         Directory.Exists(Path.Combine(WorkspaceBase, recentRunId)).Should().BeTrue();
+    }
+
+    private static async Task WaitForFileAsync(string path, int timeoutMs = 2000)
+    {
+        var deadline = Environment.TickCount64 + timeoutMs;
+        while (!File.Exists(path) && Environment.TickCount64 < deadline)
+            await Task.Delay(50);
     }
 }
