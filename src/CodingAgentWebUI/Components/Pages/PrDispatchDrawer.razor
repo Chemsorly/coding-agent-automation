@@ -126,6 +126,8 @@
     private List<PullRequestSummary> _filteredPrs = new();
     private PullRequestSummary? _selectedPr;
 
+    // TODO: OnParametersSet allocates a new filtered list on every parent re-render because the
+    // parent passes a mutable List<T> reference. Consider caching or using ShouldRender override.
     protected override void OnParametersSet()
     {
         ApplyFilter();
@@ -156,7 +158,8 @@
 
     private async Task DispatchSelected()
     {
-        if (_selectedPr != null)
-            await OnDispatch.InvokeAsync(_selectedPr);
+        if (_selectedPr == null) return;
+        await OnDispatch.InvokeAsync(_selectedPr);
+        _selectedPr = null;
     }
 }

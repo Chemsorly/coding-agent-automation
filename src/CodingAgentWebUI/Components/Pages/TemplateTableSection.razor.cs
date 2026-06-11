@@ -161,10 +161,10 @@ public partial class TemplateTableSection
     public sealed class LabelPreviewResult
     {
         public IReadOnlyList<string> Labels { get; init; } = [];
-        public List<string> QualityGates { get; init; } = new();
-        public List<string> Reviewers { get; init; } = new();
-        public List<string> Profiles { get; init; } = new();
-        public List<string> Agents { get; init; } = new();
+        public IReadOnlyList<string> QualityGates { get; init; } = [];
+        public IReadOnlyList<string> Reviewers { get; init; } = [];
+        public IReadOnlyList<string> Profiles { get; init; } = [];
+        public IReadOnlyList<string> Agents { get; init; } = [];
         public int OnlineAgentCount { get; init; }
     }
 

@@ -119,6 +119,8 @@
     private List<IssueSummary> _filteredIssues = new();
     private IssueSummary? _selectedIssue;
 
+    // TODO: OnParametersSet allocates a new filtered list on every parent re-render because the
+    // parent passes a mutable List<T> reference. Consider caching or using ShouldRender override.
     protected override void OnParametersSet()
     {
         ApplyFilter();
