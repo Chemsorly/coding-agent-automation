@@ -106,7 +106,7 @@ public class LocalPipelineExecutorTests : IDisposable
     // ── WriteMcpConfigToWorkspace ────────────────────────────────────────
 
     [Fact]
-    public void WriteMcpConfigToWorkspace_ValidStdioServers_ProducesValidJson()
+    public void McpConfigWriter_ValidStdioServers_ProducesValidJson()
     {
         // Arrange
         var servers = new List<McpServerConfig>
@@ -122,7 +122,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var relativePath = ".agent/settings/mcp.json";
 
         // Act
-        LocalPipelineExecutor.WriteMcpConfigToWorkspace(_tempDir, servers, relativePath);
+        McpConfigWriter.WriteConfig(Path.Combine(_tempDir, relativePath), servers);
 
         // Assert
         var fullPath = Path.Combine(_tempDir, relativePath);
@@ -140,14 +140,14 @@ public class LocalPipelineExecutorTests : IDisposable
     }
 
     [Fact]
-    public void WriteMcpConfigToWorkspace_EmptyServerList_ProducesEmptyMcpServersObject()
+    public void McpConfigWriter_EmptyServerList_ProducesEmptyMcpServersObject()
     {
         // Arrange
         var servers = new List<McpServerConfig>();
         var relativePath = "mcp-config/mcp.json";
 
         // Act
-        LocalPipelineExecutor.WriteMcpConfigToWorkspace(_tempDir, servers, relativePath);
+        McpConfigWriter.WriteConfig(Path.Combine(_tempDir, relativePath), servers);
 
         // Assert
         var fullPath = Path.Combine(_tempDir, relativePath);
@@ -168,7 +168,7 @@ public class LocalPipelineExecutorTests : IDisposable
     }
 
     [Fact]
-    public void WriteMcpConfigToWorkspace_BothStdioAndHttpServers_SerializesCorrectly()
+    public void McpConfigWriter_BothStdioAndHttpServers_SerializesCorrectly()
     {
         // Arrange
         var servers = new List<McpServerConfig>
@@ -191,7 +191,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var relativePath = ".agent/settings/mcp.json";
 
         // Act
-        LocalPipelineExecutor.WriteMcpConfigToWorkspace(_tempDir, servers, relativePath);
+        McpConfigWriter.WriteConfig(Path.Combine(_tempDir, relativePath), servers);
 
         // Assert
         var fullPath = Path.Combine(_tempDir, relativePath);
@@ -213,7 +213,7 @@ public class LocalPipelineExecutorTests : IDisposable
     }
 
     [Fact]
-    public void WriteMcpConfigToWorkspace_CreatesDirectoryIfNotExists()
+    public void McpConfigWriter_CreatesDirectoryIfNotExists()
     {
         // Arrange
         var servers = new List<McpServerConfig>
@@ -223,7 +223,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var relativePath = "nested/deep/path/mcp.json";
 
         // Act
-        LocalPipelineExecutor.WriteMcpConfigToWorkspace(_tempDir, servers, relativePath);
+        McpConfigWriter.WriteConfig(Path.Combine(_tempDir, relativePath), servers);
 
         // Assert
         var fullPath = Path.Combine(_tempDir, relativePath);

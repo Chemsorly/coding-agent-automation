@@ -10,6 +10,13 @@ public interface IAgentProvider : IAsyncDisposable
     AgentHealthStatus GetHealthStatus();
 
     /// <summary>
+    /// The absolute path where MCP server configuration should be written.
+    /// This is the global/user-level config path, NOT workspace-relative.
+    /// Keeping MCP config out of the workspace prevents secrets from leaking into commits.
+    /// </summary>
+    string McpConfigPath { get; }
+
+    /// <summary>
     /// Whether this provider supports concurrent <see cref="ExecuteAsync"/> calls
     /// when each request uses <c>UseResume = false</c> (isolated sessions).
     /// Providers achieve this differently: OpenCode uses independent HTTP sessions,

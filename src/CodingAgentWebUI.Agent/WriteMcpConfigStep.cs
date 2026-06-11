@@ -32,10 +32,8 @@ internal sealed class WriteMcpConfigStep : IPipelineStep
 
         try
         {
-            var agentConfig = _job.ProviderConfigs.FirstOrDefault(c => c.Id == _job.AgentProviderConfigId);
-            var mcpConfigPath = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.McpConfigPath, AgentWorkspacePaths.DefaultMcpConfigPath)
-                ?? AgentWorkspacePaths.DefaultMcpConfigPath;
-            LocalPipelineExecutor.WriteMcpConfigToWorkspace(context.Run.WorkspacePath!, _job.McpServers, mcpConfigPath);
+            var mcpConfigPath = context.AgentProvider.McpConfigPath;
+            McpConfigWriter.WriteConfig(mcpConfigPath, _job.McpServers);
             _logger.Information("Pipeline {RunId} wrote MCP config with {ServerCount} server(s) to {McpConfigPath}",
                 context.Run.RunId, _job.McpServers.Count, mcpConfigPath);
             context.Callbacks.EmitOutputLine($"🔌 Wrote MCP config with {_job.McpServers.Count} server(s) to {mcpConfigPath}");

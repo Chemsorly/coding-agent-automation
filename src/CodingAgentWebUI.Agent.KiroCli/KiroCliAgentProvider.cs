@@ -29,6 +29,9 @@ public partial class KiroCliAgentProvider : IAgentProvider
     public AgentProviderType ProviderType => AgentProviderType.KiroCli;
 
     /// <inheritdoc />
+    public string McpConfigPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".kiro", "settings", "mcp.json");
+
+    /// <inheritdoc />
     public bool SupportsParallelExecution => true;
 
     /// <inheritdoc />

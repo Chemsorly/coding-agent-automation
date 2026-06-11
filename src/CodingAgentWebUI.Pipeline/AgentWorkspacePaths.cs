@@ -62,11 +62,6 @@ public static class AgentWorkspacePaths
     public const string PromptInputFilePath = ".agent/prompt-input.md";
 
     /// <summary>
-    /// The default workspace-relative path for MCP server configuration.
-    /// </summary>
-    public const string DefaultMcpConfigPath = ".agent/settings/mcp.json";
-
-    /// <summary>
     /// The file path (relative to workspace) where the pipeline writes the diff stat
     /// (file list with line counts) for review agents to triage changes efficiently.
     /// </summary>

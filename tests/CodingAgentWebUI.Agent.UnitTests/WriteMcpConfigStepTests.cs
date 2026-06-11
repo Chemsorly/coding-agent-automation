@@ -51,7 +51,7 @@ public class WriteMcpConfigStepTests : IDisposable
         _mockCallbacks.Verify(c => c.EmitOutputLine(It.IsAny<string>()), Times.Never);
 
         // Verify no file was written
-        var mcpConfigPath = Path.Combine(_tempDir, ".agent", "settings", "mcp.json");
+        var mcpConfigPath = Path.Combine(_tempDir, ".kiro", "settings", "mcp.json");
         File.Exists(mcpConfigPath).Should().BeFalse();
     }
 
@@ -85,7 +85,7 @@ public class WriteMcpConfigStepTests : IDisposable
             Times.Once);
 
         // Verify file was written
-        var mcpConfigPath = Path.Combine(_tempDir, ".agent", "settings", "mcp.json");
+        var mcpConfigPath = Path.Combine(_tempDir, ".kiro", "settings", "mcp.json");
         File.Exists(mcpConfigPath).Should().BeTrue();
     }
 
@@ -120,7 +120,7 @@ public class WriteMcpConfigStepTests : IDisposable
     {
         // Arrange — use a workspace path that will cause an IOException
         // Create a file where the directory should be, causing IOException when trying to create subdirectory
-        var blockingFilePath = Path.Combine(_tempDir, ".agent");
+        var blockingFilePath = Path.Combine(_tempDir, ".kiro");
         File.WriteAllText(blockingFilePath, "blocking file");
 
         var servers = new List<McpServerConfig>
@@ -146,76 +146,82 @@ public class WriteMcpConfigStepTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_NoExplicitMcpConfigPath_UsesDefaultPath()
     {
-        // Arrange — job with no agent provider config (so no mcpConfigPath setting)
+        // Arrange — path comes from the agent provider's McpConfigPath property (absolute)
         var servers = new List<McpServerConfig>
         {
             new() { Name = "test-server", Type = "stdio", Command = "node" }
         };
-        var job = CreateJobWithMcpServers(servers, agentProviderConfigId: "non-existent-config");
+        var job = CreateJobWithMcpServers(servers);
         var step = new WriteMcpConfigStep(job);
         var context = CreateTestContext(_tempDir);
 
         // Act
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Assert — default path ".agent/settings/mcp.json" is used
+        // Assert — absolute path from IAgentProvider.McpConfigPath is used
         _mockCallbacks.Verify(
-            c => c.EmitOutputLine(It.Is<string>(s => s.Contains(".agent/settings/mcp.json"))),
+            c => c.EmitOutputLine(It.Is<string>(s => s.Contains("mcp.json"))),
             Times.Once);
 
-        var expectedPath = Path.Combine(_tempDir, ".agent", "settings", "mcp.json");
+        var expectedPath = Path.Combine(_tempDir, ".kiro", "settings", "mcp.json");
         File.Exists(expectedPath).Should().BeTrue();
     }
 
     [Fact]
     public async Task ExecuteAsync_ExplicitMcpConfigPath_UsesConfiguredPath()
     {
-        // Arrange — job with agent provider config that specifies a custom mcpConfigPath
-        var customPath = "custom/path/mcp-config.json";
-        var agentConfig = new ProviderConfig
-        {
-            Id = "agent-config-1",
-            Kind = ProviderKind.Agent,
-            ProviderType = "KiroCli",
-            DisplayName = "Test Agent",
-            Settings = new Dictionary<string, string> { [ProviderSettingKeys.McpConfigPath] = customPath }
-        };
-
+        // Arrange — agent provider returns a custom absolute path
         var servers = new List<McpServerConfig>
         {
             new() { Name = "test-server", Type = "stdio", Command = "node" }
         };
+        var job = CreateJobWithMcpServers(servers);
+        var step = new WriteMcpConfigStep(job);
 
-        var job = new JobAssignmentMessage
+        // Create context with a custom absolute McpConfigPath on the agent provider
+        var run = new PipelineRun
         {
-            JobId = "test-job",
+            RunId = "test-run",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
-            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
-            RepoProviderConfigId = "repo-1",
-            AgentProviderConfigId = "agent-config-1",
-            PipelineConfiguration = new PipelineConfiguration(),
-            ProviderConfigs = [agentConfig],
-            ReviewerConfigs = [],
-            QualityGateConfigs = [],
-            IssueComments = [],
-            McpServers = servers,
-            InitiatedBy = "test-user"
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "issue-config-1",
+            RepoProviderConfigId = "repo-config-1",
+            WorkspacePath = _tempDir,
+            StartedAt = DateTime.UtcNow
         };
 
-        var step = new WriteMcpConfigStep(job);
-        var context = CreateTestContext(_tempDir);
+        var customPath = Path.Combine(_tempDir, "custom", "path", "mcp-config.json");
+        var mockAgentProvider = new Mock<IAgentProvider>();
+        mockAgentProvider.Setup(p => p.McpConfigPath).Returns(customPath);
+
+        var context = new PipelineStepContext
+        {
+            Run = run,
+            Config = new PipelineConfiguration(),
+            RepoProvider = new Mock<IRepositoryProvider>().Object,
+            AgentProvider = mockAgentProvider.Object,
+            BrainProvider = null,
+            PipelineProvider = null,
+            Cts = null,
+            ConfigStore = new Mock<IConfigurationStore>().Object,
+            Callbacks = _mockCallbacks.Object,
+            IssueOps = new Mock<IAgentIssueOperations>().Object,
+            AgentExecution = new Mock<IAgentPhaseExecutor>().Object,
+            QualityGates = new Mock<IQualityGateExecutor>().Object,
+            BrainSync = null,
+            PrOrchestrator = new PullRequestOrchestrator(_mockLogger.Object),
+            Logger = _mockLogger.Object
+        };
 
         // Act
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Assert — custom path is used
+        // Assert — custom absolute path is used
         _mockCallbacks.Verify(
-            c => c.EmitOutputLine(It.Is<string>(s => s.Contains(customPath))),
+            c => c.EmitOutputLine(It.Is<string>(s => s.Contains("mcp-config.json"))),
             Times.Once);
 
-        var expectedPath = Path.Combine(_tempDir, customPath);
-        File.Exists(expectedPath).Should().BeTrue();
+        File.Exists(customPath).Should().BeTrue();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -233,12 +239,15 @@ public class WriteMcpConfigStepTests : IDisposable
             StartedAt = DateTime.UtcNow
         };
 
+        var mockAgentProvider = new Mock<IAgentProvider>();
+        mockAgentProvider.Setup(p => p.McpConfigPath).Returns(Path.Combine(_tempDir, ".kiro", "settings", "mcp.json"));
+
         return new PipelineStepContext
         {
             Run = run,
             Config = new PipelineConfiguration(),
             RepoProvider = new Mock<IRepositoryProvider>().Object,
-            AgentProvider = new Mock<IAgentProvider>().Object,
+            AgentProvider = mockAgentProvider.Object,
             BrainProvider = null,
             PipelineProvider = null,
             Cts = null,
