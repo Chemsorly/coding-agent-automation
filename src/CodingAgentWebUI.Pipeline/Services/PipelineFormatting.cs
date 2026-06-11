@@ -126,15 +126,6 @@ public static partial class PipelineFormatting
             sb.AppendLine();
         }
 
-        if (blacklistedFilesDetected is { Count: > 0 })
-        {
-            sb.AppendLine("## ⚠️ Blacklisted Files Excluded");
-            sb.AppendLine("The following agent-modified files were excluded from this commit (protected paths):");
-            foreach (var file in blacklistedFilesDetected)
-                sb.AppendLine($"- `{file}`");
-            sb.AppendLine();
-        }
-
         AppendCodeReviewSection(sb, codeReviewSummary);
         AppendComplianceSection(sb, complianceReport);
 

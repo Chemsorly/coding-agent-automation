@@ -29,8 +29,9 @@ public static class StepOrder
         [PipelineStep.RunningQualityGates] = 11,
         [PipelineStep.PreparingForPullRequest] = 12,
         [PipelineStep.CreatingPullRequest] = 13,
-        [PipelineStep.ReflectingOnRun] = 14,
-        [PipelineStep.SyncingBrainRepoPostRun] = 15,
+        [PipelineStep.GeneratingPrDescription] = 14,
+        [PipelineStep.ReflectingOnRun] = 15,
+        [PipelineStep.SyncingBrainRepoPostRun] = 16,
 
         // Decomposition pipeline
         [PipelineStep.ExtractingLinkedIssues] = 1,

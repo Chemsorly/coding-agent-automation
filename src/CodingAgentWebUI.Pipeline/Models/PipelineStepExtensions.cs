@@ -20,6 +20,7 @@ public static class PipelineStepExtensions
         PipelineStep.PostingFindings => "Posting Review Findings",
         PipelineStep.PreparingForPullRequest => "Preparing for Pull Request",
         PipelineStep.CreatingPullRequest => "Creating Pull Request",
+        PipelineStep.GeneratingPrDescription => "Generating PR Description",
         PipelineStep.ReflectingOnRun => "Reflecting on Run",
         PipelineStep.SyncingBrainRepoPostRun => "Saving Brain Knowledge",
         PipelineStep.DownloadingOpenIssues => "Downloading Issues",

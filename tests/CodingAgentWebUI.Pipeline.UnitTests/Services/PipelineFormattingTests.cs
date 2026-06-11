@@ -329,7 +329,7 @@ public class PipelineFormattingTests
     }
 
     [Fact]
-    public void GeneratePrBody_WithBlacklistedFiles_ShowsWarningSection()
+    public void GeneratePrBody_WithBlacklistedFiles_DoesNotShowWarningSection()
     {
         var blacklisted = new List<string> { ".github/workflows/ci.yml", "package-lock.json" };
 
@@ -343,9 +343,7 @@ public class PipelineFormattingTests
             issueTitle: "Test",
             blacklistedFilesDetected: blacklisted);
 
-        result.Should().Contain("## ⚠️ Blacklisted Files Excluded");
-        result.Should().Contain("- `.github/workflows/ci.yml`");
-        result.Should().Contain("- `package-lock.json`");
+        result.Should().NotContain("## ⚠️ Blacklisted Files Excluded");
     }
 
     [Fact]

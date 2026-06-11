@@ -86,6 +86,8 @@ public class PullRequestOrchestrator
             closeRef,
             run.AcceptanceCriteriaReport);
 
+        run.PullRequestBody = prBody;
+
         if (isRework || !string.IsNullOrEmpty(run.PullRequestNumber))
         {
             // Rework or draft PR already exists: update existing PR body.
@@ -337,6 +339,8 @@ public class PullRequestOrchestrator
             codeReviewSummary,
             closeRef,
             run.AcceptanceCriteriaReport);
+
+        run.PullRequestBody = prBody;
 
         // Update PR body and mark ready (or leave as draft)
         run.IsDraftPr = isDraft;

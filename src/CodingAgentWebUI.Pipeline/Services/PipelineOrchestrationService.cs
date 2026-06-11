@@ -588,6 +588,15 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         else
             await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Done, ct);
 
+        // ── PR description generation: runs on non-draft PRs regardless of brain config ──
+        if (!isDraft && !string.IsNullOrEmpty(run.PullRequestNumber))
+        {
+            _lifecycle.TransitionTo(run, PipelineStep.GeneratingPrDescription);
+            await _finalization.GeneratePrDescriptionAsync(
+                run, _providerManager.ActiveAgentProvider!, _providerManager.ActiveRepoProvider!,
+                _activeConfig!, line => _lifecycle.EmitOutputLine(line), ct);
+        }
+
         if (!isDraft && _providerManager.ActiveBrainProvider != null && !_activeConfig!.BrainReadOnly)
         {
             _lifecycle.TransitionTo(run, PipelineStep.ReflectingOnRun);

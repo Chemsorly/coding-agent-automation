@@ -709,6 +709,14 @@ public sealed class LocalPipelineExecutor
             }
             // Label swap (agent:done / agent:error) is handled by the orchestrator in ReportJobCompleted.
 
+            // ── PR description generation: runs on non-draft PRs regardless of brain config ──
+            if (!isDraft && !string.IsNullOrEmpty(run.PullRequestNumber))
+            {
+                await ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, PipelineStep.GeneratingPrDescription, ct);
+                await _finalization.GeneratePrDescriptionAsync(
+                    run, context.AgentProvider, context.RepoProvider, context.Config, context.EmitOutputLine, ct);
+            }
+
             // ── Reflection + brain post-run sync ──
             if (!isDraft && context.BrainProvider is not null && context.BrainSync is not null && !context.Config.BrainReadOnly)
             {

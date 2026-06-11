@@ -160,7 +160,7 @@ public static class PromptBuilder
     /// details (title, description, requirements, acceptance criteria, and comments).
     /// </summary>
     public static string BuildReviewPrompt(string reviewInstructions, IssueDetail issue,
-        ParsedIssue parsed, string findingsFilePath, bool isolated = false, bool inlineCommentsEnabled = false, bool hasLinkedPr = false)
+        ParsedIssue parsed, string findingsFilePath, bool isolated = false, bool inlineCommentsEnabled = false)
     {
         ArgumentNullException.ThrowIfNull(reviewInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -188,14 +188,11 @@ public static class PromptBuilder
         sb.AppendLine(reviewInstructions);
         sb.AppendLine();
 
-        // PR conversation context reference (only when a linked PR exists — rework mode)
-        if (hasLinkedPr)
-        {
-            sb.AppendLine($"PR conversation and prior review context is available at `{AgentWorkspacePaths.PrConversationContextFilePath}`.");
-            sb.AppendLine("Comments marked [HUMAN] represent feedback from team members — treat these as authoritative context about intentional design decisions. Comments from the PR author are marked [HUMAN/AUTHOR].");
-            sb.AppendLine("If prior review findings are present, verify whether they were addressed by the current changes AND look for new issues.");
-            sb.AppendLine();
-        }
+        // PR conversation context reference
+        sb.AppendLine($"PR conversation and prior review context is available at `{AgentWorkspacePaths.PrConversationContextFilePath}`.");
+        sb.AppendLine("Comments marked [HUMAN] represent feedback from team members — treat these as authoritative context about intentional design decisions. Comments from the PR author are marked [HUMAN/AUTHOR].");
+        sb.AppendLine("If prior review findings are present, verify whether they were addressed by the current changes AND look for new issues.");
+        sb.AppendLine();
 
         sb.AppendLine($"Write your findings to the file `{findingsFilePath}` in the workspace. Do NOT print the findings to stdout — only write them to that file.");
         sb.AppendLine();
@@ -615,17 +612,35 @@ public static class PromptBuilder
     }
 
     /// <summary>
-    /// Builds the prompt for the acceptance criteria compliance agent.
-    /// Instructs the agent to evaluate the implementation and write structured JSON.
+    /// Builds a prompt that asks the agent to produce a structured PR description
+    /// summarizing what changed and why.
     /// </summary>
-    public static string BuildAcceptanceCriteriaPrompt(string instructions)
+    public static string BuildPrDescriptionPrompt(PipelineRun run)
     {
-        ArgumentNullException.ThrowIfNull(instructions);
+        ArgumentNullException.ThrowIfNull(run);
 
         var sb = new StringBuilder();
-        sb.AppendLine(instructions);
+        sb.AppendLine("## Generate a Pull Request Description");
         sb.AppendLine();
-        sb.AppendLine($"Write your assessment to `{AgentWorkspacePaths.AcceptanceCriteriaFilePath}`. Do NOT print results to stdout — only write the JSON file.");
+        sb.AppendLine("Write a structured summary of the changes you made. Output ONLY the markdown below — no file writes, no code changes.");
+        sb.AppendLine();
+        sb.AppendLine("Use this format:");
+        sb.AppendLine();
+        sb.AppendLine("### Summary");
+        sb.AppendLine("2-3 sentences explaining what was done and why.");
+        sb.AppendLine();
+        sb.AppendLine("### Approach");
+        sb.AppendLine("Brief description of the implementation strategy.");
+        sb.AppendLine();
+        sb.AppendLine("### Key Changes");
+        sb.AppendLine("File-level walkthrough of the most important changes (not every file — focus on the interesting ones).");
+        sb.AppendLine();
+        sb.AppendLine("### Breaking Changes");
+        sb.AppendLine("Only if applicable. Omit this section entirely if there are none.");
+        sb.AppendLine();
+        sb.AppendLine("---");
+        sb.AppendLine();
+        sb.AppendLine($"**Issue:** #{run.IssueIdentifier} — {run.IssueTitle}");
 
         return sb.ToString().TrimEnd();
     }
