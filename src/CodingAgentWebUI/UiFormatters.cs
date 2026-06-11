@@ -18,4 +18,16 @@ public static class UiFormatters
         if (ago.TotalMinutes < 60) return $"{(int)ago.TotalMinutes}m ago";
         return $"{(int)ago.TotalHours}h ago";
     }
+
+    public static string GetLabelClass(string label) => label switch
+    {
+        "agent:next" => "label-agent-next",
+        "agent:in-progress" => "label-agent-progress",
+        "agent:error" => "label-agent-error",
+        "agent:needs-refinement" => "label-agent-refinement",
+        "agent:epic" => "label-agent-epic",
+        "agent:epic-approved" => "label-agent-epic-approved",
+        "agent:epic-review" => "label-agent-epic-review",
+        _ => ""
+    };
 }

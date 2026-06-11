@@ -1,0 +1,154 @@
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+
+<div class="dispatch-drawer-overlay @(IsOpen ? "open" : "")" @onclick="Close"></div>
+<aside class="dispatch-drawer @(IsOpen ? "open" : "")">
+    <div class="agent-detail-header">
+        <h3>Select Epic for Decomposition</h3>
+        <button class="agent-detail-close" @onclick="Close" aria-label="Close drawer">✕</button>
+    </div>
+
+    @if (Template != null)
+    {
+        <div class="agent-detail-section">
+            <h4>Template: @Template.Name</h4>
+        </div>
+
+        @if (IsLoading)
+        {
+            <div class="loading-text" style="padding: 12px;">Loading epics...</div>
+        }
+        else
+        {
+            <div style="padding: 0 0 8px;">
+                <input type="text" @bind="_filter" @bind:event="oninput" @bind:after="ApplyFilter"
+                       placeholder="Filter by number or title..." style="width: 100%; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 0.82rem;" />
+            </div>
+
+            @if (Issues.Count == 0)
+            {
+                <div class="monitoring-empty">No epics found.</div>
+            }
+            else
+            {
+                <div class="agent-history-list" style="max-height: calc(100vh - 320px); overflow-y: auto;">
+                    @foreach (var issue in _filteredIssues)
+                    {
+                        var isProcessing = IsBeingProcessed(issue.Identifier);
+                        var isApproved = issue.Labels.Contains("agent:epic-approved", StringComparer.OrdinalIgnoreCase);
+                        <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(_selectedIssue?.Identifier == issue.Identifier ? "drawer-issue-selected" : "")"
+                             @onclick="() => SelectIssue(issue)"
+                             data-testid="epic-row-@issue.Identifier"
+                             style="@(isProcessing ? "opacity: 0.6; pointer-events: none;" : "")">
+                            <div class="drawer-issue-header">
+                                <span class="drawer-issue-number">#@issue.Identifier</span>
+                                @if (isApproved)
+                                {
+                                    <span class="badge-default" style="background: #0e8a16; color: white; font-size: 0.7rem;">🧩 Create Sub-Issues</span>
+                                }
+                                else
+                                {
+                                    <span class="badge-default" style="background: #7057ff; color: white; font-size: 0.7rem;">🔍 Analysis</span>
+                                }
+                                @if (isProcessing)
+                                {
+                                    <span class="badge-default" style="background: var(--accent); color: white;">DISPATCHED</span>
+                                }
+                            </div>
+                            <div class="drawer-issue-title">@issue.Title</div>
+                            <div class="drawer-issue-labels">
+                                @foreach (var label in issue.Labels.Take(5))
+                                {
+                                    <span class="sidebar-label @UiFormatters.GetLabelClass(label)">@label</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (_selectedIssue != null)
+            {
+                var selectedIsApproved = _selectedIssue.Labels.Contains("agent:epic-approved", StringComparer.OrdinalIgnoreCase);
+                <div class="agent-detail-section" style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
+                    <h4>#@_selectedIssue.Identifier — @_selectedIssue.Title</h4>
+                    <div class="drawer-issue-labels" style="margin-bottom: 8px;">
+                        @foreach (var label in _selectedIssue.Labels)
+                        {
+                            <span class="sidebar-label @UiFormatters.GetLabelClass(label)">@label</span>
+                        }
+                    </div>
+                    <div style="margin-bottom: 8px; font-size: 0.8rem; font-weight: 500;">
+                        @if (selectedIsApproved)
+                        {
+                            <span style="color: #0e8a16;">🧩 Phase 2: Create Sub-Issues (Decomposition)</span>
+                        }
+                        else
+                        {
+                            <span style="color: #7057ff;">🔍 Phase 1: Analysis (DecompositionAnalysis)</span>
+                        }
+                    </div>
+                    @if (_selectedIssue.CreatedAt.HasValue)
+                    {
+                        <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0 0 8px;">
+                            Created: @_selectedIssue.CreatedAt.Value.ToLocalTime().ToString("g")
+                        </p>
+                    }
+                    <button class="btn-save" @onclick="DispatchSelected" disabled="@IsDispatching"
+                            data-testid="dispatch-epic-btn"
+                            style="background: #7057ff;">
+                        @(IsDispatching ? "Dispatching..." : $"Start Decomposition on #{_selectedIssue.Identifier}")
+                    </button>
+                </div>
+            }
+        }
+    }
+</aside>
+
+@code {
+    [Parameter, EditorRequired] public bool IsOpen { get; set; }
+    [Parameter, EditorRequired] public PipelineJobTemplate? Template { get; set; }
+    [Parameter, EditorRequired] public IReadOnlyList<IssueSummary> Issues { get; set; } = [];
+    [Parameter, EditorRequired] public bool IsLoading { get; set; }
+    [Parameter, EditorRequired] public bool IsDispatching { get; set; }
+    [Parameter, EditorRequired] public Func<string, bool> IsBeingProcessed { get; set; } = _ => false;
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<IssueSummary> OnDispatch { get; set; }
+
+    private string _filter = "";
+    private List<IssueSummary> _filteredIssues = new();
+    private IssueSummary? _selectedIssue;
+
+    protected override void OnParametersSet()
+    {
+        ApplyFilter();
+        if (!IsOpen) { _selectedIssue = null; _filter = ""; }
+    }
+
+    private void ApplyFilter()
+    {
+        if (string.IsNullOrWhiteSpace(_filter))
+        {
+            _filteredIssues = Issues.ToList();
+        }
+        else
+        {
+            var f = _filter.Trim();
+            _filteredIssues = Issues
+                .Where(i => i.Identifier.Contains(f, StringComparison.OrdinalIgnoreCase)
+                         || i.Title.Contains(f, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+    }
+
+    private void SelectIssue(IssueSummary issue) =>
+        _selectedIssue = _selectedIssue?.Identifier == issue.Identifier ? null : issue;
+
+    private async Task Close() => await OnClose.InvokeAsync();
+
+    private async Task DispatchSelected()
+    {
+        if (_selectedIssue != null)
+            await OnDispatch.InvokeAsync(_selectedIssue);
+    }
+}
