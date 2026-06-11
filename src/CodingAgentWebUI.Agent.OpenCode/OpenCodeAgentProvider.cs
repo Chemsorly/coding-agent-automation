@@ -30,6 +30,9 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     public AgentProviderType ProviderType => AgentProviderType.OpenCode;
 
     /// <inheritdoc />
+    public string McpConfigPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".opencode", "mcp.json");
+
+    /// <inheritdoc />
     public bool SupportsParallelExecution => true;
 
     /// <inheritdoc />

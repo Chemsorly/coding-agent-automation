@@ -14,6 +14,8 @@ public sealed class ScriptedAgentProvider : IAgentProvider
 
     public AgentProviderType ProviderType => AgentProviderType.KiroCli;
 
+    public string McpConfigPath => Path.Combine(Path.GetTempPath(), ".kiro", "settings", "mcp.json");
+
     public bool SupportsParallelExecution => false;
 
     public IReadOnlyList<string> SteeringBlacklistPaths { get; } = [".kiro"];

@@ -553,6 +553,7 @@ public sealed class LocalPipelineExecutor
         return new IPipelineStep[]
         {
             new CloneRepositoryStep(),
+            new WriteMcpConfigStep(job),
             new WriteSteeringStep(job),
             new RunEnvironmentSetupStep(job),
             new CreateBranchStep(),
@@ -576,6 +577,7 @@ public sealed class LocalPipelineExecutor
         {
             new CloneRepositoryStep(),
             new CloneProjectRepositoriesStep(),
+            new WriteMcpConfigStep(job),
             new WriteSteeringStep(job),
             new RunEnvironmentSetupStep(job),
             new SyncBrainPreRunStep(),
@@ -601,6 +603,7 @@ public sealed class LocalPipelineExecutor
         {
             new CloneRepositoryStep(),
             new CloneProjectRepositoriesStep(),
+            new WriteMcpConfigStep(job),
             new WriteSteeringStep(job),
             new RunEnvironmentSetupStep(job),
             new SyncBrainPreRunStep(),
@@ -852,17 +855,6 @@ public sealed class LocalPipelineExecutor
         TotalCost = run.TotalCost,
         FinalLabel = run.FinalLabel
     };
-
-    /// <summary>
-    /// Writes the MCP server configuration to the workspace at the path specified by
-    /// the agent provider's mcpConfigPath setting (defaults to .agent/settings/mcp.json for Kiro CLI).
-    /// Delegates to <see cref="McpConfigWriter.WriteConfig"/> for the shared implementation.
-    /// </summary>
-    internal static void WriteMcpConfigToWorkspace(string workspacePath, IReadOnlyList<McpServerConfig> mcpServers, string mcpConfigRelativePath)
-    {
-        var fullPath = Path.Combine(workspacePath, mcpConfigRelativePath);
-        McpConfigWriter.WriteConfig(fullPath, mcpServers);
-    }
 
     /// <summary>
     /// Bundles the parameters needed by <see cref="CreateStepContext"/> into a single object,
