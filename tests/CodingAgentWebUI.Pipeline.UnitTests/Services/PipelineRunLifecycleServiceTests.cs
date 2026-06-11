@@ -242,10 +242,10 @@ public class PipelineRunLifecycleServiceTests
 
         var cancelledIssues = await service.MarkAgentRunsCancelled();
 
-        cancelledIssues.Should().Contain("issue-1");
-        cancelledIssues.Should().Contain("issue-2");
-        runService.IsIssueBeingProcessed("issue-1").Should().BeFalse();
-        runService.IsIssueBeingProcessed("issue-2").Should().BeFalse();
+        cancelledIssues.Should().Contain(("issue-1", "ip-1"));
+        cancelledIssues.Should().Contain(("issue-2", "ip-1"));
+        runService.IsIssueBeingProcessed("issue-1", "ip-1").Should().BeFalse();
+        runService.IsIssueBeingProcessed("issue-2", "ip-1").Should().BeFalse();
     }
 
     // ── TransitionTo HighWaterMark with StepOrder ─────────────────────────

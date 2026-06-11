@@ -474,9 +474,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         // Release dedup guards so issues become re-dispatchable after restart
         if (_dedupGuard is not null)
         {
-            foreach (var issueId in cancelledIssues)
+            foreach (var (issueId, providerId) in cancelledIssues)
             {
-                _dedupGuard.MarkIssueComplete(issueId);
+                _dedupGuard.MarkIssueComplete(issueId, providerId);
             }
         }
     }

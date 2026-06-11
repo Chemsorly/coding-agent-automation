@@ -173,6 +173,18 @@ public sealed class JobDispatcherService : IJobDeduplicationGuard
     }
 
     /// <summary>
+    /// Checks whether the given issue identifier is queued with any provider.
+    /// Intended for test convenience where provider context is implicit.
+    /// WARNING: O(n) enumeration of all keys — do not use on hot paths.
+    /// </summary>
+    internal bool IsIssueQueued(string issueIdentifier)
+    {
+        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        var suffix = $":{issueIdentifier}";
+        return _processingIssues.Keys.Any(k => k.EndsWith(suffix, StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// Removes a queued issue (e.g., when the UI cancels a pending job).
     /// Removes from both the dedup dictionary and the queue.
     /// </summary>

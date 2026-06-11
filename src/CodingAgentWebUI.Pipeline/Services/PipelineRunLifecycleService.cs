@@ -198,14 +198,14 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// and removes runs from active tracking. Returns list of cancelled issue identifiers for caller to release dedup.
     /// No-op if no run service is configured.
     /// </summary>
-    public Task<IReadOnlyList<string>> MarkAgentRunsCancelled()
+    public Task<IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId)>> MarkAgentRunsCancelled()
     {
-        if (_runService is null) return Task.FromResult<IReadOnlyList<string>>([]);
+        if (_runService is null) return Task.FromResult<IReadOnlyList<(string, string)>>([]);
 
         var activeRuns = _runService.GetActiveRuns();
-        if (activeRuns.Count == 0) return Task.FromResult<IReadOnlyList<string>>([]);
+        if (activeRuns.Count == 0) return Task.FromResult<IReadOnlyList<(string, string)>>([]);
 
-        var cancelledIssues = new List<string>();
+        var cancelledIssues = new List<(string IssueIdentifier, string IssueProviderConfigId)>();
         foreach (var run in activeRuns)
         {
             run.CompletedAt = DateTime.UtcNow;
@@ -213,11 +213,11 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
             run.CurrentStep = PipelineStep.Cancelled;
             AddRunToHistory(run);
             _runService.RemoveRun(run.RunId);
-            cancelledIssues.Add(run.IssueIdentifier);
+            cancelledIssues.Add((run.IssueIdentifier, run.IssueProviderConfigId));
         }
 
         NotifyChange();
-        return Task.FromResult<IReadOnlyList<string>>(cancelledIssues);
+        return Task.FromResult<IReadOnlyList<(string, string)>>(cancelledIssues);
     }
 
     // ── Dispatched Run Registration ─────────────────────────────────────
