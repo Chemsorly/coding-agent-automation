@@ -46,6 +46,7 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
             AgentTimeout = TimeSpan.FromMinutes(10),
             StallPollInterval = TimeSpan.FromMilliseconds(50),
             StallWarningInterval = TimeSpan.FromHours(1),
+            AcceptanceCriteriaEnabled = false,
             CodeReview = new CodeReviewConfiguration
             {
                 MaxIterations = 2,
