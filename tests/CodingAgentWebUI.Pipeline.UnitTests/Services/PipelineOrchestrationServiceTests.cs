@@ -630,7 +630,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Review", Prompt = "Review the changes." } } }
             });
 
-        SetupReviewAgentWithFindings("Review the changes", "[WARNING] Consider renaming\n[SUGGESTION] Use var");
+        // Empty findings — no criticals, no warnings, no suggestions.
+        // Production code only skips fix prompt when findings text is empty.
+        SetupReviewAgentWithFindings("Review the changes", "");
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
@@ -1171,10 +1173,12 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Agent1", Prompt = "Agent1 prompt" }, new ReviewAgent { Name = "Agent2", Prompt = "Agent2 prompt" } } }
             });
 
+        // Empty findings — no criticals, no warnings, no suggestions.
+        // Production code only skips fix prompt when findings text is empty.
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Agent1 prompt") || r.Prompt.Contains("Agent2 prompt")), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
             {
-                WriteReviewFindingsFile(req.WorkspacePath, "[WARNING] Minor", req.Prompt);
+                WriteReviewFindingsFile(req.WorkspacePath, "", req.Prompt);
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
