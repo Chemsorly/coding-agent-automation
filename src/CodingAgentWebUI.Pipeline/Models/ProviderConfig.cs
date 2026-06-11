@@ -35,13 +35,6 @@ public sealed class ProviderConfig
     public IReadOnlyList<string>? BlacklistedPaths { get; init; }
 
     /// <summary>
-    /// Blacklist enforcement mode for this repository.
-    /// Only meaningful when Kind == Repository. Null means fall back to
-    /// <see cref="PipelineConfiguration.BlacklistMode"/> global default.
-    /// </summary>
-    public BlacklistMode? BlacklistMode { get; init; }
-
-    /// <summary>
     /// Environment secrets injected into setup step processes as environment variables.
     /// Only meaningful when Kind == Repository and RepositoryRole == Work.
     /// Keys are variable names, values are plaintext.

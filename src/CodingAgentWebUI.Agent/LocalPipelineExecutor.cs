@@ -204,6 +204,9 @@ public sealed class LocalPipelineExecutor
             // Merge provider-specific steering blacklist paths into config
             config = PipelineConfiguration.ApplyProviderBlacklist(config, agentProvider.SteeringBlacklistPaths);
 
+            // Store provider-specific hardcoded paths for CommitAll enforcement
+            config = config with { PipelineInjectedPaths = agentProvider.PipelineInjectedPaths };
+
             result = await ExecutePipelineStepsAsync(
                 job, config, repoProvider, agentProvider, brainProvider, pipelineProvider,
                 issueOps, connection, outputBatcher, onStepChanged, ct, additionalRepoProviders);
@@ -522,6 +525,7 @@ public sealed class LocalPipelineExecutor
         var steps = new List<IPipelineStep>
         {
             new CloneRepositoryStep(),
+            new EnsureAgentGitignoreStep(),
             new WriteMcpConfigStep(job),
             new WriteSteeringStep(job),
             new RunEnvironmentSetupStep(job),
@@ -549,6 +553,7 @@ public sealed class LocalPipelineExecutor
         return new IPipelineStep[]
         {
             new CloneRepositoryStep(),
+            new EnsureAgentGitignoreStep(),
             new WriteSteeringStep(job),
             new CreateBranchStep(),
             new SyncBrainPreRunStep(),
@@ -570,6 +575,7 @@ public sealed class LocalPipelineExecutor
         return new IPipelineStep[]
         {
             new CloneRepositoryStep(),
+            new EnsureAgentGitignoreStep(),
             new CloneProjectRepositoriesStep(),
             new WriteSteeringStep(job),
             new RunEnvironmentSetupStep(job),
@@ -595,6 +601,7 @@ public sealed class LocalPipelineExecutor
         return new IPipelineStep[]
         {
             new CloneRepositoryStep(),
+            new EnsureAgentGitignoreStep(),
             new CloneProjectRepositoriesStep(),
             new WriteSteeringStep(job),
             new RunEnvironmentSetupStep(job),

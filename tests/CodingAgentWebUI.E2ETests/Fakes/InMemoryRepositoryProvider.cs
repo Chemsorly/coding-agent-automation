@@ -52,13 +52,13 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
         return Task.FromResult(branchName);
     }
 
-    public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, CancellationToken ct)
+    public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, CancellationToken ct, IReadOnlyList<string>? pipelineInjectedPaths = null)
     {
         MethodCalls.Add(nameof(CommitAllAsync));
         return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
     }
 
-    public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct)
+    public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct, IReadOnlyList<string>? pipelineInjectedPaths = null)
     {
         MethodCalls.Add(nameof(CommitAllAsync));
         return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());

@@ -715,7 +715,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     public async Task StartPipeline_WarnMode_RecordsBlacklistedFilesAndContinues()
     {
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), BlacklistMode = BlacklistMode.WarnAndExclude });
+            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() });
 
         var blacklisted = new List<string> { ".github/workflows/ci.yml" };
         _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))

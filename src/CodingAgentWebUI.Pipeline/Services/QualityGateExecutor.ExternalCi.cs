@@ -65,7 +65,8 @@ internal partial class QualityGateExecutor
                 var issueRef = context.IssueReference ?? $"#{run.IssueIdentifier}";
                 var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, issueRef);
                 var blacklisted = await context.RepoProvider.CommitAllAsync(
-                    run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct);
+                    run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct,
+                    config.PipelineInjectedPaths);
                 RecordBlacklistedFiles(run, blacklisted, config, callbacks);
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
@@ -82,7 +83,8 @@ internal partial class QualityGateExecutor
                     await context.RepoProvider.CommitAllAsync(
                         run.WorkspacePath!,
                         $"chore: trigger CI re-run for {run.IssueIdentifier} (retry {run.RetryCount})",
-                        config.BlacklistedPaths, allowEmpty: true, ct);
+                        config.BlacklistedPaths, allowEmpty: true, ct,
+                        config.PipelineInjectedPaths);
                 }
                 else if (!await context.RepoProvider.HasCommitsAheadAsync(run.WorkspacePath!, ct))
                 {
@@ -136,7 +138,8 @@ internal partial class QualityGateExecutor
 
                     await context.RepoProvider.CommitAllAsync(run.WorkspacePath!,
                         $"chore: re-trigger CI after infrastructure failure ({run.InfrastructureRetryCount})",
-                        config.BlacklistedPaths, allowEmpty: true, ct);
+                        config.BlacklistedPaths, allowEmpty: true, ct,
+                        config.PipelineInjectedPaths);
                     await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
 
                     string? retrySha = null;

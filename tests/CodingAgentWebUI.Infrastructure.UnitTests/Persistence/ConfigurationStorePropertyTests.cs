@@ -41,15 +41,12 @@ public class ConfigurationStorePropertyTests : IDisposable
         // Constrain to reasonable values
         var clampedRetries = Math.Clamp(Math.Abs(maxRetries), 0, 100);
         var timeoutMinutes = Math.Clamp(Math.Abs(maxRetries % 120) + 1, 1, 120);
-        var blacklistMode = BlacklistMode.WarnAndExclude;
-
         var original = new PipelineConfiguration
         {
             MaxRetries = clampedRetries,
             AgentTimeout = TimeSpan.FromMinutes(timeoutMinutes),
             WorkspaceBaseDirectory = workspaceDir.Get,
             BlacklistedPaths = new[] { ".agent", ".github", $".custom-{Math.Abs(maxRetries % 10)}" },
-            BlacklistMode = blacklistMode
         };
 
         var store = new JsonConfigurationStore(_tempDir);
@@ -61,7 +58,6 @@ public class ConfigurationStorePropertyTests : IDisposable
         Assert.Equal(original.AgentTimeout, loaded.AgentTimeout);
         Assert.Equal(original.WorkspaceBaseDirectory, loaded.WorkspaceBaseDirectory);
         Assert.Equal(original.BlacklistedPaths, loaded.BlacklistedPaths);
-        Assert.Equal(original.BlacklistMode, loaded.BlacklistMode);
     }
 
     /// <summary>

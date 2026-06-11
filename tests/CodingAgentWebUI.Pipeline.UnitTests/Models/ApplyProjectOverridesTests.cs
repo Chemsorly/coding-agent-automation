@@ -59,7 +59,6 @@ public class ApplyProjectOverridesTests
         result.BrainConsolidationReviewEnabled.Should().Be(config.BrainConsolidationReviewEnabled);
         result.HarnessSuggestionsReviewEnabled.Should().Be(config.HarnessSuggestionsReviewEnabled);
         result.BlacklistedPaths.Should().BeSameAs(config.BlacklistedPaths);
-        result.BlacklistMode.Should().Be(config.BlacklistMode);
         result.BrainReadOnly.Should().Be(config.BrainReadOnly);
     }
 
@@ -309,17 +308,6 @@ public class ApplyProjectOverridesTests
     }
 
     [Fact]
-    public void BlacklistMode_NonNull_OverridesGlobal()
-    {
-        var config = TestPipelineConfig.Default(); // WarnAndExclude by default
-        var project = TestPipelineConfig.WithProject() with { BlacklistMode = BlacklistMode.WarnAndExclude };
-
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
-
-        result.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
-    }
-
-    [Fact]
     public void BrainReadOnly_NonNull_OverridesGlobal()
     {
         var config = TestPipelineConfig.Default();
@@ -400,7 +388,6 @@ public class ApplyProjectOverridesTests
         var project = TestPipelineConfig.WithProject() with
         {
             BlacklistedPaths = projectPaths,
-            BlacklistMode = BlacklistMode.WarnAndExclude,
         };
 
         // 3. ProviderConfig overrides the project-level blacklist (repo-specific)
@@ -411,7 +398,6 @@ public class ApplyProjectOverridesTests
             Kind = ProviderKind.Repository,
             ProviderType = "GitHub",
             BlacklistedPaths = ["secrets", "internal"],
-            BlacklistMode = BlacklistMode.WarnAndExclude,
         };
 
         // Apply in correct resolution order: Global → Project → ProviderConfig
@@ -420,11 +406,9 @@ public class ApplyProjectOverridesTests
 
         // Project overrides should have applied over global
         afterProject.BlacklistedPaths.Should().BeEquivalentTo(projectPaths);
-        afterProject.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
 
         // ProviderConfig should override the project-level values
         afterProvider.BlacklistedPaths.Should().BeEquivalentTo(new[] { "secrets", "internal" });
-        afterProvider.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
     }
 
     [Fact]
@@ -454,7 +438,6 @@ public class ApplyProjectOverridesTests
             Kind = ProviderKind.Repository,
             ProviderType = "GitHub",
             BlacklistedPaths = [], // empty — does NOT override
-            BlacklistMode = null,
         };
 
         var afterProject = PipelineConfiguration.ApplyProjectOverrides(globalConfig, project);

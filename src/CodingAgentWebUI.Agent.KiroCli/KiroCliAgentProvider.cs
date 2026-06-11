@@ -34,6 +34,9 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// <inheritdoc />
     public IReadOnlyList<string> SteeringBlacklistPaths { get; } = [".kiro"];
 
+    /// <inheritdoc />
+    public IReadOnlyList<string> PipelineInjectedPaths { get; } = [".kiro"];
+
     /// <summary>The model configured for this agent provider, or null/auto for default.</summary>
     public string? Model => _model;
 

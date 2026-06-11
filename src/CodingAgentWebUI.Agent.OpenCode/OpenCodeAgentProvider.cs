@@ -35,6 +35,9 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     /// <inheritdoc />
     public IReadOnlyList<string> SteeringBlacklistPaths { get; } = ["AGENTS.md"];
 
+    /// <inheritdoc />
+    public IReadOnlyList<string> PipelineInjectedPaths { get; } = ["AGENTS.md"];
+
     public OpenCodeAgentProvider(
         IHttpClientFactory httpClientFactory,
         ILogger? logger = null,

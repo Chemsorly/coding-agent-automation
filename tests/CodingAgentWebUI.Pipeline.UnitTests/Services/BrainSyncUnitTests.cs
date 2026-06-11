@@ -222,8 +222,8 @@ public class BrainSyncUnitTests
         public string RepositoryFullName => "test/repo";
         public Task CloneAsync(string workspacePath, CancellationToken ct) => Task.CompletedTask;
         public Task<string> CreateBranchAsync(string workspacePath, string branchName, CancellationToken ct) => Task.FromResult(branchName);
-        public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, CancellationToken ct) => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
-        public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct) => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+        public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, CancellationToken ct, IReadOnlyList<string>? pipelineInjectedPaths = null) => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+        public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct, IReadOnlyList<string>? pipelineInjectedPaths = null) => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
         public Task PushBranchAsync(string workspacePath, string branchName, CancellationToken ct) => Task.CompletedTask;
         public Task<string> CreatePullRequestAsync(PullRequestInfo prInfo, CancellationToken ct) => Task.FromResult("https://github.com/test/repo/pull/1");
         public Task<string> GetHeadCommitShaAsync(string workspacePath, CancellationToken ct) => Task.FromResult("abc123");

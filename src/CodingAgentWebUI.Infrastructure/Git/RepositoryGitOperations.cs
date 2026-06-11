@@ -106,7 +106,8 @@ internal static class RepositoryGitOperations
 
     public static IReadOnlyList<string> CommitAll(
         string workspacePath, string message,
-        IReadOnlyList<string>? blacklistedPaths, bool allowEmpty)
+        IReadOnlyList<string>? blacklistedPaths, bool allowEmpty,
+        IReadOnlyList<string>? pipelineInjectedPaths = null)
     {
         using var repo = new Repository(workspacePath);
 
@@ -151,15 +152,41 @@ internal static class RepositoryGitOperations
             repo.Index.Write();
 
         var unstaged = new List<string>();
+
+        // Hardcoded: ALWAYS unstage pipeline-injected paths regardless of configured blacklist.
+        // These directories/files contain pipeline metadata and steering content that must
+        // never be committed by the pipeline under any circumstances:
+        //   .agent  — MCP configs, prompt files, analysis output, review findings
+        //   .brain  — cloned brain/knowledge repository
+        //   + provider-specific paths from IAgentProvider.PipelineInjectedPaths
+        //     (e.g., .kiro for Kiro CLI, AGENTS.md for OpenCode)
+        var universalHardcoded = new[] { ".agent", ".brain" };
+        var hardcodedBlacklist = pipelineInjectedPaths is { Count: > 0 }
+            ? universalHardcoded.Concat(pipelineInjectedPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+            : universalHardcoded;
+        {
+            var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
+            foreach (var change in indexChanges)
+            {
+                if (PipelineFormatting.IsPathBlacklisted(change.Path, hardcodedBlacklist))
+                {
+                    Commands.Unstage(repo, change.Path);
+                    unstaged.Add(change.Path.Replace('\\', '/'));
+                }
+            }
+        }
+
+        // Apply configurable blacklist (may overlap with hardcoded — skip already-unstaged paths)
         if (blacklistedPaths is { Count: > 0 })
         {
             var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
             foreach (var change in indexChanges)
             {
-                if (PipelineFormatting.IsPathBlacklisted(change.Path, blacklistedPaths))
+                var normalized = change.Path.Replace('\\', '/');
+                if (!unstaged.Contains(normalized) && PipelineFormatting.IsPathBlacklisted(change.Path, blacklistedPaths))
                 {
                     Commands.Unstage(repo, change.Path);
-                    unstaged.Add(change.Path.Replace('\\', '/'));
+                    unstaged.Add(normalized);
                 }
             }
         }

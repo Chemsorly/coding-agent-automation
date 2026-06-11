@@ -24,6 +24,14 @@ public interface IAgentProvider : IAsyncDisposable
     IReadOnlyList<string> SteeringBlacklistPaths { get; }
 
     /// <summary>
+    /// Provider-specific paths where the pipeline injects files (steering, MCP config, etc.).
+    /// These are ALWAYS unstaged before commit regardless of configuration — they form part
+    /// of the hardcoded blacklist in <see cref="CodingAgentWebUI.Infrastructure.Git.RepositoryGitOperations.CommitAll"/>.
+    /// Each agent provider implementation MUST declare its injected paths.
+    /// </summary>
+    IReadOnlyList<string> PipelineInjectedPaths { get; }
+
+    /// <summary>
     /// Ensures a CLI session is established for the given workspace path by sending a
     /// read-only warm-up prompt on the first call. Subsequent calls for the same
     /// (normalized) workspace path are no-ops. Exceptions from the underlying agent

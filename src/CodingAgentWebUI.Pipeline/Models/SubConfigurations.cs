@@ -91,7 +91,6 @@ public sealed record AgentConfiguration
 public sealed record CommitConfiguration
 {
     public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".agent", ".brain" };
-    public BlacklistMode BlacklistMode { get; init; } = BlacklistMode.WarnAndExclude;
 }
 
 /// <summary>

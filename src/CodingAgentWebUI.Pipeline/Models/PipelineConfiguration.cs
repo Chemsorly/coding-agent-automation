@@ -177,11 +177,14 @@ public sealed record PipelineConfiguration
         init => Commit = Commit with { BlacklistedPaths = value };
     }
 
-    public BlacklistMode BlacklistMode
-    {
-        get => Commit.BlacklistMode;
-        init => Commit = Commit with { BlacklistMode = value };
-    }
+    /// <summary>
+    /// Agent-provider-specific paths that are ALWAYS unstaged before commit, regardless of
+    /// <see cref="BlacklistedPaths"/> configuration. Populated from
+    /// <see cref="IAgentProvider.PipelineInjectedPaths"/> at pipeline startup.
+    /// </summary>
+    public IReadOnlyList<string> PipelineInjectedPaths { get; init; } = Array.Empty<string>();
+
+
 
     /// <summary>
     /// Applies non-null project overrides to a PipelineConfiguration instance.

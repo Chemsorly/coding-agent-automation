@@ -396,7 +396,6 @@ public class HubMessageSerializationTests
                     RepositoryRole = RepositoryRole.Work,
                     RequiredLabels = new[] { "kiro", "dotnet" },
                     BlacklistedPaths = new[] { "docs/", ".github/" },
-                    BlacklistMode = BlacklistMode.WarnAndExclude,
                     Secrets = new Dictionary<string, string> { ["NPM_TOKEN"] = "secret-val" },
                     SetupSteps = new List<SetupStep>
                     {
@@ -605,7 +604,6 @@ public class HubMessageSerializationTests
         repoConfig.RepositoryRole.Should().Be(RepositoryRole.Work);
         repoConfig.RequiredLabels.Should().BeEquivalentTo(new[] { "kiro", "dotnet" });
         repoConfig.BlacklistedPaths.Should().BeEquivalentTo(new[] { "docs/", ".github/" });
-        repoConfig.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
         repoConfig.Secrets.Should().ContainKey("NPM_TOKEN");
         repoConfig.SetupSteps.Should().HaveCount(1);
         repoConfig.SetupSteps![0].Name.Should().Be("Install deps");
@@ -801,7 +799,6 @@ public class HubMessageSerializationTests
                     RepositoryRole = RepositoryRole.Brain,
                     RequiredLabels = new[] { "brain" },
                     BlacklistedPaths = new[] { "secrets/" },
-                    BlacklistMode = BlacklistMode.WarnAndExclude,
                     Secrets = new Dictionary<string, string> { ["API_KEY"] = "secret-123" },
                     SetupSteps = new List<SetupStep>
                     {
@@ -871,7 +868,6 @@ public class HubMessageSerializationTests
         brainConfig.RepositoryRole.Should().Be(RepositoryRole.Brain);
         brainConfig.RequiredLabels.Should().BeEquivalentTo(new[] { "brain" });
         brainConfig.BlacklistedPaths.Should().BeEquivalentTo(new[] { "secrets/" });
-        brainConfig.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
         brainConfig.Secrets.Should().ContainKey("API_KEY");
         brainConfig.SetupSteps.Should().HaveCount(1);
         brainConfig.SetupSteps![0].Name.Should().Be("Restore");

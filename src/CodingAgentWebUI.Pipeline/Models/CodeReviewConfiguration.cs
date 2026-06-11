@@ -4,15 +4,6 @@ using CodingAgentWebUI.Pipeline.CodeReview.Models;
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
-/// Controls how blacklisted path violations are handled during commits.
-/// </summary>
-public enum BlacklistMode
-{
-    /// <summary>Unstage blacklisted files, log a warning, and continue the pipeline.</summary>
-    WarnAndExclude
-}
-
-/// <summary>
 /// Controls whether review agents share the codegen session or run in isolation.
 /// </summary>
 [JsonConverter(typeof(JsonStringEnumConverter))]

@@ -17,12 +17,13 @@ public interface IRepositoryProvider : IAsyncDisposable
     Task CloneAsync(string workspacePath, CancellationToken ct);
     Task<string> CreateBranchAsync(string workspacePath, string branchName, CancellationToken ct);
     /// <summary>
-    /// Stages all changes, unstages any files matching <paramref name="blacklistedPaths"/>,
-    /// then commits the remaining staged files.
+    /// Stages all changes, unstages any files matching <paramref name="blacklistedPaths"/>
+    /// and hardcoded pipeline paths, then commits the remaining staged files.
     /// Returns the list of file paths that were unstaged due to blacklist matches.
     /// </summary>
     Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message,
-        IReadOnlyList<string>? blacklistedPaths, CancellationToken ct);
+        IReadOnlyList<string>? blacklistedPaths, CancellationToken ct,
+        IReadOnlyList<string>? pipelineInjectedPaths = null);
 
     /// <summary>
     /// Stages all changes, unstages blacklisted paths, and commits.
@@ -30,7 +31,8 @@ public interface IRepositoryProvider : IAsyncDisposable
     /// (useful for triggering CI re-runs after retry fixes that didn't change files).
     /// </summary>
     Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message,
-        IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct);
+        IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct,
+        IReadOnlyList<string>? pipelineInjectedPaths = null);
 
     /// <summary>Backward-compatible overload with no blacklist.</summary>
     Task CommitAllAsync(string workspacePath, string message, CancellationToken ct) =>

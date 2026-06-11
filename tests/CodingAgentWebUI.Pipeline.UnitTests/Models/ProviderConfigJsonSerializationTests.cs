@@ -148,6 +148,5 @@ public class ProviderConfigJsonSerializationTests
         deserialized.RequiredLabels.Should().BeEquivalentTo(new[] { "dotnet", "dotnet10" });
         deserialized.BlacklistedPaths.Should().NotBeNull();
         deserialized.BlacklistedPaths.Should().BeEquivalentTo(new[] { "docs/", "README.md" });
-        deserialized.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
     }
 }

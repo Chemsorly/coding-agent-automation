@@ -107,8 +107,7 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
         // Step 3: If inline comments are disabled, submit body-only and return
         if (!inlineSettings.Enabled)
         {
-            await context.RepoProvider.SubmitPullRequestReviewAsync(
-                prNumber, body, reviewType, ct);
+            await SubmitWithOwnPrFallbackAsync(context, prNumber, body, reviewType, ct);
             return;
         }
 
@@ -133,8 +132,7 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
                 }
             }
 
-            await context.RepoProvider.SubmitPullRequestReviewAsync(
-                prNumber, body, reviewType, ct);
+            await SubmitWithOwnPrFallbackAsync(context, prNumber, body, reviewType, ct);
             return;
         }
 
@@ -223,9 +221,9 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
             context.Run.InlineCommentsDegraded = true;
             context.Run.InlineCommentsDegradedReason = $"Inline submission failed: {ex.Message}";
 
-            // Retry body-only (this may also throw — caught by outer handler)
-            await context.RepoProvider.SubmitPullRequestReviewAsync(
-                prNumber, body, reviewType, ct);
+            // Retry body-only — if this also fails due to "own pull request" restriction,
+            // downgrade to Comment type (GitHub disallows REQUEST_CHANGES on own PRs).
+            await SubmitWithOwnPrFallbackAsync(context, prNumber, body, reviewType, ct);
         }
     }
 
@@ -245,6 +243,39 @@ internal sealed class PostReviewFindingsStep : IPipelineStep
         // Using Approve could inadvertently satisfy branch protection rules,
         // allowing PRs to merge without human review.
         return PullRequestReviewType.Comment;
+    }
+
+    /// <summary>
+    /// Submits a body-only review, falling back from RequestChanges to Comment
+    /// when GitHub returns 422 "Can not request changes on your own pull request".
+    /// This occurs when the bot that created the PR is also the reviewer.
+    /// </summary>
+    private static async Task SubmitWithOwnPrFallbackAsync(
+        PipelineStepContext context, int prNumber, string body,
+        PullRequestReviewType reviewType, CancellationToken ct)
+    {
+        try
+        {
+            await context.RepoProvider.SubmitPullRequestReviewAsync(
+                prNumber, body, reviewType, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException
+                                    && IsOwnPullRequestError(ex))
+        {
+            context.Logger.Warning(
+                "Cannot request changes on own PR #{PrNumber}, downgrading to Comment review type",
+                prNumber);
+            await context.RepoProvider.SubmitPullRequestReviewAsync(
+                prNumber, body, PullRequestReviewType.Comment, ct);
+        }
+    }
+
+    /// <summary>
+    /// Detects GitHub's "Can not request changes on your own pull request" error.
+    /// </summary>
+    private static bool IsOwnPullRequestError(Exception ex)
+    {
+        return ex.Message.Contains("request changes on your own pull request", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
