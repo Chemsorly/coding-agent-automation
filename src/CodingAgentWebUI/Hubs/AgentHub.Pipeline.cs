@@ -33,11 +33,11 @@ public sealed partial class AgentHub
     }
 
     /// <summary>
-    /// Agent rejects a job. Cleans up the orphaned run so the pipeline loop can
-    /// re-discover and re-dispatch the issue on its next cycle.
+    /// Agent rejects a job. Cleans up the orphaned run and reverts the label so the
+    /// pipeline loop can re-discover and re-dispatch the issue.
     /// This should be rare after the atomic agent reservation fix in SelectAgent.
     /// </summary>
-    public Task JobRejected(string jobId, string reason)
+    public async Task JobRejected(string jobId, string reason)
     {
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         _logger.Warning("Agent {AgentId} rejected job {JobId}: {Reason}", agent?.AgentId, jobId, reason);
@@ -48,6 +48,19 @@ public sealed partial class AgentHub
         {
             _facade.RemoveRun(jobId);
             _facade.MarkIssueComplete(run.IssueIdentifier);
+
+            // Revert label to agent:error — not agent:next to avoid infinite dispatch loops
+            // in case of misconfiguration. Human intervention needed to retry.
+            try
+            {
+                await SwapLabelAsync(run, AgentLabels.Error, GetLabelTargetKind(run));
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to revert label for rejected run {JobId} (issue {IssueIdentifier})",
+                    jobId, run.IssueIdentifier);
+            }
+
             _logger.Warning("Cleaned up rejected run {JobId} for issue {IssueIdentifier} (step={Step}, agent={AgentId}). " +
                 "This indicates a dispatch race condition — investigate if recurring.",
                 jobId, run.IssueIdentifier, run.CurrentStep, run.AgentId);
@@ -66,8 +79,6 @@ public sealed partial class AgentHub
             // Signal drain service — agent is idle and may pick up a different job
             _facade.Signal();
         }
-
-        return Task.CompletedTask;
     }
 
     /// <summary>

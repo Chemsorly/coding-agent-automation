@@ -1407,4 +1407,92 @@ public class LocalPipelineExecutorTests : IDisposable
     private LocalPipelineExecutor CreateExecutor() => new(
         _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
         _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentIdentity("test-agent"));
+
+    // ── BuildReviewStepPipeline ─────────────────────────────────────────
+
+    [Fact]
+    public void BuildReviewStepPipeline_IncludesWriteMcpConfigStep()
+    {
+        var job = CreateMinimalJobAssignment();
+
+        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job);
+
+        steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
+    }
+
+    [Fact]
+    public void BuildReviewStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
+    {
+        var job = CreateMinimalJobAssignment();
+
+        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job);
+
+        var mcpIndex = steps.ToList().FindIndex(s => s is WriteMcpConfigStep);
+        var steeringIndex = steps.ToList().FindIndex(s => s is WriteSteeringStep);
+        mcpIndex.Should().BeGreaterThanOrEqualTo(0, "WriteMcpConfigStep should be present");
+        steeringIndex.Should().BeGreaterThanOrEqualTo(0, "WriteSteeringStep should be present");
+        mcpIndex.Should().BeLessThan(steeringIndex, "WriteMcpConfigStep should come before WriteSteeringStep");
+    }
+
+    [Fact]
+    public void BuildReviewStepPipeline_StartsWithCloneRepository()
+    {
+        var job = CreateMinimalJobAssignment();
+
+        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job);
+
+        steps[0].Should().BeOfType<CloneRepositoryStep>();
+    }
+
+    // ── BuildDecompositionAnalysisStepPipeline ───────────────────────────
+
+    [Fact]
+    public void BuildDecompositionAnalysisStepPipeline_IncludesWriteMcpConfigStep()
+    {
+        var job = CreateMinimalJobAssignment();
+
+        var steps = LocalPipelineExecutor.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>());
+
+        steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
+    }
+
+    [Fact]
+    public void BuildDecompositionAnalysisStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
+    {
+        var job = CreateMinimalJobAssignment();
+
+        var steps = LocalPipelineExecutor.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>());
+
+        var mcpIndex = steps.ToList().FindIndex(s => s is WriteMcpConfigStep);
+        var steeringIndex = steps.ToList().FindIndex(s => s is WriteSteeringStep);
+        mcpIndex.Should().BeGreaterThanOrEqualTo(0);
+        steeringIndex.Should().BeGreaterThanOrEqualTo(0);
+        mcpIndex.Should().BeLessThan(steeringIndex);
+    }
+
+    // ── BuildDecompositionStepPipeline ───────────────────────────────────
+
+    [Fact]
+    public void BuildDecompositionStepPipeline_IncludesWriteMcpConfigStep()
+    {
+        var job = CreateMinimalJobAssignment();
+
+        var steps = LocalPipelineExecutor.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>());
+
+        steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
+    }
+
+    [Fact]
+    public void BuildDecompositionStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
+    {
+        var job = CreateMinimalJobAssignment();
+
+        var steps = LocalPipelineExecutor.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>());
+
+        var mcpIndex = steps.ToList().FindIndex(s => s is WriteMcpConfigStep);
+        var steeringIndex = steps.ToList().FindIndex(s => s is WriteSteeringStep);
+        mcpIndex.Should().BeGreaterThanOrEqualTo(0);
+        steeringIndex.Should().BeGreaterThanOrEqualTo(0);
+        mcpIndex.Should().BeLessThan(steeringIndex);
+    }
 }

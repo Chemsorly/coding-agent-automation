@@ -544,6 +544,7 @@ public sealed class LocalPipelineExecutor
         return new IPipelineStep[]
         {
             new CloneRepositoryStep(),
+            new WriteMcpConfigStep(job),
             new WriteSteeringStep(job),
             new RunEnvironmentSetupStep(job),
             new CreateBranchStep(),
@@ -567,6 +568,7 @@ public sealed class LocalPipelineExecutor
         {
             new CloneRepositoryStep(),
             new CloneProjectRepositoriesStep(),
+            new WriteMcpConfigStep(job),
             new WriteSteeringStep(job),
             new RunEnvironmentSetupStep(job),
             new SyncBrainPreRunStep(),
@@ -592,6 +594,7 @@ public sealed class LocalPipelineExecutor
         {
             new CloneRepositoryStep(),
             new CloneProjectRepositoriesStep(),
+            new WriteMcpConfigStep(job),
             new WriteSteeringStep(job),
             new RunEnvironmentSetupStep(job),
             new SyncBrainPreRunStep(),
