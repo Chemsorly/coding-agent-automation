@@ -52,6 +52,11 @@ public class DecompositionTemplatePropertyTests
         var mockStore = new Mock<IConfigurationStore>();
         mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(config);
+        mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = new List<string> { template.Id } }
+            });
 
         // Set up both issue and repo provider configs so provider validation passes
         mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
@@ -157,6 +162,11 @@ public class DecompositionTemplatePropertyTests
         var mockStore = new Mock<IConfigurationStore>();
         mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(config);
+        mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = new List<string> { template.Id } }
+            });
 
         // Conditionally include provider configs based on test parameters
         var issueConfigs = issueProviderExists
