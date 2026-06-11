@@ -42,6 +42,9 @@ namespace CodingAgentWebUI.Agent;
 public sealed class AgentWorkerService : BackgroundService
 {
     private readonly HubConnectionManager _hubManager;
+    // TODO: _hubManagerFactory is unused after the reconnection loop was simplified. Restore the outer
+    // reconnection loop (dispose + factory.Create()) to handle terminal Closed state, or remove this field.
+    private readonly HubConnectionManagerFactory _hubManagerFactory;
     private readonly LocalPipelineExecutor _executor;
     private readonly LocalConsolidationExecutor _consolidationExecutor;
     private readonly IKiroCliOrchestrator _orchestrator;
@@ -68,6 +71,7 @@ public sealed class AgentWorkerService : BackgroundService
 
     public AgentWorkerService(
         HubConnectionManager hubManager,
+        HubConnectionManagerFactory hubManagerFactory,
         LocalPipelineExecutor executor,
         LocalConsolidationExecutor consolidationExecutor,
         IKiroCliOrchestrator orchestrator,
@@ -77,6 +81,7 @@ public sealed class AgentWorkerService : BackgroundService
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(hubManager);
+        ArgumentNullException.ThrowIfNull(hubManagerFactory);
         ArgumentNullException.ThrowIfNull(executor);
         ArgumentNullException.ThrowIfNull(consolidationExecutor);
         ArgumentNullException.ThrowIfNull(orchestrator);
@@ -86,6 +91,7 @@ public sealed class AgentWorkerService : BackgroundService
         ArgumentNullException.ThrowIfNull(logger);
 
         _hubManager = hubManager;
+        _hubManagerFactory = hubManagerFactory;
         _executor = executor;
         _consolidationExecutor = consolidationExecutor;
         _orchestrator = orchestrator;
@@ -118,6 +124,11 @@ public sealed class AgentWorkerService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // TODO: The outer reconnection loop (dispose old connection, create fresh via factory) was removed.
+        // WithAutomaticReconnect(InfiniteRetryPolicy) handles transient failures, but if the connection
+        // reaches terminal Closed state the agent will now crash instead of recovering. Consider restoring
+        // the factory-based fresh reconnection as a defense-in-depth fallback.
+
         // Wire up event handlers
         _hubManager.OnAssignJob += HandleAssignJobAsync;
         _hubManager.OnCancelJob += HandleCancelJobAsync;
@@ -773,6 +784,15 @@ public sealed class AgentWorkerService : BackgroundService
         };
 
         await _hubManager.Connection.InvokeAsync(HubMethodNames.Heartbeat, heartbeat, ct);
+    }
+
+    // TODO: This method is no longer called in production code after the reconnection loop removal.
+    // It remains for test compatibility. Restore usage if the outer reconnection loop is re-added.
+    private static TimeSpan CalculateReconnectionDelay(int attempt)
+    {
+        var baseSeconds = Math.Min(Math.Pow(2, attempt), 120);
+        var jitter = Random.Shared.NextDouble(); // 0–1s
+        return TimeSpan.FromSeconds(baseSeconds + jitter);
     }
 
     private async Task ShutdownAsync()
