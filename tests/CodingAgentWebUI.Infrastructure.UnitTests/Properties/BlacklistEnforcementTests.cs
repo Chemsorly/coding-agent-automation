@@ -98,7 +98,7 @@ public class BlacklistEnforcementTests
     // --- PR body with blacklisted files ---
 
     [Fact]
-    public void GeneratePrBody_WithBlacklistedFiles_IncludesWarningSection()
+    public void GeneratePrBody_WithBlacklistedFiles_DoesNotIncludeWarningSection()
     {
         var blacklisted = new[] { ".agent/steering/rule.md", ".github/workflows/ci.yml" };
 
@@ -108,9 +108,7 @@ public class BlacklistEnforcementTests
             issueTitle: "Feature",
             blacklistedFilesDetected: blacklisted);
 
-        body.Should().Contain("## ⚠️ Blacklisted Files Excluded");
-        body.Should().Contain(".agent/steering/rule.md");
-        body.Should().Contain(".github/workflows/ci.yml");
+        body.Should().NotContain("## ⚠️ Blacklisted Files Excluded");
     }
 
     [Fact]

@@ -23,6 +23,63 @@ public sealed class PullRequestFinalizationService
     }
 
     /// <summary>
+    /// Generates an agent-written PR description and updates the PR body.
+    /// Does not throw on failure — logs a warning and returns.
+    /// </summary>
+    public async Task GeneratePrDescriptionAsync(
+        PipelineRun run, IAgentProvider agentProvider, IRepositoryProvider repoProvider,
+        PipelineConfiguration config, Action<string> emitOutputLine, CancellationToken ct)
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("GeneratePrDescription");
+        activity?.SetTag("pipeline.run_id", run.RunId);
+
+        emitOutputLine("📝 Generating PR description...");
+        try
+        {
+            var prompt = PromptBuilder.BuildPrDescriptionPrompt(run);
+
+            var result = await agentProvider.ExecuteAsync(
+                new AgentRequest
+                {
+                    Prompt = prompt,
+                    WorkspacePath = run.WorkspacePath!,
+                    Timeout = config.AgentTimeout,
+                    UseResume = true
+                },
+                ct,
+                line => emitOutputLine(line));
+
+            run.AccumulateTokenUsage(result);
+
+            var description = string.Join("\n", result.OutputLines).Trim();
+            if (string.IsNullOrWhiteSpace(description))
+            {
+                _logger.Warning("Pipeline {RunId} PR description generation returned empty output", run.RunId);
+                return;
+            }
+
+            // Prepend agent summary above existing PR body
+            if (!int.TryParse(run.PullRequestNumber, out var prNumber))
+            {
+                _logger.Warning("Pipeline {RunId} PR description skipped — PullRequestNumber '{PrNumber}' is not a valid integer", run.RunId, run.PullRequestNumber);
+                return;
+            }
+            var currentBody = run.PullRequestBody ?? "";
+            var newBody = $"{description}\n\n---\n\n{currentBody}";
+            await repoProvider.UpdatePullRequestAsync(prNumber, newBody, false, ct);
+            run.PullRequestBody = newBody;
+
+            _logger.Information("Pipeline {RunId} PR description generated and applied", run.RunId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            _logger.Warning(ex, "Pipeline {RunId} PR description generation failed, continuing", run.RunId);
+        }
+    }
+
+    /// <summary>
     /// Executes the reflection step: builds a reflection prompt and asks the agent to review
     /// the run and enrich .brain/ knowledge. Accumulates token usage on the run.
     /// Does not throw on failure — logs a warning and returns.

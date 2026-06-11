@@ -151,12 +151,12 @@ public class PipelineModelCoverageTests
     }
 
     [Fact]
-    public void GeneratePrBody_WithBlacklistedFiles_IncludesWarning()
+    public void GeneratePrBody_WithBlacklistedFiles_DoesNotIncludeWarning()
     {
         var body = PipelineFormatting.GeneratePrBody(
             "#42", 10, 0, 0, null, Array.Empty<FileChangeSummary>(), "Fix bug",
             blacklistedFilesDetected: new[] { ".agent/settings.json" });
-        body.Should().Contain(".agent/settings.json");
+        body.Should().NotContain("## ⚠️ Blacklisted Files Excluded");
     }
 
     [Fact]

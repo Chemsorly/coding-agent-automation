@@ -32,6 +32,9 @@ public sealed class PipelineRun
     public string? FailureReason { get; set; }
     public string? PullRequestUrl { get; set; }
 
+    /// <summary>The PR body content as last set. Used by the description generation step to prepend agent summary.</summary>
+    public string? PullRequestBody { get; set; }
+
     /// <summary>Cohesive sub-state group for execution metrics (MAINT-13). Delegating properties below preserve the existing API surface.</summary>
     public RunMetrics Metrics { get; } = new();
 

@@ -19,8 +19,9 @@ public class StepOrderTests
     [InlineData(PipelineStep.RunningQualityGates, 11)]
     [InlineData(PipelineStep.PreparingForPullRequest, 12)]
     [InlineData(PipelineStep.CreatingPullRequest, 13)]
-    [InlineData(PipelineStep.ReflectingOnRun, 14)]
-    [InlineData(PipelineStep.SyncingBrainRepoPostRun, 15)]
+    [InlineData(PipelineStep.GeneratingPrDescription, 14)]
+    [InlineData(PipelineStep.ReflectingOnRun, 15)]
+    [InlineData(PipelineStep.SyncingBrainRepoPostRun, 16)]
     [InlineData(PipelineStep.Completed, 100)]
     public void GetOrder_ImplementationPipelineSteps_ReturnsCorrectOrder(PipelineStep step, int expectedOrder)
     {
@@ -70,6 +71,7 @@ public class StepOrderTests
             PipelineStep.RunningQualityGates,
             PipelineStep.PreparingForPullRequest,
             PipelineStep.CreatingPullRequest,
+            PipelineStep.GeneratingPrDescription,
             PipelineStep.ReflectingOnRun,
             PipelineStep.SyncingBrainRepoPostRun,
             PipelineStep.Completed
@@ -87,11 +89,11 @@ public class StepOrderTests
     [Fact]
     public void GetOrder_RunningEnvironmentSetup_HasOrder2_DespiteHighEnumOrdinal()
     {
-        // RunningEnvironmentSetup has enum ordinal 28 but logical order 2
+        // RunningEnvironmentSetup has enum ordinal 29 but logical order 2
         var enumOrdinal = (int)PipelineStep.RunningEnvironmentSetup;
         var logicalOrder = StepOrder.GetOrder(PipelineStep.RunningEnvironmentSetup);
 
-        Assert.Equal(28, enumOrdinal);
+        Assert.Equal(29, enumOrdinal);
         Assert.Equal(2, logicalOrder);
     }
 

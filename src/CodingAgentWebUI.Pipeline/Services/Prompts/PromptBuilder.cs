@@ -188,7 +188,7 @@ public static class PromptBuilder
         sb.AppendLine(reviewInstructions);
         sb.AppendLine();
 
-        // PR conversation context reference (only when a linked PR exists — rework mode)
+        // PR conversation context reference
         if (hasLinkedPr)
         {
             sb.AppendLine($"PR conversation and prior review context is available at `{AgentWorkspacePaths.PrConversationContextFilePath}`.");
@@ -626,6 +626,40 @@ public static class PromptBuilder
         sb.AppendLine(instructions);
         sb.AppendLine();
         sb.AppendLine($"Write your assessment to `{AgentWorkspacePaths.AcceptanceCriteriaFilePath}`. Do NOT print results to stdout — only write the JSON file.");
+
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Builds a prompt that asks the agent to produce a structured PR description
+    /// summarizing what changed and why.
+    /// </summary>
+    public static string BuildPrDescriptionPrompt(PipelineRun run)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+
+        var sb = new StringBuilder();
+        sb.AppendLine("## Generate a Pull Request Description");
+        sb.AppendLine();
+        sb.AppendLine("Write a structured summary of the changes you made. Output ONLY the markdown below — no file writes, no code changes.");
+        sb.AppendLine();
+        sb.AppendLine("Use this format:");
+        sb.AppendLine();
+        sb.AppendLine("### Summary");
+        sb.AppendLine("2-3 sentences explaining what was done and why.");
+        sb.AppendLine();
+        sb.AppendLine("### Approach");
+        sb.AppendLine("Brief description of the implementation strategy.");
+        sb.AppendLine();
+        sb.AppendLine("### Key Changes");
+        sb.AppendLine("File-level walkthrough of the most important changes (not every file — focus on the interesting ones).");
+        sb.AppendLine();
+        sb.AppendLine("### Breaking Changes");
+        sb.AppendLine("Only if applicable. Omit this section entirely if there are none.");
+        sb.AppendLine();
+        sb.AppendLine("---");
+        sb.AppendLine();
+        sb.AppendLine($"**Issue:** #{run.IssueIdentifier} — {run.IssueTitle}");
 
         return sb.ToString().TrimEnd();
     }

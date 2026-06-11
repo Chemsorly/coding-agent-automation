@@ -122,10 +122,10 @@ public class PullRequestOrchestratorTests
         run.BlacklistedFilesDetected.Should().Contain(".agent/config.json");
     }
 
-    // ── Blacklisted files → PR body includes blacklist section ──
+    // ── Blacklisted files → PR body no longer includes blacklist section ──
 
     [Fact]
-    public async Task CreatePullRequest_BlacklistedFiles_IncludedInPrBody()
+    public async Task CreatePullRequest_BlacklistedFiles_NotIncludedInPrBody()
     {
         var blacklisted = new List<string> { ".github/workflows/ci.yml" };
         _mockRepo.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
@@ -142,7 +142,7 @@ public class PullRequestOrchestratorTests
             run, CreateReport(), false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None);
 
-        capturedInfo!.Body.Should().Contain(".github/workflows/ci.yml");
+        capturedInfo!.Body.Should().NotContain("## ⚠️ Blacklisted Files Excluded");
     }
 
     // ── Code review summary included ──
