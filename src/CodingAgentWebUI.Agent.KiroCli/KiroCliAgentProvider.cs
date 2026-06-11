@@ -67,11 +67,8 @@ public partial class KiroCliAgentProvider : IAgentProvider
         if (_establishedSessions.Contains(normalizedPath))
             return;
 
-        // Set model before first invocation if a specific model is configured
-        await ApplyModelSettingAsync(ct);
-
-        // Set effort level before first invocation if a specific effort is configured
-        await ApplyEffortSettingAsync(ct);
+        // Persist model + effort settings to ~/.kiro/settings/cli.json
+        await ApplyCliSettingsAsync(ct);
 
         try
         {
@@ -251,81 +248,81 @@ public partial class KiroCliAgentProvider : IAgentProvider
     }
 
     /// <summary>
-    /// Runs <c>kiro-cli settings chat.defaultModel "model"</c> if a specific (non-auto) model is configured.
+    /// Persists model and effort settings to <c>~/.kiro/settings/cli.json</c> in a single file write.
+    /// Sets <c>chat.defaultModel</c> and <c>chat.modelDefaults.{model}.output_config.effort</c>.
     /// </summary>
-    internal async Task ApplyModelSettingAsync(CancellationToken ct)
+    internal async Task ApplyCliSettingsAsync(CancellationToken ct, string? settingsPathOverride = null)
     {
-        if (string.IsNullOrEmpty(_model) || _model.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        var hasModel = !string.IsNullOrEmpty(_model) && !_model.Equals("auto", StringComparison.OrdinalIgnoreCase);
+        var effortValue = _effort.ToCliValue();
+
+        if (!hasModel && effortValue is null)
             return;
 
-        if (!ModelNamePattern().IsMatch(_model))
+        if (hasModel && !ModelNamePattern().IsMatch(_model!))
         {
             _logger.Warning("Invalid model name rejected: {Model}", _model);
             return;
         }
 
-        _logger.Information("Setting Kiro CLI model to {Model}", _model);
-        var psi = new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = _executablePath,
-            Arguments = $"settings chat.defaultModel \"{_model}\"",
-            RedirectStandardOutput = false,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
+        var settingsPath = settingsPathOverride
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".kiro", "settings", "cli.json");
 
-        using var process = _processStarter.Start(psi);
-        if (process == null)
+        try
         {
-            _logger.Warning("Failed to start kiro-cli settings process");
-            return;
+            var settingsDir = Path.GetDirectoryName(settingsPath)!;
+            Directory.CreateDirectory(settingsDir);
+
+            // Read existing settings or start fresh
+            System.Text.Json.Nodes.JsonObject root;
+            if (File.Exists(settingsPath))
+            {
+                var existing = await File.ReadAllTextAsync(settingsPath, ct);
+                root = System.Text.Json.Nodes.JsonNode.Parse(existing)?.AsObject()
+                       ?? new System.Text.Json.Nodes.JsonObject();
+            }
+            else
+            {
+                root = new System.Text.Json.Nodes.JsonObject();
+            }
+
+            // Set chat.defaultModel
+            if (hasModel)
+                root["chat.defaultModel"] = _model;
+
+            // Set chat.modelDefaults.{model}.output_config.effort
+            if (hasModel && effortValue is not null)
+            {
+                var modelDefaults = root["chat.modelDefaults"]?.AsObject()
+                                    ?? new System.Text.Json.Nodes.JsonObject();
+                root["chat.modelDefaults"] = modelDefaults;
+
+                var modelNode = modelDefaults[_model!]?.AsObject()
+                                ?? new System.Text.Json.Nodes.JsonObject();
+                modelDefaults[_model!] = modelNode;
+
+                var outputConfig = modelNode["output_config"]?.AsObject()
+                                   ?? new System.Text.Json.Nodes.JsonObject();
+                modelNode["output_config"] = outputConfig;
+
+                outputConfig["effort"] = effortValue;
+            }
+
+            var json = root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(settingsPath, json, ct);
+
+            _logger.Information("Persisted CLI settings (model={Model}, effort={Effort}) to {Path}",
+                hasModel ? _model : "auto", effortValue ?? "auto", settingsPath);
         }
-
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct);
-        var stderr = await stderrTask;
-        if (process.ExitCode != 0)
-            _logger.Warning("kiro-cli settings exited with code {ExitCode}: {Error}", process.ExitCode, stderr);
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Failed to persist CLI settings to {Path}", settingsPath);
+        }
     }
 
     /// <summary>Pattern for valid model names: alphanumeric, dots, hyphens, underscores.</summary>
     [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9._-]+$")]
     private static partial System.Text.RegularExpressions.Regex ModelNamePattern();
-
-    /// <summary>
-    /// Runs <c>kiro-cli settings chat.effort "{level}"</c> if a specific (non-auto) effort is configured.
-    /// </summary>
-    internal async Task ApplyEffortSettingAsync(CancellationToken ct)
-    {
-        var cliValue = _effort.ToCliValue();
-        if (cliValue is null)
-            return;
-
-        _logger.Information("Setting Kiro CLI effort to {Effort}", cliValue);
-        var psi = new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = _executablePath,
-            Arguments = $"settings chat.effort \"{cliValue}\"",
-            RedirectStandardOutput = false,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        using var process = _processStarter.Start(psi);
-        if (process == null)
-        {
-            _logger.Warning("Failed to start kiro-cli settings process for effort");
-            return;
-        }
-
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct);
-        var stderr = await stderrTask;
-        if (process.ExitCode != 0)
-            _logger.Warning("kiro-cli settings (effort) exited with code {ExitCode}: {Error}", process.ExitCode, stderr);
-    }
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()

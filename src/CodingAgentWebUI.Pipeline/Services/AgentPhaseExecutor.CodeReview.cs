@@ -494,7 +494,7 @@ internal partial class AgentPhaseExecutor
         if (File.Exists(findingsFilePath))
             File.Delete(findingsFilePath);
 
-        var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue, agentFindingsRelativePath, isolated: isolated, inlineCommentsEnabled: config.CodeReview.InlineComments.Enabled);
+        var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue, agentFindingsRelativePath, isolated: isolated, inlineCommentsEnabled: config.CodeReview.InlineComments.Enabled, hasLinkedPr: run.LinkedPullRequest is not null);
         _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, iterationIndex + 1, agent.Name, reviewPrompt);
 
         var reviewResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
