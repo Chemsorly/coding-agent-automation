@@ -260,7 +260,7 @@ public class WriteSteeringStepTests : IDisposable
     {
         var mockAgent = new Mock<IAgentProvider>();
         mockAgent.Setup(a => a.ProviderType).Returns(providerType);
-        mockAgent.Setup(a => a.SteeringBlacklistPaths).Returns(
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(
             providerType == AgentProviderType.KiroCli ? [".kiro"] : ["AGENTS.md"]);
 
         return new PipelineStepContext

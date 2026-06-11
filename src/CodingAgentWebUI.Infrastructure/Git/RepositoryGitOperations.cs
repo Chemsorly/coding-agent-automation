@@ -151,7 +151,7 @@ internal static class RepositoryGitOperations
         if (stagedAny)
             repo.Index.Write();
 
-        var unstaged = new List<string>();
+        var unstaged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Hardcoded: ALWAYS unstage pipeline-injected paths regardless of configured blacklist.
         // These directories/files contain pipeline metadata and steering content that must
@@ -205,7 +205,7 @@ internal static class RepositoryGitOperations
         var commitOptions = allowEmpty ? new CommitOptions { AllowEmptyCommit = true } : new CommitOptions();
         repo.Commit(message, signature, signature, commitOptions);
 
-        return unstaged;
+        return unstaged.ToList();
     }
 
     public static async Task Push(

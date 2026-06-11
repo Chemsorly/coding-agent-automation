@@ -33,9 +33,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     public bool SupportsParallelExecution => true;
 
     /// <inheritdoc />
-    public IReadOnlyList<string> SteeringBlacklistPaths { get; } = ["AGENTS.md"];
-
-    /// <inheritdoc />
     public IReadOnlyList<string> PipelineInjectedPaths { get; } = ["AGENTS.md"];
 
     public OpenCodeAgentProvider(

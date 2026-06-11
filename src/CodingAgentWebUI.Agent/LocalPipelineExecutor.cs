@@ -201,10 +201,8 @@ public sealed class LocalPipelineExecutor
             if (pipelineProvider is not null)
                 await pipelineProvider.ValidateAsync(ct);
 
-            // Merge provider-specific steering blacklist paths into config
-            config = PipelineConfiguration.ApplyProviderBlacklist(config, agentProvider.SteeringBlacklistPaths);
-
-            // Store provider-specific hardcoded paths for CommitAll enforcement
+            // Merge provider-specific paths into configurable blacklist AND store for hardcoded enforcement
+            config = PipelineConfiguration.ApplyProviderBlacklist(config, agentProvider.PipelineInjectedPaths);
             config = config with { PipelineInjectedPaths = agentProvider.PipelineInjectedPaths };
 
             result = await ExecutePipelineStepsAsync(

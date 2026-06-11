@@ -32,9 +32,6 @@ public partial class KiroCliAgentProvider : IAgentProvider
     public bool SupportsParallelExecution => true;
 
     /// <inheritdoc />
-    public IReadOnlyList<string> SteeringBlacklistPaths { get; } = [".kiro"];
-
-    /// <inheritdoc />
     public IReadOnlyList<string> PipelineInjectedPaths { get; } = [".kiro"];
 
     /// <summary>The model configured for this agent provider, or null/auto for default.</summary>

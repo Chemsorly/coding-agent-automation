@@ -275,8 +275,8 @@ public sealed record PipelineConfiguration
     }
 
     /// <summary>
-    /// Merges provider-specific steering blacklist paths into the configuration.
-    /// Called after agent provider creation to ensure steering files are excluded from commits.
+    /// Merges provider-specific pipeline-injected paths into the configurable blacklist.
+    /// Called after agent provider creation to ensure injected files are excluded from commits.
     /// </summary>
     public static PipelineConfiguration ApplyProviderBlacklist(PipelineConfiguration config, IReadOnlyList<string> providerPaths)
     {
