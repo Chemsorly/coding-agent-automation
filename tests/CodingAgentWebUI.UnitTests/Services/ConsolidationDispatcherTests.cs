@@ -47,7 +47,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
         _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile>());
 
-        // Default: return empty projects (pre-migration fallback behavior)
+        // Default: return empty projects (no templates will resolve without project ownership)
         _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject>());
     }

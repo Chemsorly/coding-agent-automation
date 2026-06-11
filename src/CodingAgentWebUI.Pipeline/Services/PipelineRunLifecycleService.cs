@@ -83,16 +83,18 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// <summary>
     /// Checks whether the given issue is being processed by any active run (local or agent).
     /// </summary>
-    public bool IsIssueBeingProcessed(string issueIdentifier)
+    public bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
 
         // Check local run
-        if (ActiveRun != null && ActiveRun.IssueIdentifier == issueIdentifier && IsRunning)
+        if (ActiveRun != null && ActiveRun.IssueIdentifier == issueIdentifier
+            && ActiveRun.IssueProviderConfigId == issueProviderConfigId && IsRunning)
             return true;
 
         // Check agent runs via OrchestratorRunService
-        return _runService?.IsIssueBeingProcessed(issueIdentifier) == true;
+        return _runService?.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId) == true;
     }
 
     // ── State Transition Methods ────────────────────────────────────────
@@ -196,14 +198,14 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// and removes runs from active tracking. Returns list of cancelled issue identifiers for caller to release dedup.
     /// No-op if no run service is configured.
     /// </summary>
-    public Task<IReadOnlyList<string>> MarkAgentRunsCancelled()
+    public Task<IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId)>> MarkAgentRunsCancelled()
     {
-        if (_runService is null) return Task.FromResult<IReadOnlyList<string>>([]);
+        if (_runService is null) return Task.FromResult<IReadOnlyList<(string, string)>>([]);
 
         var activeRuns = _runService.GetActiveRuns();
-        if (activeRuns.Count == 0) return Task.FromResult<IReadOnlyList<string>>([]);
+        if (activeRuns.Count == 0) return Task.FromResult<IReadOnlyList<(string, string)>>([]);
 
-        var cancelledIssues = new List<string>();
+        var cancelledIssues = new List<(string IssueIdentifier, string IssueProviderConfigId)>();
         foreach (var run in activeRuns)
         {
             run.CompletedAt = DateTime.UtcNow;
@@ -211,11 +213,11 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
             run.CurrentStep = PipelineStep.Cancelled;
             AddRunToHistory(run);
             _runService.RemoveRun(run.RunId);
-            cancelledIssues.Add(run.IssueIdentifier);
+            cancelledIssues.Add((run.IssueIdentifier, run.IssueProviderConfigId));
         }
 
         NotifyChange();
-        return Task.FromResult<IReadOnlyList<string>>(cancelledIssues);
+        return Task.FromResult<IReadOnlyList<(string, string)>>(cancelledIssues);
     }
 
     // ── Dispatched Run Registration ─────────────────────────────────────
@@ -229,7 +231,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         if (_runService is null)
             throw new InvalidOperationException("OrchestratorRunService is not configured. Cannot register dispatched runs.");
 
-        if (IsIssueBeingProcessed(run.IssueIdentifier))
+        if (IsIssueBeingProcessed(run.IssueIdentifier, run.IssueProviderConfigId))
         {
             _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping registration",
                 run.IssueIdentifier);

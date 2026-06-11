@@ -83,5 +83,5 @@ public interface IJobDispatcher
     /// <summary>
     /// Whether the given issue is already being processed or queued.
     /// </summary>
-    bool IsIssueBeingProcessedOrQueued(string issueIdentifier);
+    bool IsIssueBeingProcessedOrQueued(string issueIdentifier, string issueProviderConfigId);
 }

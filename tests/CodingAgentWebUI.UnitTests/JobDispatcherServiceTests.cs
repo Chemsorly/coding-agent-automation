@@ -106,21 +106,21 @@ public class JobDispatcherServiceTests
     {
         var service = CreateService();
         service.EnqueueJob(CreateJob("issue-1"));
-        service.IsIssueQueued("issue-1").Should().BeTrue();
+        service.IsIssueQueued("issue-1", "ip").Should().BeTrue();
     }
 
     [Fact]
     public void IsIssueQueued_NotQueued_ReturnsFalse()
     {
         var service = CreateService();
-        service.IsIssueQueued("issue-1").Should().BeFalse();
+        service.IsIssueQueued("issue-1", "ip").Should().BeFalse();
     }
 
     [Fact]
     public void IsIssueQueued_NullIdentifier_Throws()
     {
         var service = CreateService();
-        var act = () => service.IsIssueQueued(null!);
+        var act = () => service.IsIssueQueued(null!, "ip");
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -133,17 +133,17 @@ public class JobDispatcherServiceTests
     {
         var service = CreateService();
         service.EnqueueJob(CreateJob("issue-1"));
-        service.IsIssueQueued("issue-1").Should().BeTrue();
+        service.IsIssueQueued("issue-1", "ip").Should().BeTrue();
 
-        service.MarkIssueComplete("issue-1");
-        service.IsIssueQueued("issue-1").Should().BeFalse();
+        service.MarkIssueComplete("issue-1", "ip");
+        service.IsIssueQueued("issue-1", "ip").Should().BeFalse();
     }
 
     [Fact]
     public void MarkIssueComplete_NonExistentIssue_DoesNotThrow()
     {
         var service = CreateService();
-        var act = () => service.MarkIssueComplete("nonexistent");
+        var act = () => service.MarkIssueComplete("nonexistent", "ip");
         act.Should().NotThrow();
     }
 
@@ -152,7 +152,7 @@ public class JobDispatcherServiceTests
     {
         var service = CreateService();
         service.EnqueueJob(CreateJob("issue-1"));
-        service.MarkIssueComplete("issue-1");
+        service.MarkIssueComplete("issue-1", "ip");
         service.EnqueueJob(CreateJob("issue-1")).Should().BeTrue();
     }
 
@@ -165,14 +165,14 @@ public class JobDispatcherServiceTests
     {
         var service = CreateService();
         service.EnqueueJob(CreateJob("issue-1"));
-        service.RemoveFromQueue("issue-1").Should().BeTrue();
+        service.RemoveFromQueue("issue-1", "ip").Should().BeTrue();
     }
 
     [Fact]
     public void RemoveFromQueue_NonExistentJob_ReturnsFalse()
     {
         var service = CreateService();
-        service.RemoveFromQueue("nonexistent").Should().BeFalse();
+        service.RemoveFromQueue("nonexistent", "ip").Should().BeFalse();
     }
 
     [Fact]
@@ -180,10 +180,10 @@ public class JobDispatcherServiceTests
     {
         var service = CreateService();
         service.EnqueueJob(CreateJob("issue-1"));
-        service.RemoveFromQueue("issue-1");
+        service.RemoveFromQueue("issue-1", "ip");
 
         service.QueueLength.Should().Be(0);
-        service.IsIssueQueued("issue-1").Should().BeFalse();
+        service.IsIssueQueued("issue-1", "ip").Should().BeFalse();
     }
 
     [Fact]
@@ -194,11 +194,11 @@ public class JobDispatcherServiceTests
         service.EnqueueJob(CreateJob("issue-2"));
         service.EnqueueJob(CreateJob("issue-3"));
 
-        service.RemoveFromQueue("issue-2");
+        service.RemoveFromQueue("issue-2", "ip");
 
         service.QueueLength.Should().Be(2);
-        service.IsIssueQueued("issue-1").Should().BeTrue();
-        service.IsIssueQueued("issue-3").Should().BeTrue();
+        service.IsIssueQueued("issue-1", "ip").Should().BeTrue();
+        service.IsIssueQueued("issue-3", "ip").Should().BeTrue();
     }
 
     #endregion

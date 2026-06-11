@@ -13,7 +13,7 @@ public interface IOrchestratorRunService
     bool HasActiveRuns { get; }
 
     /// <summary>Checks whether the given issue identifier is being processed by any active run.</summary>
-    bool IsIssueBeingProcessed(string issueIdentifier);
+    bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId);
 
     /// <summary>Returns all active runs as a read-only snapshot.</summary>
     IReadOnlyList<PipelineRun> GetActiveRuns();

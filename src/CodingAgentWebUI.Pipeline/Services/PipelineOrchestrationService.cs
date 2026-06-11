@@ -100,7 +100,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// Checks whether the given issue is being processed by any active run (local or agent).
     /// Delegates to lifecycle service.
     /// </summary>
-    public bool IsIssueBeingProcessed(string issueIdentifier) => _lifecycle.IsIssueBeingProcessed(issueIdentifier);
+    public bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId) => _lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId);
 
     public PipelineOrchestrationService(
         IConfigurationStore configStore,
@@ -269,7 +269,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         ArgumentNullException.ThrowIfNull(agentProviderId);
         ArgumentNullException.ThrowIfNull(agentId);
 
-        if (_lifecycle.IsIssueBeingProcessed(issueIdentifier))
+        if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId))
         {
             _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping dispatch", issueIdentifier);
             return null;
@@ -474,9 +474,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         // Release dedup guards so issues become re-dispatchable after restart
         if (_dedupGuard is not null)
         {
-            foreach (var issueId in cancelledIssues)
+            foreach (var (issueId, providerId) in cancelledIssues)
             {
-                _dedupGuard.MarkIssueComplete(issueId);
+                _dedupGuard.MarkIssueComplete(issueId, providerId);
             }
         }
     }

@@ -598,12 +598,12 @@ public sealed partial class PipelineLoopService
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedFilteredByLabel));
                             continue;
                         }
-                        if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
+                        if (_orchestration.IsIssueBeingProcessed(candidate.Identifier, template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
                         }
-                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier))
+                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier, template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
@@ -690,12 +690,12 @@ public sealed partial class PipelineLoopService
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedFilteredByLabel));
                             continue;
                         }
-                        if (_orchestration.IsIssueBeingProcessed(candidate.Identifier))
+                        if (_orchestration.IsIssueBeingProcessed(candidate.Identifier, template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
                         }
-                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier))
+                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier, template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
@@ -767,12 +767,12 @@ public sealed partial class PipelineLoopService
                         var candidate = queue[0];
                         queue.RemoveAt(0);
 
-                        if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier))
+                        if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier, template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
                         }
-                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier))
+                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier, template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
@@ -839,12 +839,12 @@ public sealed partial class PipelineLoopService
 
                         // Deduplication: skip if already being processed or queued
                         // (may have been picked up by template-level polling of the same issue)
-                        if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier))
+                        if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier, candidate.Template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
                         }
-                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier))
+                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier, candidate.Template.IssueProviderId))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
@@ -1157,62 +1157,6 @@ public sealed partial class PipelineLoopService
         var result = new List<(PipelineJobTemplate, PipelineProject)>();
         // Build lookup for O(1) template resolution
         var templateLookup = globalConfig.PipelineJobTemplates.ToDictionary(t => t.Id);
-
-        // If no projects exist yet (pre-migration or test scenario), create a virtual Default
-        // containing all template IDs to preserve backward compatibility
-        if (projects.Count == 0)
-        {
-            var virtualDefault = new PipelineProject
-            {
-                Id = WellKnownIds.DefaultProjectId,
-                Name = "Default",
-                TemplateIds = globalConfig.PipelineJobTemplates.Select(t => t.Id).ToList()
-            };
-            projects = new List<PipelineProject> { virtualDefault };
-        }
-        else
-        {
-            // Handle orphaned templates: templates in globalConfig that don't appear in any project
-            var allProjectTemplateIds = projects
-                .SelectMany(p => p.TemplateIds)
-                .ToHashSet();
-
-            var orphanedTemplateIds = globalConfig.PipelineJobTemplates
-                .Where(t => !allProjectTemplateIds.Contains(t.Id))
-                .Select(t => t.Id)
-                .ToList();
-
-            if (orphanedTemplateIds.Count > 0)
-            {
-                _logger.Warning("Found {Count} orphaned template(s) not assigned to any project — assigning to Default: {TemplateIds}",
-                    orphanedTemplateIds.Count, string.Join(", ", orphanedTemplateIds));
-
-                // Find Default project and add orphaned templates to it for this cycle
-                var defaultProject = projects.FirstOrDefault(p => p.Id == WellKnownIds.DefaultProjectId);
-                if (defaultProject is not null)
-                {
-                    var updatedTemplateIds = defaultProject.TemplateIds.Concat(orphanedTemplateIds).ToList();
-                    var updatedDefault = defaultProject with { TemplateIds = updatedTemplateIds };
-
-                    // Replace in a new list for this cycle's processing
-                    projects = projects
-                        .Select(p => p.Id == WellKnownIds.DefaultProjectId ? updatedDefault : p)
-                        .ToList();
-                }
-                else
-                {
-                    // Default project is missing — create a virtual one for orphans
-                    _logger.Warning("Default project not found — creating virtual Default for orphaned templates");
-                    var virtualDefault = new PipelineProject
-                    {
-                        Id = WellKnownIds.DefaultProjectId,
-                        Name = "Default",
-                        TemplateIds = orphanedTemplateIds
-                    };
-                    projects = projects.Concat(new[] { virtualDefault }).ToList();
-                }
-            }
-        }
 
         foreach (var project in projects.Where(p => p.Enabled).OrderBy(p => p.Name, StringComparer.Ordinal))
         {

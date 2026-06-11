@@ -170,7 +170,7 @@
                             </div>
                             <div class="form-group">
                                 <label>Environment Variables <span class="form-hint">(one per line, KEY=VALUE)</span></label>
-                                <textarea rows="3" @bind="_mcpForm.EnvVars" placeholder="FASTMCP_LOG_LEVEL=ERROR"></textarea>
+                                <textarea rows="3" @bind="_mcpForm.EnvVars" @bind:event="oninput" placeholder="FASTMCP_LOG_LEVEL=ERROR"></textarea>
                             </div>
                         }
                         <div class="form-group form-checkbox">

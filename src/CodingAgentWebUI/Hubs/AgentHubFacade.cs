@@ -95,8 +95,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
     // ── Dispatch operations ─────────────────────────────────────────────
 
     /// <inheritdoc />
-    public void MarkIssueComplete(string issueIdentifier)
-        => _dispatcher.MarkIssueComplete(issueIdentifier);
+    public void MarkIssueComplete(string issueIdentifier, string issueProviderConfigId)
+        => _dispatcher.MarkIssueComplete(issueIdentifier, issueProviderConfigId);
 
     /// <inheritdoc />
     public void Signal()

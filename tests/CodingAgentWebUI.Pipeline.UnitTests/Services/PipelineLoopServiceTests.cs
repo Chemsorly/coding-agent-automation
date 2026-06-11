@@ -52,6 +52,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     {
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestPipelineConfig.Default() with { PipelineJobTemplates = DefaultTemplates });
+        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = DefaultTemplates.Select(t => t.Id).ToList() }
+            });
         _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
@@ -588,7 +593,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>(),
                 It.IsAny<PipelineProject?>()))
             .ReturnsAsync(true);
-        mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>()))
+        mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>(), It.IsAny<string>()))
             .Returns(false);
 
         var svc = CreateService(mockDispatcher.Object);

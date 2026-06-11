@@ -223,22 +223,14 @@
             var projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
             var templateLookup = config.PipelineJobTemplates.ToDictionary(t => t.Id);
 
-            if (projects.Count > 0)
-            {
-                _templates = projects
-                    .Where(p => p.Enabled)
-                    .OrderBy(p => p.Name, StringComparer.Ordinal)
-                    .SelectMany(p => p.TemplateIds)
-                    .Where(tid => templateLookup.ContainsKey(tid))
-                    .Select(tid => templateLookup[tid])
-                    .Where(t => t.Enabled)
-                    .ToList();
-            }
-            else
-            {
-                // Pre-migration fallback: use global config directly
-                _templates = config.PipelineJobTemplates.Where(t => t.Enabled).ToList();
-            }
+            _templates = projects
+                .Where(p => p.Enabled)
+                .OrderBy(p => p.Name, StringComparer.Ordinal)
+                .SelectMany(p => p.TemplateIds)
+                .Where(tid => templateLookup.ContainsKey(tid))
+                .Select(tid => templateLookup[tid])
+                .Where(t => t.Enabled)
+                .ToList();
         }
         catch (Exception ex)
         {

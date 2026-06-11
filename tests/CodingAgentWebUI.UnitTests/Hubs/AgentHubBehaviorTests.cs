@@ -205,7 +205,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
         _mockFacade.Verify(f => f.Signal(), Times.Once);
-        _mockFacade.Verify(f => f.MarkIssueComplete("org/repo#42"), Times.Once);
+        _mockFacade.Verify(f => f.MarkIssueComplete("org/repo#42", "issue-cfg-1"), Times.Once);
         agent.ActiveJobId.Should().BeNull();
     }
 

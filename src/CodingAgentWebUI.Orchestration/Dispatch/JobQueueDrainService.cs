@@ -1,13 +1,11 @@
 using System.Diagnostics;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
-using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.Extensions.Hosting;
 using OpenTelemetry.Trace;
 using Serilog;
 using ILogger = Serilog.ILogger;
-using ProviderKind = CodingAgentWebUI.Pipeline.Models.ProviderKind;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
@@ -186,29 +184,25 @@ public sealed class JobQueueDrainService : BackgroundService
 
             try
             {
-                // Resolve required labels for the job
-                var config = await _configStore.LoadPipelineConfigAsync(ct);
-                var repoConfig = await _configStore.GetProviderConfigByIdAsync(
-                    pendingJob.RepoProviderId, ProviderKind.Repository, ct);
-                var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
+                var requiredLabels = await ResolveRequiredLabelsAsync(pendingJob, ct);
 
-                // Agent already selected by DequeueForAgent — dispatch directly
                 var dispatched = await _jobDispatcher.DispatchToAgentDirectAsync(
                     agent, pendingJob, requiredLabels, ct);
 
                 if (dispatched)
                 {
-                    // Run is now tracked by OrchestratorRunService.IsIssueBeingProcessed
-                    // Remove from queue dedup since run service provides the guard now
-                    _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier);
                     dispatchedCount++;
+                    // Release the dedup entry after successful dispatch.
+                    // NOTE: There is a narrow race window between this call and the next poll cycle —
+                    // the run is already registered in OrchestratorRunService (via CreateDispatchedRunAsync),
+                    // so IsIssueBeingProcessed at the loop level guards against re-enqueue.
+                    _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId);
                 }
                 else
                 {
                     _logger.Warning(
                         "Drain: failed to dispatch job for issue {IssueIdentifier}, re-enqueuing",
                         pendingJob.IssueIdentifier);
-                    // Re-enqueue at the back — no TryAdd needed, entry stays in _processingIssues
                     _dispatcher.ReEnqueue(pendingJob);
                 }
             }
@@ -217,12 +211,24 @@ public sealed class JobQueueDrainService : BackgroundService
                 _logger.Error(ex,
                     "Drain: exception dispatching job for issue {IssueIdentifier} to agent {AgentId}, re-enqueuing",
                     pendingJob.IssueIdentifier, agent.AgentId);
-                // Re-enqueue at the back — entry stays in _processingIssues
                 _dispatcher.ReEnqueue(pendingJob);
             }
         }
 
         return dispatchedCount;
+    }
+
+    private async Task<IReadOnlyList<string>> ResolveRequiredLabelsAsync(Pipeline.Models.PendingJob job, CancellationToken ct)
+    {
+        // Use the job's pre-resolved labels if available
+        if (job.RequiredLabels.Count > 0)
+            return job.RequiredLabels;
+
+        // Fall back to resolving from config
+        var pipelineConfig = await _configStore.LoadPipelineConfigAsync(ct);
+        var repoConfig = await _configStore.GetProviderConfigByIdAsync(
+            job.RepoProviderId, Pipeline.Models.ProviderKind.Repository, ct);
+        return JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
     }
 
     private async Task<int> DrainConsolidationJobsAsync(CancellationToken ct)
@@ -321,5 +327,4 @@ public sealed class JobQueueDrainService : BackgroundService
 
         return dispatchedCount;
     }
-
 }

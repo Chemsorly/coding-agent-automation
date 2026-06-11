@@ -129,7 +129,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
 
                                 _historyService.AddRunToHistory(run);
                                 _runService.RemoveRun(orphanedJobId);
-                                _dispatcher.MarkIssueComplete(run.IssueIdentifier);
+                                _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
                                 await TrySwapLabelToErrorAsync(run, ct);
                             }
@@ -170,7 +170,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
                     _runService.RemoveRun(agent.ActiveJobId);
 
                     // Mark issue as no longer processing in the dispatcher
-                    _dispatcher.MarkIssueComplete(run.IssueIdentifier);
+                    _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
                     // Swap label to agent:error via issue provider
                     await TrySwapLabelToErrorAsync(run, ct);
@@ -211,7 +211,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
 
             _historyService.AddRunToHistory(run);
             _runService.RemoveRun(run.RunId);
-            _dispatcher.MarkIssueComplete(run.IssueIdentifier);
+            _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
             await TrySwapLabelToErrorAsync(run, ct);
 

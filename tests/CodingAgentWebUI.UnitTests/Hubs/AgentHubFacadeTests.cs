@@ -183,7 +183,7 @@ public sealed class AgentHubFacadeTests
     public void MarkIssueComplete_DelegatesToDispatcher()
     {
         // Should not throw
-        _facade.MarkIssueComplete("org/repo#1");
+        _facade.MarkIssueComplete("org/repo#1", "provider-1");
     }
 
     [Fact]
