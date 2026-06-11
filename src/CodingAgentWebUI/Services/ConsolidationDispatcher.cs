@@ -202,17 +202,6 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         var includeIssuePermission = type == ConsolidationRunType.RefactoringDetection;
         var rawConfigs = await BuildProviderConfigsAsync(type, templateId, agent, ct);
 
-        // Validate provider↔agent compatibility BEFORE token vending
-        var agentProviderConfig = rawConfigs.FirstOrDefault(c => c.Kind == ProviderKind.Agent);
-        if (agentProviderConfig is not null && !IsProviderCompatibleWithAgent(agentProviderConfig, agent))
-        {
-            _logger.Error(
-                "Provider type '{ProviderType}' is incompatible with agent {AgentId} (labels=[{Labels}]). Aborting dispatch.",
-                agentProviderConfig.ProviderType, agent.AgentId, string.Join(", ", agent.Labels));
-            throw new InvalidOperationException(
-                $"Agent provider '{agentProviderConfig.ProviderType}' is incompatible with agent '{agent.AgentId}' labels [{string.Join(", ", agent.Labels)}]");
-        }
-
         var template = templateId is not null ? await ResolveTemplateAsync(templateId, ct) : null;
         var repoProviderId = template?.RepoProviderId ?? "";
         var providerConfigs = await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct, includeIssuePermission);
@@ -343,12 +332,14 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
         // Resolve agent config via profile (same as regular pipeline jobs)
         ProviderConfig? agentConfig = null;
+        bool resolvedViaProfile = false;
         var profiles = await _configStore.LoadAgentProfilesAsync(ct);
         var profileResolver = new ProfileResolver();
         var profile = profileResolver.Resolve(profiles, agent.Labels);
         if (profile is not null)
         {
             agentConfig = agentConfigs.FirstOrDefault(c => c.Id == profile.AgentProviderConfigId);
+            resolvedViaProfile = agentConfig is not null;
             _logger.Debug(
                 "Consolidation job resolved agent provider via profile '{ProfileId}' for agent {AgentId}",
                 profile.Id, agent.AgentId);
@@ -361,6 +352,18 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         }
 
         agentConfig ??= agentConfigs.FirstOrDefault();
+
+        if (agentConfig is not null)
+        {
+            // Validate compatibility only on fallback path — profile resolution is trusted
+            if (!resolvedViaProfile && !IsProviderCompatibleWithAgent(agentConfig, agent))
+            {
+                _logger.Error(
+                    "Fallback provider '{ProviderType}' is incompatible with agent {AgentId} (labels=[{Labels}]). Skipping agent config.",
+                    agentConfig.ProviderType, agent.AgentId, string.Join(", ", agent.Labels));
+                agentConfig = null;
+            }
+        }
 
         if (agentConfig is not null)
             configs.Add(agentConfig);

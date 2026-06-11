@@ -396,9 +396,9 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     }
 
     [Fact]
-    public async Task TryDispatchAsync_IncompatibleProvider_ReturnsFailed()
+    public async Task TryDispatchAsync_IncompatibleFallbackProvider_SkipsAgentConfig()
     {
-        // Agent has kiro labels but no profiles → fallback picks OpenCode config
+        // Agent has kiro labels but no profiles → fallback picks OpenCode config → compatibility rejects it
         RegisterIdleAgent(labels: new[] { "kiro", "dotnet", "dotnet10" });
 
         // Only OpenCode provider available (simulates misconfigured fallback)
@@ -411,7 +411,9 @@ public sealed class ConsolidationDispatcherTests : IDisposable
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { openCodeConfig });
 
+        IReadOnlyList<ProviderConfig>? capturedConfigs = null;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>((configs, _, _, _) => capturedConfigs = configs)
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
@@ -419,10 +421,10 @@ public sealed class ConsolidationDispatcherTests : IDisposable
 
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
-        result.Should().Be(ConsolidationDispatchResult.Failed);
-        // Token vending should NOT have been called
-        _mockTokenVending.Verify(t => t.PrepareAgentConfigsAsync(
-            It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
+        // Job dispatches but without an agent provider config (incompatible one was skipped)
+        result.Should().Be(ConsolidationDispatchResult.Dispatched);
+        capturedConfigs.Should().NotBeNull();
+        capturedConfigs!.Any(c => c.Kind == ProviderKind.Agent).Should().BeFalse();
     }
 
     #endregion
