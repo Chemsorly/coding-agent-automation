@@ -8,6 +8,7 @@ using CodingAgentWebUI.Pipeline.Services.Steps;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
+using Serilog.Context;
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
@@ -319,6 +320,9 @@ public sealed class LocalPipelineExecutor
             var masked = MaskSecretsInOutput(line, context);
             _ = EmitOutputLineInternalAsync(run, outputBatcher, masked, ct);
         }
+
+        using var _runIdCtx = LogContext.PushProperty("PipelineRunId", run.RunId);
+        using var _issueCtx = LogContext.PushProperty("IssueIdentifier", run.IssueIdentifier);
 
         try
         {
