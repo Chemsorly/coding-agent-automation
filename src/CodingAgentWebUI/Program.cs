@@ -85,6 +85,7 @@ builder.Services.AddOpenTelemetry()
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
         .AddSource(PipelineTelemetry.SourceName)
+        .AddSource("Microsoft.AspNetCore.SignalR.Server")
         .AddOtlpExporter())
     .WithMetrics(m => m
         .AddAspNetCoreInstrumentation()
