@@ -550,7 +550,6 @@ public sealed class LocalPipelineExecutor
         {
             new CloneRepositoryStep(),
             new WriteSteeringStep(job),
-            new RunEnvironmentSetupStep(job),
             new CreateBranchStep(),
             new SyncBrainPreRunStep(),
             new ExtractLinkedIssuesStep(new IssueDescriptionParser()),

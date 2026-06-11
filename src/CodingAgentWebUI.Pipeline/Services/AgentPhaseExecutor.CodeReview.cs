@@ -101,12 +101,12 @@ internal partial class AgentPhaseExecutor
         if (agents.Count == 0)
             return;
 
-        run.CodeReviewIterationsTotal = config.CodeReview.MaxIterations;
-
         // For review runs (PR review pipeline), force single iteration and skip fix prompts.
         // The review pipeline is read-only — it reports findings but never modifies code.
         var maxIterations = run.RunType == PipelineRunType.Review ? 1 : config.CodeReview.MaxIterations;
         var skipFixPrompt = run.RunType == PipelineRunType.Review;
+
+        run.CodeReviewIterationsTotal = maxIterations;
 
         // Pre-compute diff artifacts so review agents don't need to run git diff themselves.
         // This saves context window space (agents read selectively) and eliminates the first

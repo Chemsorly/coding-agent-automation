@@ -3,6 +3,7 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using ILogger = Serilog.ILogger;
 
@@ -199,7 +200,19 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     {
         // Build provider configs for the consolidation job and vend tokens
         var includeIssuePermission = type == ConsolidationRunType.RefactoringDetection;
-        var rawConfigs = await BuildProviderConfigsAsync(type, templateId, ct);
+        var rawConfigs = await BuildProviderConfigsAsync(type, templateId, agent, ct);
+
+        // Validate provider↔agent compatibility BEFORE token vending
+        var agentProviderConfig = rawConfigs.FirstOrDefault(c => c.Kind == ProviderKind.Agent);
+        if (agentProviderConfig is not null && !IsProviderCompatibleWithAgent(agentProviderConfig, agent))
+        {
+            _logger.Error(
+                "Provider type '{ProviderType}' is incompatible with agent {AgentId} (labels=[{Labels}]). Aborting dispatch.",
+                agentProviderConfig.ProviderType, agent.AgentId, string.Join(", ", agent.Labels));
+            throw new InvalidOperationException(
+                $"Agent provider '{agentProviderConfig.ProviderType}' is incompatible with agent '{agent.AgentId}' labels [{string.Join(", ", agent.Labels)}]");
+        }
+
         var template = templateId is not null ? await ResolveTemplateAsync(templateId, ct) : null;
         var repoProviderId = template?.RepoProviderId ?? "";
         var providerConfigs = await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct, includeIssuePermission);
@@ -315,25 +328,48 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
     /// <summary>
     /// Builds the provider configs list for the consolidation job based on the run type and template.
-    /// Uses project-based template lookup via IProjectStore.
+    /// Uses profile resolution to determine the correct agent provider config for the selected agent
+    /// (same pattern as regular pipeline jobs).
     /// </summary>
     private async Task<IReadOnlyList<ProviderConfig>> BuildProviderConfigsAsync(
         ConsolidationRunType type,
         string? templateId,
+        AgentEntry agent,
         CancellationToken ct)
     {
         var configs = new List<ProviderConfig>();
 
-        // Always need an agent provider
         var agentConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
-        var agentConfig = agentConfigs.FirstOrDefault();
+
+        // Resolve agent config via profile (same as regular pipeline jobs)
+        ProviderConfig? agentConfig = null;
+        var profiles = await _configStore.LoadAgentProfilesAsync(ct);
+        var profileResolver = new ProfileResolver();
+        var profile = profileResolver.Resolve(profiles, agent.Labels);
+        if (profile is not null)
+        {
+            agentConfig = agentConfigs.FirstOrDefault(c => c.Id == profile.AgentProviderConfigId);
+            _logger.Debug(
+                "Consolidation job resolved agent provider via profile '{ProfileId}' for agent {AgentId}",
+                profile.Id, agent.AgentId);
+        }
+        else if (profiles.Count > 0)
+        {
+            _logger.Warning(
+                "No profile matches agent {AgentId} labels [{Labels}] for consolidation job. Using fallback.",
+                agent.AgentId, string.Join(", ", agent.Labels));
+        }
+
+        agentConfig ??= agentConfigs.FirstOrDefault();
+
         if (agentConfig is not null)
             configs.Add(agentConfig);
 
-        if (templateId is null)
-            return configs.AsReadOnly();
+        // Resolve template for repo/brain/issue providers
+        PipelineJobTemplate? template = null;
+        if (templateId is not null)
+            template = await ResolveTemplateAsync(templateId, ct);
 
-        var template = await ResolveTemplateAsync(templateId, ct);
         if (template is null)
             return configs.AsReadOnly();
 
@@ -438,4 +474,29 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
     private static Dictionary<string, string>? CaptureTraceContext() =>
         PipelineTelemetry.CaptureTraceContext("DispatchConsolidation");
+
+    /// <summary>
+    /// Validates that the resolved agent provider type is compatible with the selected agent's capabilities.
+    /// Uses the provider config's <see cref="ProviderConfig.RequiredLabels"/> to determine compatibility.
+    /// If no RequiredLabels are set, falls back to provider-type-based heuristic (OpenCode→"opencode", KiroCli→"kiro").
+    /// Returns true if compatible or if no constraints can be determined.
+    /// </summary>
+    private static bool IsProviderCompatibleWithAgent(ProviderConfig agentProviderConfig, AgentEntry agent)
+    {
+        var agentLabelSet = new HashSet<string>(agent.Labels, StringComparer.OrdinalIgnoreCase);
+
+        // Primary: use explicit RequiredLabels from config
+        if (agentProviderConfig.RequiredLabels is { Count: > 0 } required)
+            return required.All(l => agentLabelSet.Contains(l));
+
+        // Fallback: heuristic based on provider type (safety net for configs without RequiredLabels)
+        if (agentProviderConfig.ProviderType.Equals("OpenCode", StringComparison.OrdinalIgnoreCase))
+            return agentLabelSet.Contains("opencode");
+
+        if (agentProviderConfig.ProviderType.Equals("KiroCli", StringComparison.OrdinalIgnoreCase))
+            return agentLabelSet.Contains("kiro");
+
+        // Unknown provider type with no labels — be permissive
+        return true;
+    }
 }
