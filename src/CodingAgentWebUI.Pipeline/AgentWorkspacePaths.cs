@@ -149,6 +149,12 @@ public static class AgentWorkspacePaths
         return $".agent/review-findings-{sanitized}.md";
     }
 
+    /// <summary>
+    /// The file path (relative to workspace) where the acceptance criteria agent writes
+    /// its structured compliance report (JSON).
+    /// </summary>
+    public const string AcceptanceCriteriaFilePath = ".agent/acceptance-criteria.json";
+
     /// <summary>Kiro CLI steering file for project-level content.</summary>
     public const string KiroSteeringProjectFilePath = ".kiro/steering/pipeline-project.md";
 

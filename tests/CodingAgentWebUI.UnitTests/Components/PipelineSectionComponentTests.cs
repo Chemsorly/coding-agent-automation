@@ -187,8 +187,9 @@ public class PipelineSectionComponentTests : BunitContext
         var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
         Assert.Contains("Analysis Prompt", cut.Markup);
         Assert.Contains("Implementation Prompt", cut.Markup);
+        Assert.Contains("Acceptance Criteria Prompt", cut.Markup);
         var textareas = cut.FindAll("textarea");
-        Assert.Equal(2, textareas.Count);
+        Assert.Equal(3, textareas.Count);
     }
 
     [Fact]
@@ -196,7 +197,7 @@ public class PipelineSectionComponentTests : BunitContext
     {
         var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
         var resetButtons = cut.FindAll(".btn-revert");
-        Assert.Equal(2, resetButtons.Count);
+        Assert.Equal(3, resetButtons.Count);
     }
 
     [Fact]

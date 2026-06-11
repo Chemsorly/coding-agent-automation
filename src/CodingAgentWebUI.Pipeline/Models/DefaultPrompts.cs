@@ -177,4 +177,34 @@ public static class DefaultPrompts
         "2. **Implement** — Make focused, minimal changes. Fix root causes, not symptoms. Maintain the existing code style and conventions.\n" +
         "3. **Verify** — Run the project's build, linter, and tests. If a command fails, fix the issue and re-run to confirm.\n\n" +
         "Keep working until the implementation is complete. If something fails, diagnose and fix it rather than stopping.";
+
+    public const string AcceptanceCriteriaCompliance =
+        "Evaluate the implementation against the acceptance criteria from the original issue.\n\n" +
+        "Read the issue context from `.agent/issue-context.md` or `.agent/linked-issue-*.md` files " +
+        "to find the acceptance criteria. If no acceptance criteria are found, write an empty criteria array.\n\n" +
+        "For EACH criterion, determine whether the implementation satisfies it.\n\n" +
+        "Write your assessment as a JSON file to `.agent/acceptance-criteria.json` with this exact schema:\n\n" +
+        "```json\n" +
+        "{\n" +
+        "  \"criteria\": [\n" +
+        "    {\n" +
+        "      \"criterion\": \"Description of the requirement\",\n" +
+        "      \"status\": \"compliant\",\n" +
+        "      \"evidence\": \"What satisfies this criterion (file/feature reference)\"\n" +
+        "    },\n" +
+        "    {\n" +
+        "      \"criterion\": \"Another requirement\",\n" +
+        "      \"status\": \"non_compliant\",\n" +
+        "      \"reasoning\": \"What is missing or incomplete\"\n" +
+        "    }\n" +
+        "  ],\n" +
+        "  \"summary\": \"X of Y criteria addressed.\"\n" +
+        "}\n" +
+        "```\n\n" +
+        "Status values:\n" +
+        "- `compliant` — criterion is satisfied, provide `evidence` (file/feature reference)\n" +
+        "- `non_compliant` — criterion is NOT satisfied, provide `reasoning` (what's missing)\n" +
+        "- `not_applicable` — criterion is out of scope or contradicts constraints, provide `reasoning`\n\n" +
+        "Use snake_case for status values in the JSON output.\n\n" +
+        "Do NOT fix anything. Only evaluate and write the JSON file.";
 }

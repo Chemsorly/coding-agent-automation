@@ -578,11 +578,10 @@ public class PipelineOrchestrationServiceTests : IDisposable
         config.CodeReview.FixPrompt.Should().BeNull();
         config.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
         PipelineConfiguration.DefaultReviewAgents.Should().NotBeNull();
-        PipelineConfiguration.DefaultReviewAgents.Count.Should().Be(4);
+        PipelineConfiguration.DefaultReviewAgents.Count.Should().Be(3);
         PipelineConfiguration.DefaultReviewAgents[0].Name.Should().Be("Correctness");
         PipelineConfiguration.DefaultReviewAgents[1].Name.Should().Be("DotNetSpecialist");
         PipelineConfiguration.DefaultReviewAgents[2].Name.Should().Be("SecurityReviewer");
-        PipelineConfiguration.DefaultReviewAgents[3].Name.Should().Be("AcceptanceCriteria");
     }
 
     // --- Fix prompt tests ---
@@ -1276,11 +1275,10 @@ public class PipelineOrchestrationServiceTests : IDisposable
     public void CodeReviewDefaults_IncludeDefaultAgents()
     {
         var agents = PipelineConfiguration.DefaultReviewAgents;
-        agents.Should().HaveCount(4);
+        agents.Should().HaveCount(3);
         agents[0].Name.Should().Be("Correctness");
         agents[1].Name.Should().Be("DotNetSpecialist");
         agents[2].Name.Should().Be("SecurityReviewer");
-        agents[3].Name.Should().Be("AcceptanceCriteria");
     }
 
     [Fact]

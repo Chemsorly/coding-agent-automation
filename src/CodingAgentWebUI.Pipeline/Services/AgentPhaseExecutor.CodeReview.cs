@@ -140,6 +140,14 @@ internal partial class AgentPhaseExecutor
                           && agents.Count > 1
                           && context.AgentProvider.SupportsParallelExecution;
 
+        // Launch acceptance criteria compliance check in parallel with code reviewers.
+        // This runs as a separate task that is awaited AFTER the review loop completes.
+        Task<AgentResult?> acceptanceCriteriaTask = Task.FromResult<AgentResult?>(null);
+        if (config.AcceptanceCriteriaEnabled)
+        {
+            acceptanceCriteriaTask = ExecuteAcceptanceCriteriaSafeAsync(context, ct);
+        }
+
         if (useParallel)
         {
             _logger.Information(
@@ -285,6 +293,18 @@ internal partial class AgentPhaseExecutor
         }
 
         run.CodeReviewIterationInProgress = 0;
+
+        // TODO: If the review loop exits via OperationCanceledException (line 277), acceptanceCriteriaTask
+        // is never awaited and may still be running briefly. Consider wrapping in a finally block to await
+        // or cancel the task explicitly on early exit.
+        // Await acceptance criteria task and parse results
+        var acAgentResult = await acceptanceCriteriaTask;
+        if (acAgentResult is not null)
+        {
+            run.AccumulateTokenUsage(acAgentResult);
+            run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
+                run.WorkspacePath!, _logger, ct);
+        }
     }
 
     /// <summary>
@@ -441,6 +461,54 @@ internal partial class AgentPhaseExecutor
         context.Callbacks.NotifyChange();
 
         return localCriticalCount;
+    }
+
+    /// <summary>
+    /// Executes the acceptance criteria compliance agent in isolation.
+    /// Returns the AgentResult for token accumulation, or null on failure.
+    /// Never throws — failures are logged and result in a null report.
+    /// </summary>
+    private async Task<AgentResult?> ExecuteAcceptanceCriteriaSafeAsync(
+        AgentPhaseContext context, CancellationToken ct)
+    {
+        try
+        {
+            var run = context.Run;
+            var config = context.Config;
+
+            _logger.Information("Pipeline {RunId} launching acceptance criteria compliance check", run.RunId);
+            context.Callbacks.EmitOutputLine("📋 Launching acceptance criteria compliance check...");
+
+            var prompt = PromptBuilder.BuildAcceptanceCriteriaPrompt(config.AcceptanceCriteriaPrompt);
+
+            var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+                context.AgentProvider,
+                new AgentRequest
+                {
+                    Prompt = prompt,
+                    WorkspacePath = run.WorkspacePath!,
+                    Timeout = config.AgentTimeout,
+                    UseResume = false
+                },
+                run, config, "Acceptance criteria compliance",
+                context.Callbacks.NotifyChange, _logger, ct,
+                line => context.Callbacks.EmitOutputLine($"[AcceptanceCriteria] {line}"));
+
+            _logger.Information(
+                "Pipeline {RunId} acceptance criteria check completed with exit code {ExitCode}",
+                run.RunId, agentResult.ExitCode);
+
+            return agentResult;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // Propagate cancellation
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} acceptance criteria check failed, skipping", context.Run.RunId);
+            return null;
+        }
     }
 
     /// <summary>

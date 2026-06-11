@@ -114,6 +114,9 @@ public sealed class PipelineRun
     /// <summary>Analysis gate recommendation, or null if no assessment was produced.</summary>
     public AnalysisGateResult? AnalysisRecommendation { get; set; }
 
+    /// <summary>Structured acceptance criteria compliance report, or null if not produced/disabled.</summary>
+    public AcceptanceCriteriaReport? AcceptanceCriteriaReport { get; set; }
+
     /// <summary>The authoritative label the agent applied for this run's terminal state (e.g. "agent:needs-refinement", "agent:wont-do"). Null if not explicitly set.</summary>
     public string? FinalLabel { get; set; }
 
