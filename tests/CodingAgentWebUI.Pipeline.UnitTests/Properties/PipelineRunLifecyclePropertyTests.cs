@@ -128,7 +128,7 @@ public class PipelineRunLifecyclePropertyTests
         var localIssueId = input.LocalMatchesQuery ? input.QueryIssue : "other-issue";
 
         var runServiceMock = new Mock<IOrchestratorRunService>();
-        runServiceMock.Setup(r => r.IsIssueBeingProcessed(input.QueryIssue)).Returns(input.RunServiceReports);
+        runServiceMock.Setup(r => r.IsIssueBeingProcessed(input.QueryIssue, It.IsAny<string>())).Returns(input.RunServiceReports);
 
         var service = CreateService(runServiceMock: runServiceMock);
         service.ActiveRun = CreateRun(issueId: localIssueId, step: input.LocalStep);
@@ -137,7 +137,7 @@ public class PipelineRunLifecyclePropertyTests
         var localMatches = input.LocalMatchesQuery && localIsRunning;
         var expected = localMatches || input.RunServiceReports;
 
-        return service.IsIssueBeingProcessed(input.QueryIssue) == expected;
+        return service.IsIssueBeingProcessed(input.QueryIssue, "ip-1") == expected;
     }
 
     // ── Property 5: Event Emission Correctness ──────────────────────────
@@ -350,7 +350,7 @@ public class PipelineRunLifecyclePropertyTests
         var allCancelled = agentRuns.All(r => r.CurrentStep == PipelineStep.Cancelled);
         var allInHistory = agentRuns.All(r => addedRuns.Contains(r));
         var allRemoved = agentRuns.All(r => removedRunIds.Contains(r.RunId));
-        var returnedIssues = cancelledIssues.SequenceEqual(agentRuns.Select(r => r.IssueIdentifier));
+        var returnedIssues = cancelledIssues.SequenceEqual(agentRuns.Select(r => (r.IssueIdentifier, r.IssueProviderConfigId)));
 
         return allCompleted && allCancelled && allInHistory && allRemoved && returnedIssues;
     }
@@ -369,7 +369,7 @@ public class PipelineRunLifecyclePropertyTests
         var run = CreateRun(input.RunId, input.IssueId, PipelineStep.GeneratingCode);
 
         var runServiceMock = new Mock<IOrchestratorRunService>();
-        runServiceMock.Setup(r => r.IsIssueBeingProcessed(input.IssueId)).Returns(false);
+        runServiceMock.Setup(r => r.IsIssueBeingProcessed(input.IssueId, It.IsAny<string>())).Returns(false);
 
         var service = CreateService(runServiceMock: runServiceMock);
 
@@ -396,7 +396,7 @@ public class PipelineRunLifecyclePropertyTests
         var run = CreateRun(input.RunId, input.IssueId, PipelineStep.GeneratingCode);
 
         var runServiceMock = new Mock<IOrchestratorRunService>();
-        runServiceMock.Setup(r => r.IsIssueBeingProcessed(input.IssueId)).Returns(true);
+        runServiceMock.Setup(r => r.IsIssueBeingProcessed(input.IssueId, It.IsAny<string>())).Returns(true);
 
         var service = CreateService(runServiceMock: runServiceMock);
 

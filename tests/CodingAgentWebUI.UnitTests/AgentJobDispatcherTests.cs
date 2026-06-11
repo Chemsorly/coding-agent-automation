@@ -114,7 +114,7 @@ public class AgentJobDispatcherTests : IDisposable
     public void IsIssueBeingProcessedOrQueued_NotQueued_ReturnsFalse()
     {
         var dispatcher = CreateDispatcher();
-        dispatcher.IsIssueBeingProcessedOrQueued("issue-1").Should().BeFalse();
+        dispatcher.IsIssueBeingProcessedOrQueued("issue-1", "provider-1").Should().BeFalse();
     }
 
     [Fact]
@@ -130,7 +130,7 @@ public class AgentJobDispatcherTests : IDisposable
         });
 
         var dispatcher = CreateDispatcher();
-        dispatcher.IsIssueBeingProcessedOrQueued("issue-1").Should().BeTrue();
+        dispatcher.IsIssueBeingProcessedOrQueued("issue-1", "ip").Should().BeTrue();
     }
 
     [Fact]
@@ -147,14 +147,14 @@ public class AgentJobDispatcherTests : IDisposable
         });
 
         var dispatcher = CreateDispatcher();
-        dispatcher.IsIssueBeingProcessedOrQueued("issue-1").Should().BeTrue();
+        dispatcher.IsIssueBeingProcessedOrQueued("issue-1", "ip").Should().BeTrue();
     }
 
     [Fact]
     public void IsIssueBeingProcessedOrQueued_NullIdentifier_Throws()
     {
         var dispatcher = CreateDispatcher();
-        var act = () => dispatcher.IsIssueBeingProcessedOrQueued(null!);
+        var act = () => dispatcher.IsIssueBeingProcessedOrQueued(null!, "provider-1");
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -195,7 +195,7 @@ public class AgentJobDispatcherTests : IDisposable
             "issue-new", "ip", "rp", null, null, "user", CancellationToken.None);
 
         result.Should().BeTrue(); // Enqueued successfully
-        _dispatcher.IsIssueQueued("issue-new").Should().BeTrue();
+        _dispatcher.IsIssueQueued("issue-new", "ip").Should().BeTrue();
     }
 
     [Fact]
@@ -319,7 +319,7 @@ public class AgentJobDispatcherTests : IDisposable
         removed!.RunId.Should().Be("run-complete");
 
         // After removal, issue should no longer be processed
-        _runService.IsIssueBeingProcessed("issue-complete").Should().BeFalse();
+        _runService.IsIssueBeingProcessed("issue-complete", "ip").Should().BeFalse();
     }
 
     #region TryDispatchReviewAsync
@@ -374,7 +374,7 @@ public class AgentJobDispatcherTests : IDisposable
         }, CancellationToken.None);
 
         result.Should().BeTrue();
-        _dispatcher.IsIssueQueued("pr-2").Should().BeTrue();
+        _dispatcher.IsIssueQueued("pr-2", "ip").Should().BeTrue();
     }
 
     [Fact]
@@ -471,7 +471,7 @@ public class AgentJobDispatcherTests : IDisposable
             "ip", "rp", null, "user", CancellationToken.None);
 
         result.Should().BeTrue();
-        _dispatcher.IsIssueQueued("epic-2").Should().BeTrue();
+        _dispatcher.IsIssueQueued("epic-2", "ip").Should().BeTrue();
     }
 
     [Fact]

@@ -95,7 +95,7 @@ public class DecompositionTemplatePropertyTests
             .Returns(new Mock<IRepositoryProvider>().Object);
 
         var mockDispatcher = new Mock<IJobDispatcher>();
-        mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>())).Returns(false);
+        mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>(), It.IsAny<string>())).Returns(false);
 
         var svc = CreateService(mockStore, mockFactory, mockDispatcher.Object);
         using var cts = new CancellationTokenSource();
@@ -199,7 +199,7 @@ public class DecompositionTemplatePropertyTests
             .Returns(new Mock<IRepositoryProvider>().Object);
 
         var mockDispatcher = new Mock<IJobDispatcher>();
-        mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>())).Returns(false);
+        mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>(), It.IsAny<string>())).Returns(false);
 
         var svc = CreateService(mockStore, mockFactory, mockDispatcher.Object);
         using var cts = new CancellationTokenSource();

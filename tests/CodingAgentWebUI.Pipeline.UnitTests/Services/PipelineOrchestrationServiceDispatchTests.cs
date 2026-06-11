@@ -60,7 +60,7 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
         _mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>())).Returns(_mockRepoProvider.Object);
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(_mockIssueProvider.Object);
 
-        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<string>())).Returns(false);
+        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<string>())).Returns(false);
 
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistory()).Returns(new List<PipelineRunSummary>().AsReadOnly());
@@ -108,7 +108,7 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
     public async Task CreateDispatchedRunAsync_IssueAlreadyProcessed_ReturnsNull()
     {
         // Arrange
-        _mockRunService.Setup(r => r.IsIssueBeingProcessed("42")).Returns(true);
+        _mockRunService.Setup(r => r.IsIssueBeingProcessed("42", It.IsAny<string>())).Returns(true);
 
         // Act
         var run = await _service.CreateDispatchedRunAsync(

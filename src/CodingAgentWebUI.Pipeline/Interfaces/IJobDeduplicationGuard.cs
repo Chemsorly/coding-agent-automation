@@ -11,5 +11,5 @@ public interface IJobDeduplicationGuard
     /// Marks an issue as no longer being processed, releasing the dedup guard.
     /// After this call, the issue can be re-enqueued for dispatch.
     /// </summary>
-    void MarkIssueComplete(string issueIdentifier);
+    void MarkIssueComplete(string issueIdentifier, string issueProviderConfigId);
 }
