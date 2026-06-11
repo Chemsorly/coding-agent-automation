@@ -59,7 +59,11 @@ public sealed class PullRequestFinalizationService
             }
 
             // Prepend agent summary above existing PR body
-            var prNumber = int.Parse(run.PullRequestNumber!);
+            if (!int.TryParse(run.PullRequestNumber, out var prNumber))
+            {
+                _logger.Warning("Pipeline {RunId} PR description skipped — PullRequestNumber '{PrNumber}' is not a valid integer", run.RunId, run.PullRequestNumber);
+                return;
+            }
             var currentBody = run.PullRequestBody ?? "";
             var newBody = $"{description}\n\n---\n\n{currentBody}";
             await repoProvider.UpdatePullRequestAsync(prNumber, newBody, false, ct);
