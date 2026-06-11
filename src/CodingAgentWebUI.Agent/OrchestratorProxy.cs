@@ -39,7 +39,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
         ArgumentNullException.ThrowIfNull(body);
         return _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync(
-                "RequestPostComment",
+                HubMethodNames.RequestPostComment,
                 _jobId,
                 CommentType.Analysis,
                 new CommentPayload { AnalysisMarkdown = body },
@@ -54,7 +54,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(newLabel);
         return _signalRPipeline.ExecuteAsync(async token =>
-            await _connection.InvokeAsync("RequestLabelChange", _jobId, newLabel, (int)LabelTargetKind.Issue, token), ct).AsTask();
+            await _connection.InvokeAsync(HubMethodNames.RequestLabelChange, _jobId, newLabel, (int)LabelTargetKind.Issue, token), ct).AsTask();
     }
 
     /// <summary>
@@ -66,7 +66,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
         ArgumentNullException.ThrowIfNull(identifier);
         ArgumentNullException.ThrowIfNull(newLabel);
         return _signalRPipeline.ExecuteAsync(async token =>
-            await _connection.InvokeAsync("RequestLabelChange", _jobId, newLabel, (int)targetKind, token), ct).AsTask();
+            await _connection.InvokeAsync(HubMethodNames.RequestLabelChange, _jobId, newLabel, (int)targetKind, token), ct).AsTask();
     }
 
     /// <summary>
@@ -77,7 +77,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
         ArgumentNullException.ThrowIfNull(assessmentJson);
         return _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync(
-                "RequestPostComment",
+                HubMethodNames.RequestPostComment,
                 _jobId,
                 CommentType.GateRejection,
                 new CommentPayload { AssessmentJson = assessmentJson },
@@ -92,7 +92,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
         ArgumentNullException.ThrowIfNull(assessmentJson);
         return _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync(
-                "RequestPostComment",
+                HubMethodNames.RequestPostComment,
                 _jobId,
                 CommentType.GateWontDo,
                 new CommentPayload { AssessmentJson = assessmentJson },
@@ -106,7 +106,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     {
         var response = await _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync<TokenRefreshResponse>(
-                "RequestTokenRefresh", _jobId, kind, token), ct);
+                HubMethodNames.RequestTokenRefresh, _jobId, kind, token), ct);
         return response.Token;
     }
 
@@ -123,7 +123,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
 
         return await _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync<CreatedIssueResult>(
-                "RequestCreateIssue", _jobId, title, body, labels, token), ct);
+                HubMethodNames.RequestCreateIssue, _jobId, title, body, labels, token), ct);
     }
 
     /// <summary>
@@ -140,7 +140,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
 
         return await _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync<CreatedIssueResult>(
-                "RequestCreateIssueForProvider", _jobId, issueProviderConfigId, title, body, labels, token), ct);
+                HubMethodNames.RequestCreateIssueForProvider, _jobId, issueProviderConfigId, title, body, labels, token), ct);
     }
 
     /// <summary>
@@ -150,7 +150,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     {
         return await _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync<PagedResult<IssueSummary>>(
-                "RequestListOpenIssues", _jobId, page, pageSize, labels, token), ct);
+                HubMethodNames.RequestListOpenIssues, _jobId, page, pageSize, labels, token), ct);
     }
 
     /// <summary>
@@ -162,7 +162,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
 
         return await _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync<IssueDetail>(
-                "RequestGetIssue", _jobId, identifier, token), ct);
+                HubMethodNames.RequestGetIssue, _jobId, identifier, token), ct);
     }
 
     /// <summary>
@@ -174,7 +174,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
 
         return await _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync<IReadOnlyList<IssueComment>>(
-                "RequestListComments", _jobId, identifier, token), ct);
+                HubMethodNames.RequestListComments, _jobId, identifier, token), ct);
     }
 
     /// <summary>
@@ -188,6 +188,6 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
 
         return _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync(
-                "RequestUpdateComment", _jobId, issueIdentifier, commentId, body, token), ct).AsTask();
+                HubMethodNames.RequestUpdateComment, _jobId, issueIdentifier, commentId, body, token), ct).AsTask();
     }
 }

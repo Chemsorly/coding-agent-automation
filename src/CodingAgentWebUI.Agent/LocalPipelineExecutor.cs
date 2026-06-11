@@ -481,7 +481,7 @@ public sealed class LocalPipelineExecutor
             onStepChanged?.Invoke(step);
 
             var metadata = BuildStepMetadata(run, step);
-            await connection.InvokeAsync("ReportStepTransition", jobId, step, DateTimeOffset.UtcNow, metadata, ct);
+            await connection.InvokeAsync(HubMethodNames.ReportStepTransition, jobId, step, DateTimeOffset.UtcNow, metadata, ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", step); }
     }
@@ -508,7 +508,7 @@ public sealed class LocalPipelineExecutor
     internal async Task ReportQualityGateResultInternalAsync(
         HubConnection connection, string jobId, QualityGateReport report, CancellationToken ct)
     {
-        try { await connection.InvokeAsync("ReportQualityGateResult", jobId, report, ct); }
+        try { await connection.InvokeAsync(HubMethodNames.ReportQualityGateResult, jobId, report, ct); }
         catch (Exception ex) { _logger.Warning(ex, "Failed to report quality gate result"); }
     }
 
@@ -623,7 +623,7 @@ public sealed class LocalPipelineExecutor
             (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, inputs.PrContext, token),
             async (contextLoaded, fileCount) =>
             {
-                try { await inputs.Connection.InvokeAsync("ReportBrainSyncResult", inputs.Job.JobId, contextLoaded, fileCount, ct); }
+                try { await inputs.Connection.InvokeAsync(HubMethodNames.ReportBrainSyncResult, inputs.Job.JobId, contextLoaded, fileCount, ct); }
                 catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
             });
 
@@ -738,7 +738,7 @@ public sealed class LocalPipelineExecutor
         run.CurrentStep = step;
         try
         {
-            await connection.InvokeAsync("ReportStepTransition", jobId, step, DateTimeOffset.UtcNow, (Dictionary<string, string>?)null, ct);
+            await connection.InvokeAsync(HubMethodNames.ReportStepTransition, jobId, step, DateTimeOffset.UtcNow, (Dictionary<string, string>?)null, ct);
         }
         catch (Exception ex)
         {
