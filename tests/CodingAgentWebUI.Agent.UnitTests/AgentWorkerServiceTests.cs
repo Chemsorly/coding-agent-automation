@@ -30,7 +30,7 @@ public class AgentWorkerServiceTests
         var mockConsolidationExecutor = CreateMockConsolidationExecutor();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
-        var act = () => new AgentWorkerService(null!, mockExecutor, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
+        var act = () => new AgentWorkerService(null!, CreateTestHubManagerFactory(), mockExecutor, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("hubManager");
     }
 
@@ -42,7 +42,7 @@ public class AgentWorkerServiceTests
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
         var act = () => new AgentWorkerService(
-            CreateTestHubManager(), null!, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
+            CreateTestHubManager(), CreateTestHubManagerFactory(), null!, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("executor");
     }
 
@@ -51,7 +51,7 @@ public class AgentWorkerServiceTests
     {
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var act = () => new AgentWorkerService(
-            CreateTestHubManager(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), null!);
+            CreateTestHubManager(), CreateTestHubManagerFactory(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), null!);
         act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
     }
 
@@ -98,7 +98,7 @@ public class AgentWorkerServiceTests
             var mockLogger = new Mock<Serilog.ILogger>();
             var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
             var act = () => new AgentWorkerService(
-                CreateTestHubManager(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
+                CreateTestHubManager(), CreateTestHubManagerFactory(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
             act.Should().Throw<InvalidOperationException>()
                 .WithMessage("*AGENT_TYPE*");
         }
@@ -674,6 +674,7 @@ public class AgentWorkerServiceTests
 
         var service = new AgentWorkerService(
             CreateTestHubManager(),
+            CreateTestHubManagerFactory(),
             CreateMockExecutor(),
             CreateMockConsolidationExecutor(),
             mockOrchestrator.Object,
@@ -742,6 +743,7 @@ public class AgentWorkerServiceTests
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         return new AgentWorkerService(
             CreateTestHubManager(),
+            CreateTestHubManagerFactory(),
             CreateMockExecutor(),
             CreateMockConsolidationExecutor(),
             mockOrchestrator.Object,
@@ -764,6 +766,7 @@ public class AgentWorkerServiceTests
         var mockLogger = new Mock<Serilog.ILogger>();
         return new AgentWorkerService(
             CreateTestHubManager(),
+            CreateTestHubManagerFactory(),
             CreateMockExecutor(),
             CreateMockConsolidationExecutor(),
             orchestrator,
@@ -771,6 +774,12 @@ public class AgentWorkerServiceTests
             new AgentIdentity("test-agent"),
             Mock.Of<IHostApplicationLifetime>(),
             mockLogger.Object);
+    }
+
+    private static HubConnectionManagerFactory CreateTestHubManagerFactory()
+    {
+        var logger = new Mock<Serilog.ILogger>();
+        return new HubConnectionManagerFactory("http://localhost:9999", "test-agent", "test-api-key", logger.Object);
     }
 
     private static JobAssignmentMessage CreateTestJobAssignment(string jobId = "test-job-1")

@@ -75,6 +75,11 @@ public interface IAgentHubFacade
     /// </summary>
     void RemoveRun(string jobId);
 
+    /// <summary>
+    /// Returns all active runs assigned to the specified agent.
+    /// </summary>
+    IReadOnlyList<PipelineRun> GetActiveRunsByAgent(string agentId);
+
     // ── Dispatch operations ─────────────────────────────────────────────
 
     /// <summary>

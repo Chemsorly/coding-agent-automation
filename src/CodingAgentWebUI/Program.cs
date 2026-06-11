@@ -104,31 +104,8 @@ _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.jobs.active",
 _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
     () => agentRegistry.GetAllAgents().Count, "{connection}", "Total registered agents");
 
-// Graceful shutdown: swap to agent:cancelled label before exit
-var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
-lifetime.ApplicationStopping.Register(() =>
-{
-    var lifecycle = app.Services.GetRequiredService<PipelineRunLifecycleService>();
-    var pipeline = app.Services.GetRequiredService<PipelineOrchestrationService>();
-
-    try
-    {
-        var completed = Task.Run(async () =>
-        {
-            if (lifecycle.IsRunning)
-                await lifecycle.CancelPipelineAsync();
-
-            await pipeline.CancelActiveAgentRunsAsync();
-        }).Wait(TimeSpan.FromSeconds(15));
-
-        if (!completed)
-            Log.Warning("Graceful shutdown timed out after 15s — proceeding with exit");
-    }
-    catch (AggregateException ex)
-    {
-        Log.Warning(ex.InnerException ?? ex, "Error during graceful shutdown cancellation");
-    }
-});
+// Graceful shutdown is handled by ShutdownService (IHostedLifecycleService)
+// — async, with 15s timeout, non-blocking (Req 12)
 
 // Kubernetes-style health probes — anonymous, no auth required
 app.MapGet("/healthz", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }))

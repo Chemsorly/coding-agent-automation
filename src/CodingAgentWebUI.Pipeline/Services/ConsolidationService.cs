@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Persistence;
 using Serilog;
 
 namespace CodingAgentWebUI.Pipeline.Services;
@@ -137,8 +138,19 @@ public sealed class ConsolidationService : IConsolidationService
             await PrepareFeedbackDataAsync(run, ct);
         }
 
-        // Persist the run record
-        await PersistRunAsync(run, ct);
+        // Persist the run record — rollback in-memory state on failure to prevent orphaned entries
+        try
+        {
+            await PersistRunAsync(run, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex,
+                "Failed to persist consolidation run {RunId} for {Type}/{TemplateName} — rolling back in-memory state",
+                run.RunId, type, templateName);
+            _runningRuns.TryRemove(key, out _);
+            return null;
+        }
 
         // Dispatch the job to an idle agent (wrapped in try-catch to prevent concurrency state leak)
         if (_dispatcher is not null)
@@ -564,12 +576,9 @@ public sealed class ConsolidationService : IConsolidationService
     {
         try
         {
-            if (!Directory.Exists(_consolidationRunsDirectory))
-                Directory.CreateDirectory(_consolidationRunsDirectory);
-
             var filePath = Path.Combine(_consolidationRunsDirectory, $"{run.RunId}.json");
             var json = JsonSerializer.Serialize(run, PipelineJsonOptions.Default);
-            await File.WriteAllTextAsync(filePath, json, ct);
+            await AtomicFileWriter.WriteAsync(filePath, json, ct);
         }
         catch (Exception ex)
         {

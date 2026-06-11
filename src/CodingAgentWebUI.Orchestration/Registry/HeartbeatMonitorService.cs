@@ -101,6 +101,46 @@ public sealed class HeartbeatMonitorService : BackgroundService
 
                     _registry.TransitionStatus(agent.AgentId, AgentStatus.Disconnected);
                 }
+                // Phase 1.5: Detect orphaned runs that the agent never resumed.
+                // If the agent is Busy with a restored orphan but hasn't reported progress
+                // within the grace period, the agent doesn't actually have this job.
+                // Fail the run directly — no need for a second grace period since we already waited.
+                else if (agent is { Status: AgentStatus.Busy, OrphanRestoredAt: not null })
+                {
+                    var orphanAge = now - agent.OrphanRestoredAt.Value;
+                    if (orphanAge > gracePeriod)
+                    {
+                        var orphanedJobId = agent.ActiveJobId;
+                        _logger.Warning(
+                            "Agent {AgentId} has not resumed orphaned job {JobId} within grace period ({GracePeriod}, elapsed={OrphanAge:F0}s). " +
+                            "Marking run as Failed and returning agent to Idle.",
+                            agent.AgentId, orphanedJobId, gracePeriod, orphanAge.TotalSeconds);
+
+                        // Fail the orphaned run directly
+                        if (orphanedJobId is not null)
+                        {
+                            var run = _runService.GetRun(orphanedJobId);
+                            if (run is not null)
+                            {
+                                run.FailureReason = "Agent did not resume orphaned job within grace period";
+                                run.CompletedAt = DateTime.UtcNow;
+                                run.CompletedAtOffset = DateTimeOffset.UtcNow;
+                                run.CurrentStep = PipelineStep.Failed;
+
+                                _historyService.AddRunToHistory(run);
+                                _runService.RemoveRun(orphanedJobId);
+                                _dispatcher.MarkIssueComplete(run.IssueIdentifier);
+
+                                await TrySwapLabelToErrorAsync(run, ct);
+                            }
+                        }
+
+                        // Return agent to Idle so it can accept new jobs
+                        agent.ActiveJobId = null;
+                        agent.OrphanRestoredAt = null;
+                        _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+                    }
+                }
 
                 continue;
             }
@@ -122,6 +162,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
                 {
                     run.FailureReason = "Agent disconnected";
                     run.CompletedAt = DateTime.UtcNow;
+                    run.CompletedAtOffset = DateTimeOffset.UtcNow;
                     run.CurrentStep = PipelineStep.Failed;
 
                     // Persist to history and remove from active runs
@@ -165,6 +206,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
             // Agent gone from registry entirely — orphaned run
             run.FailureReason = "Agent deregistered (orphaned run)";
             run.CompletedAt = DateTime.UtcNow;
+            run.CompletedAtOffset = DateTimeOffset.UtcNow;
             run.CurrentStep = PipelineStep.Failed;
 
             _historyService.AddRunToHistory(run);

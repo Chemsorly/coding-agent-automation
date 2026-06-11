@@ -219,7 +219,8 @@ public class PipelineRunLifecyclePropertyTests
     /// <summary>
     /// Property 7: TransitionTo Postconditions
     /// For any PipelineRun and PipelineStep, after TransitionTo:
-    /// CurrentStep equals new step, HighWaterMark updated if non-terminal and exceeds current, OnChange invoked.
+    /// CurrentStep equals new step, HighWaterMark updated if non-terminal and exceeds current
+    /// (using StepOrder logical ordering, not enum ordinals), OnChange invoked.
     /// **Validates: Requirements 3.1, 3.2**
     /// </summary>
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
@@ -237,10 +238,12 @@ public class PipelineRunLifecyclePropertyTests
         var stepCorrect = run.CurrentStep == input.TargetStep;
 
         // (b) HighWaterMark updated if step is not Failed/Cancelled and exceeds current
-        // Note: Completed IS allowed to update HighWaterMark (only Failed/Cancelled are excluded)
+        // Uses StepOrder.GetOrder (logical execution order) — NOT enum ordinals.
+        // Steps from different pipeline types may have overlapping orders; the production
+        // code uses StepOrder for comparison and so must this assertion.
         bool hwmCorrect;
         var hwmExcluded = input.TargetStep is PipelineStep.Failed or PipelineStep.Cancelled;
-        if (!hwmExcluded && (int)input.TargetStep > (int)initialHighWaterMark)
+        if (!hwmExcluded && StepOrder.GetOrder(input.TargetStep) > StepOrder.GetOrder(initialHighWaterMark))
             hwmCorrect = run.HighWaterMark == input.TargetStep;
         else
             hwmCorrect = run.HighWaterMark == initialHighWaterMark;
@@ -335,15 +338,21 @@ public class PipelineRunLifecyclePropertyTests
         var runServiceMock = new Mock<IOrchestratorRunService>();
         runServiceMock.Setup(r => r.GetActiveRuns()).Returns(agentRuns.AsReadOnly());
 
+        var removedRunIds = new List<string>();
+        runServiceMock.Setup(r => r.RemoveRun(It.IsAny<string>()))
+            .Callback<string>(id => removedRunIds.Add(id));
+
         var service = CreateService(historyMock: historyMock, runServiceMock: runServiceMock);
 
-        service.MarkAgentRunsCancelled().GetAwaiter().GetResult();
+        var cancelledIssues = service.MarkAgentRunsCancelled().GetAwaiter().GetResult();
 
         var allCompleted = agentRuns.All(r => r.CompletedAt != null);
         var allCancelled = agentRuns.All(r => r.CurrentStep == PipelineStep.Cancelled);
         var allInHistory = agentRuns.All(r => addedRuns.Contains(r));
+        var allRemoved = agentRuns.All(r => removedRunIds.Contains(r.RunId));
+        var returnedIssues = cancelledIssues.SequenceEqual(agentRuns.Select(r => r.IssueIdentifier));
 
-        return allCompleted && allCancelled && allInHistory;
+        return allCompleted && allCancelled && allInHistory && allRemoved && returnedIssues;
     }
 
     // ── Property 11: RegisterDispatchedRun Success ──────────────────────

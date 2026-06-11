@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Moq;
+using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -203,9 +204,79 @@ public class PipelineRunLifecycleServiceTests
             runService: null,
             _mockLogger.Object);
 
+        var result = await service.MarkAgentRunsCancelled();
+
+        result.Should().BeEmpty();
+        _mockHistory.Verify(h => h.AddRunToHistory(It.IsAny<PipelineRun>()), Times.Never);
+    }
+
+    // ── MarkAgentRunsCancelled Run Removal ──────────────────────────────
+
+    [Fact]
+    public async Task MarkAgentRunsCancelled_RemovesRunsFromActiveTracking()
+    {
+        var runService = new Orchestration.OrchestratorRunService(_mockLogger.Object);
+        var run1 = CreateRun("run-1", "issue-1", PipelineStep.GeneratingCode);
+        var run2 = CreateRun("run-2", "issue-2", PipelineStep.CloningRepository);
+        runService.AddRun(run1);
+        runService.AddRun(run2);
+
+        var service = CreateService(runService);
+
         await service.MarkAgentRunsCancelled();
 
-        _mockHistory.Verify(h => h.AddRunToHistory(It.IsAny<PipelineRun>()), Times.Never);
+        runService.GetActiveRuns().Should().BeEmpty();
+        runService.ActiveRunCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task MarkAgentRunsCancelled_IsIssueBeingProcessed_ReturnsFalseForCancelledIssues()
+    {
+        var runService = new Orchestration.OrchestratorRunService(_mockLogger.Object);
+        var run1 = CreateRun("run-1", "issue-1", PipelineStep.GeneratingCode);
+        var run2 = CreateRun("run-2", "issue-2", PipelineStep.AnalyzingCode);
+        runService.AddRun(run1);
+        runService.AddRun(run2);
+
+        var service = CreateService(runService);
+
+        var cancelledIssues = await service.MarkAgentRunsCancelled();
+
+        cancelledIssues.Should().Contain("issue-1");
+        cancelledIssues.Should().Contain("issue-2");
+        runService.IsIssueBeingProcessed("issue-1").Should().BeFalse();
+        runService.IsIssueBeingProcessed("issue-2").Should().BeFalse();
+    }
+
+    // ── TransitionTo HighWaterMark with StepOrder ─────────────────────────
+
+    [Fact]
+    public void TransitionTo_RunningEnvironmentSetup_AdvancesHighWaterMarkPastCloningRepository()
+    {
+        // RunningEnvironmentSetup has enum ordinal 28 but logical order 2 (after CloningRepository=1).
+        // Before the StepOrder fix, ordinal-based comparison would have worked by accident here,
+        // but this test proves the StepOrder-based logic correctly advances HWM.
+        var service = CreateService();
+        var run = CreateRun(step: PipelineStep.CloningRepository);
+
+        service.TransitionTo(run, PipelineStep.RunningEnvironmentSetup);
+
+        run.CurrentStep.Should().Be(PipelineStep.RunningEnvironmentSetup);
+        run.HighWaterMark.Should().Be(PipelineStep.RunningEnvironmentSetup);
+    }
+
+    [Fact]
+    public void TransitionTo_EarlierStep_DoesNotRegressHighWaterMark()
+    {
+        // If a run transitions backward (e.g. retry), HWM should not regress
+        var service = CreateService();
+        var run = CreateRun(step: PipelineStep.GeneratingCode);
+        run.HighWaterMark = PipelineStep.GeneratingCode;
+
+        service.TransitionTo(run, PipelineStep.AnalyzingCode);
+
+        run.CurrentStep.Should().Be(PipelineStep.AnalyzingCode);
+        run.HighWaterMark.Should().Be(PipelineStep.GeneratingCode); // unchanged
     }
 
     /// <summary>

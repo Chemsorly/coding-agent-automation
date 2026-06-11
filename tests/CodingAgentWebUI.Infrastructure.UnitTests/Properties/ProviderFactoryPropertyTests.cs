@@ -4,9 +4,11 @@ using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure;
+using Moq;
 using Xunit;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests;
@@ -18,6 +20,14 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests;
 public class ProviderFactoryPropertyTests
 {
     private static readonly PipelineConfiguration DefaultPipelineConfig = new();
+
+    private static IPipelineConfigStore CreateMockConfigStore(PipelineConfiguration? config = null)
+    {
+        var mock = new Mock<IPipelineConfigStore>();
+        mock.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config ?? DefaultPipelineConfig);
+        return mock.Object;
+    }
 
     /// <summary>
     /// Generates a valid base64-encoded RSA private key PEM string.
@@ -78,7 +88,7 @@ public class ProviderFactoryPropertyTests
         // Assert: The ProviderFactory accepts this config without throwing a validation error.
         // CreateIssueProvider will call ValidateRequiredSettings internally.
         // It will also create a GitHubAppAuthService which validates the private key.
-        var factory = new ProviderFactory(DefaultPipelineConfig);
+        var factory = new ProviderFactory(CreateMockConfigStore());
         var exception = Record.Exception(() => factory.CreateIssueProvider(config));
         Assert.Null(exception);
     }
@@ -124,7 +134,7 @@ public class ProviderFactoryPropertyTests
         Assert.False(config.Settings.ContainsKey(ProviderSettingKeys.Token), "Settings must NOT contain 'token' — PAT has been replaced by GitHub App auth");
 
         // Assert: The ProviderFactory accepts this config without throwing a validation error.
-        var factory = new ProviderFactory(DefaultPipelineConfig);
+        var factory = new ProviderFactory(CreateMockConfigStore());
         var exception = Record.Exception(() => factory.CreateRepositoryProvider(config));
         Assert.Null(exception);
     }
@@ -148,7 +158,7 @@ public class ProviderFactoryPropertyTests
     public void AuthServiceCache_SameKey_ReturnsSameInstance_DifferentKey_ReturnsDistinct(AuthCacheConsistencyInput input)
     {
         // Arrange
-        var factory = new ProviderFactory(DefaultPipelineConfig);
+        var factory = new ProviderFactory(CreateMockConfigStore());
 
         // Act: Call GetOrCreateAuthService for each config and collect results
         var results = input.Configs
@@ -226,7 +236,7 @@ public class ProviderFactoryPropertyTests
         };
 
         // Act & Assert: The factory must throw ArgumentException
-        var factory = new ProviderFactory(DefaultPipelineConfig);
+        var factory = new ProviderFactory(CreateMockConfigStore());
         var ex = Assert.Throws<ArgumentException>(() => factory.CreateIssueProvider(config));
 
         // Assert: The exception message identifies each missing setting

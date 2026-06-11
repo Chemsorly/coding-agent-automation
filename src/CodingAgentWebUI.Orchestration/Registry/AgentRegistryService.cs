@@ -57,34 +57,37 @@ public sealed class AgentRegistryService
             // Update factory — re-registration (reconnection)
             (_, existing) =>
             {
-                existing.ConnectionId = connectionId;
-                existing.LastHeartbeatAt = now;
-                existing.DisconnectedAt = null;
-
-                if (existing.Status == AgentStatus.Disconnected)
+                lock (existing.SyncRoot)
                 {
-                    if (existing.ActiveJobId is not null)
+                    existing.ConnectionId = connectionId;
+                    existing.LastHeartbeatAt = now;
+                    existing.DisconnectedAt = null;
+
+                    if (existing.Status == AgentStatus.Disconnected)
                     {
-                        // Agent reconnected with active job — restore to Busy (REQ-3.6)
-                        existing.Status = AgentStatus.Busy;
-                        _logger.Information(
-                            "Agent {AgentId} re-registered after disconnect with active job {JobId}, status restored to Busy",
-                            message.AgentId, existing.ActiveJobId);
+                        if (existing.ActiveJobId is not null)
+                        {
+                            // Agent reconnected with active job — restore to Busy (REQ-3.6)
+                            existing.Status = AgentStatus.Busy;
+                            _logger.Information(
+                                "Agent {AgentId} re-registered after disconnect with active job {JobId}, status restored to Busy",
+                                message.AgentId, existing.ActiveJobId);
+                        }
+                        else
+                        {
+                            existing.Status = AgentStatus.Idle;
+                            _logger.Information(
+                                "Agent {AgentId} re-registered after disconnect, status reset to Idle",
+                                message.AgentId);
+                        }
+                        existing.DisconnectedAt = null;
                     }
                     else
                     {
-                        existing.Status = AgentStatus.Idle;
                         _logger.Information(
-                            "Agent {AgentId} re-registered after disconnect, status reset to Idle",
-                            message.AgentId);
+                            "Agent {AgentId} re-registered (connection={ConnectionId})",
+                            message.AgentId, connectionId);
                     }
-                    existing.DisconnectedAt = null;
-                }
-                else
-                {
-                    _logger.Information(
-                        "Agent {AgentId} re-registered (connection={ConnectionId})",
-                        message.AgentId, connectionId);
                 }
 
                 return existing;
@@ -136,7 +139,10 @@ public sealed class AgentRegistryService
 
         if (_agents.TryGetValue(agentId, out var entry))
         {
-            entry.LastHeartbeatAt = timestamp;
+            lock (entry.SyncRoot)
+            {
+                entry.LastHeartbeatAt = timestamp;
+            }
         }
         else
         {
@@ -154,21 +160,34 @@ public sealed class AgentRegistryService
 
         if (_agents.TryGetValue(agentId, out var entry))
         {
-            var oldStatus = entry.Status;
-            entry.Status = newStatus;
-
-            if (newStatus == AgentStatus.Disconnected)
+            lock (entry.SyncRoot)
             {
-                entry.DisconnectedAt = DateTimeOffset.UtcNow;
-            }
-            else if (newStatus == AgentStatus.Idle)
-            {
-                entry.DisconnectedAt = null;
-            }
+                var oldStatus = entry.Status;
 
-            _logger.Information(
-                "Agent {AgentId} status transitioned {OldStatus} → {NewStatus}",
-                agentId, oldStatus, newStatus);
+                // Reject Disconnected → Busy: must go through Register for reconnection
+                if (oldStatus == AgentStatus.Disconnected && newStatus == AgentStatus.Busy)
+                {
+                    _logger.Warning(
+                        "Agent {AgentId} invalid transition {OldStatus} → {NewStatus} rejected (must re-register first)",
+                        agentId, oldStatus, newStatus);
+                    return;
+                }
+
+                entry.Status = newStatus;
+
+                if (newStatus == AgentStatus.Disconnected)
+                {
+                    entry.DisconnectedAt = DateTimeOffset.UtcNow;
+                }
+                else if (newStatus == AgentStatus.Idle)
+                {
+                    entry.DisconnectedAt = null;
+                }
+
+                _logger.Information(
+                    "Agent {AgentId} status transitioned {OldStatus} → {NewStatus}",
+                    agentId, oldStatus, newStatus);
+            }
         }
         else
         {

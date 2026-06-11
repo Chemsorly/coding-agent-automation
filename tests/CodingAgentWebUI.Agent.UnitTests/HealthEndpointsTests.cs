@@ -47,11 +47,13 @@ public class HealthEndpointsTests : IAsyncDisposable
         // Ensure AGENT_TYPE is set
         Environment.SetEnvironmentVariable("AGENT_TYPE", "kiro-dotnet");
 
-        var hubManager = new HubConnectionManager(
+        var hubManagerFactory = new HubConnectionManagerFactory(
             "http://localhost:9999",
             "test-agent",
             "test-api-key",
             mockLogger.Object);
+
+        var hubManager = hubManagerFactory.Create();
 
         var executor = new LocalPipelineExecutor(
             mockOrchestrator.Object,
@@ -66,7 +68,7 @@ public class HealthEndpointsTests : IAsyncDisposable
             new Mock<IHttpClientFactory>().Object,
             mockLogger.Object);
 
-        var workerService = new AgentWorkerService(hubManager, executor, consolidationExecutor, mockOrchestrator.Object, new Mock<IHttpClientFactory>().Object, new AgentIdentity("test-agent"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
+        var workerService = new AgentWorkerService(hubManager, hubManagerFactory, executor, consolidationExecutor, mockOrchestrator.Object, new Mock<IHttpClientFactory>().Object, new AgentIdentity("test-agent"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
 
         _host = await new HostBuilder()
             .ConfigureWebHost(webBuilder =>

@@ -219,6 +219,30 @@ public class AgentRegistryServiceExtendedTests
     }
 
     [Fact]
+    public void TransitionStatus_DisconnectedToBusy_IsRejected()
+    {
+        RegisterAgent("agent-1", "conn-1");
+        _registry.TransitionStatus("agent-1", AgentStatus.Disconnected);
+
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        var agent = _registry.GetByAgentId("agent-1");
+        agent!.Status.Should().Be(AgentStatus.Disconnected);
+    }
+
+    [Fact]
+    public void TransitionStatus_DisconnectedToIdle_IsAllowed()
+    {
+        RegisterAgent("agent-1", "conn-1");
+        _registry.TransitionStatus("agent-1", AgentStatus.Disconnected);
+
+        _registry.TransitionStatus("agent-1", AgentStatus.Idle);
+
+        var agent = _registry.GetByAgentId("agent-1");
+        agent!.Status.Should().Be(AgentStatus.Idle);
+    }
+
+    [Fact]
     public void TransitionStatus_NonExistentAgent_DoesNotThrow()
     {
         _registry.TransitionStatus("non-existent", AgentStatus.Idle);

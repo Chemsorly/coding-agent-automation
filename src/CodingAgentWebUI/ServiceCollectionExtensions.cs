@@ -38,7 +38,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IReviewerConfigStore>(configStore);
         services.AddSingleton<IProjectStore>(configStore);
 
-        services.AddSingleton<IProviderFactory>(sp => new ProviderFactory(pipelineConfig));
+        services.AddSingleton<IProviderFactory>(sp => new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
 
         services.AddTransient<GitHubValidationService>(sp =>
             new GitHubValidationService(sp.GetRequiredService<IProviderFactory>()));
@@ -59,6 +59,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<OrchestratorRunService>(),
             Log.Logger));
+        services.AddSingleton<Pipeline.Interfaces.ILifecycleShutdownAction>(sp =>
+            sp.GetRequiredService<PipelineRunLifecycleService>());
 
         services.AddSingleton<IBrainSyncService>(sp => new BrainSyncService(
             sp.GetRequiredService<IBrainUpdateService>(), Log.Logger));
@@ -79,7 +81,17 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<FeedbackService>(),
             sp.GetRequiredService<PullRequestOrchestrator>(),
             sp.GetRequiredService<PullRequestFinalizationService>(),
-            sp.GetRequiredService<IBrainSyncService>()));
+            sp.GetRequiredService<IBrainSyncService>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IJobDeduplicationGuard>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IAgentCancellationSender>()));
+        services.AddSingleton<Pipeline.Interfaces.IOrchestrationShutdownAction>(sp =>
+            sp.GetRequiredService<PipelineOrchestrationService>());
+
+        // Graceful shutdown via IHostedLifecycleService (async, 15s timeout, non-blocking)
+        services.AddHostedService(sp => new ShutdownService(
+            sp.GetRequiredService<Pipeline.Interfaces.ILifecycleShutdownAction>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IOrchestrationShutdownAction>(),
+            Log.Logger));
 
         services.AddSingleton<IDependencyChecker>(sp => new DependencyChecker(Log.Logger));
         services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(
@@ -110,6 +122,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp => new JobDispatcherService(
             sp.GetRequiredService<AgentRegistryService>(),
             Log.Logger));
+        services.AddSingleton<Pipeline.Interfaces.IJobDeduplicationGuard>(sp =>
+            sp.GetRequiredService<JobDispatcherService>());
 
         services.AddHttpClient("TokenVending");
         services.AddSingleton<ITokenVendingService>(sp => new TokenVendingService(Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
@@ -137,6 +151,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<JobDispatcherService>(),
             sp.GetRequiredService<AgentRegistryService>(),
             sp.GetRequiredService<IJobDispatcher>(),
+            sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<ConsolidationQueueService>(),
             sp.GetRequiredService<IConsolidationService>(),
             sp.GetRequiredService<IConsolidationDispatcher>(),
@@ -156,6 +171,11 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
             sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));
+
+        services.AddSingleton<Pipeline.Interfaces.IAgentCancellationSender>(sp => new AgentCancellationSender(
+            sp.GetRequiredService<AgentRegistryService>(),
+            sp.GetRequiredService<IAgentCommunication>(),
+            Log.Logger));
 
         services.AddSingleton<ModelFetchService>(sp => new ModelFetchService(
             sp.GetRequiredService<AgentRegistryService>(),

@@ -13,6 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Moq;
+using Serilog;
 
 namespace CodingAgentWebUI.IntegrationTests.Smoke;
 
@@ -81,6 +82,11 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
                 services.RemoveAll<IHostedService>();
+                // Re-add ShutdownService so graceful shutdown fires through IHostedLifecycleService
+                services.AddHostedService(sp => new ShutdownService(
+                    sp.GetRequiredService<ILifecycleShutdownAction>(),
+                    sp.GetRequiredService<IOrchestrationShutdownAction>(),
+                    Log.Logger));
                 ReplaceService<IConfigurationStore>(services, _mockConfigStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, _mockConfigStore.Object);
                 ReplaceService<IProviderConfigStore>(services, _mockConfigStore.Object);
@@ -175,6 +181,10 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
                 services.RemoveAll<IHostedService>();
+                services.AddHostedService(sp => new ShutdownService(
+                    sp.GetRequiredService<ILifecycleShutdownAction>(),
+                    sp.GetRequiredService<IOrchestrationShutdownAction>(),
+                    Log.Logger));
                 ReplaceService<IConfigurationStore>(services, configStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, configStore.Object);
                 ReplaceService<IProviderConfigStore>(services, configStore.Object);
@@ -228,6 +238,10 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
                 services.RemoveAll<IHostedService>();
+                services.AddHostedService(sp => new ShutdownService(
+                    sp.GetRequiredService<ILifecycleShutdownAction>(),
+                    sp.GetRequiredService<IOrchestrationShutdownAction>(),
+                    Log.Logger));
                 ReplaceService<IConfigurationStore>(services, _mockConfigStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, _mockConfigStore.Object);
                 ReplaceService<IProviderConfigStore>(services, _mockConfigStore.Object);
@@ -304,6 +318,10 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
                 services.RemoveAll<IHostedService>();
+                services.AddHostedService(sp => new ShutdownService(
+                    sp.GetRequiredService<ILifecycleShutdownAction>(),
+                    sp.GetRequiredService<IOrchestrationShutdownAction>(),
+                    Log.Logger));
                 ReplaceService<IConfigurationStore>(services, configStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, configStore.Object);
                 ReplaceService<IProviderConfigStore>(services, configStore.Object);

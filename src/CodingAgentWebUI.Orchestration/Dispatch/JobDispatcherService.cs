@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
 using ILogger = Serilog.ILogger;
@@ -7,44 +8,12 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
-/// Pending job awaiting dispatch to an available agent.
-/// </summary>
-public sealed record PendingJob
-{
-    public required string IssueIdentifier { get; init; }
-    public string? IssueTitle { get; init; }
-    public required string IssueProviderId { get; init; }
-    public required string RepoProviderId { get; init; }
-    public string? BrainProviderId { get; init; }
-    public string? PipelineProviderId { get; init; }
-    public required DateTimeOffset EnqueuedAt { get; init; }
-    public required string InitiatedBy { get; init; }
-    public IReadOnlyList<string> RequiredLabels { get; init; } = [];
-    public PipelineRunType RunType { get; init; } = PipelineRunType.Implementation;
-    public string? PrBranchName { get; init; }
-    public string? PrDescription { get; init; }
-    public string? PrUrl { get; init; }
-    public string? PrTargetBranch { get; init; }
-    public string? PrAuthor { get; init; }
-
-    /// <summary>The project that owns this template. Set at poll time, used at dispatch time for settings resolution.</summary>
-    public PipelineProject? Project { get; init; }
-
-    /// <summary>
-    /// For decomposition runs: whether the epic was polled from the project-level
-    /// EpicIssueProviderId ("project-level") or the template's own IssueProviderId ("template-level").
-    /// Null for non-decomposition runs.
-    /// </summary>
-    public string? DecompositionSource { get; init; }
-}
-
-/// <summary>
 /// Manages the job queue and agent selection for dispatching pipeline runs.
 /// Uses a <see cref="ConcurrentQueue{T}"/> for FIFO job ordering and a
 /// <see cref="ConcurrentDictionary{TKey,TValue}"/> for duplicate issue detection.
 /// Registered as a singleton in DI.
 /// </summary>
-public sealed class JobDispatcherService
+public sealed class JobDispatcherService : IJobDeduplicationGuard
 {
     private readonly AgentRegistryService _registry;
 
@@ -102,15 +71,35 @@ public sealed class JobDispatcherService
                 return null;
             }
 
-            var selected = compatible[0];
+            // Iterate compatible agents with double-check pattern:
+            // Lock the entry and verify status is still Idle before transitioning.
+            // HeartbeatMonitor may have marked the agent Disconnected between GetIdleAgents() and now.
+            // Lock ordering: _selectionLock (already held) → entry.SyncRoot (no deadlock risk).
+            foreach (var candidate in compatible)
+            {
+                lock (candidate.SyncRoot)
+                {
+                    if (candidate.Status != AgentStatus.Idle)
+                    {
+                        // Race: HeartbeatMonitor changed status between snapshot and lock acquisition — skip
+                        _logger.Debug("SelectAgent: skipping agent {AgentId} — status changed to {Status} before reservation",
+                            candidate.AgentId, candidate.Status);
+                        continue;
+                    }
 
-            // Atomically reserve the agent so no other dispatch path can select it
-            _registry.TransitionStatus(selected.AgentId, AgentStatus.Busy);
+                    // Atomically reserve the agent so no other dispatch path can select it
+                    candidate.Status = AgentStatus.Busy;
+                }
 
-            _logger.Debug("SelectAgent: reserved agent {AgentId} for requiredLabels=[{Labels}] ({CompatibleCount} compatible, {IdleCount} idle)",
-                selected.AgentId, string.Join(", ", requiredLabels), compatible.Count, idleAgents.Count);
+                _logger.Debug("SelectAgent: reserved agent {AgentId} for requiredLabels=[{Labels}] ({CompatibleCount} compatible, {IdleCount} idle)",
+                    candidate.AgentId, string.Join(", ", requiredLabels), compatible.Count, idleAgents.Count);
 
-            return selected;
+                return candidate;
+            }
+
+            _logger.Debug("SelectAgent: all {CompatibleCount} compatible agents had status change before reservation (requiredLabels=[{Labels}])",
+                compatible.Count, string.Join(", ", requiredLabels));
+            return null;
         }
     }
 
@@ -217,6 +206,20 @@ public sealed class JobDispatcherService
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         _processingIssues.TryRemove(issueIdentifier, out _);
+    }
+
+    /// <summary>
+    /// Re-enqueues a job that was previously dequeued but could not be dispatched.
+    /// Bypasses the <c>_processingIssues.TryAdd</c> check because the entry is still
+    /// active in the dedup dictionary (caller guarantees this).
+    /// </summary>
+    public void ReEnqueue(PendingJob job)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        _jobQueue.Enqueue(job);
+        _logger.Debug(
+            "Re-enqueued job for issue {IssueIdentifier} (dedup entry retained)",
+            job.IssueIdentifier);
     }
 
     /// <summary>

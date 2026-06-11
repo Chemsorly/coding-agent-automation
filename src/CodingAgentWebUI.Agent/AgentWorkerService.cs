@@ -40,7 +40,8 @@ namespace CodingAgentWebUI.Agent;
 /// </remarks>
 public sealed class AgentWorkerService : BackgroundService
 {
-    private readonly HubConnectionManager _hubManager;
+    private readonly HubConnectionManagerFactory _hubManagerFactory;
+    private HubConnectionManager _hubManager;
     private readonly LocalPipelineExecutor _executor;
     private readonly LocalConsolidationExecutor _consolidationExecutor;
     private readonly IKiroCliOrchestrator _orchestrator;
@@ -67,6 +68,7 @@ public sealed class AgentWorkerService : BackgroundService
 
     public AgentWorkerService(
         HubConnectionManager hubManager,
+        HubConnectionManagerFactory hubManagerFactory,
         LocalPipelineExecutor executor,
         LocalConsolidationExecutor consolidationExecutor,
         IKiroCliOrchestrator orchestrator,
@@ -76,6 +78,7 @@ public sealed class AgentWorkerService : BackgroundService
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(hubManager);
+        ArgumentNullException.ThrowIfNull(hubManagerFactory);
         ArgumentNullException.ThrowIfNull(executor);
         ArgumentNullException.ThrowIfNull(consolidationExecutor);
         ArgumentNullException.ThrowIfNull(orchestrator);
@@ -85,6 +88,7 @@ public sealed class AgentWorkerService : BackgroundService
         ArgumentNullException.ThrowIfNull(logger);
 
         _hubManager = hubManager;
+        _hubManagerFactory = hubManagerFactory;
         _executor = executor;
         _consolidationExecutor = consolidationExecutor;
         _orchestrator = orchestrator;
@@ -117,6 +121,49 @@ public sealed class AgentWorkerService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        int consecutiveFailures = 0;
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await RunConnectionLifecycleAsync(stoppingToken);
+                // Normal exit — stoppingToken was cancelled
+                break;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                consecutiveFailures++;
+                if (consecutiveFailures % 5 == 0)
+                    _logger.Error(ex, "Connection closed — {Failures} consecutive reconnection failures", consecutiveFailures);
+                else
+                    _logger.Warning(ex, "Connection closed — reconnection attempt {Attempt} starting", consecutiveFailures);
+
+                if (stoppingToken.IsCancellationRequested) break;
+
+                // Exponential backoff matching InfiniteRetryPolicy: 1s, 2s, 4s, 8s, 16s, 32s, 64s, 120s cap + jitter
+                var delay = CalculateReconnectionDelay(consecutiveFailures);
+                _logger.Warning("Waiting {Delay} before fresh reconnection attempt", delay);
+                await Task.Delay(delay, stoppingToken);
+
+                // Dispose old connection, create fresh one
+                await DisposeCurrentConnectionAsync();
+                _hubManager = _hubManagerFactory.Create();
+            }
+        }
+
+        await ShutdownAsync();
+    }
+
+    private async Task RunConnectionLifecycleAsync(CancellationToken stoppingToken)
+    {
+        // Signal that fires when the connection enters terminal Closed state
+        var closedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         // Wire up event handlers
         _hubManager.OnAssignJob += HandleAssignJobAsync;
         _hubManager.OnCancelJob += HandleCancelJobAsync;
@@ -125,52 +172,73 @@ public sealed class AgentWorkerService : BackgroundService
         _hubManager.OnFetchModels += HandleFetchModelsAsync;
         _hubManager.OnAssignConsolidationJob += HandleAssignConsolidationJobAsync;
         _hubManager.OnReconnected += HandleReconnectedAsync;
-
-        try
+        _hubManager.OnClosed += error =>
         {
-            // Connect to orchestrator
-            await _hubManager.StartAsync(stoppingToken);
+            closedTcs.TrySetResult();
+            return Task.CompletedTask;
+        };
 
-            // Register with orchestrator
-            var registration = BuildRegistrationMessage();
+        // Connect to orchestrator
+        await _hubManager.StartAsync(stoppingToken);
 
-            await _signalRPipeline.ExecuteAsync(async token =>
-                await _hubManager.Connection.InvokeAsync("RegisterAgent", registration, token), stoppingToken);
-            _logger.Information("Agent {AgentId} registered as {AgentType} with labels [{Labels}]",
-                _agentId, _agentType, string.Join(", ", _labels));
+        // Register with orchestrator
+        var registration = BuildRegistrationMessage();
 
-            // Heartbeat loop
-            using var heartbeatTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
-            while (!stoppingToken.IsCancellationRequested)
+        await _signalRPipeline.ExecuteAsync(async token =>
+            await _hubManager.Connection.InvokeAsync("RegisterAgent", registration, token), stoppingToken);
+        _logger.Information("Agent {AgentId} registered as {AgentType} with labels [{Labels}]",
+            _agentId, _agentType, string.Join(", ", _labels));
+
+        // Heartbeat loop — exits when connection closes or stoppingToken fires
+        using var heartbeatTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            // Race heartbeat tick against connection closed
+            var tickTask = heartbeatTimer.WaitForNextTickAsync(stoppingToken).AsTask();
+            var completedTask = await Task.WhenAny(tickTask, closedTcs.Task);
+
+            if (completedTask == closedTcs.Task)
             {
-                try
-                {
-                    if (await heartbeatTimer.WaitForNextTickAsync(stoppingToken))
-                        await SendHeartbeatAsync(stoppingToken);
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    PipelineTelemetry.AgentHeartbeatFailures.Add(1);
-                    _logger.Warning(ex, "Heartbeat failed, will retry on next tick");
-                }
+                // Connection permanently closed — throw to trigger reconnection in outer loop
+                throw new InvalidOperationException("SignalR connection entered terminal Closed state");
+            }
+
+            try
+            {
+                if (await tickTask)
+                    await SendHeartbeatAsync(stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                PipelineTelemetry.AgentHeartbeatFailures.Add(1);
+                _logger.Warning(ex, "Heartbeat failed, will retry on next tick");
             }
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+    }
+
+    private static TimeSpan CalculateReconnectionDelay(int attempt)
+    {
+        // Same backoff as InfiniteRetryPolicy: 2^min(attempt, 7) capped at 120s + jitter
+        var delay = TimeSpan.FromSeconds(Math.Pow(2, Math.Min(attempt, 7)));
+        var maxDelay = TimeSpan.FromSeconds(120);
+        if (delay > maxDelay) delay = maxDelay;
+        delay += TimeSpan.FromMilliseconds(Random.Shared.Next(0, 1000));
+        return delay;
+    }
+
+    private async Task DisposeCurrentConnectionAsync()
+    {
+        try
         {
-            // Expected during shutdown
+            await _hubManager.DisposeAsync();
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Agent worker service encountered a fatal error");
-            throw;
-        }
-        finally
-        {
-            await ShutdownAsync();
+            _logger.Warning(ex, "Failed to dispose previous hub connection");
         }
     }
 

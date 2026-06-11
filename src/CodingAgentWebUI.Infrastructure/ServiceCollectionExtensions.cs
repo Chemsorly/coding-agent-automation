@@ -47,7 +47,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<CiLogWriter>(),
             sp.GetRequiredService<FeedbackService>(),
             logger,
-            sp.GetService<IPipelineRunHistoryService>()));
+            sp.GetRequiredService<IPipelineRunHistoryService>()));
 
         return services;
     }

@@ -3,5 +3,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- Prevent orphaned MSBuild node processes after dotnet test/build -->
     <UseSharedCompilation>false</UseSharedCompilation>
+    <!-- CS0618: PipelineRun/PipelineRunSummary StartedAt/CompletedAt are marked [Obsolete] as migration
+         guidance toward StartedAtOffset/CompletedAtOffset. All existing usages are intentional. -->
+    <NoWarn>$(NoWarn);CS0618</NoWarn>
   </PropertyGroup>
 </Project>

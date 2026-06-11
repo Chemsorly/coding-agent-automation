@@ -1,7 +1,10 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.CodeReview;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Prompts;
+using CodingAgentWebUI.Pipeline.Telemetry;
+using Serilog.Context;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -146,6 +149,13 @@ internal partial class AgentPhaseExecutor
 
         for (var i = 0; i < maxIterations; i++)
         {
+            using var iterationActivity = PipelineTelemetry.ActivitySource.StartActivity("CodeReview.Iteration");
+            iterationActivity?.SetTag("pipeline.run_id", run.RunId);
+            iterationActivity?.SetTag("pipeline.issue", run.IssueIdentifier);
+            iterationActivity?.SetTag("code_review.iteration", i + 1);
+            iterationActivity?.SetTag("code_review.max_iterations", maxIterations);
+            iterationActivity?.SetTag("code_review.parallel", useParallel);
+
             run.CodeReviewIterationInProgress = i + 1;
             context.Callbacks.TransitionTo(PipelineStep.ReviewingCode);
             _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
@@ -215,10 +225,43 @@ internal partial class AgentPhaseExecutor
                     });
                     context.Callbacks.NotifyChange();
                 }
+                else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt) && !string.IsNullOrEmpty(iterationFindingsText))
+                {
+                    // No critical findings but warnings/suggestions exist — send fix prompt then exit.
+                    // Warnings are actionable (TODO comments per fixPrompt instructions) but don't
+                    // warrant another full review cycle since no code logic changes.
+                    _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings but warnings present, sending fix prompt then exiting review loop",
+                        run.RunId, i + 1);
+                    context.Callbacks.EmitOutputLine($"📝 Code review: no critical findings, applying warning fixes then completing review");
+
+                    var findingsFileForFix = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReviewFindingsFilePath);
+                    await File.WriteAllTextAsync(findingsFileForFix, iterationFindingsText, ct);
+
+                    var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt);
+                    _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
+
+                    await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
+                        context.AgentProvider, fixPrompt, run, config,
+                        $"Code review fix agent (iteration {i + 1})",
+                        context.Callbacks, _logger, ct,
+                        recordOutputToHistory: false,
+                        resumeSessionId: run.CodegenSessionId);
+
+                    run.ChatHistory.Enqueue(new ChatEntry
+                    {
+                        Role = ChatRole.Agent,
+                        Content = $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)"
+                    });
+                    context.Callbacks.NotifyChange();
+                    break;
+                }
                 else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt))
                 {
-                    _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings, skipping fix prompt",
+                    _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no findings, exiting review loop",
                         run.RunId, i + 1);
+
+                    // Early exit: no findings at all — re-reviewing won't produce different results.
+                    break;
                 }
             }
             catch (OperationCanceledException) when (context.OrchestratorCts?.IsCancellationRequested == true)
@@ -333,7 +376,7 @@ internal partial class AgentPhaseExecutor
             run.RunId, iterationIndex + 1, agents.Count, context.AgentProvider.ProviderType);
         context.Callbacks.EmitOutputLine($"⚡ Running {agents.Count} review agents in parallel...");
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var sw = Stopwatch.StartNew();
 
         // Launch all agents concurrently
         var tasks = agents.Select(agent => ExecuteSingleReviewAgentSafeAsync(context, agent, iterationIndex, isolated, ct)).ToList();
@@ -430,6 +473,16 @@ internal partial class AgentPhaseExecutor
     private async Task<ReviewAgentResult> ExecuteSingleReviewAgentAsync(
         AgentPhaseContext context, ReviewAgentConfig agent, int iterationIndex, bool isolated, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("CodeReview.Agent");
+        activity?.SetTag("pipeline.run_id", context.Run.RunId);
+        activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+        activity?.SetTag("code_review.agent_name", agent.Name);
+        activity?.SetTag("code_review.iteration", iterationIndex + 1);
+        activity?.SetTag("code_review.isolated", isolated);
+
+        using var _logCtxAgent = LogContext.PushProperty("ReviewAgentName", agent.Name);
+        using var _logCtxIter = LogContext.PushProperty("ReviewIteration", iterationIndex + 1);
+
         var run = context.Run;
         var config = context.Config;
 
@@ -456,6 +509,18 @@ internal partial class AgentPhaseExecutor
             run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,
             line => context.Callbacks.EmitOutputLine($"[{agent.Name}] {line}"));
 
+        if (reviewResult.ExitCode != 0)
+        {
+            var tailLines = reviewResult.OutputLines.TakeLast(20);
+            _logger.Warning(
+                "Pipeline {RunId} review agent '{AgentName}' (iteration {Iteration}) exited with code {ExitCode}. Last output:\n{Output}",
+                run.RunId, agent.Name, iterationIndex + 1, reviewResult.ExitCode,
+                string.Join(Environment.NewLine, tailLines));
+            activity?.SetStatus(ActivityStatusCode.Error, $"Exit code {reviewResult.ExitCode}");
+        }
+
+        activity?.SetTag("code_review.exit_code", reviewResult.ExitCode);
+
         string findingsText;
         IReadOnlyList<string> findingsLines;
         if (File.Exists(findingsFilePath))
@@ -474,6 +539,11 @@ internal partial class AgentPhaseExecutor
         }
 
         var severityCounts = CodeReview.SeverityParser.Parse(findingsLines);
+
+        activity?.SetTag("code_review.findings_critical", severityCounts.Critical);
+        activity?.SetTag("code_review.findings_warning", severityCounts.Warning);
+        activity?.SetTag("code_review.findings_suggestion", severityCounts.Suggestion);
+        activity?.SetTag("code_review.has_findings_file", File.Exists(findingsFilePath));
 
         return new ReviewAgentResult
         {

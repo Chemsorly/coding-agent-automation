@@ -135,7 +135,7 @@ public partial class GitHubRepositoryProvider
                         var client = await GetClientAsync(ct);
                         var graphqlBody = $"{{\"query\":\"mutation {{ markPullRequestReadyForReview(input: {{pullRequestId: \\\"{pr.NodeId}\\\"}}) {{ pullRequest {{ isDraft }} }} }}\"}}";
                         await client.Connection.Post<object>(
-                            new Uri("https://api.github.com/graphql"),
+                            DeriveGraphQlUri(),
                             graphqlBody,
                             "application/json",
                             "application/json");

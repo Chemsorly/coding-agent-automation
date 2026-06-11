@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure;
@@ -37,7 +38,11 @@ public class ProviderFactoryTests
             ExternalCiPollInterval = expectedInterval
         };
 
-        var factory = new ProviderFactory(pipelineConfig);
+        var mockConfigStore = new Mock<IPipelineConfigStore>();
+        mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pipelineConfig);
+
+        var factory = new ProviderFactory(mockConfigStore.Object);
 
         var providerConfig = new ProviderConfig
         {
@@ -73,7 +78,11 @@ public class ProviderFactoryTests
     {
         // Arrange — use default PipelineConfiguration
         var pipelineConfig = new PipelineConfiguration();
-        var factory = new ProviderFactory(pipelineConfig);
+        var mockConfigStore = new Mock<IPipelineConfigStore>();
+        mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pipelineConfig);
+
+        var factory = new ProviderFactory(mockConfigStore.Object);
 
         var providerConfig = new ProviderConfig
         {
@@ -103,4 +112,53 @@ public class ProviderFactoryTests
     }
 
     // --- Agent provider tests removed: KiroCliAgentProvider moved to CodingAgentWebUI.Agent project ---
+
+    // --- REQ-11: Runtime Configuration Refresh for ProviderFactory ---
+
+    [Fact]
+    public void CreatePipelineProvider_ResolvesCurrentConfigPerCreation_NotStartupSnapshot()
+    {
+        // Arrange — mock store returns different configs on successive calls
+        var firstConfig = new PipelineConfiguration { ExternalCiPollInterval = TimeSpan.FromSeconds(15) };
+        var secondConfig = new PipelineConfiguration { ExternalCiPollInterval = TimeSpan.FromSeconds(90) };
+
+        var callCount = 0;
+        var mockConfigStore = new Mock<IPipelineConfigStore>();
+        mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => ++callCount == 1 ? firstConfig : secondConfig);
+
+        var factory = new ProviderFactory(mockConfigStore.Object);
+
+        var providerConfig = new ProviderConfig
+        {
+            Kind = ProviderKind.Pipeline,
+            ProviderType = "GitHub",
+            DisplayName = "CI Provider",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.ClientId] = "Iv1.testclientid789",
+                [ProviderSettingKeys.InstallationId] = "11111",
+                [ProviderSettingKeys.PrivateKeyBase64] = GenerateValidPrivateKeyBase64(),
+                [ProviderSettingKeys.Owner] = "testowner",
+                [ProviderSettingKeys.Repo] = "testrepo"
+            }
+        };
+
+        var pollIntervalField = typeof(GitHubActionsPipelineProvider)
+            .GetField("_pollInterval", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        // Act — create first provider
+        var provider1 = factory.CreatePipelineProvider(providerConfig);
+        var interval1 = (TimeSpan)pollIntervalField.GetValue(provider1)!;
+
+        // Act — create second provider (simulates config change between creations)
+        var provider2 = factory.CreatePipelineProvider(providerConfig);
+        var interval2 = (TimeSpan)pollIntervalField.GetValue(provider2)!;
+
+        // Assert — each creation uses the CURRENT config, not a captured snapshot
+        interval1.Should().Be(TimeSpan.FromSeconds(15));
+        interval2.Should().Be(TimeSpan.FromSeconds(90));
+        mockConfigStore.Verify(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
 }

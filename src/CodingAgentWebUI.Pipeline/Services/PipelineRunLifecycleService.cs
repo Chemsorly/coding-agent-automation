@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// Single source of truth for pipeline run state, lifecycle transitions, events, and cancellation.
 /// Registered as a singleton. Consumers inject this for state/event access.
 /// </summary>
-public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable
+public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifecycleShutdownAction
 {
     // ── Dependencies ────────────────────────────────────────────────────
     private readonly IPipelineRunHistoryService _historyService;
@@ -106,7 +106,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable
         run.CurrentStep = step;
 
         if (step is not (PipelineStep.Failed or PipelineStep.Cancelled)
-            && (int)step > (int)run.HighWaterMark)
+            && StepOrder.GetOrder(step) > StepOrder.GetOrder(run.HighWaterMark))
             run.HighWaterMark = step;
 
         _logger.Information("Pipeline {RunId} transitioned from {PreviousStep} to {Step}",
@@ -121,6 +121,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable
     {
         run.FailureReason = reason;
         run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
         EmitOutputLine($"❌ Pipeline failed: {reason}");
         TransitionTo(run, PipelineStep.Failed);
         AddRunToHistory(run);
@@ -182,6 +183,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable
 
         _cancellationTokenSource?.Cancel();
         run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
         EmitOutputLine("🚫 Pipeline cancelled");
         TransitionTo(run, PipelineStep.Cancelled);
         AddRunToHistory(run);
@@ -190,25 +192,30 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// Marks all agent-dispatched runs as cancelled. Sets CompletedAt, transitions to Cancelled, adds to history.
+    /// Marks all agent-dispatched runs as cancelled. Sets CompletedAt, transitions to Cancelled, adds to history,
+    /// and removes runs from active tracking. Returns list of cancelled issue identifiers for caller to release dedup.
     /// No-op if no run service is configured.
     /// </summary>
-    public Task MarkAgentRunsCancelled()
+    public Task<IReadOnlyList<string>> MarkAgentRunsCancelled()
     {
-        if (_runService is null) return Task.CompletedTask;
+        if (_runService is null) return Task.FromResult<IReadOnlyList<string>>([]);
 
         var activeRuns = _runService.GetActiveRuns();
-        if (activeRuns.Count == 0) return Task.CompletedTask;
+        if (activeRuns.Count == 0) return Task.FromResult<IReadOnlyList<string>>([]);
 
+        var cancelledIssues = new List<string>();
         foreach (var run in activeRuns)
         {
             run.CompletedAt = DateTime.UtcNow;
+            run.CompletedAtOffset = DateTimeOffset.UtcNow;
             run.CurrentStep = PipelineStep.Cancelled;
             AddRunToHistory(run);
+            _runService.RemoveRun(run.RunId);
+            cancelledIssues.Add(run.IssueIdentifier);
         }
 
         NotifyChange();
-        return Task.CompletedTask;
+        return Task.FromResult<IReadOnlyList<string>>(cancelledIssues);
     }
 
     // ── Dispatched Run Registration ─────────────────────────────────────

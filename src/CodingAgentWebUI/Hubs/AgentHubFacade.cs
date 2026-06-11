@@ -88,6 +88,10 @@ public sealed class AgentHubFacade : IAgentHubFacade
     public void RemoveRun(string jobId)
         => _runService.RemoveRun(jobId);
 
+    /// <inheritdoc />
+    public IReadOnlyList<PipelineRun> GetActiveRunsByAgent(string agentId)
+        => _runService.GetActiveRuns().Where(r => r.AgentId == agentId).ToList();
+
     // ── Dispatch operations ─────────────────────────────────────────────
 
     /// <inheritdoc />

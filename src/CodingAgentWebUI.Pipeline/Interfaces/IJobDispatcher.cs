@@ -63,6 +63,18 @@ public interface IJobDispatcher
         PipelineProject? project = null);
 
     /// <summary>
+    /// Dispatches a job directly to a pre-selected agent, skipping the dedup checks
+    /// (<c>IsIssueQueued</c>/<c>IsIssueBeingProcessed</c>). The caller guarantees
+    /// uniqueness via <c>_processingIssues</c>.
+    /// </summary>
+    /// <param name="agent">The pre-selected agent (already reserved as Busy).</param>
+    /// <param name="job">The pending job to dispatch.</param>
+    /// <param name="requiredLabels">Resolved required labels for agent matching.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns><c>true</c> if the run was created and dispatched successfully; <c>false</c> on failure.</returns>
+    Task<bool> DispatchToAgentDirectAsync(AgentEntry agent, PendingJob job, IReadOnlyList<string> requiredLabels, CancellationToken ct);
+
+    /// <summary>
     /// Whether any agents are registered and available for dispatch.
     /// When <c>false</c>, the loop should fall back to local execution.
     /// </summary>

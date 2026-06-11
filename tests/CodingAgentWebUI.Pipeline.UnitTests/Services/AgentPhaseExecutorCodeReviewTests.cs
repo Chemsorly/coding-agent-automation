@@ -173,8 +173,8 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
         await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
 
-        // Only the review agent call, no fix prompt
-        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
+        // Review agent + fix prompt for warnings (no re-review since no criticals → early exit)
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
     }
 
     [Fact]

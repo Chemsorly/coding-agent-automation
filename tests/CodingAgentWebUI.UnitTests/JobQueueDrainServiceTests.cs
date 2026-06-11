@@ -20,6 +20,7 @@ public class JobQueueDrainServiceTests
     private readonly AgentRegistryService _registry;
     private readonly JobDispatcherService _dispatcher;
     private readonly Mock<IJobDispatcher> _mockJobDispatcher;
+    private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly ConsolidationQueueService _consolidationQueue;
     private readonly Mock<IConsolidationService> _mockConsolidationService;
     private readonly Mock<IConsolidationDispatcher> _mockConsolidationDispatcher;
@@ -31,11 +32,18 @@ public class JobQueueDrainServiceTests
         _registry = new AgentRegistryService(logger);
         _dispatcher = new JobDispatcherService(_registry, logger);
         _mockJobDispatcher = new Mock<IJobDispatcher>();
+        _mockConfigStore = new Mock<IConfigurationStore>();
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        _mockConfigStore
+            .Setup(c => c.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
         _consolidationQueue = new ConsolidationQueueService(logger);
         _mockConsolidationService = new Mock<IConsolidationService>();
         _mockConsolidationDispatcher = new Mock<IConsolidationDispatcher>();
         _service = new JobQueueDrainService(_dispatcher, _registry, _mockJobDispatcher.Object,
-            _consolidationQueue, _mockConsolidationService.Object, _mockConsolidationDispatcher.Object, logger);
+            _mockConfigStore.Object, _consolidationQueue, _mockConsolidationService.Object, _mockConsolidationDispatcher.Object, logger);
     }
 
     private AgentEntry RegisterIdleAgent(string agentId = "agent-1", IReadOnlyList<string>? labels = null)
@@ -67,9 +75,8 @@ public class JobQueueDrainServiceTests
         await _service.DrainAsync(CancellationToken.None);
 
         _mockJobDispatcher.Verify(
-            d => d.TryDispatchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()),
+            d => d.DispatchToAgentDirectAsync(It.IsAny<AgentEntry>(), It.IsAny<PendingJob>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -82,63 +89,88 @@ public class JobQueueDrainServiceTests
         await _service.DrainAsync(CancellationToken.None);
 
         _mockJobDispatcher.Verify(
-            d => d.TryDispatchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()),
+            d => d.DispatchToAgentDirectAsync(It.IsAny<AgentEntry>(), It.IsAny<PendingJob>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
     [Fact]
-    public async Task DrainAsync_QueuedJobAndIdleAgent_DispatchesJob()
+    public async Task DrainAsync_QueuedJobAndIdleAgent_DispatchesDirectly()
     {
         RegisterIdleAgent();
         _dispatcher.EnqueueJob(CreateJob("issue-42"));
 
         _mockJobDispatcher
-            .Setup(d => d.TryDispatchAsync("issue-42", "ip", "rp", null, null, "test", It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .Setup(d => d.DispatchToAgentDirectAsync(
+                It.IsAny<AgentEntry>(), It.Is<PendingJob>(j => j.IssueIdentifier == "issue-42"),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         await _service.DrainAsync(CancellationToken.None);
 
         _mockJobDispatcher.Verify(
-            d => d.TryDispatchAsync("issue-42", "ip", "rp", null, null, "test", It.IsAny<CancellationToken>(), It.IsAny<string?>()),
+            d => d.DispatchToAgentDirectAsync(
+                It.IsAny<AgentEntry>(), It.Is<PendingJob>(j => j.IssueIdentifier == "issue-42"),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
     [Fact]
-    public async Task DrainAsync_DispatchFails_ReEnqueuesJob()
+    public async Task DrainAsync_SuccessfulDispatch_MarkIssueCompleteCalledAfter()
+    {
+        RegisterIdleAgent();
+        _dispatcher.EnqueueJob(CreateJob("issue-99"));
+
+        _mockJobDispatcher
+            .Setup(d => d.DispatchToAgentDirectAsync(
+                It.IsAny<AgentEntry>(), It.IsAny<PendingJob>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        await _service.DrainAsync(CancellationToken.None);
+
+        // Dedup entry should be removed after successful dispatch
+        _dispatcher.IsIssueQueued("issue-99").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task DrainAsync_DispatchFails_ReEnqueuesJobAndRetainsDedup()
     {
         RegisterIdleAgent();
         _dispatcher.EnqueueJob(CreateJob("issue-1"));
 
         _mockJobDispatcher
-            .Setup(d => d.TryDispatchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .Setup(d => d.DispatchToAgentDirectAsync(
+                It.IsAny<AgentEntry>(), It.IsAny<PendingJob>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         await _service.DrainAsync(CancellationToken.None);
 
         // Job should be re-enqueued
         _dispatcher.QueueLength.Should().Be(1);
+        // Dedup entry should remain active (not removed)
+        _dispatcher.IsIssueQueued("issue-1").Should().BeTrue();
     }
 
     [Fact]
-    public async Task DrainAsync_DispatchThrows_ReEnqueuesJob()
+    public async Task DrainAsync_DispatchThrows_ReEnqueuesJobAndRetainsDedup()
     {
         RegisterIdleAgent();
         _dispatcher.EnqueueJob(CreateJob("issue-1"));
 
         _mockJobDispatcher
-            .Setup(d => d.TryDispatchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .Setup(d => d.DispatchToAgentDirectAsync(
+                It.IsAny<AgentEntry>(), It.IsAny<PendingJob>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Provider error"));
 
         await _service.DrainAsync(CancellationToken.None);
 
         // Job should be re-enqueued after exception
         _dispatcher.QueueLength.Should().Be(1);
+        // Dedup entry should remain active
+        _dispatcher.IsIssueQueued("issue-1").Should().BeTrue();
     }
 
     [Fact]
@@ -156,9 +188,8 @@ public class JobQueueDrainServiceTests
 
         // Should not dispatch anything since cancellation was requested
         _mockJobDispatcher.Verify(
-            d => d.TryDispatchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()),
+            d => d.DispatchToAgentDirectAsync(It.IsAny<AgentEntry>(), It.IsAny<PendingJob>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -183,10 +214,127 @@ public class JobQueueDrainServiceTests
         JobQueueDrainService.DefaultDrainInterval.Should().Be(TimeSpan.FromSeconds(10));
     }
 
-    #region Review/Decomposition routing
+    #region Drain-Dispatch Dedup Continuity (Req 9.1, 9.3, 9.5)
 
     [Fact]
-    public async Task DrainAsync_ReviewRunType_RoutesToTryDispatchReviewAsync()
+    public async Task DrainAsync_ConcurrentPollForSameIssue_RejectedWhileDrainInProgress()
+    {
+        // Scenario: Enqueue job → drain starts → concurrent poll for same issue → poll is rejected
+        // Validates: Requirements 9.1, 9.5
+        RegisterIdleAgent();
+        var job = CreateJob("issue-concurrent");
+        _dispatcher.EnqueueJob(job);
+
+        // The issue is queued — IsIssueQueued should return true
+        _dispatcher.IsIssueQueued("issue-concurrent").Should().BeTrue(
+            "dedup entry must exist immediately after enqueue");
+
+        // Set up dispatch to simulate in-flight dispatch (it will succeed)
+        _mockJobDispatcher
+            .Setup(d => d.DispatchToAgentDirectAsync(
+                It.IsAny<AgentEntry>(), It.IsAny<PendingJob>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Returns(async (AgentEntry _, PendingJob _, IReadOnlyList<string> _, CancellationToken _) =>
+            {
+                // During dispatch, verify a concurrent enqueue for the same issue is rejected
+                var duplicateEnqueued = _dispatcher.EnqueueJob(new PendingJob
+                {
+                    IssueIdentifier = "issue-concurrent",
+                    IssueProviderId = "ip",
+                    RepoProviderId = "rp",
+                    EnqueuedAt = DateTimeOffset.UtcNow,
+                    InitiatedBy = "concurrent-poll"
+                });
+                duplicateEnqueued.Should().BeFalse(
+                    "dedup must remain active during drain→dispatch sequence (Req 9.5)");
+
+                _dispatcher.IsIssueQueued("issue-concurrent").Should().BeTrue(
+                    "IsIssueQueued must return true during in-flight dispatch");
+
+                return true;
+            });
+
+        await _service.DrainAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task DrainAsync_SuccessfulDispatch_MarkIssueCompleteCalledAndRunServiceTracksIssue()
+    {
+        // Scenario: Enqueue job → drain dispatches successfully → MarkIssueComplete called → issue tracked by run service
+        // Validates: Requirements 9.1, 9.3
+        RegisterIdleAgent();
+        _dispatcher.EnqueueJob(CreateJob("issue-tracked"));
+
+        _mockJobDispatcher
+            .Setup(d => d.DispatchToAgentDirectAsync(
+                It.IsAny<AgentEntry>(), It.Is<PendingJob>(j => j.IssueIdentifier == "issue-tracked"),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // Before drain — dedup active
+        _dispatcher.IsIssueQueued("issue-tracked").Should().BeTrue();
+
+        await _service.DrainAsync(CancellationToken.None);
+
+        // After successful dispatch — dedup entry removed (MarkIssueComplete called)
+        _dispatcher.IsIssueQueued("issue-tracked").Should().BeFalse(
+            "MarkIssueComplete must be called after successful dispatch (Req 9.3)");
+
+        // Verify DispatchToAgentDirectAsync was called (which registers the run in run service)
+        _mockJobDispatcher.Verify(
+            d => d.DispatchToAgentDirectAsync(
+                It.IsAny<AgentEntry>(), It.Is<PendingJob>(j => j.IssueIdentifier == "issue-tracked"),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Queue should be empty
+        _dispatcher.QueueLength.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task DrainAsync_DispatchFails_JobReEnqueuedAtBackAndDedupStillActive()
+    {
+        // Scenario: Enqueue job → drain fails dispatch → job re-enqueued at back of queue → dedup still active
+        // Validates: Requirements 9.1, 9.3, 9.5
+        RegisterIdleAgent();
+        var firstJob = CreateJob("issue-fail-dedup");
+        _dispatcher.EnqueueJob(firstJob);
+
+        _mockJobDispatcher
+            .Setup(d => d.DispatchToAgentDirectAsync(
+                It.IsAny<AgentEntry>(), It.Is<PendingJob>(j => j.IssueIdentifier == "issue-fail-dedup"),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        await _service.DrainAsync(CancellationToken.None);
+
+        // After failed dispatch:
+        // 1. Job must be re-enqueued
+        _dispatcher.QueueLength.Should().Be(1, "job must be re-enqueued after failed dispatch");
+
+        // 2. Dedup entry must still be active — prevents concurrent poll from enqueuing duplicate
+        _dispatcher.IsIssueQueued("issue-fail-dedup").Should().BeTrue(
+            "dedup entry must remain active after failed dispatch (Req 9.5)");
+
+        // 3. Attempting to enqueue the same issue should be rejected
+        var duplicateResult = _dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = "issue-fail-dedup",
+            IssueProviderId = "ip",
+            RepoProviderId = "rp",
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            InitiatedBy = "retry-poll"
+        });
+        duplicateResult.Should().BeFalse(
+            "concurrent poll for re-enqueued issue must be rejected while dedup is active");
+    }
+
+    #endregion
+
+    #region Review/Decomposition routing (via DispatchToAgentDirectAsync)
+
+    [Fact]
+    public async Task DrainAsync_ReviewRunType_DispatchesDirectlyWithJob()
     {
         RegisterIdleAgent();
         _dispatcher.EnqueueJob(new PendingJob
@@ -206,52 +354,24 @@ public class JobQueueDrainServiceTests
         });
 
         _mockJobDispatcher
-            .Setup(d => d.TryDispatchReviewAsync(It.IsAny<ReviewDispatchRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(d => d.DispatchToAgentDirectAsync(
+                It.IsAny<AgentEntry>(),
+                It.Is<PendingJob>(j => j.IssueIdentifier == "pr-10" && j.RunType == PipelineRunType.Review),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         await _service.DrainAsync(CancellationToken.None);
 
         _mockJobDispatcher.Verify(
-            d => d.TryDispatchReviewAsync(It.Is<ReviewDispatchRequest>(r => r.PrIdentifier == "pr-10"), It.IsAny<CancellationToken>()),
+            d => d.DispatchToAgentDirectAsync(
+                It.IsAny<AgentEntry>(),
+                It.Is<PendingJob>(j => j.IssueIdentifier == "pr-10" && j.RunType == PipelineRunType.Review),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
     [Fact]
-    public async Task DrainAsync_ReviewRunType_PreservesPrAuthor()
-    {
-        RegisterIdleAgent();
-        _dispatcher.EnqueueJob(new PendingJob
-        {
-            IssueIdentifier = "pr-20",
-            IssueTitle = "PR #20",
-            IssueProviderId = "ip",
-            RepoProviderId = "rp",
-            EnqueuedAt = DateTimeOffset.UtcNow,
-            InitiatedBy = "loop",
-            RequiredLabels = Array.Empty<string>(),
-            RunType = PipelineRunType.Review,
-            PrBranchName = "feature/author",
-            PrDescription = "desc",
-            PrAuthor = "alice",
-            PrUrl = "https://github.com/org/repo/pull/20",
-            PrTargetBranch = "main"
-        });
-
-        _mockJobDispatcher
-            .Setup(d => d.TryDispatchReviewAsync(It.IsAny<ReviewDispatchRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-
-        await _service.DrainAsync(CancellationToken.None);
-
-        _mockJobDispatcher.Verify(
-            d => d.TryDispatchReviewAsync(
-                It.Is<ReviewDispatchRequest>(r => r.PrAuthor == "alice"),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
-    }
-
-    [Fact]
-    public async Task DrainAsync_DecompositionRunType_RoutesToTryDispatchDecompositionAsync()
+    public async Task DrainAsync_DecompositionRunType_DispatchesDirectlyWithJob()
     {
         RegisterIdleAgent();
         _dispatcher.EnqueueJob(new PendingJob
@@ -267,18 +387,19 @@ public class JobQueueDrainServiceTests
         });
 
         _mockJobDispatcher
-            .Setup(d => d.TryDispatchDecompositionAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .Setup(d => d.DispatchToAgentDirectAsync(
+                It.IsAny<AgentEntry>(),
+                It.Is<PendingJob>(j => j.IssueIdentifier == "epic-5" && j.RunType == PipelineRunType.DecompositionAnalysis),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         await _service.DrainAsync(CancellationToken.None);
 
         _mockJobDispatcher.Verify(
-            d => d.TryDispatchDecompositionAsync(
-                "epic-5", "Epic #5", PipelineRunType.DecompositionAnalysis,
-                "ip", "rp", null, "loop", It.IsAny<CancellationToken>(), It.IsAny<string?>()),
+            d => d.DispatchToAgentDirectAsync(
+                It.IsAny<AgentEntry>(),
+                It.Is<PendingJob>(j => j.IssueIdentifier == "epic-5" && j.RunType == PipelineRunType.DecompositionAnalysis),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -404,4 +525,5 @@ public class JobQueueDrainServiceTests
     }
 
     #endregion
+
 }
