@@ -11,13 +11,12 @@ public sealed record PipelineConfiguration
     public const string DefaultSecurityReviewPrompt = DefaultPrompts.SecurityReview;
     public const string DefaultAcceptanceCriteriaReviewPrompt = DefaultPrompts.AcceptanceCriteriaReview;
 
-    /// <summary>Default review agents: Correctness + DotNetSpecialist + Security + AcceptanceCriteria.</summary>
+    /// <summary>Default review agents: Correctness + DotNetSpecialist + Security.</summary>
     public static IReadOnlyList<ReviewAgentConfig> DefaultReviewAgents { get; } = new[]
     {
         new ReviewAgentConfig { Name = "Correctness", Prompt = DefaultCorrectnessReviewPrompt },
         new ReviewAgentConfig { Name = "DotNetSpecialist", Prompt = DefaultDotNetSpecialistReviewPrompt },
-        new ReviewAgentConfig { Name = "SecurityReviewer", Prompt = DefaultSecurityReviewPrompt },
-        new ReviewAgentConfig { Name = "AcceptanceCriteria", Prompt = DefaultAcceptanceCriteriaReviewPrompt }
+        new ReviewAgentConfig { Name = "SecurityReviewer", Prompt = DefaultSecurityReviewPrompt }
     };
 
     public const string DefaultAnalysisPrompt = DefaultPrompts.Analysis;
@@ -108,6 +107,18 @@ public sealed record PipelineConfiguration
     /// the analysis based on the review feedback at .agent/analysis-review.md.
     /// </summary>
     public string AnalysisRefinementPrompt { get; init; } = DefaultAnalysisRefinementPrompt;
+
+    /// <summary>
+    /// When true, a dedicated acceptance criteria compliance check runs in parallel with
+    /// code reviewers, producing a structured JSON report. Default: true.
+    /// </summary>
+    public bool AcceptanceCriteriaEnabled { get; init; } = true;
+
+    /// <summary>
+    /// Prompt sent to the acceptance criteria agent that evaluates implementation compliance.
+    /// The agent writes structured JSON to .agent/acceptance-criteria.json.
+    /// </summary>
+    public string AcceptanceCriteriaPrompt { get; init; } = DefaultPrompts.AcceptanceCriteriaCompliance;
 
     /// <summary>
     /// When true, refactoring proposals are reviewed by an isolated discriminator agent
@@ -215,6 +226,8 @@ public sealed record PipelineConfiguration
                 config = config with { AnalysisReviewPrompt = project.AnalysisReviewPrompt };
             if (project.AnalysisRefinementPrompt is not null)
                 config = config with { AnalysisRefinementPrompt = project.AnalysisRefinementPrompt };
+            if (project.AcceptanceCriteriaEnabled.HasValue)
+                config = config with { AcceptanceCriteriaEnabled = project.AcceptanceCriteriaEnabled.Value };
             if (project.CodeReview is not null)
                 config = config with { CodeReview = project.CodeReview }; // REPLACE semantics — entire object replaced
             if (project.BaselineHealthCheckEnabled.HasValue)

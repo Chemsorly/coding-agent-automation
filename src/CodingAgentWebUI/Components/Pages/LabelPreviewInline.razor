@@ -1,0 +1,67 @@
+@using static CodingAgentWebUI.Components.Pages.TemplateTableSection
+
+<div class="label-preview-inline">
+    <div class="label-preview-section">
+        <span class="label-preview-heading">@(IsFormContext ? "Resolved Labels:" : "Labels:")</span>
+        @foreach (var label in Preview.Labels)
+        {
+            <span class="provider-label">@label</span>
+        }
+    </div>
+    @if (Preview.QualityGates.Count > 0)
+    {
+        <div class="label-preview-section">
+            <span class="label-preview-heading">🔧 Quality Gates:</span>
+            @foreach (var qg in Preview.QualityGates)
+            {
+                <span class="label-preview-item label-preview-qg">@qg</span>
+            }
+        </div>
+    }
+    @if (Preview.Reviewers.Count > 0)
+    {
+        <div class="label-preview-section">
+            <span class="label-preview-heading">📝 Reviewers:</span>
+            @foreach (var rv in Preview.Reviewers)
+            {
+                <span class="label-preview-item label-preview-rv">@rv</span>
+            }
+        </div>
+    }
+    @if (Preview.Profiles.Count > 0)
+    {
+        <div class="label-preview-section">
+            <span class="label-preview-heading">🤖 Agent Profiles:</span>
+            @foreach (var pr in Preview.Profiles)
+            {
+                <span class="label-preview-item label-preview-pr">@pr</span>
+            }
+        </div>
+    }
+    <div class="label-preview-section">
+        <span class="label-preview-heading">🖥️ Agents:</span>
+        @if (Preview.Agents.Count > 0)
+        {
+            @foreach (var ag in Preview.Agents)
+            {
+                <span class="label-preview-item label-preview-ag">@ag</span>
+            }
+            <span class="monitoring-muted">(@Preview.OnlineAgentCount online)</span>
+        }
+        else
+        {
+            <span class="monitoring-muted">No agents available</span>
+        }
+    </div>
+    @if (Preview.QualityGates.Count == 0 && Preview.Reviewers.Count == 0 && Preview.Profiles.Count == 0 && Preview.Agents.Count == 0)
+    {
+        <div class="label-preview-section">
+            <span class="monitoring-muted">No label-mapped resources match these labels</span>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public LabelPreviewResult Preview { get; set; } = new();
+    [Parameter] public bool IsFormContext { get; set; }
+}

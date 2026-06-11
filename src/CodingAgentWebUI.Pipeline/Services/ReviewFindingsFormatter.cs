@@ -53,6 +53,30 @@ internal static class ReviewFindingsFormatter
             sb.AppendLine();
         }
 
+        // Acceptance criteria compliance section
+        if (run.AcceptanceCriteriaReport is { Criteria.Count: > 0 } report)
+        {
+            sb.AppendLine("### 📋 Acceptance Criteria Compliance");
+            sb.AppendLine();
+            sb.AppendLine("| Status | Criterion | Notes |");
+            sb.AppendLine("|--------|-----------|-------|");
+            foreach (var c in report.Criteria)
+            {
+                var icon = c.Status switch
+                {
+                    CriterionStatus.Compliant => "✅",
+                    CriterionStatus.NonCompliant => "❌",
+                    CriterionStatus.NotApplicable => "⚠️",
+                    _ => "❓"
+                };
+                var notes = SanitizeTableCell(c.Evidence ?? c.Reasoning ?? "");
+                sb.AppendLine($"| {icon} | {SanitizeTableCell(c.Criterion)} | {notes} |");
+            }
+            sb.AppendLine();
+            sb.AppendLine($"*{report.Summary}*");
+            sb.AppendLine();
+        }
+
         // Inline comment status (only when inline comments are active)
         if (run.InlineCommentsPosted > 0)
         {
@@ -131,4 +155,8 @@ internal static class ReviewFindingsFormatter
         FindingSeverity.Suggestion => "💡",
         _ => "❓"
     };
+
+    /// <summary>Escapes pipe characters and replaces newlines to keep markdown table cells intact.</summary>
+    private static string SanitizeTableCell(string text)
+        => text.Replace("|", "\\|").Replace("\r\n", " ").Replace("\n", " ");
 }

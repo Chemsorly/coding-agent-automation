@@ -1,0 +1,199 @@
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Services
+<section class="settings-section" style="margin: 16px 20px;">
+    <h2>Pipeline Job Templates</h2>
+    @if (Templates.Count == 0)
+    {
+        <div class="monitoring-empty">No pipeline job templates configured. Add at least one template to enable the multi-repo loop.</div>
+    }
+    else
+    {
+        @foreach (var projectGroup in GetTemplatesByProject())
+        {
+            <div class="project-group" style="margin-bottom: 16px;">
+                <div class="project-group-header" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-hover); border-radius: var(--radius); margin-bottom: 8px;">
+                    <strong>@projectGroup.Project.Name</strong>
+                    @if (!string.IsNullOrEmpty(projectGroup.Project.EpicIssueProviderId))
+                    {
+                        <span title="Cross-repo epic decomposition configured">🧩</span>
+                    }
+                    @if (!projectGroup.Project.Enabled)
+                    {
+                        <span class="badge-disabled-table" title="Project is disabled">disabled</span>
+                    }
+                </div>
+                <div class="monitoring-table-wrap">
+                    <table class="monitoring-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Issue Provider</th>
+                                <th>Repo Provider</th>
+                                <th>Brain</th>
+                                <th>CI</th>
+                                <th>Decomp</th>
+                                <th>Impl</th>
+                                <th>Review</th>
+                                <th>Enabled</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var template in projectGroup.Templates)
+                            {
+                                var status = GetTemplateStatus(template.Id);
+                                var isPolling = status?.IsCurrentlyPolling == true;
+                                var hasError = !string.IsNullOrEmpty(status?.LastError);
+                                var providerMissing = IsProviderMissing(template);
+
+                                <tr class="@(isPolling ? "monitoring-row-busy" : "") @(!template.Enabled ? "monitoring-row-disabled" : "")">
+                                    <td>
+                                        @template.Name
+                                        @if (providerMissing)
+                                        {
+                                            <span class="badge-disabled-table" title="Referenced provider no longer exists">⚠️</span>
+                                        }
+                                    </td>
+                                    <td class="monitoring-mono">@GetProviderDisplayName(template.IssueProviderId, IssueProviders)</td>
+                                    <td class="monitoring-mono">
+                                        @GetProviderDisplayName(template.RepoProviderId, RepoProviders)
+                                        @{ var previewLabels = GetLabelPreview(template.RepoProviderId); }
+                                        @if (previewLabels.Labels.Count > 0)
+                                        {
+                                            <button class="btn-label-preview" @onclick="() => ToggleLabelPreview(template.Id)" title="Show label-mapped resources">ℹ</button>
+                                        }
+                                    </td>
+                                    <td>@(string.IsNullOrEmpty(template.BrainProviderId) ? "—" : GetProviderDisplayName(template.BrainProviderId, BrainProviders))</td>
+                                    <td>@(string.IsNullOrEmpty(template.PipelineProviderId) ? "—" : GetProviderDisplayName(template.PipelineProviderId, PipelineProviders))</td>
+                                    <td>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" checked="@template.DecompositionEnabled"
+                                                   @onchange="e => OnToggleDecomposition.InvokeAsync((template, (bool)(e.Value ?? false)))" />
+                                            <span class="toggle-slider"></span>
+                                        </label>
+                                    </td>
+                                    <td>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" checked="@template.ImplementationEnabled"
+                                                   @onchange="e => OnToggleImplementation.InvokeAsync((template, (bool)(e.Value ?? false)))" />
+                                            <span class="toggle-slider"></span>
+                                        </label>
+                                    </td>
+                                    <td>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" checked="@template.ReviewEnabled"
+                                                   @onchange="e => OnToggleReview.InvokeAsync((template, (bool)(e.Value ?? false)))" />
+                                            <span class="toggle-slider"></span>
+                                        </label>
+                                    </td>
+                                    <td>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" checked="@template.Enabled"
+                                                   @onchange="e => OnToggleEnabled.InvokeAsync((template, (bool)(e.Value ?? false)))" />
+                                            <span class="toggle-slider"></span>
+                                        </label>
+                                        @if (IsLoopActive && RecentlyToggled.Contains(template.Id))
+                                        {
+                                            <span class="monitoring-muted" style="font-size: 0.7rem; margin-left: 4px;">next cycle</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (IsLoopActive && status != null)
+                                        {
+                                            @if (isPolling)
+                                            {
+                                                <span class="monitoring-status monitoring-status-busy">⟳ polling</span>
+                                            }
+                                            else if (hasError)
+                                            {
+                                                <span class="monitoring-status monitoring-status-disconnected" title="@status.LastError">
+                                                    ⚠ @status.ConsecutiveFailures fail(s)
+                                                </span>
+                                            }
+                                            else if (status.LastPollTime.HasValue)
+                                            {
+                                                <span class="monitoring-status monitoring-status-idle">
+                                                    @UiFormatters.FormatTimeAgo(status.LastPollTime.Value) · @status.LastPollIssueCount issue(s)
+                                                </span>
+                                            }
+                                        }
+                                        else
+                                        {
+                                            <span class="monitoring-muted">—</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (!IsLoopActive)
+                                        {
+                                            <div style="display: flex; gap: 4px; align-items: center;">
+                                                <button class="btn-delete" @onclick="() => OnConfirmRemove.InvokeAsync(template)">Remove</button>
+                                                @if (Projects.Count > 1)
+                                                {
+                                                    <div class="move-to-dropdown" style="position: relative;">
+                                                        <button class="btn-cancel" style="font-size: 0.75rem; padding: 2px 8px;" @onclick="() => ToggleMoveMenu(template.Id)">Move to…</button>
+                                                        @if (_moveMenuTemplateId == template.Id)
+                                                        {
+                                                            <div class="move-to-backdrop" style="position: fixed; inset: 0; z-index: 99;" @onclick="() => ToggleMoveMenu(null)"></div>
+                                                            <div class="move-to-menu" style="position: absolute; top: 100%; right: 0; z-index: 100; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 4px 12px rgba(0,0,0,0.3); min-width: 160px; padding: 4px 0;">
+                                                                @foreach (var targetProject in Projects.Where(p => p.Id != projectGroup.Project.Id))
+                                                                {
+                                                                    <button class="move-to-option" style="display: block; width: 100%; text-align: left; padding: 6px 12px; background: none; border: none; color: var(--text); cursor: pointer; font-size: 0.8rem;"
+                                                                            @onclick="() => MoveTemplate(template.Id, projectGroup.Project.Id, targetProject.Id)">
+                                                                        @targetProject.Name
+                                                                        @if (!string.IsNullOrEmpty(targetProject.EpicIssueProviderId))
+                                                                        {
+                                                                            <text> 🧩</text>
+                                                                        }
+                                                                    </button>
+                                                                }
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+                                    </td>
+                                </tr>
+                                @if (_expandedPreviewTemplateId == template.Id)
+                                {
+                                    <tr class="label-preview-row">
+                                        <td colspan="11">
+                                            <LabelPreviewInline Preview="previewLabels" />
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+    }
+
+    @if (ShowAddForm)
+    {
+        <TemplateAddForm Form="AddForm" FormError="@FormError" Projects="Projects"
+            IssueProviders="IssueProviders" RepoProviders="RepoProviders"
+            BrainProviders="BrainProviders" PipelineProviders="PipelineProviders"
+            LabelPreview="@(!string.IsNullOrEmpty(AddForm.RepoProviderId) ? GetLabelPreview(AddForm.RepoProviderId) : new LabelPreviewResult())"
+            OnSave="OnAddTemplate" OnCancel="OnCancelAdd" />
+    }
+    else if (!IsLoopActive)
+    {
+        <button class="btn-add" style="margin-top: 12px;" @onclick="() => OnShowAddForm.InvokeAsync()">+ Add Template</button>
+    }
+
+    @if (ShowDeleteConfirm && DeletingTemplate != null)
+    {
+        <div class="agent-detail-confirm" style="margin-top: 12px;">
+            <p>Remove template <strong>@DeletingTemplate.Name</strong>?</p>
+            <div class="confirm-buttons">
+                <button class="btn-delete" @onclick="() => OnRemoveTemplate.InvokeAsync()">Remove</button>
+                <button class="btn-cancel" @onclick="() => OnCancelDelete.InvokeAsync()">Cancel</button>
+            </div>
+        </div>
+    }
+</section>

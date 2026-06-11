@@ -613,4 +613,20 @@ public static class PromptBuilder
 
         return sb.ToString().TrimEnd();
     }
+
+    /// <summary>
+    /// Builds the prompt for the acceptance criteria compliance agent.
+    /// Instructs the agent to evaluate the implementation and write structured JSON.
+    /// </summary>
+    public static string BuildAcceptanceCriteriaPrompt(string instructions)
+    {
+        ArgumentNullException.ThrowIfNull(instructions);
+
+        var sb = new StringBuilder();
+        sb.AppendLine(instructions);
+        sb.AppendLine();
+        sb.AppendLine($"Write your assessment to `{AgentWorkspacePaths.AcceptanceCriteriaFilePath}`. Do NOT print results to stdout — only write the JSON file.");
+
+        return sb.ToString().TrimEnd();
+    }
 }

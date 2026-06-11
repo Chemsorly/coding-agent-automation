@@ -83,7 +83,8 @@ public class PullRequestOrchestrator
             run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
             run.ModelName,
             codeReviewSummary,
-            closeRef);
+            closeRef,
+            run.AcceptanceCriteriaReport);
 
         if (isRework || !string.IsNullOrEmpty(run.PullRequestNumber))
         {
@@ -334,7 +335,8 @@ public class PullRequestOrchestrator
             run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
             run.ModelName,
             codeReviewSummary,
-            closeRef);
+            closeRef,
+            run.AcceptanceCriteriaReport);
 
         // Update PR body and mark ready (or leave as draft)
         run.IsDraftPr = isDraft;

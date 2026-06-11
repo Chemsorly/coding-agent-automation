@@ -206,6 +206,7 @@ Detailed documentation lives in the [`docs/`](docs/) folder. Suggested reading o
 - **HMAC-derived agent keys** — Each agent derives its own auth key from the shared master secret via HMAC(key, agent_id), enabling per-agent revocation without rotating the master key
 - **Baseline health check** — Validates build/tests pass before the agent writes code (catches broken base branches early)
 - **Inline review comments** — Code review findings posted as native inline comments at specific file:line positions in the PR diff
+- **Acceptance criteria compliance** — Dedicated parallel agent evaluates implementation against issue acceptance criteria, producing a structured compliance table in PR bodies and review comments
 
 ## Quick Start
 

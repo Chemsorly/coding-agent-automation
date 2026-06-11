@@ -38,6 +38,7 @@ public sealed record PipelineProject
     public bool? AnalysisReviewEnabled { get; init; }
     public string? AnalysisReviewPrompt { get; init; }
     public string? AnalysisRefinementPrompt { get; init; }
+    public bool? AcceptanceCriteriaEnabled { get; init; }
     public CodeReviewConfiguration? CodeReview { get; init; }
     public bool? BaselineHealthCheckEnabled { get; init; }
     public TimeSpan? ExternalCiTimeout { get; init; }

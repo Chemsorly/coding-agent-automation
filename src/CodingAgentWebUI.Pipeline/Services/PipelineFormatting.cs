@@ -69,7 +69,8 @@ public static partial class PipelineFormatting
         IReadOnlyList<string>? blacklistedFilesDetected = null,
         string? modelName = null,
         CodeReviewSummary? codeReviewSummary = null,
-        string? closeReference = null)
+        string? closeReference = null,
+        AcceptanceCriteriaReport? complianceReport = null)
     {
         var sb = new StringBuilder();
 
@@ -135,6 +136,7 @@ public static partial class PipelineFormatting
         }
 
         AppendCodeReviewSection(sb, codeReviewSummary);
+        AppendComplianceSection(sb, complianceReport);
 
         sb.AppendLine("---");
         if (!string.IsNullOrEmpty(modelName))
@@ -217,6 +219,36 @@ public static partial class PipelineFormatting
             sb.AppendLine();
         }
     }
+
+    private static void AppendComplianceSection(StringBuilder sb, AcceptanceCriteriaReport? report)
+    {
+        if (report is null || report.Criteria.Count == 0)
+            return;
+
+        sb.AppendLine("## Acceptance Criteria Compliance");
+        sb.AppendLine();
+        sb.AppendLine("| Status | Criterion | Notes |");
+        sb.AppendLine("|--------|-----------|-------|");
+        foreach (var c in report.Criteria)
+        {
+            var icon = c.Status switch
+            {
+                CriterionStatus.Compliant => "✅",
+                CriterionStatus.NonCompliant => "❌",
+                CriterionStatus.NotApplicable => "⚠️",
+                _ => "❓"
+            };
+            var notes = SanitizeTableCell(c.Evidence ?? c.Reasoning ?? "");
+            sb.AppendLine($"| {icon} | {SanitizeTableCell(c.Criterion)} | {notes} |");
+        }
+        sb.AppendLine();
+        sb.AppendLine($"*{report.Summary}*");
+        sb.AppendLine();
+    }
+
+    /// <summary>Escapes pipe characters and replaces newlines to keep markdown table cells intact.</summary>
+    private static string SanitizeTableCell(string text)
+        => text.Replace("|", "\\|").Replace("\r\n", " ").Replace("\n", " ");
 
     private static void AppendInputComments(StringBuilder sb, IReadOnlyList<IssueComment>? comments)
     {
