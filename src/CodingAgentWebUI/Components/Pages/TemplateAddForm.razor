@@ -1,0 +1,120 @@
+@using CodingAgentWebUI.Pipeline.Models
+@using static CodingAgentWebUI.Components.Pages.TemplateTableSection
+
+<div class="provider-form" style="margin-top: 12px;">
+    <h3>Add Pipeline Job Template</h3>
+
+    @if (!string.IsNullOrEmpty(FormError))
+    {
+        <div class="settings-status status-error">@FormError</div>
+    }
+
+    <div class="form-group">
+        <label>Name *</label>
+        <input type="text" @bind="Form.Name" placeholder="e.g. DotNet Main Repo" />
+    </div>
+    <div class="form-group">
+        <label>Project</label>
+        <select @bind="Form.ProjectId">
+            @foreach (var p in Projects)
+            {
+                <option value="@p.Id">@p.Name @(!string.IsNullOrEmpty(p.EpicIssueProviderId) ? "🧩" : "")</option>
+            }
+        </select>
+    </div>
+    <div class="form-group">
+        <label>Issue Provider *</label>
+        <select @bind="Form.IssueProviderId">
+            <option value="">-- Select --</option>
+            @foreach (var p in IssueProviders)
+            {
+                <option value="@p.Id">@p.DisplayName</option>
+            }
+        </select>
+    </div>
+    <div class="form-group">
+        <label>Repo Provider *</label>
+        <select @bind="Form.RepoProviderId">
+            <option value="">-- Select --</option>
+            @foreach (var p in RepoProviders)
+            {
+                <option value="@p.Id">@p.DisplayName</option>
+            }
+        </select>
+    </div>
+    @if (!string.IsNullOrEmpty(Form.RepoProviderId))
+    {
+        @if (LabelPreview.Labels.Count > 0)
+        {
+            <LabelPreviewInline Preview="LabelPreview" IsFormContext="true" />
+        }
+    }
+    <div class="form-group">
+        <label>Brain Provider (optional)</label>
+        <select @bind="Form.BrainProviderId">
+            <option value="">— None —</option>
+            @foreach (var p in BrainProviders)
+            {
+                <option value="@p.Id">@p.DisplayName</option>
+            }
+        </select>
+    </div>
+    @if (!string.IsNullOrEmpty(Form.BrainProviderId))
+    {
+        <div class="form-group form-checkbox">
+            <label>
+                <input type="checkbox" @bind="Form.BrainReadOnly" />
+                Brain Repository Read-Only
+                <span class="form-hint-icon" aria-hidden="true" title="When enabled, the brain repo is cloned and read by the agent but no changes are written back.">?</span>
+            </label>
+        </div>
+    }
+    <div class="form-group">
+        <label>Pipeline/CI Provider (optional)</label>
+        <select @bind="Form.PipelineProviderId">
+            <option value="">— None —</option>
+            @foreach (var p in PipelineProviders)
+            {
+                <option value="@p.Id">@p.DisplayName</option>
+            }
+        </select>
+    </div>
+    <div class="form-group form-checkbox">
+        <label>
+            <input type="checkbox" @bind="Form.ImplementationEnabled" />
+            Implementation Enabled
+            <span class="form-hint-icon" title="When enabled, this template dispatches implementation jobs from issues.">?</span>
+        </label>
+    </div>
+    <div class="form-group form-checkbox">
+        <label>
+            <input type="checkbox" @bind="Form.ReviewEnabled" />
+            Review Enabled
+            <span class="form-hint-icon" title="When enabled, this template dispatches PR review jobs.">?</span>
+        </label>
+    </div>
+    <div class="form-group form-checkbox">
+        <label>
+            <input type="checkbox" @bind="Form.DecompositionEnabled" />
+            Decomposition Enabled
+            <span class="form-hint-icon" title="When enabled, this template dispatches epic decomposition jobs from agent:epic labeled issues.">?</span>
+        </label>
+    </div>
+    <div class="form-buttons">
+        <button class="btn-save" @onclick="() => OnSave.InvokeAsync()">Save</button>
+        <button class="btn-cancel" @onclick="() => OnCancel.InvokeAsync()">Cancel</button>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TemplateFormModel Form { get; set; } = new();
+    [Parameter] public string? FormError { get; set; }
+    [Parameter, EditorRequired] public IReadOnlyList<PipelineProject> Projects { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<ProviderConfig> IssueProviders { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<ProviderConfig> RepoProviders { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<ProviderConfig> BrainProviders { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<ProviderConfig> PipelineProviders { get; set; } = [];
+    [Parameter] public LabelPreviewResult LabelPreview { get; set; } = new();
+    [Parameter] public EventCallback OnSave { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+}
