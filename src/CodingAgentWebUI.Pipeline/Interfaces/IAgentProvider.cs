@@ -25,10 +25,13 @@ public interface IAgentProvider : IAsyncDisposable
     bool SupportsParallelExecution { get; }
 
     /// <summary>
-    /// Provider-specific paths that should be excluded from commits when steering files are written.
-    /// Merged with config.BlacklistedPaths at commit time.
+    /// Provider-specific paths where the pipeline injects files (steering, MCP config, etc.).
+    /// Used for two enforcement layers:
+    /// 1. Hardcoded commit-time unstage — ALWAYS unstaged regardless of configuration
+    /// 2. Merged into config.BlacklistedPaths for configurable blacklist enforcement
+    /// Each agent provider implementation MUST declare its injected paths.
     /// </summary>
-    IReadOnlyList<string> SteeringBlacklistPaths { get; }
+    IReadOnlyList<string> PipelineInjectedPaths { get; }
 
     /// <summary>
     /// Ensures a CLI session is established for the given workspace path by sending a

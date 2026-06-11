@@ -374,7 +374,8 @@ public class PullRequestOrchestrator
         {
             var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, effectiveIssueRef);
             var blacklisted = await repoProvider.CommitAllAsync(
-                run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct);
+                run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct,
+                config.PipelineInjectedPaths);
             if (blacklisted.Count > 0)
             {
                 RecordBlacklistedFiles(run, blacklisted, config);

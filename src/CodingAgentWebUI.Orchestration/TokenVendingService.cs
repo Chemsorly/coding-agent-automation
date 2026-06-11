@@ -267,7 +267,6 @@ public sealed partial class TokenVendingService : ITokenVendingService
             RepositoryRole = original.RepositoryRole,
             RequiredLabels = original.RequiredLabels,
             BlacklistedPaths = original.BlacklistedPaths,
-            BlacklistMode = original.BlacklistMode,
             Secrets = original.Secrets,
             SetupSteps = original.SetupSteps
         };

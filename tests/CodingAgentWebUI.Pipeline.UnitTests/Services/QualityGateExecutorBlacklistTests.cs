@@ -60,10 +60,10 @@ public class QualityGateExecutorBlacklistTests
         // Arrange
         var blacklistedFiles = new List<string> { ".agent/settings.json", ".github/workflows/ci.yml" };
         var run = CreateRun();
-        var config = CreateConfig(BlacklistMode.WarnAndExclude);
+        var config = CreateConfig();
 
         _mockRepoProvider.Setup(r => r.CommitAllAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(blacklistedFiles.AsReadOnly());
         _mockRepoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
@@ -93,10 +93,10 @@ public class QualityGateExecutorBlacklistTests
         // Arrange
         var blacklistedFiles = new List<string> { ".agent/config.json" };
         var run = CreateRun();
-        var config = CreateConfig(BlacklistMode.WarnAndExclude);
+        var config = CreateConfig();
 
         _mockRepoProvider.Setup(r => r.CommitAllAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(blacklistedFiles.AsReadOnly());
         _mockRepoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
@@ -125,10 +125,10 @@ public class QualityGateExecutorBlacklistTests
     {
         // Arrange
         var run = CreateRun();
-        var config = CreateConfig(BlacklistMode.WarnAndExclude);
+        var config = CreateConfig();
 
         _mockRepoProvider.Setup(r => r.CommitAllAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
         _mockRepoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
@@ -165,12 +165,11 @@ public class QualityGateExecutorBlacklistTests
         BranchName = "feature/auto-42-test"
     };
 
-    private static PipelineConfiguration CreateConfig(BlacklistMode mode) => new()
+    private static PipelineConfiguration CreateConfig() => new()
     {
         AgentTimeout = TimeSpan.FromMinutes(10),
         MaxRetries = 0,
         BlacklistedPaths = new[] { ".agent", ".github" },
-        BlacklistMode = mode,
         ExternalCiTimeout = TimeSpan.FromMinutes(5),
         StallPollInterval = TimeSpan.FromMilliseconds(50),
         StallWarningInterval = TimeSpan.FromHours(1)

@@ -192,7 +192,7 @@ Any step can transition to `Failed` on error. The pipeline catches exceptions at
 - **Clone failure** — immediate fail, no retry
 - **Analysis failure** — retries up to `maxAnalysisRetries` (assessment file missing, malformed JSON, analysis too short)
 - **Agent timeout** — fail with exit code 124
-- **Blacklisted files** — fail if `blacklistMode` is `Fail`, warn if `Warn`
+- **Blacklisted files** — excluded from commits with a warning logged
 - **External CI timeout** — treated as gate failure, enters retry loop
 - **Cancellation** — `OperationCanceledException` caught at top level, label set to `agent:cancelled`
 

@@ -73,14 +73,6 @@
                             </div>
                             <input type="text" @bind="_form.BlacklistedPaths" placeholder=".kiro, .github, .brain" />
                         </div>
-                        <div class="form-group">
-                            <label>Blacklist Mode</label>
-                            <select @bind="_form.BlacklistMode">
-                                <option value="">— Use Global Default —</option>
-                                <option value="WarnAndExclude">Warn &amp; Exclude (unstage and continue)</option>
-                                <option value="Fail">Fail (stop pipeline on violation)</option>
-                            </select>
-                        </div>
                         <details class="secrets-section">
                             <summary class="secrets-section-header">🔑 Secrets (@_form.Secrets.Count)</summary>
                             <div class="secrets-section-body">
@@ -201,14 +193,6 @@
                                 <span class="form-hint-icon" aria-hidden="true" title="Comma-separated path prefixes excluded from agent commits (e.g. .kiro, .github). Leave empty to use global defaults.">?</span>
                             </div>
                             <input type="text" @bind="_form.BlacklistedPaths" placeholder=".kiro, .github, .brain" />
-                        </div>
-                        <div class="form-group">
-                            <label>Blacklist Mode</label>
-                            <select @bind="_form.BlacklistMode">
-                                <option value="">— Use Global Default —</option>
-                                <option value="WarnAndExclude">Warn &amp; Exclude (unstage and continue)</option>
-                                <option value="Fail">Fail (stop pipeline on violation)</option>
-                            </select>
                         </div>
                         <details class="secrets-section">
                             <summary class="secrets-section-header">🔑 Secrets (@_form.Secrets.Count)</summary>
@@ -358,7 +342,6 @@
             RepositoryRole = p.RepositoryRole.ToString(),
             RequiredLabels = p.RequiredLabels != null ? string.Join(", ", p.RequiredLabels) : p.Settings.GetValueOrDefault(ProviderSettingKeys.RequiredAgentLabels, ""),
             BlacklistedPaths = p.BlacklistedPaths != null ? string.Join(", ", p.BlacklistedPaths) : "",
-            BlacklistMode = p.BlacklistMode?.ToString() ?? "",
             GitLabApiUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, ProviderSettingKeys.DefaultGitLabApiUrl),
             GitLabAccessToken = p.Settings.GetValueOrDefault(ProviderSettingKeys.AccessToken, ""),
             GitLabProjectId = p.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId, ""),
@@ -442,7 +425,6 @@
             RepositoryRole = Enum.TryParse<RepositoryRole>(_form.RepositoryRole, out var role) ? role : RepositoryRole.Work,
             RequiredLabels = ParseLabels(_form.RequiredLabels),
             BlacklistedPaths = ParseBlacklistedPaths(_form.BlacklistedPaths),
-            BlacklistMode = Enum.TryParse<BlacklistMode>(_form.BlacklistMode, out var mode) ? mode : null,
             Secrets = BuildSecretsDictionary(),
             SetupSteps = BuildSetupStepsList(),
             SteeringContent = string.IsNullOrWhiteSpace(_form.SteeringContent) ? null : _form.SteeringContent.Trim(),
@@ -538,7 +520,6 @@
         public string RepositoryRole { get; set; } = "Work";
         public string RequiredLabels { get; set; } = "";
         public string BlacklistedPaths { get; set; } = "";
-        public string BlacklistMode { get; set; } = "";
         public List<SecretEntry> Secrets { get; set; } = new();
         public List<SetupStepEntry> SetupSteps { get; set; } = new();
         public string? SteeringContent { get; set; }
@@ -645,7 +626,6 @@
                 RepositoryRole = Enum.TryParse<RepositoryRole>(_form.RepositoryRole, out var role) ? role : RepositoryRole.Work,
                 RequiredLabels = ParseLabels(_form.RequiredLabels),
                 BlacklistedPaths = ParseBlacklistedPaths(_form.BlacklistedPaths),
-                BlacklistMode = Enum.TryParse<BlacklistMode>(_form.BlacklistMode, out var mode) ? mode : null,
                 Secrets = BuildSecretsDictionary(),
                 SetupSteps = BuildSetupStepsList(),
                 SteeringContent = string.IsNullOrWhiteSpace(_form.SteeringContent) ? null : _form.SteeringContent.Trim(),

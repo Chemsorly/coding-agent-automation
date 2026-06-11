@@ -20,7 +20,7 @@ Projects can override most general settings on a per-project basis using a nulla
 | `externalCiTimeout` | 00:15:00 | Max wait time for external CI completion (CI runs automatically when a Pipeline Provider is configured on the job template) |
 | `externalCiPollInterval` | 00:00:30 | How often to poll external CI for status updates |
 | `blacklistedPaths` | .agent, .brain | Paths excluded from agent commits |
-| `blacklistMode` | WarnAndExclude | How to handle blacklisted files. `WarnAndExclude` silently excludes them from commits. `Fail` aborts the run if the agent touches blacklisted paths. |
+
 | `failedWorkspaceRetentionDays` | 7 | Days to keep failed workspaces before cleanup |
 | `stallWarningInterval` | 00:02:00 | Time without agent output before a stall warning is logged |
 | `stallPollInterval` | 00:00:30 | How often to check for agent silence |

@@ -18,7 +18,7 @@ public sealed class ScriptedAgentProvider : IAgentProvider
 
     public bool SupportsParallelExecution => false;
 
-    public IReadOnlyList<string> SteeringBlacklistPaths { get; } = [".kiro"];
+    public IReadOnlyList<string> PipelineInjectedPaths { get; } = [".kiro"];
 
     /// <summary>
     /// When set, ExecuteAsync will await this before proceeding.

@@ -266,37 +266,37 @@ public class KiroCliAgentProviderTests
     }
 
     [Fact]
-    public async Task ApplyModelSettingAsync_WhenModelIsNull_DoesNothing()
+    public async Task ApplyCliSettingsAsync_WhenModelIsNull_DoesNothing()
     {
         // _provider already has model=null
-        await _provider.ApplyModelSettingAsync(CancellationToken.None);
+        await _provider.ApplyCliSettingsAsync(CancellationToken.None);
     }
 
     [Fact]
-    public async Task ApplyModelSettingAsync_WhenModelIsAuto_DoesNothing()
+    public async Task ApplyCliSettingsAsync_WhenModelIsAuto_DoesNothing()
     {
         var provider = new KiroCliAgentProvider(
             _mockOrchestrator.Object, _mockLogger.Object, model: "auto",
             "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
-        await provider.ApplyModelSettingAsync(CancellationToken.None);
+        await provider.ApplyCliSettingsAsync(CancellationToken.None);
     }
 
     [Fact]
-    public async Task ApplyModelSettingAsync_WhenModelIsAutoUpperCase_DoesNothing()
+    public async Task ApplyCliSettingsAsync_WhenModelIsAutoUpperCase_DoesNothing()
     {
         var provider = new KiroCliAgentProvider(
             _mockOrchestrator.Object, _mockLogger.Object, model: "Auto",
             "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
-        await provider.ApplyModelSettingAsync(CancellationToken.None);
+        await provider.ApplyCliSettingsAsync(CancellationToken.None);
     }
 
     [Fact]
-    public async Task ApplyModelSettingAsync_WhenModelContainsInvalidChars_RejectsAndLogs()
+    public async Task ApplyCliSettingsAsync_WhenModelContainsInvalidChars_RejectsAndLogs()
     {
         var provider = new KiroCliAgentProvider(
             _mockOrchestrator.Object, _mockLogger.Object, model: "foo\" && rm -rf /",
             "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
-        await provider.ApplyModelSettingAsync(CancellationToken.None);
+        await provider.ApplyCliSettingsAsync(CancellationToken.None);
 
         _mockLogger.Verify(l => l.Warning(
             "Invalid model name rejected: {Model}",
@@ -304,16 +304,119 @@ public class KiroCliAgentProviderTests
     }
 
     [Fact]
-    public async Task ApplyModelSettingAsync_WhenModelContainsSpaces_RejectsAndLogs()
+    public async Task ApplyCliSettingsAsync_WhenModelContainsSpaces_RejectsAndLogs()
     {
         var provider = new KiroCliAgentProvider(
             _mockOrchestrator.Object, _mockLogger.Object, model: "model with spaces",
             "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
-        await provider.ApplyModelSettingAsync(CancellationToken.None);
+        await provider.ApplyCliSettingsAsync(CancellationToken.None);
 
         _mockLogger.Verify(l => l.Warning(
             "Invalid model name rejected: {Model}",
             "model with spaces"), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApplyCliSettingsAsync_WritesModelAndEffort_ToCliJson()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
+        var settingsPath = Path.Combine(tempDir, "cli.json");
+        try
+        {
+            var provider = new KiroCliAgentProvider(
+                _mockOrchestrator.Object, _mockLogger.Object, model: "claude-opus-4.6",
+                "/usr/bin/fake-kiro-cli", AgentEffortLevel.Max, _mockProcessStarter.Object);
+
+            await provider.ApplyCliSettingsAsync(CancellationToken.None, settingsPath);
+
+            File.Exists(settingsPath).Should().BeTrue();
+
+            var json = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(settingsPath));
+            json!["chat.defaultModel"]!.GetValue<string>().Should().Be("claude-opus-4.6");
+            json["chat.modelDefaults"]!["claude-opus-4.6"]!["output_config"]!["effort"]!.GetValue<string>().Should().Be("max");
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    [Fact]
+    public async Task ApplyCliSettingsAsync_WithEffortHigh_WritesCorrectValue()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
+        var settingsPath = Path.Combine(tempDir, "cli.json");
+        try
+        {
+            var provider = new KiroCliAgentProvider(
+                _mockOrchestrator.Object, _mockLogger.Object, model: "claude-sonnet-4.6",
+                "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
+
+            await provider.ApplyCliSettingsAsync(CancellationToken.None, settingsPath);
+
+            var json = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(settingsPath));
+            json!["chat.defaultModel"]!.GetValue<string>().Should().Be("claude-sonnet-4.6");
+            json["chat.modelDefaults"]!["claude-sonnet-4.6"]!["output_config"]!["effort"]!.GetValue<string>().Should().Be("high");
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    [Fact]
+    public async Task ApplyCliSettingsAsync_WithEffortAuto_OmitsModelDefaults()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
+        var settingsPath = Path.Combine(tempDir, "cli.json");
+        try
+        {
+            var provider = new KiroCliAgentProvider(
+                _mockOrchestrator.Object, _mockLogger.Object, model: "claude-opus-4.6",
+                "/usr/bin/fake-kiro-cli", AgentEffortLevel.Auto, _mockProcessStarter.Object);
+
+            await provider.ApplyCliSettingsAsync(CancellationToken.None, settingsPath);
+
+            var json = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(settingsPath));
+            json!["chat.defaultModel"]!.GetValue<string>().Should().Be("claude-opus-4.6");
+            json["chat.modelDefaults"].Should().BeNull();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    [Fact]
+    public async Task ApplyCliSettingsAsync_PreservesExistingSettings()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
+        var settingsPath = Path.Combine(tempDir, "cli.json");
+        try
+        {
+            // Pre-populate with existing settings
+            Directory.CreateDirectory(tempDir);
+            await File.WriteAllTextAsync(settingsPath,
+                """{"mcp.loadedBefore": true, "mcp.initTimeout": 30}""");
+
+            var provider = new KiroCliAgentProvider(
+                _mockOrchestrator.Object, _mockLogger.Object, model: "claude-opus-4.6",
+                "/usr/bin/fake-kiro-cli", AgentEffortLevel.Max, _mockProcessStarter.Object);
+
+            await provider.ApplyCliSettingsAsync(CancellationToken.None, settingsPath);
+
+            var json = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(settingsPath));
+            // New settings present
+            json!["chat.defaultModel"]!.GetValue<string>().Should().Be("claude-opus-4.6");
+            json["chat.modelDefaults"]!["claude-opus-4.6"]!["output_config"]!["effort"]!.GetValue<string>().Should().Be("max");
+            // Existing settings preserved
+            json["mcp.loadedBefore"]!.GetValue<bool>().Should().BeTrue();
+            json["mcp.initTimeout"]!.GetValue<int>().Should().Be(30);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort cleanup */ }
+        }
     }
 
     // --- ExecuteAsync timeout tests ---

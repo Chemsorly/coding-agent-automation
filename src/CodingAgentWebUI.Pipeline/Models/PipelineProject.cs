@@ -54,7 +54,6 @@ public sealed record PipelineProject
     public bool? BrainConsolidationReviewEnabled { get; init; }
     public bool? HarnessSuggestionsReviewEnabled { get; init; }
     public IReadOnlyList<string>? BlacklistedPaths { get; init; }
-    public BlacklistMode? BlacklistMode { get; init; }
     public bool? BrainReadOnly { get; init; }
 
     /// <summary>

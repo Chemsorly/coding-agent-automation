@@ -43,6 +43,10 @@ public sealed class ConsolidationDispatcherTests : IDisposable
                 return Task.FromResult(configs.FirstOrDefault(c => c.Id == id));
             });
 
+        // Default: return empty profiles (tests override as needed)
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>());
+
         // Default: return empty projects (no templates will resolve without project ownership)
         _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject>());
@@ -317,6 +321,110 @@ public sealed class ConsolidationDispatcherTests : IDisposable
         // Should include agent + repo + brain configs
         capturedConfigs.Should().NotBeNull();
         capturedConfigs!.Count.Should().Be(3);
+    }
+
+    #endregion
+
+    #region AgentProvider resolution via profiles
+
+    [Fact]
+    public async Task TryDispatchAsync_ProfileResolution_SelectsCorrectProviderFromProfile()
+    {
+        // Agent has kiro labels → profile should resolve to KiroCli provider
+        RegisterIdleAgent(labels: new[] { "kiro", "dotnet", "dotnet10" });
+
+        var kiroProfile = new AgentProfile
+        {
+            Id = "prof-kiro-dotnet",
+            DisplayName = "Kiro DotNet",
+            MatchLabels = new[] { "kiro", "dotnet", "dotnet10" },
+            AgentProviderConfigId = "kiro-agent-cfg"
+        };
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile> { kiroProfile });
+
+        // Two agent configs — OpenCode first alphabetically
+        var openCodeConfig = new ProviderConfig { Id = "aaa-opencode-cfg", Kind = ProviderKind.Agent, ProviderType = "OpenCode", DisplayName = "OpenCode" };
+        var kiroConfig = new ProviderConfig { Id = "kiro-agent-cfg", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "KiroCli", RequiredLabels = new List<string> { "kiro" } };
+
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { openCodeConfig, kiroConfig });
+
+        IReadOnlyList<ProviderConfig>? capturedConfigs = null;
+        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>((configs, _, _, _) => capturedConfigs = configs)
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var svc = CreateService();
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.HarnessSuggestions, StartedAtUtc = DateTime.UtcNow };
+
+        var result = await svc.TryDispatchAsync(run, ConsolidationRunType.HarnessSuggestions, null, null, "/tmp", CancellationToken.None);
+
+        result.Should().Be(ConsolidationDispatchResult.Dispatched);
+        capturedConfigs.Should().NotBeNull();
+        var agentCfg = capturedConfigs!.FirstOrDefault(c => c.Kind == ProviderKind.Agent);
+        agentCfg.Should().NotBeNull();
+        agentCfg!.Id.Should().Be("kiro-agent-cfg");
+        agentCfg.ProviderType.Should().Be("KiroCli");
+    }
+
+    [Fact]
+    public async Task TryDispatchAsync_NoProfiles_FallsBackToFirstAvailable()
+    {
+        RegisterIdleAgent(labels: new[] { "kiro", "dotnet", "dotnet10" });
+
+        // No profiles configured — empty list (default mock)
+        var kiroConfig = new ProviderConfig { Id = "kiro-agent-cfg", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "KiroCli", RequiredLabels = new List<string> { "kiro" } };
+
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { kiroConfig });
+
+        IReadOnlyList<ProviderConfig>? capturedConfigs = null;
+        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>((configs, _, _, _) => capturedConfigs = configs)
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var svc = CreateService();
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow };
+
+        await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
+
+        capturedConfigs.Should().NotBeNull();
+        var agentCfg = capturedConfigs!.FirstOrDefault(c => c.Kind == ProviderKind.Agent);
+        agentCfg.Should().NotBeNull();
+        agentCfg!.Id.Should().Be("kiro-agent-cfg");
+    }
+
+    [Fact]
+    public async Task TryDispatchAsync_IncompatibleFallbackProvider_SkipsAgentConfig()
+    {
+        // Agent has kiro labels but no profiles → fallback picks OpenCode config → compatibility rejects it
+        RegisterIdleAgent(labels: new[] { "kiro", "dotnet", "dotnet10" });
+
+        // Only OpenCode provider available (simulates misconfigured fallback)
+        var openCodeConfig = new ProviderConfig
+        {
+            Id = "opencode-cfg", Kind = ProviderKind.Agent, ProviderType = "OpenCode", DisplayName = "OpenCode",
+            RequiredLabels = new List<string> { "opencode" }
+        };
+
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { openCodeConfig });
+
+        IReadOnlyList<ProviderConfig>? capturedConfigs = null;
+        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>((configs, _, _, _) => capturedConfigs = configs)
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var svc = CreateService();
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow };
+
+        var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
+
+        // Job dispatches but without an agent provider config (incompatible one was skipped)
+        result.Should().Be(ConsolidationDispatchResult.Dispatched);
+        capturedConfigs.Should().NotBeNull();
+        capturedConfigs!.Any(c => c.Kind == ProviderKind.Agent).Should().BeFalse();
     }
 
     #endregion

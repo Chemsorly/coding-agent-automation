@@ -23,15 +23,6 @@ public class BlacklistEnforcementTests
     }
 
     [Fact]
-    public void PipelineConfiguration_DefaultBlacklistMode_IsWarnAndExclude()
-    {
-        var config = new PipelineConfiguration();
-        config.BlacklistMode.Should().Be(BlacklistMode.WarnAndExclude);
-    }
-
-    // --- PipelineRun.BlacklistedFilesDetected ---
-
-    [Fact]
     public void PipelineRun_BlacklistedFilesDetected_DefaultsToEmpty()
     {
         var run = new PipelineRun
@@ -143,14 +134,5 @@ public class BlacklistEnforcementTests
             blacklistedFilesDetected: null);
 
         body.Should().NotContain("Blacklisted Files Excluded");
-    }
-
-    // --- BlacklistMode enum ---
-
-    [Fact]
-    public void BlacklistMode_HasExpectedValues()
-    {
-        Enum.GetValues<BlacklistMode>().Should().HaveCount(1);
-        Enum.IsDefined(BlacklistMode.WarnAndExclude).Should().BeTrue();
     }
 }

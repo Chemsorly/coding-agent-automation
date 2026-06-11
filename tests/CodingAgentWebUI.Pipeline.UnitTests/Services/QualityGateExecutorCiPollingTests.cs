@@ -85,7 +85,7 @@ public class QualityGateExecutorCiPollingTests
 
         // Infra retry creates an empty commit + push, then reads new SHA
         _mockRepoProvider.Setup(r => r.CommitAllAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), true, It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), true, It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
 
         var context = BuildContext(run);
@@ -120,7 +120,7 @@ public class QualityGateExecutorCiPollingTests
     private void SetupDefaultMocks()
     {
         _mockRepoProvider.Setup(r => r.CommitAllAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
         _mockRepoProvider.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);

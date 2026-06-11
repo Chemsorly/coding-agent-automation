@@ -44,7 +44,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
             StallWarningInterval = TimeSpan.FromMinutes(5),
             StallPollInterval = TimeSpan.FromSeconds(15),
             BlacklistedPaths = new[] { ".agent", ".github", ".secret" },
-            BlacklistMode = BlacklistMode.WarnAndExclude,
             FailedWorkspaceRetentionDays = 14,
             LastUsedProviderIds = new Dictionary<string, string>
             {
@@ -75,7 +74,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
         loaded.StallWarningInterval.Should().Be(original.StallWarningInterval);
         loaded.StallPollInterval.Should().Be(original.StallPollInterval);
         loaded.BlacklistedPaths.Should().BeEquivalentTo(original.BlacklistedPaths);
-        loaded.BlacklistMode.Should().Be(original.BlacklistMode);
         loaded.FailedWorkspaceRetentionDays.Should().Be(original.FailedWorkspaceRetentionDays);
         loaded.LastUsedProviderIds.Should().BeEquivalentTo(original.LastUsedProviderIds);
         loaded.BrainReadOnly.Should().Be(original.BrainReadOnly);

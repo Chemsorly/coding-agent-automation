@@ -132,17 +132,19 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
 
     /// <inheritdoc />
     public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message,
-        IReadOnlyList<string>? blacklistedPaths, CancellationToken ct)
-        => CommitAllAsync(workspacePath, message, blacklistedPaths, allowEmpty: false, ct);
+        IReadOnlyList<string>? blacklistedPaths, CancellationToken ct,
+        IReadOnlyList<string>? pipelineInjectedPaths = null)
+        => CommitAllAsync(workspacePath, message, blacklistedPaths, allowEmpty: false, ct, pipelineInjectedPaths);
 
     /// <inheritdoc />
     public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message,
-        IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct)
+        IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct,
+        IReadOnlyList<string>? pipelineInjectedPaths = null)
     {
         ArgumentNullException.ThrowIfNull(workspacePath);
         ArgumentNullException.ThrowIfNull(message);
 
-        return Task.Run(() => RepositoryGitOperations.CommitAll(workspacePath, message, blacklistedPaths, allowEmpty), ct);
+        return Task.Run(() => RepositoryGitOperations.CommitAll(workspacePath, message, blacklistedPaths, allowEmpty, pipelineInjectedPaths), ct);
     }
 
     /// <inheritdoc />

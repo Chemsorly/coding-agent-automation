@@ -18,7 +18,7 @@ public class PullRequestOrchestratorTests
 
         // Default happy-path setup
         _mockRepo.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>());
         _mockRepo.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<bool>(), It.IsAny<CancellationToken>()))
@@ -110,7 +110,7 @@ public class PullRequestOrchestratorTests
     {
         var blacklisted = new List<string> { ".github/workflows/ci.yml", ".agent/config.json" };
         _mockRepo.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(blacklisted.AsReadOnly());
 
         var run = CreateRun();
@@ -129,7 +129,7 @@ public class PullRequestOrchestratorTests
     {
         var blacklisted = new List<string> { ".github/workflows/ci.yml" };
         _mockRepo.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(blacklisted.AsReadOnly());
 
         PullRequestInfo? capturedInfo = null;

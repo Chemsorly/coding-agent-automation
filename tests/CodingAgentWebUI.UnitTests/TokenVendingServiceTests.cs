@@ -402,7 +402,7 @@ public class TokenVendingServiceTests
 
     /// <summary>
     /// Verifies that PrepareAgentConfigsAsync preserves Secrets, SetupSteps, RequiredLabels,
-    /// BlacklistedPaths, and BlacklistMode through the non-GitHub-App path (no privateKeyBase64).
+    /// and BlacklistedPaths through the non-GitHub-App path (no privateKeyBase64).
     /// **Validates: Requirements 2.1, 2.2, 2.3**
     /// </summary>
     [Fact]
@@ -424,7 +424,6 @@ public class TokenVendingServiceTests
 
         var requiredLabels = new List<string> { "dotnet", "dotnet10" };
         var blacklistedPaths = new List<string> { "docs/", "*.md" };
-        var blacklistMode = BlacklistMode.WarnAndExclude;
 
         var configs = new List<ProviderConfig>
         {
@@ -443,7 +442,6 @@ public class TokenVendingServiceTests
                 RepositoryRole = RepositoryRole.Work,
                 RequiredLabels = requiredLabels,
                 BlacklistedPaths = blacklistedPaths,
-                BlacklistMode = blacklistMode,
                 Secrets = secrets,
                 SetupSteps = setupSteps
             }
@@ -473,9 +471,6 @@ public class TokenVendingServiceTests
         // Verify BlacklistedPaths are preserved (Requirement 2.1 — latent bug fix)
         output.BlacklistedPaths.Should().NotBeNull();
         output.BlacklistedPaths.Should().BeEquivalentTo(blacklistedPaths);
-
-        // Verify BlacklistMode is preserved (Requirement 2.1 — latent bug fix)
-        output.BlacklistMode.Should().Be(blacklistMode);
     }
 
     #endregion

@@ -724,7 +724,6 @@ public class LocalPipelineExecutorTests : IDisposable
                 [ProviderSettingKeys.Token] = "fake-token"
             },
             BlacklistedPaths = ["*.secret", "credentials/"],
-            BlacklistMode = BlacklistMode.WarnAndExclude
         };
         var agentConfig = new ProviderConfig
         {
@@ -1114,7 +1113,7 @@ public class LocalPipelineExecutorTests : IDisposable
 
         var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection);
 
-        steps.Should().HaveCount(14);
+        steps.Should().HaveCount(15);
         await connection.DisposeAsync();
     }
 
@@ -1139,7 +1138,7 @@ public class LocalPipelineExecutorTests : IDisposable
 
         var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection);
 
-        steps[1].Should().BeOfType<WriteMcpConfigStep>();
+        steps[2].Should().BeOfType<WriteMcpConfigStep>();
         await connection.DisposeAsync();
     }
 

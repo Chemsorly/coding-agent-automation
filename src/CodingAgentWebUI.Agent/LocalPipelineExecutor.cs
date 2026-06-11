@@ -202,8 +202,9 @@ public sealed class LocalPipelineExecutor
             if (pipelineProvider is not null)
                 await pipelineProvider.ValidateAsync(ct);
 
-            // Merge provider-specific steering blacklist paths into config
-            config = PipelineConfiguration.ApplyProviderBlacklist(config, agentProvider.SteeringBlacklistPaths);
+            // Merge provider-specific paths into configurable blacklist AND store for hardcoded enforcement
+            config = PipelineConfiguration.ApplyProviderBlacklist(config, agentProvider.PipelineInjectedPaths);
+            config = config with { PipelineInjectedPaths = agentProvider.PipelineInjectedPaths };
 
             result = await ExecutePipelineStepsAsync(
                 job, config, repoProvider, agentProvider, brainProvider, pipelineProvider,
@@ -526,6 +527,7 @@ public sealed class LocalPipelineExecutor
         var steps = new List<IPipelineStep>
         {
             new CloneRepositoryStep(),
+            new EnsureAgentGitignoreStep(),
             new WriteMcpConfigStep(job),
             new WriteSteeringStep(job),
             new RunEnvironmentSetupStep(job),
@@ -553,9 +555,9 @@ public sealed class LocalPipelineExecutor
         return new IPipelineStep[]
         {
             new CloneRepositoryStep(),
+            new EnsureAgentGitignoreStep(),
             new WriteMcpConfigStep(job),
             new WriteSteeringStep(job),
-            new RunEnvironmentSetupStep(job),
             new CreateBranchStep(),
             new SyncBrainPreRunStep(),
             new ExtractLinkedIssuesStep(new IssueDescriptionParser()),
@@ -576,6 +578,7 @@ public sealed class LocalPipelineExecutor
         return new IPipelineStep[]
         {
             new CloneRepositoryStep(),
+            new EnsureAgentGitignoreStep(),
             new CloneProjectRepositoriesStep(),
             new WriteMcpConfigStep(job),
             new WriteSteeringStep(job),
@@ -602,6 +605,7 @@ public sealed class LocalPipelineExecutor
         return new IPipelineStep[]
         {
             new CloneRepositoryStep(),
+            new EnsureAgentGitignoreStep(),
             new CloneProjectRepositoriesStep(),
             new WriteMcpConfigStep(job),
             new WriteSteeringStep(job),

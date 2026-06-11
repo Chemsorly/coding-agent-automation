@@ -19,7 +19,7 @@ The pipeline uses a two-level settings hierarchy with a nullable override patter
 flowchart LR
     A[Global PipelineConfiguration] -->|null = inherit| B[Project overrides]
     B -->|non-null = replace| C[Resolved config]
-    C -->|blacklist only| D[ProviderConfig overrides]
+    C -->|blacklisted paths only| D[ProviderConfig overrides]
     D --> E[Final config sent to agent]
 ```
 
@@ -34,7 +34,7 @@ flowchart LR
 
 1. **Global defaults** — `pipeline-config.json` provides base values for all settings
 2. **Project overrides** — Non-null project settings replace corresponding global values
-3. **Repository overrides** — `BlacklistedPaths` and `BlacklistMode` from ProviderConfig override project values (if set)
+3. **Repository overrides** — `BlacklistedPaths` from ProviderConfig overrides project values (if set)
 
 Templates do NOT carry behavioral overrides. They define provider bindings only (issue/repo/brain/pipeline provider IDs and feature toggles).
 
@@ -146,7 +146,6 @@ All settings below are nullable on the project. When `null`, the global default 
 | Setting | Type | Description |
 |---------|------|-------------|
 | `BlacklistedPaths` | list? | Paths excluded from agent commits |
-| `BlacklistMode` | BlacklistMode? | `WarnAndExclude` or `Fail` |
 | `BrainReadOnly` | bool? | If true, brain is synced pre-run but not written post-run |
 
 ### Refactoring Settings

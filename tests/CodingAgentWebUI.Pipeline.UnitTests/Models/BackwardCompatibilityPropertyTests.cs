@@ -67,7 +67,6 @@ public class BackwardCompatibilityPropertyTests
         Assert.Equal(originalConfig.BrainConsolidationReviewEnabled, result.BrainConsolidationReviewEnabled);
         Assert.Equal(originalConfig.HarnessSuggestionsReviewEnabled, result.HarnessSuggestionsReviewEnabled);
         Assert.Equal(originalConfig.BlacklistedPaths, result.BlacklistedPaths);
-        Assert.Equal(originalConfig.BlacklistMode, result.BlacklistMode);
         Assert.Equal(originalConfig.BrainReadOnly, result.BrainReadOnly);
 
         // Also verify infrastructure-level settings remain untouched
@@ -145,7 +144,6 @@ public class PipelineConfigArbitraries
             from harnessSuggestionsReview in Gen.Elements(true, false)
             from blacklistCount in Gen.Choose(1, 4)
             from blacklistedPaths in Gen.ArrayOf(Gen.Elements(PathPool)).Resize(blacklistCount)
-            from blacklistMode in Gen.Constant(BlacklistMode.WarnAndExclude)
             from brainReadOnly in Gen.Elements(true, false)
             from workspaceDir in Gen.Elements(WorkspaceDirPool)
             select new PipelineConfiguration
@@ -178,7 +176,6 @@ public class PipelineConfigArbitraries
                 BrainConsolidationReviewEnabled = brainConsolidationReview,
                 HarnessSuggestionsReviewEnabled = harnessSuggestionsReview,
                 BlacklistedPaths = blacklistedPaths.Distinct().ToList(),
-                BlacklistMode = blacklistMode,
                 BrainReadOnly = brainReadOnly,
                 WorkspaceBaseDirectory = workspaceDir,
             };

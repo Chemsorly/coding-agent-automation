@@ -55,7 +55,6 @@ public class SettingsResolutionDeterminismPropertyTests
         result1.BrainConsolidationReviewEnabled.Should().Be(result2.BrainConsolidationReviewEnabled);
         result1.HarnessSuggestionsReviewEnabled.Should().Be(result2.HarnessSuggestionsReviewEnabled);
         result1.BlacklistedPaths.Should().BeEquivalentTo(result2.BlacklistedPaths);
-        result1.BlacklistMode.Should().Be(result2.BlacklistMode);
         result1.BrainReadOnly.Should().Be(result2.BrainReadOnly);
     }
 
@@ -94,7 +93,6 @@ public class SettingsResolutionDeterminismPropertyTests
         result.BrainConsolidationReviewEnabled.Should().Be(input.Config.BrainConsolidationReviewEnabled);
         result.HarnessSuggestionsReviewEnabled.Should().Be(input.Config.HarnessSuggestionsReviewEnabled);
         result.BlacklistedPaths.Should().BeEquivalentTo(input.Config.BlacklistedPaths);
-        result.BlacklistMode.Should().Be(input.Config.BlacklistMode);
         result.BrainReadOnly.Should().Be(input.Config.BrainReadOnly);
     }
 
@@ -140,7 +138,6 @@ public class SettingsResolutionDeterminismPropertyTests
         result.BrainConsolidationReviewEnabled.Should().Be(input.Config.BrainConsolidationReviewEnabled);
         result.HarnessSuggestionsReviewEnabled.Should().Be(input.Config.HarnessSuggestionsReviewEnabled);
         result.BlacklistedPaths.Should().BeEquivalentTo(input.Config.BlacklistedPaths);
-        result.BlacklistMode.Should().Be(input.Config.BlacklistMode);
         result.BrainReadOnly.Should().Be(input.Config.BrainReadOnly);
     }
 
@@ -205,8 +202,6 @@ public class SettingsResolutionDeterminismPropertyTests
             result.HarnessSuggestionsReviewEnabled.Should().Be(project.HarnessSuggestionsReviewEnabled.Value);
         if (project.BlacklistedPaths is not null)
             result.BlacklistedPaths.Should().BeEquivalentTo(project.BlacklistedPaths);
-        if (project.BlacklistMode.HasValue)
-            result.BlacklistMode.Should().Be(project.BlacklistMode.Value);
         if (project.BrainReadOnly.HasValue)
             result.BrainReadOnly.Should().Be(project.BrainReadOnly.Value);
     }
@@ -294,7 +289,6 @@ public class SettingsResolutionArbitraries
         from brainConsolidationReviewEnabled in Gen.Elements(true, false)
         from harnessSuggestionsReviewEnabled in Gen.Elements(true, false)
         from blacklistedPaths in GenBlacklistedPaths()
-        from blacklistMode in Gen.Constant(BlacklistMode.WarnAndExclude)
         from brainReadOnly in Gen.Elements(true, false)
         select new PipelineConfiguration
         {
@@ -321,7 +315,6 @@ public class SettingsResolutionArbitraries
             BrainConsolidationReviewEnabled = brainConsolidationReviewEnabled,
             HarnessSuggestionsReviewEnabled = harnessSuggestionsReviewEnabled,
             BlacklistedPaths = blacklistedPaths,
-            BlacklistMode = blacklistMode,
             BrainReadOnly = brainReadOnly
         };
 
@@ -358,7 +351,6 @@ public class SettingsResolutionArbitraries
         from blacklistedPaths in Gen.Frequency(
             (2, Gen.Constant<IReadOnlyList<string>?>(null)),
             (1, GenBlacklistedPaths().Select<IReadOnlyList<string>, IReadOnlyList<string>?>(p => p)))
-        from blacklistMode in Gen.Elements<BlacklistMode?>(null, BlacklistMode.WarnAndExclude)
         from brainReadOnly in Gen.Elements<bool?>(null, true, false)
         select new PipelineProject
         {
@@ -387,7 +379,6 @@ public class SettingsResolutionArbitraries
             BrainConsolidationReviewEnabled = brainConsolidationReviewEnabled,
             HarnessSuggestionsReviewEnabled = harnessSuggestionsReviewEnabled,
             BlacklistedPaths = blacklistedPaths,
-            BlacklistMode = blacklistMode,
             BrainReadOnly = brainReadOnly
         };
 
