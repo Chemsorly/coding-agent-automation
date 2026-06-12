@@ -81,7 +81,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
     }
 
     [Fact]
-    public async Task ConsolidationPage_TriggerWithNoAgent_ShowsRejectionMessage()
+    public async Task ConsolidationPage_TriggerWithNoAgent_ShowsQueuedMessage()
     {
         // Arrange: seed a template but do NOT connect any agent
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
@@ -310,7 +310,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
     }
 
     [Fact]
-    public async Task ConsolidationPage_TriggerWithNoAgent_ShowsRejection_ForBrainConsolidation()
+    public async Task ConsolidationPage_TriggerWithNoAgent_ShowsQueued_ForBrainConsolidation()
     {
         // Arrange: seed a template but do NOT connect any agent
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
