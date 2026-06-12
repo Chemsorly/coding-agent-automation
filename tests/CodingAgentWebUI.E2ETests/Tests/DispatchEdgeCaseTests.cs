@@ -61,7 +61,7 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase, IClassFixture<E2EFixtur
         await codingPage.ClickStartPipelineAsync();
 
         // Assert: error message appears (not silent failure)
-        await Page.WaitForTimeoutAsync(1000);
+        await Page.WaitForSelectorAsync(".settings-status.status-error", new() { Timeout = 10_000 });
         var errorVisible = await Page.Locator(".settings-status.status-error").CountAsync();
         Assert.True(errorVisible > 0, "Expected an error message when no agents are available for dispatch");
 
@@ -114,9 +114,8 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase, IClassFixture<E2EFixtur
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
 
-        // Act: dispatch the issue first time
+        // Act
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
         await codingPage.SelectTemplateAsync("Test Template");
@@ -185,7 +184,7 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase, IClassFixture<E2EFixtur
         await Page.ClickAsync("[data-testid='browse-issues-btn']");
 
         // Wait for the error to appear
-        await Page.WaitForTimeoutAsync(2000);
+        await Page.WaitForSelectorAsync(".settings-status.status-error", new() { Timeout = 10_000 });
 
         // Assert: error message is shown
         var errorVisible = await Page.Locator(".settings-status.status-error").CountAsync();

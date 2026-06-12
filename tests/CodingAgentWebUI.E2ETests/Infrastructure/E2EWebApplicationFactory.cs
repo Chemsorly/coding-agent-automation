@@ -35,6 +35,9 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
     private OrchestratorRunService? _runService;
     private JobDispatcherService? _dispatcher;
 
+    /// <summary>Exposes the agent registry for test assertions and wait helpers.</summary>
+    public AgentRegistryService AgentRegistry => _registry ?? throw new InvalidOperationException("Not initialized");
+
     public E2EWebApplicationFactory()
     {
         // Use the .NET 10 first-class API to start real Kestrel on a random port

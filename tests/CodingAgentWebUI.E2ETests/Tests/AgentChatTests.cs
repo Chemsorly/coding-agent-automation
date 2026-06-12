@@ -1,5 +1,7 @@
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.E2ETests.PageObjects;
+using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.E2ETests.Tests;
 
@@ -18,7 +20,6 @@ public sealed class AgentChatTests : E2ETestBase, IClassFixture<E2EFixture>
         // Arrange: connect a fake agent
         await using var fakeAgent = new FakeAgentClient("chat-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(1000);
 
         // Act: navigate, select agent, start chat, send prompt
         var chatPage = new AgentChatPage(Page, BaseUrl);
@@ -57,7 +58,6 @@ public sealed class AgentChatTests : E2ETestBase, IClassFixture<E2EFixture>
         // Arrange: connect a fake agent and start a chat
         await using var fakeAgent = new FakeAgentClient("chat-agent-2", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(1000);
 
         var chatPage = new AgentChatPage(Page, BaseUrl);
         await chatPage.NavigateAsync();
@@ -67,8 +67,14 @@ public sealed class AgentChatTests : E2ETestBase, IClassFixture<E2EFixture>
         // Act: end the chat session
         await chatPage.EndChatAsync();
 
+        // Wait for agent to return to Idle in registry
+        var registry = Fixture.Factory.AgentRegistry;
+        await WaitUntilAsync(() => registry.GetByAgentId("chat-agent-2")?.Status == AgentStatus.Idle);
+
+        // Refresh the dropdown by re-navigating (Blazor needs to re-fetch agent list)
+        await chatPage.NavigateAsync();
+
         // Assert: agent reappears in the dropdown (back to idle)
-        await Task.Delay(500); // Allow state to propagate
         var agentInDropdown = await chatPage.IsAgentInDropdownAsync("chat-agent-2");
         Assert.True(agentInDropdown, "Expected agent to reappear in dropdown after ending chat session");
     }

@@ -1,6 +1,7 @@
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.E2ETests.PageObjects;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.E2ETests.Tests;
@@ -22,9 +23,6 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         // Arrange: connect a fake agent
         await using var fakeAgent = new FakeAgentClient("monitor-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-
-        // Wait for agent registration to be processed by the hub
-        await Task.Delay(1000);
 
         // Act: navigate to the monitoring page
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
@@ -93,9 +91,6 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         await agent1.ConnectAsync(BaseUrl, Fixture.ApiKey);
         await agent2.ConnectAsync(BaseUrl, Fixture.ApiKey);
 
-        // Wait for both agents to register
-        await Task.Delay(1000);
-
         // Act: dispatch first issue from the UI
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
@@ -136,8 +131,9 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         await busyAgent.AcceptJobAsync(assignment1.JobId);
         await busyAgent.ReportStepAsync(assignment1.JobId, PipelineStep.CloningRepository);
 
-        // Small delay to let the hub process the acceptance
-        await Task.Delay(500);
+        // Wait for the busy agent to be marked as Busy in registry before dispatching second job
+        var registry = Fixture.Factory.AgentRegistry;
+        await WaitUntilAsync(() => registry.GetByAgentId(busyAgent.AgentId)?.Status == AgentStatus.Busy);
 
         // Navigate back to dispatch the second issue
         await codingPage.NavigateAsync();
@@ -166,10 +162,8 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         await freeAgent.ReportStepAsync(assignment2.JobId, PipelineStep.Completed);
         await freeAgent.ReportCompletionAsync(assignment2.JobId, CreateCompletionPayload("https://github.com/e2e-org/e2e-repo/pull/2"));
 
-        // Allow time for hub processing
-        await Task.Delay(1000);
-
         // Assert: history shows two completed runs
+        await WaitForHistoryAsync(r => r.IssueIdentifier == "43"); // wait for second run
         var history = Fixture.Factory.HistoryService;
         var runs = history.GetRunHistory();
         Assert.True(runs.Count >= 2, $"Expected at least 2 completed runs in history, got {runs.Count}");

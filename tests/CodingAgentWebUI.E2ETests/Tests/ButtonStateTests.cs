@@ -50,7 +50,7 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
 
         // Verify clicking it does NOT open the drawer
         await btn.ClickAsync(new() { Force = true }); // Force click even though disabled
-        await Page.WaitForTimeoutAsync(500);
+        // Drawer should not open — assert immediately (force-click on disabled button is a no-op in Blazor)
         var drawerOpen = await Page.Locator(".dispatch-drawer.open").CountAsync();
         Assert.Equal(0, drawerOpen);
     }
@@ -185,7 +185,6 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(2000); // Allow extra time for agent registration on slow ARM runners
 
         // Act: navigate, select template, open drawer, select issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -216,10 +215,8 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
         // Wait for agent to receive the job (with generous timeout for slow ARM runners)
         await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
 
-        // Give extra time for any potential second dispatch to arrive
-        await Task.Delay(2000);
-
-        // Assert: only one job was received by the agent
+        // Verify no second dispatch arrived — since SignalR InvokeAsync is request-response,
+        // any second dispatch would have completed synchronously before the success selector appeared.
         Assert.Single(fakeAgent.ReceivedJobIds);
     }
 

@@ -58,9 +58,6 @@ public sealed class QualityGateRetryTests : E2ETestBase, IClassFixture<E2EFixtur
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
 
-        // Wait for agent to be registered in the registry
-        await Task.Delay(500);
-
         // Act: navigate and dispatch
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
@@ -104,16 +101,8 @@ public sealed class QualityGateRetryTests : E2ETestBase, IClassFixture<E2EFixtur
             CodeReviewSuggestionCount = 0
         });
 
-        // Allow time for hub processing
-        await Task.Delay(500);
-
         // Assert: verify the run was completed in history
-        var history = Fixture.Factory.HistoryService;
-        var runs = history.GetRunHistory();
-        Assert.True(runs.Count > 0, "Expected at least one completed run in history");
-
-        var completedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "42");
-        Assert.NotNull(completedRun);
+        var completedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "42");
         Assert.Equal(PipelineStep.Completed, completedRun.FinalStep);
         Assert.Equal(1, completedRun.RetryCount);
         Assert.Equal("https://github.com/e2e-org/e2e-repo/pull/2", completedRun.PullRequestUrl);
@@ -162,9 +151,6 @@ public sealed class QualityGateRetryTests : E2ETestBase, IClassFixture<E2EFixtur
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
 
-        // Wait for agent to be registered in the registry
-        await Task.Delay(500);
-
         // Act: navigate and dispatch
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
@@ -209,16 +195,8 @@ public sealed class QualityGateRetryTests : E2ETestBase, IClassFixture<E2EFixtur
             CodeReviewSuggestionCount = 0
         });
 
-        // Allow time for hub processing
-        await Task.Delay(500);
-
         // Assert: verify the run was recorded as failed in history
-        var history = Fixture.Factory.HistoryService;
-        var runs = history.GetRunHistory();
-        Assert.True(runs.Count > 0, "Expected at least one run in history");
-
-        var failedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "42");
-        Assert.NotNull(failedRun);
+        var failedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "42");
         Assert.Equal(PipelineStep.Failed, failedRun.FinalStep);
         Assert.Equal(3, failedRun.RetryCount);
         Assert.Equal("https://github.com/e2e-org/e2e-repo/pull/3", failedRun.PullRequestUrl);

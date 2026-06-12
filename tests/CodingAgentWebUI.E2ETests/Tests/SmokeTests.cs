@@ -68,7 +68,12 @@ public sealed class SmokeTests : E2ETestBase, IClassFixture<E2EFixture>
 
         await Page.GotoAsync($"{BaseUrl}/agent-coding");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 10_000 });
-        await Page.WaitForTimeoutAsync(3000);
+
+        // Wait for Blazor framework scripts to load
+        await Page.WaitForFunctionAsync(
+            "() => document.querySelector('script[src*=\"blazor\"]') !== null",
+            null,
+            new() { Timeout = 10_000 });
 
         // Get the page HTML to check what script src is used
         var scriptSrc = await Page.EvaluateAsync<string>(

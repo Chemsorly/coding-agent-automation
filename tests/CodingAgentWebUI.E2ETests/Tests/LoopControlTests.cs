@@ -57,10 +57,12 @@ public sealed class LoopControlTests : E2ETestBase, IClassFixture<E2EFixture>
 
         // Act: click Start Loop
         await startBtn.ClickAsync();
-        await Page.WaitForTimeoutAsync(1000);
+
+        // Wait for Stop Loop button to appear (confirms loop started)
+        var stopBtn = Page.Locator("button:has-text('Stop Loop')");
+        await stopBtn.First.WaitForAsync(new() { Timeout = 5_000 });
 
         // Assert: Stop Loop button appears, Start Loop disappears
-        var stopBtn = Page.Locator("button:has-text('Stop Loop')");
         var stopCount = await stopBtn.CountAsync();
         Assert.True(stopCount > 0, "Stop Loop button should appear after starting the loop");
 
@@ -71,10 +73,12 @@ public sealed class LoopControlTests : E2ETestBase, IClassFixture<E2EFixture>
 
         // Act: click Stop Loop
         await stopBtn.First.ClickAsync();
-        await Page.WaitForTimeoutAsync(1000);
+
+        // Wait for Start Loop button to reappear (confirms loop stopped)
+        var startBtnAfter = Page.Locator("button:has-text('Start Loop')");
+        await startBtnAfter.First.WaitForAsync(new() { Timeout = 5_000 });
 
         // Assert: Start Loop button returns
-        var startBtnAfter = Page.Locator("button:has-text('Start Loop')");
         var startCount = await startBtnAfter.CountAsync();
         Assert.True(startCount > 0, "Start Loop button should return after stopping the loop");
     }
@@ -119,7 +123,9 @@ public sealed class LoopControlTests : E2ETestBase, IClassFixture<E2EFixture>
 
         // Act: start the loop
         await Page.ClickAsync("button:has-text('Start Loop')");
-        await Page.WaitForTimeoutAsync(1000);
+
+        // Wait for the loop to activate (Stop Loop button appears)
+        await Page.WaitForSelectorAsync("button:has-text('Stop Loop')", new() { Timeout = 5_000 });
 
         // Assert: Remove button is hidden during active loop
         var removeBtnAfter = Page.Locator("button.btn-delete:has-text('Remove')");
@@ -165,15 +171,19 @@ public sealed class LoopControlTests : E2ETestBase, IClassFixture<E2EFixture>
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
         await Page.ClickAsync("button:has-text('Start Loop')");
-        await Page.WaitForTimeoutAsync(1000);
+
+        // Wait for the loop to activate (Stop Loop button appears)
+        await Page.WaitForSelectorAsync("button:has-text('Stop Loop')", new() { Timeout = 5_000 });
 
         // Act: toggle the template's enabled state
         var toggleSwitch = Page.Locator(".toggle-switch input[type='checkbox']").First;
         await toggleSwitch.ClickAsync();
-        await Page.WaitForTimeoutAsync(500);
+
+        // Wait for the "next cycle" indicator to appear
+        var nextCycleText = Page.Locator("text=next cycle");
+        await nextCycleText.First.WaitForAsync(new() { Timeout = 5_000 });
 
         // Assert: "next cycle" indicator appears
-        var nextCycleText = Page.Locator("text=next cycle");
         var nextCycleCount = await nextCycleText.CountAsync();
         Assert.True(nextCycleCount > 0, "Toggling a template during active loop should show 'next cycle' indicator");
 
