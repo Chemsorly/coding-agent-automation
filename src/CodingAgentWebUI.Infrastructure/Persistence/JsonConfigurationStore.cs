@@ -251,11 +251,187 @@ public class JsonConfigurationStore : IConfigurationStore
         }
     }
 
+    // ── Template CRUD ─────────────────────────────────────────────────────
+
+    public async Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(projectId);
+        ValidateProjectId(projectId);
+        var project = await GetProjectByIdAsync(projectId, ct);
+        if (project is null)
+            return [];
+
+        var templatesDir = Path.Combine(_baseDirectory, "projects", projectId, "templates");
+        if (!Directory.Exists(templatesDir))
+            return [];
+
+        var templates = new Dictionary<string, PipelineJobTemplate>();
+        foreach (var file in Directory.GetFiles(templatesDir, "*.json"))
+        {
+            var template = await LoadJsonAsync<PipelineJobTemplate>(file, ct);
+            if (template is not null)
+                templates[template.Id] = template;
+        }
+
+        // Order by TemplateIds position
+        var ordered = new List<PipelineJobTemplate>();
+        foreach (var id in project.TemplateIds)
+        {
+            if (templates.TryGetValue(id, out var t))
+                ordered.Add(t);
+        }
+        return ordered.AsReadOnly();
+    }
+
+    public async Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct)
+    {
+        var projectsDir = Path.Combine(_baseDirectory, "projects");
+        if (!Directory.Exists(projectsDir))
+            return [];
+
+        var all = new List<PipelineJobTemplate>();
+        foreach (var projDir in Directory.GetDirectories(projectsDir))
+        {
+            var templatesDir = Path.Combine(projDir, "templates");
+            if (!Directory.Exists(templatesDir))
+                continue;
+            foreach (var file in Directory.GetFiles(templatesDir, "*.json"))
+            {
+                var template = await LoadJsonAsync<PipelineJobTemplate>(file, ct);
+                if (template is not null)
+                    all.Add(template);
+            }
+        }
+        return all.AsReadOnly();
+    }
+
+    public async Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(projectId);
+        ArgumentNullException.ThrowIfNull(template);
+        ValidateProjectId(projectId);
+
+        await _projectLock.WaitAsync(ct);
+        try
+        {
+            // Verify project exists before writing the template file
+            var project = await GetProjectByIdAsync(projectId, ct);
+            if (project is null)
+                return;
+
+            var templatesDir = Path.Combine(_baseDirectory, "projects", projectId, "templates");
+            Directory.CreateDirectory(templatesDir);
+            var path = Path.Combine(templatesDir, $"{template.Id}.json");
+            await SaveJsonAsync(path, template, ct);
+
+            // Add template ID to project's TemplateIds if not present
+            if (!project.TemplateIds.Contains(template.Id))
+            {
+                var updatedIds = project.TemplateIds.ToList();
+                updatedIds.Add(template.Id);
+                var updated = project with { TemplateIds = updatedIds };
+                await SaveEntityAsync(updated, "projects", p => p.Id, ct);
+            }
+        }
+        finally
+        {
+            _projectLock.Release();
+        }
+    }
+
+    public async Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(projectId);
+        ArgumentNullException.ThrowIfNull(templateId);
+        ValidateProjectId(projectId);
+        ValidateTemplateId(templateId);
+
+        await _projectLock.WaitAsync(ct);
+        try
+        {
+            var path = Path.Combine(_baseDirectory, "projects", projectId, "templates", $"{templateId}.json");
+            if (File.Exists(path))
+                File.Delete(path);
+
+            // Remove template ID from project's TemplateIds
+            var project = await GetProjectByIdAsync(projectId, ct);
+            if (project is not null && project.TemplateIds.Contains(templateId))
+            {
+                var updatedIds = project.TemplateIds.ToList();
+                updatedIds.Remove(templateId);
+                var updated = project with { TemplateIds = updatedIds };
+                await SaveEntityAsync(updated, "projects", p => p.Id, ct);
+            }
+        }
+        finally
+        {
+            _projectLock.Release();
+        }
+    }
+
+    public async Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, string templateId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(sourceProjectId);
+        ArgumentNullException.ThrowIfNull(targetProjectId);
+        ArgumentNullException.ThrowIfNull(templateId);
+        ValidateProjectId(sourceProjectId);
+        ValidateProjectId(targetProjectId);
+        ValidateTemplateId(templateId);
+
+        await _projectLock.WaitAsync(ct);
+        try
+        {
+            // Move template file
+            var sourcePath = Path.Combine(_baseDirectory, "projects", sourceProjectId, "templates", $"{templateId}.json");
+            var targetDir = Path.Combine(_baseDirectory, "projects", targetProjectId, "templates");
+            Directory.CreateDirectory(targetDir);
+            var targetPath = Path.Combine(targetDir, $"{templateId}.json");
+
+            if (File.Exists(sourcePath))
+            {
+                File.Copy(sourcePath, targetPath, overwrite: true);
+                File.Delete(sourcePath);
+            }
+
+            // Remove from source project's TemplateIds
+            var sourceProject = await GetProjectByIdAsync(sourceProjectId, ct);
+            if (sourceProject is not null && sourceProject.TemplateIds.Contains(templateId))
+            {
+                var updatedIds = sourceProject.TemplateIds.ToList();
+                updatedIds.Remove(templateId);
+                var updated = sourceProject with { TemplateIds = updatedIds };
+                await SaveEntityAsync(updated, "projects", p => p.Id, ct);
+            }
+
+            // Add to target project's TemplateIds
+            var targetProject = await GetProjectByIdAsync(targetProjectId, ct);
+            if (targetProject is not null && !targetProject.TemplateIds.Contains(templateId))
+            {
+                var updatedIds = targetProject.TemplateIds.ToList();
+                updatedIds.Add(templateId);
+                var updated = targetProject with { TemplateIds = updatedIds };
+                await SaveEntityAsync(updated, "projects", p => p.Id, ct);
+            }
+        }
+        finally
+        {
+            _projectLock.Release();
+        }
+    }
+
     private static void ValidateProjectId(string id)
     {
         if (!IsValidGuidFormat(id))
             throw new ArgumentException(
                 $"Project ID '{id}' is not a valid GUID format. Only GUID-formatted IDs are accepted to prevent path traversal.",
+                nameof(id));
+    }
+
+    private static void ValidateTemplateId(string id)
+    {
+        if (!IsValidGuidFormat(id))
+            throw new ArgumentException(
+                $"Template ID '{id}' is not a valid GUID format. Only GUID-formatted IDs are accepted to prevent path traversal.",
                 nameof(id));
     }
 
