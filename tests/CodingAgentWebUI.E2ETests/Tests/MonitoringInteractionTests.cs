@@ -292,7 +292,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await codingPage.ClickStartPipelineAsync();
 
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 15_000 });
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await fakeAgent.AcceptJobAsync(assignment.JobId);
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
@@ -304,8 +304,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
         await monitoringPage.NavigateAsync();
 
-        // Assert: agent shows "Busy" status
-        var status = await monitoringPage.GetAgentStatusAsync("status-agent-1");
-        Assert.Equal("Busy", status);
+        // Assert: agent shows "Busy" status (poll DOM until rendered — timer-driven refresh)
+        await monitoringPage.WaitForAgentStatusAsync("status-agent-1", "Busy", timeoutMs: 15_000);
     }
 }

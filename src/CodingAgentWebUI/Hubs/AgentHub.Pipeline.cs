@@ -27,6 +27,7 @@ public sealed partial class AgentHub
         {
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Busy);
             _logger.Information("Agent {AgentId} accepted job {JobId}", agent.AgentId, jobId);
+            _orchestration.NotifyChange();
         }
 
         return Task.CompletedTask;
