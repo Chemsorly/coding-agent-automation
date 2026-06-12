@@ -23,7 +23,6 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     private readonly List<QualityGateConfiguration> _qualityGateConfigs = new();
     private readonly List<ReviewerConfiguration> _reviewerConfigs = new();
     private readonly List<PipelineProject> _projects = new();
-    private readonly Dictionary<string, PipelineJobTemplate> _templates = new();
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     public void Reset()
@@ -40,7 +39,6 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         _qualityGateConfigs.Clear();
         _reviewerConfigs.Clear();
         _projects.Clear();
-        _templates.Clear();
         SeedDefaults();
     }
 
@@ -205,45 +203,41 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct)
-    {
-        var project = _projects.FirstOrDefault(p => p.Id == projectId);
-        if (project is null)
-            return Task.FromResult<IReadOnlyList<PipelineJobTemplate>>([]);
-        var templates = project.TemplateIds
-            .Where(id => _templates.ContainsKey(id))
-            .Select(id => _templates[id])
-            .ToList();
-        return Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(templates);
-    }
+    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(_pipelineConfig.PipelineJobTemplates.ToList() as IReadOnlyList<PipelineJobTemplate>);
 
-    public Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct)
-    {
-        if (_templates.Count > 0)
-            return Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(_templates.Values.ToList());
-
-        // Fall back to PipelineJobTemplates from config (same pattern as LoadProjectsAsync)
-        return Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(
-            _pipelineConfig.PipelineJobTemplates.ToList());
-    }
+    public Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(_pipelineConfig.PipelineJobTemplates.ToList());
 
     public Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct)
     {
-        _templates[template.Id] = template;
+        var templates = _pipelineConfig.PipelineJobTemplates.ToList();
+        templates.RemoveAll(t => t.Id == template.Id);
+        templates.Add(template);
+        _pipelineConfig = _pipelineConfig with { PipelineJobTemplates = templates };
+
+        // Ensure project has the template ID
         var project = _projects.FirstOrDefault(p => p.Id == projectId);
-        if (project is not null && !project.TemplateIds.Contains(template.Id))
+        if (project != null && !project.TemplateIds.Contains(template.Id))
         {
-            var updatedIds = project.TemplateIds.ToList();
-            updatedIds.Add(template.Id);
             _projects.Remove(project);
-            _projects.Add(project with { TemplateIds = updatedIds });
+            _projects.Add(project with { TemplateIds = project.TemplateIds.Append(template.Id).ToList() });
         }
         return Task.CompletedTask;
     }
 
     public Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct)
     {
-        _templates.Remove(templateId);
+        var templates = _pipelineConfig.PipelineJobTemplates.ToList();
+        templates.RemoveAll(t => t.Id == templateId);
+        _pipelineConfig = _pipelineConfig with { PipelineJobTemplates = templates };
+
+        var project = _projects.FirstOrDefault(p => p.Id == projectId);
+        if (project != null)
+        {
+            _projects.Remove(project);
+            _projects.Add(project with { TemplateIds = project.TemplateIds.Where(id => id != templateId).ToList() });
+        }
         return Task.CompletedTask;
     }
 
