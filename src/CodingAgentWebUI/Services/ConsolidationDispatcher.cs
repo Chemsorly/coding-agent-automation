@@ -454,7 +454,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private async Task<PipelineJobTemplate?> ResolveTemplateAsync(string templateId, CancellationToken ct)
     {
         var projects = await _projectStore.LoadProjectsAsync(ct);
-        var templateLookup = _config.PipelineJobTemplates.ToDictionary(t => t.Id);
+        var templateLookup = (await _projectStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
 
         foreach (var project in projects.Where(p => p.Enabled))
         {

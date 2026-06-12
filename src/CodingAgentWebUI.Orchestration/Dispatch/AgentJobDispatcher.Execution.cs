@@ -386,7 +386,7 @@ public sealed partial class AgentJobDispatcher
             {
                 var repoProviderConfigs = await _resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
                 var repoConfigLookup = repoProviderConfigs.ToDictionary(c => c.Id);
-                var templateLookup = config.PipelineJobTemplates.ToDictionary(t => t.Id);
+                var templateLookup = (await _resolution.ConfigStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
 
                 var repositories = new List<RepositoryTarget>();
                 foreach (var templateId in project.TemplateIds)
@@ -431,7 +431,8 @@ public sealed partial class AgentJobDispatcher
 
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
             config = PipelineConfiguration.ApplyProjectOverrides(config, project);
-            config = ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs);
+            var templates = await _resolution.ConfigStore.LoadAllTemplatesAsync(ct);
+            config = ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
 
             var message = new JobAssignmentMessage
             {
@@ -529,7 +530,8 @@ public sealed partial class AgentJobDispatcher
     {
         var config = await _resolution.ConfigStore.LoadPipelineConfigAsync(ct);
         config = PipelineConfiguration.ApplyProjectOverrides(config, project);
-        return ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs);
+        var templates = await _resolution.ConfigStore.LoadAllTemplatesAsync(ct);
+        return ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
     }
 
     /// <summary>
@@ -540,9 +542,10 @@ public sealed partial class AgentJobDispatcher
         PipelineConfiguration config,
         string repoProviderId,
         string? brainProviderId,
-        IReadOnlyList<ProviderConfig> providerConfigs)
+        IReadOnlyList<ProviderConfig> providerConfigs,
+        IReadOnlyList<PipelineJobTemplate> templates)
     {
-        var matchingTemplate = config.PipelineJobTemplates.FirstOrDefault(t =>
+        var matchingTemplate = templates.FirstOrDefault(t =>
             t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
         if (matchingTemplate is { BrainReadOnly: true })
             config = config with { BrainReadOnly = true };

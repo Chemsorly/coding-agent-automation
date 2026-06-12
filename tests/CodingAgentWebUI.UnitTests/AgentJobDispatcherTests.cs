@@ -50,6 +50,8 @@ public class AgentJobDispatcherTests : IDisposable
                 var configs = _mockConfigStore.Object.LoadProviderConfigsAsync(kind, ct).GetAwaiter().GetResult();
                 return Task.FromResult(configs.FirstOrDefault(c => c.Id == id));
             });
+        _mockConfigStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>());
     }
 
     private AgentJobDispatcher CreateDispatcher()
