@@ -25,6 +25,7 @@ public class AgentCodingPageComponentTests : BunitContext
     private readonly Mock<IIssueProvider> _mockIssueProvider;
     private readonly Mock<IRepositoryProvider> _mockRepoProvider;
     private readonly Mock<IJobDispatcher> _mockJobDispatcher;
+    private readonly Mock<IProjectStore> _mockProjectStore;
     private readonly PipelineOrchestrationService _pipelineService;
 
     public AgentCodingPageComponentTests()
@@ -59,10 +60,15 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddSingleton(new PipelineLoopService(_pipelineService, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, mockLogger.Object));
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
 
-        var mockProjectStore = new Mock<IProjectStore>();
-        mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockProjectStore = new Mock<IProjectStore>();
+        _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
-        Services.AddSingleton(mockProjectStore.Object);
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "t-1", Name = "DotNet Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true }
+            });
+        Services.AddSingleton(_mockProjectStore.Object);
 
         var registry = new AgentRegistryService(mockLogger.Object);
         Services.AddSingleton(registry);
@@ -176,6 +182,8 @@ public class AgentCodingPageComponentTests : BunitContext
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 PipelineJobTemplates = new List<PipelineJobTemplate>()
             });
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>());
 
         var component = Render<AgentCoding>();
 
@@ -191,6 +199,8 @@ public class AgentCodingPageComponentTests : BunitContext
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 PipelineJobTemplates = new List<PipelineJobTemplate>()
             });
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>());
 
         var component = Render<AgentCoding>();
 
@@ -255,6 +265,11 @@ public class AgentCodingPageComponentTests : BunitContext
                 {
                     new() { Id = "t-1", Name = "Bad Template", IssueProviderId = "nonexistent", RepoProviderId = "rp-1", Enabled = true }
                 }
+            });
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "t-1", Name = "Bad Template", IssueProviderId = "nonexistent", RepoProviderId = "rp-1", Enabled = true }
             });
 
         var component = Render<AgentCoding>();

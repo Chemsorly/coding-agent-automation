@@ -53,9 +53,11 @@ public class ConsolidationPageComponentTests : BunitContext
                 if (templateIds.Count == 0) return Array.Empty<PipelineProject>();
                 return new List<PipelineProject>
                 {
-                    new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = templateIds }
+                    new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = templateIds, Enabled = true }
                 };
             });
+        mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => templates ?? Array.Empty<PipelineJobTemplate>());
         Services.AddSingleton(mockProjectStore.Object);
     }
 
