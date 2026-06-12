@@ -86,6 +86,9 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     public Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct)
     {
         _pipelineConfig = config;
+        // Sync templates from config so LoadAllTemplatesAsync returns them (E2E tests seed via PipelineJobTemplates)
+        _templates.Clear();
+        _templates.AddRange(config.PipelineJobTemplates);
         return Task.CompletedTask;
     }
 
