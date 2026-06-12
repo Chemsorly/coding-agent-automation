@@ -81,7 +81,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
     }
 
     [Fact]
-    public async Task ConsolidationPage_TriggerWithNoAgent_ShowsRejectionMessage()
+    public async Task ConsolidationPage_TriggerWithNoAgent_ShowsQueuedMessage()
     {
         // Arrange: seed a template but do NOT connect any agent
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
@@ -109,11 +109,11 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         // Wait for status message
         await page.WaitForStatusMessageAsync();
 
-        // Assert: rejection message shown
+        // Assert: queued message shown (no agent → queued, not rejected)
         var message = await page.GetStatusMessageAsync();
         Assert.NotNull(message);
-        Assert.Contains("rejected", message, StringComparison.OrdinalIgnoreCase);
-        Assert.True(await page.IsStatusMessageErrorAsync());
+        Assert.Contains("queued", message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(await page.IsStatusMessageErrorAsync());
     }
 
     [Fact]
@@ -310,7 +310,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
     }
 
     [Fact]
-    public async Task ConsolidationPage_TriggerWithNoAgent_ShowsRejection_ForBrainConsolidation()
+    public async Task ConsolidationPage_TriggerWithNoAgent_ShowsQueued_ForBrainConsolidation()
     {
         // Arrange: seed a template but do NOT connect any agent
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
@@ -345,11 +345,11 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         // Wait for status message
         await page.WaitForStatusMessageAsync();
 
-        // Assert: rejection message shown (no agents available)
+        // Assert: queued message shown (no agents available → queued, not rejected)
         var message = await page.GetStatusMessageAsync();
         Assert.NotNull(message);
-        Assert.Contains("rejected", message, StringComparison.OrdinalIgnoreCase);
-        Assert.True(await page.IsStatusMessageErrorAsync());
+        Assert.Contains("queued", message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(await page.IsStatusMessageErrorAsync());
     }
 
     [Fact]
