@@ -343,4 +343,167 @@ public class ProjectStoreTests : IDisposable
         await act.Should().ThrowAsync<ArgumentException>()
             .WithMessage("*must not exceed 512 characters*");
     }
+
+    // ── Template CRUD ───────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SaveTemplateAsync_ThenLoadTemplatesForProjectAsync_ReturnsTemplate()
+    {
+        var projectId = Guid.NewGuid().ToString();
+        var project = new PipelineProject { Id = projectId, Name = "TP" };
+        await _store.SaveProjectAsync(project, CancellationToken.None);
+
+        var template = new PipelineJobTemplate
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "T1",
+            IssueProviderId = "ip1",
+            RepoProviderId = "rp1"
+        };
+        await _store.SaveTemplateAsync(projectId, template, CancellationToken.None);
+
+        var loaded = await _store.LoadTemplatesForProjectAsync(projectId, CancellationToken.None);
+        loaded.Should().HaveCount(1);
+        loaded[0].Id.Should().Be(template.Id);
+        loaded[0].Name.Should().Be("T1");
+    }
+
+    [Fact]
+    public async Task SaveTemplateAsync_AddsTemplateIdToProjectTemplateIds()
+    {
+        var projectId = Guid.NewGuid().ToString();
+        var project = new PipelineProject { Id = projectId, Name = "TP" };
+        await _store.SaveProjectAsync(project, CancellationToken.None);
+
+        var template = new PipelineJobTemplate
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "T1",
+            IssueProviderId = "ip1",
+            RepoProviderId = "rp1"
+        };
+        await _store.SaveTemplateAsync(projectId, template, CancellationToken.None);
+
+        var updatedProject = await _store.GetProjectByIdAsync(projectId, CancellationToken.None);
+        updatedProject!.TemplateIds.Should().Contain(template.Id);
+    }
+
+    [Fact]
+    public async Task SaveTemplateAsync_IdempotentSave_DoesNotDuplicateTemplateId()
+    {
+        var projectId = Guid.NewGuid().ToString();
+        var project = new PipelineProject { Id = projectId, Name = "TP" };
+        await _store.SaveProjectAsync(project, CancellationToken.None);
+
+        var template = new PipelineJobTemplate
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "T1",
+            IssueProviderId = "ip1",
+            RepoProviderId = "rp1"
+        };
+        await _store.SaveTemplateAsync(projectId, template, CancellationToken.None);
+        await _store.SaveTemplateAsync(projectId, template, CancellationToken.None);
+
+        var updatedProject = await _store.GetProjectByIdAsync(projectId, CancellationToken.None);
+        updatedProject!.TemplateIds.Count(id => id == template.Id).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task DeleteTemplateAsync_RemovesTemplateAndUpdatesTemplateIds()
+    {
+        var projectId = Guid.NewGuid().ToString();
+        var project = new PipelineProject { Id = projectId, Name = "TP" };
+        await _store.SaveProjectAsync(project, CancellationToken.None);
+
+        var template = new PipelineJobTemplate
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "T1",
+            IssueProviderId = "ip1",
+            RepoProviderId = "rp1"
+        };
+        await _store.SaveTemplateAsync(projectId, template, CancellationToken.None);
+        await _store.DeleteTemplateAsync(projectId, template.Id, CancellationToken.None);
+
+        var loaded = await _store.LoadTemplatesForProjectAsync(projectId, CancellationToken.None);
+        loaded.Should().BeEmpty();
+
+        var updatedProject = await _store.GetProjectByIdAsync(projectId, CancellationToken.None);
+        updatedProject!.TemplateIds.Should().NotContain(template.Id);
+    }
+
+    [Fact]
+    public async Task MoveTemplateAsync_MovesTemplateBetweenProjects()
+    {
+        var sourceId = Guid.NewGuid().ToString();
+        var targetId = Guid.NewGuid().ToString();
+        await _store.SaveProjectAsync(new PipelineProject { Id = sourceId, Name = "Source" }, CancellationToken.None);
+        await _store.SaveProjectAsync(new PipelineProject { Id = targetId, Name = "Target" }, CancellationToken.None);
+
+        var template = new PipelineJobTemplate
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "Movable",
+            IssueProviderId = "ip1",
+            RepoProviderId = "rp1"
+        };
+        await _store.SaveTemplateAsync(sourceId, template, CancellationToken.None);
+
+        await _store.MoveTemplateAsync(sourceId, targetId, template.Id, CancellationToken.None);
+
+        var sourceTemplates = await _store.LoadTemplatesForProjectAsync(sourceId, CancellationToken.None);
+        sourceTemplates.Should().BeEmpty();
+
+        var targetTemplates = await _store.LoadTemplatesForProjectAsync(targetId, CancellationToken.None);
+        targetTemplates.Should().HaveCount(1);
+        targetTemplates[0].Id.Should().Be(template.Id);
+
+        var sourceProject = await _store.GetProjectByIdAsync(sourceId, CancellationToken.None);
+        sourceProject!.TemplateIds.Should().NotContain(template.Id);
+
+        var targetProject = await _store.GetProjectByIdAsync(targetId, CancellationToken.None);
+        targetProject!.TemplateIds.Should().Contain(template.Id);
+    }
+
+    [Fact]
+    public async Task LoadTemplatesForProjectAsync_OrderedByTemplateIds()
+    {
+        var projectId = Guid.NewGuid().ToString();
+        var project = new PipelineProject { Id = projectId, Name = "TP" };
+        await _store.SaveProjectAsync(project, CancellationToken.None);
+
+        var t1 = new PipelineJobTemplate { Id = Guid.NewGuid().ToString(), Name = "First", IssueProviderId = "ip1", RepoProviderId = "rp1" };
+        var t2 = new PipelineJobTemplate { Id = Guid.NewGuid().ToString(), Name = "Second", IssueProviderId = "ip1", RepoProviderId = "rp1" };
+        var t3 = new PipelineJobTemplate { Id = Guid.NewGuid().ToString(), Name = "Third", IssueProviderId = "ip1", RepoProviderId = "rp1" };
+
+        await _store.SaveTemplateAsync(projectId, t1, CancellationToken.None);
+        await _store.SaveTemplateAsync(projectId, t2, CancellationToken.None);
+        await _store.SaveTemplateAsync(projectId, t3, CancellationToken.None);
+
+        var loaded = await _store.LoadTemplatesForProjectAsync(projectId, CancellationToken.None);
+        loaded.Should().HaveCount(3);
+        loaded[0].Id.Should().Be(t1.Id);
+        loaded[1].Id.Should().Be(t2.Id);
+        loaded[2].Id.Should().Be(t3.Id);
+    }
+
+    [Fact]
+    public async Task LoadAllTemplatesAsync_ReturnsTemplatesAcrossProjects()
+    {
+        var p1 = Guid.NewGuid().ToString();
+        var p2 = Guid.NewGuid().ToString();
+        await _store.SaveProjectAsync(new PipelineProject { Id = p1, Name = "P1" }, CancellationToken.None);
+        await _store.SaveProjectAsync(new PipelineProject { Id = p2, Name = "P2" }, CancellationToken.None);
+
+        var t1 = new PipelineJobTemplate { Id = Guid.NewGuid().ToString(), Name = "T1", IssueProviderId = "ip1", RepoProviderId = "rp1" };
+        var t2 = new PipelineJobTemplate { Id = Guid.NewGuid().ToString(), Name = "T2", IssueProviderId = "ip1", RepoProviderId = "rp1" };
+        await _store.SaveTemplateAsync(p1, t1, CancellationToken.None);
+        await _store.SaveTemplateAsync(p2, t2, CancellationToken.None);
+
+        var all = await _store.LoadAllTemplatesAsync(CancellationToken.None);
+        all.Should().HaveCount(2);
+        all.Select(t => t.Id).Should().Contain(t1.Id);
+        all.Select(t => t.Id).Should().Contain(t2.Id);
+    }
 }
