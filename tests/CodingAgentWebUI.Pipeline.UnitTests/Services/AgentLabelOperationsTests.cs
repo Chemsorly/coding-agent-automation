@@ -10,20 +10,24 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 public class AgentLabelOperationsTests
 {
     [Fact]
-    public async Task SwapAsync_RemovesAllLabelsExceptTarget_ThenAddsTarget()
+    public async Task SwapAsync_AddsTarget_ThenRemovesAllOtherLabels()
     {
         var removed = new List<string>();
         var added = new List<string>();
+        var callOrder = new List<string>();
 
         await AgentLabelOperations.SwapAsync(
-            (label, ct) => { removed.Add(label); return Task.CompletedTask; },
-            (label, ct) => { added.Add(label); return Task.CompletedTask; },
+            (label, ct) => { removed.Add(label); callOrder.Add($"remove:{label}"); return Task.CompletedTask; },
+            (label, ct) => { added.Add(label); callOrder.Add($"add:{label}"); return Task.CompletedTask; },
             AgentLabels.InProgress,
             CancellationToken.None);
 
         removed.Should().NotContain(AgentLabels.InProgress);
         removed.Should().HaveCount(AgentLabels.All.Count - 1);
         added.Should().ContainSingle().Which.Should().Be(AgentLabels.InProgress);
+
+        // Add happens before any removes (crash-safe ordering)
+        callOrder.First().Should().Be($"add:{AgentLabels.InProgress}");
     }
 
     [Fact]
