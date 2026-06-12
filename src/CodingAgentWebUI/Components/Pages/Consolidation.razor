@@ -218,10 +218,9 @@
     {
         try
         {
-            // Load templates from projects (project-based ownership) instead of PipelineConfiguration.PipelineJobTemplates
-            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+            var allTemplates = await ProjectStore.LoadAllTemplatesAsync(CancellationToken.None);
             var projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
-            var templateLookup = config.PipelineJobTemplates.ToDictionary(t => t.Id);
+            var templateLookup = allTemplates.ToDictionary(t => t.Id);
 
             _templates = projects
                 .Where(p => p.Enabled)

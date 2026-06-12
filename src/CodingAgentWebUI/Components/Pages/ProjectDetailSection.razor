@@ -117,7 +117,7 @@
         }
         _globalConfig = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         _issueProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
-        _allTemplates = _globalConfig.PipelineJobTemplates.ToList();
+        _allTemplates = (await ConfigStore.LoadAllTemplatesAsync(CancellationToken.None)).ToList();
         _allProjects = await ConfigStore.LoadProjectsAsync(CancellationToken.None);
 
         // Populate overview fields

@@ -112,7 +112,7 @@ public partial class AgentCoding : IDisposable
 
             var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
             _maxRetries = config.MaxRetries;
-            _templates = config.PipelineJobTemplates.ToList();
+            _templates = (await ProjectStore.LoadAllTemplatesAsync(CancellationToken.None)).ToList();
             _pipelineConfig = config;
             _projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
             _qualityGateConfigs = await ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None);
@@ -143,8 +143,11 @@ public partial class AgentCoding : IDisposable
     {
         var idx = _templates.FindIndex(t => t.Id == args.template.Id);
         if (idx < 0) return;
-        _templates[idx] = args.template with { Enabled = args.enabled };
-        await PersistTemplates();
+        var updated = args.template with { Enabled = args.enabled };
+        var projectId = GetParentProject(args.template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
+        try { await ProjectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
+        catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; return; }
+        _templates[idx] = updated;
         if (LoopService.IsLoopActive) { _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id); }
     }
 
@@ -152,8 +155,11 @@ public partial class AgentCoding : IDisposable
     {
         var idx = _templates.FindIndex(t => t.Id == args.template.Id);
         if (idx < 0) return;
-        _templates[idx] = args.template with { ImplementationEnabled = args.enabled };
-        await PersistTemplates();
+        var updated = args.template with { ImplementationEnabled = args.enabled };
+        var projectId = GetParentProject(args.template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
+        try { await ProjectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
+        catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; return; }
+        _templates[idx] = updated;
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
     }
 
@@ -161,8 +167,11 @@ public partial class AgentCoding : IDisposable
     {
         var idx = _templates.FindIndex(t => t.Id == args.template.Id);
         if (idx < 0) return;
-        _templates[idx] = args.template with { ReviewEnabled = args.enabled };
-        await PersistTemplates();
+        var updated = args.template with { ReviewEnabled = args.enabled };
+        var projectId = GetParentProject(args.template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
+        try { await ProjectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
+        catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; return; }
+        _templates[idx] = updated;
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
     }
 
@@ -170,8 +179,11 @@ public partial class AgentCoding : IDisposable
     {
         var idx = _templates.FindIndex(t => t.Id == args.template.Id);
         if (idx < 0) return;
-        _templates[idx] = args.template with { DecompositionEnabled = args.enabled };
-        await PersistTemplates();
+        var updated = args.template with { DecompositionEnabled = args.enabled };
+        var projectId = GetParentProject(args.template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
+        try { await ProjectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
+        catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; return; }
+        _templates[idx] = updated;
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
     }
 
@@ -193,16 +205,11 @@ public partial class AgentCoding : IDisposable
             BrainReadOnly = _addForm.BrainReadOnly, ImplementationEnabled = _addForm.ImplementationEnabled,
             ReviewEnabled = _addForm.ReviewEnabled, DecompositionEnabled = _addForm.DecompositionEnabled, Enabled = true
         };
-        _templates.Add(newTemplate);
-        await PersistTemplates();
-
         var targetProjectId = string.IsNullOrEmpty(_addForm.ProjectId) ? WellKnownIds.DefaultProjectId : _addForm.ProjectId;
-        var targetProject = _projects.FirstOrDefault(p => p.Id == targetProjectId);
-        if (targetProject != null)
-        {
-            await ProjectStore.SaveProjectAsync(targetProject with { TemplateIds = targetProject.TemplateIds.Append(newTemplate.Id).ToList() }, CancellationToken.None);
-            _projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
-        }
+        try { await ProjectStore.SaveTemplateAsync(targetProjectId, newTemplate, CancellationToken.None); }
+        catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; return; }
+        _templates.Add(newTemplate);
+        _projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
         _showAddForm = false;
         _successMessage = $"Template \"{newTemplate.Name}\" added.";
         _ = ClearSuccessAfterDelay();
@@ -211,8 +218,11 @@ public partial class AgentCoding : IDisposable
     private async Task RemoveTemplate()
     {
         if (_deletingTemplate == null) return;
+        var projectId = GetParentProject(_deletingTemplate.Id)?.Id ?? WellKnownIds.DefaultProjectId;
+        try { await ProjectStore.DeleteTemplateAsync(projectId, _deletingTemplate.Id, CancellationToken.None); }
+        catch (Exception ex) { _errorMessage = $"Failed to delete: {ex.Message}"; return; }
         _templates.RemoveAll(t => t.Id == _deletingTemplate.Id);
-        await PersistTemplates();
+        _projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
         _showDeleteConfirm = false;
         _successMessage = $"Template \"{_deletingTemplate.Name}\" removed.";
         _deletingTemplate = null;
@@ -422,16 +432,6 @@ public partial class AgentCoding : IDisposable
 
     private PipelineProject? GetParentProject(string templateId) =>
         _projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId));
-
-    private async Task PersistTemplates()
-    {
-        try
-        {
-            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-            await ConfigStore.SavePipelineConfigAsync(config with { PipelineJobTemplates = _templates.ToList() }, CancellationToken.None);
-        }
-        catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; }
-    }
 
     private async Task ClearRecentlyToggledAfterDelay(string templateId)
     {
