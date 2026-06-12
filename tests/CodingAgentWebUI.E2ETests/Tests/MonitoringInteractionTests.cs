@@ -57,7 +57,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
 
         await using var fakeAgent = new FakeAgentClient("monitor-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
+        await Task.Delay(2000);
 
         // Dispatch the issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -126,7 +126,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
 
         await using var fakeAgent = new FakeAgentClient("modal-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
+        await Task.Delay(2000);
 
         // Dispatch and get the run active
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -199,7 +199,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
 
         await using var fakeAgent = new FakeAgentClient("escape-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
+        await Task.Delay(2000);
 
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
@@ -270,7 +270,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
 
         await using var fakeAgent = new FakeAgentClient("status-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
+        await Task.Delay(2000);
 
         // Dispatch and accept job
         var codingPage = new AgentCodingPage(Page, BaseUrl);

@@ -185,7 +185,7 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
+        await Task.Delay(2000); // Allow time for agent registration on slow ARM runners
 
         // Act: navigate, select template, open drawer, select issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
