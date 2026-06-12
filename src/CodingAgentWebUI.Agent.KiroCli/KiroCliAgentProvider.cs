@@ -259,7 +259,9 @@ public partial class KiroCliAgentProvider : IAgentProvider
         var hasModel = !string.IsNullOrEmpty(_model) && !_model.Equals("auto", StringComparison.OrdinalIgnoreCase);
         var effortValue = _effort.ToCliValue();
 
-        if (!hasModel && effortValue is null)
+        // Without a model, there's nothing to persist (both chat.defaultModel and
+        // chat.modelDefaults.{model} require a model key).
+        if (!hasModel)
             return;
 
         if (hasModel && !ModelNamePattern().IsMatch(_model!))
