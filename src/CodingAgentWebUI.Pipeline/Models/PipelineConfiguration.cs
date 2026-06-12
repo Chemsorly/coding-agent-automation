@@ -469,7 +469,7 @@ public sealed record PipelineConfiguration
     /// Each template pairs an issue provider with a repository provider.
     /// When non-empty, the pipeline loop iterates through enabled templates each cycle.
     /// </summary>
-    // Phase 2 TODO: Move template storage to per-project directories, then add [Obsolete]
+    [Obsolete("Use IProjectStore template methods (LoadTemplatesForProjectAsync, SaveTemplateAsync) instead. This property is retained for migration and rollback compatibility.")]
     public IReadOnlyList<PipelineJobTemplate> PipelineJobTemplates { get; init; } = Array.Empty<PipelineJobTemplate>();
 
     /// <summary>
