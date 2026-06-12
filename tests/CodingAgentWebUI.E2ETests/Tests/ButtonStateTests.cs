@@ -210,8 +210,11 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
             // Button was detached, removed, or disabled after first click — expected
         }
 
-        // Wait for agent to receive the job (with timeout for slow runners)
-        await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        // Wait for the dispatch to complete and the success message to show
+        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 15_000 });
+
+        // Wait for agent to receive the job (with generous timeout for slow ARM runners)
+        await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
 
         // Give extra time for any potential second dispatch to arrive
         await Task.Delay(2000);
