@@ -164,6 +164,7 @@ public sealed partial class PipelineLoopService : BackgroundService
         var config = await _pipelineConfigStore.LoadPipelineConfigAsync(CancellationToken.None).ConfigureAwait(false);
         var issueProviders = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None).ConfigureAwait(false);
         var repoProviders = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None).ConfigureAwait(false);
+        var templates = await _projectStore.LoadAllTemplatesAsync(CancellationToken.None).ConfigureAwait(false);
 
         lock (_lock)
         {
@@ -172,7 +173,6 @@ public sealed partial class PipelineLoopService : BackgroundService
             if (_orchestration.IsRunning)
                 return false;
 
-            var templates = config.PipelineJobTemplates;
             var enabledTemplates = templates.Where(t => t.Enabled).ToList();
 
             _validationErrors = new List<string>();

@@ -67,6 +67,10 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             TemplateIds = templates.Select(t => t.Id).ToList()
         }, CancellationToken.None);
 
+        // Save templates to project store
+        foreach (var tmpl in templates)
+            await ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, tmpl, CancellationToken.None);
+
         // Setup mock providers
         var healthyProvider = new Mock<IIssueProvider>();
         healthyProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
@@ -228,6 +232,16 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             PipelineJobTemplates = templates
         };
         await ConfigStore.SavePipelineConfigAsync(config, CancellationToken.None);
+
+        // Save project and templates to project store
+        await ConfigStore.SaveProjectAsync(new PipelineProject
+        {
+            Id = WellKnownIds.DefaultProjectId,
+            Name = "Default",
+            TemplateIds = templates.Select(t => t.Id).ToList()
+        }, CancellationToken.None);
+        foreach (var tmpl in templates)
+            await ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, tmpl, CancellationToken.None);
 
         // Save only the valid provider configs
         await ConfigStore.SaveProviderConfigAsync(

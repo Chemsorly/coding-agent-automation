@@ -72,6 +72,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             {
                 new() { Id = "ap-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test" }
             });
+        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DefaultTemplates);
 
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(_mockIssueProvider.Object);
@@ -123,6 +125,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     {
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestPipelineConfig.Default() with { PipelineJobTemplates = new List<PipelineJobTemplate>() });
+        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>());
         var svc = CreateService();
         var result = await svc.StartLoopAsync();
         Assert.False(result);
@@ -138,6 +142,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         };
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestPipelineConfig.Default() with { PipelineJobTemplates = disabledTemplates });
+        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(disabledTemplates);
         var svc = CreateService();
         var result = await svc.StartLoopAsync();
         Assert.False(result);

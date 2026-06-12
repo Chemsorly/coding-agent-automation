@@ -97,7 +97,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config);
+        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
 
         // Assert — Alpha's template should come before Beta's
         Assert.Equal(2, result.Count);
@@ -140,7 +140,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config);
+        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
 
         // Assert — "Apple" (uppercase A=65) sorts before "banana" (lowercase b=98)
         Assert.Equal(2, result.Count);
@@ -186,7 +186,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config);
+        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
 
         // Assert — templates come out in TemplateIds position order: 3, 1, 2
         Assert.Equal(3, result.Count);
@@ -232,7 +232,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config);
+        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
 
         // Assert — Alpha first (alphabetical), then Beta. Within Alpha: a2, a1 (position order)
         Assert.Equal(3, result.Count);
@@ -274,7 +274,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config);
+        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
 
         // Assert — only Alpha's template appears (Beta is disabled)
         Assert.Single(result);
@@ -313,7 +313,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config);
+        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
 
         // Assert — no templates in result
         Assert.Empty(result);
@@ -349,7 +349,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config);
+        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
 
         // Assert — only the enabled template appears
         Assert.Single(result);
@@ -384,7 +384,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var svc = CreateService();
 
         // Act — should not throw
-        var result = svc.FlattenTemplates(projects, config);
+        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
 
         // Assert — only the existing template appears
         Assert.Single(result);
@@ -410,7 +410,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config);
+        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
 
         // Assert
         Assert.Empty(result);
@@ -433,7 +433,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var svc = CreateService();
 
         // Act
-        svc.FlattenTemplates(projects, config);
+        svc.FlattenTemplates(projects, config.PipelineJobTemplates);
 
         // Assert — logger.Warning was called with appropriate parameters
         _mockLogger.Verify(
