@@ -180,11 +180,13 @@ public sealed partial class PipelineLoopService
 
         // Load projects and flatten templates using project-based ordering
         var projects = await _projectStore.LoadProjectsAsync(ct) ?? (IReadOnlyList<PipelineProject>)[];
-        var flattenedTemplates = FlattenTemplates(projects, config);
+        var allTemplates = await _projectStore.LoadAllTemplatesAsync(ct);
+        var flattenedTemplates = FlattenTemplates(projects, allTemplates);
         var enabledTemplates = flattenedTemplates.Select(ft => ft.Template).ToList();
 
         // Pre-built lookup shared by FlattenTemplates logic and SelectDecompositionTemplate
-        var templateLookup = config.PipelineJobTemplates.ToDictionary(t => t.Id);
+        // TODO: ToDictionary will throw on duplicate template IDs from a corrupted store; consider using DistinctBy or GroupBy for resilience
+        var templateLookup = allTemplates.ToDictionary(t => t.Id);
 
         // Filter out rate-limited templates
         var now = DateTimeOffset.UtcNow;
@@ -1152,11 +1154,11 @@ public sealed partial class PipelineLoopService
     /// </summary>
     internal IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> FlattenTemplates(
         IReadOnlyList<PipelineProject> projects,
-        PipelineConfiguration globalConfig)
+        IReadOnlyList<PipelineJobTemplate> templates)
     {
         var result = new List<(PipelineJobTemplate, PipelineProject)>();
         // Build lookup for O(1) template resolution
-        var templateLookup = globalConfig.PipelineJobTemplates.ToDictionary(t => t.Id);
+        var templateLookup = templates.ToDictionary(t => t.Id);
 
         foreach (var project in projects.Where(p => p.Enabled).OrderBy(p => p.Name, StringComparer.Ordinal))
         {
