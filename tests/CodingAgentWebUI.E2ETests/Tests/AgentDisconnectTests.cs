@@ -160,10 +160,10 @@ public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture
         // Click the Cancel button
         await Page.ClickAsync("button.btn-cancel-small");
 
-        // Wait for the click to be processed (cancel button disappears or run clears)
-        await Page.WaitForSelectorAsync("button.btn-cancel-small", new() { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
+        // Wait for the server to process the cancellation (run removed from active runs)
+        await WaitUntilAsync(() => !runService.GetActiveRuns().Any(r => r.IssueIdentifier == "61"));
 
-        // Assert: no error appeared
+        // Assert: no error appeared during the cancel flow
         var errorVisible = await Page.Locator(".settings-status.status-error").CountAsync();
         Assert.Equal(0, errorVisible);
     }

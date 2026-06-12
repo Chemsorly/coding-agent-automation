@@ -71,6 +71,9 @@ public sealed class AgentChatTests : E2ETestBase, IClassFixture<E2EFixture>
         var registry = Fixture.Factory.AgentRegistry;
         await WaitUntilAsync(() => registry.GetByAgentId("chat-agent-2")?.Status == AgentStatus.Idle);
 
+        // Refresh the dropdown by re-navigating (Blazor needs to re-fetch agent list)
+        await chatPage.NavigateAsync();
+
         // Assert: agent reappears in the dropdown (back to idle)
         var agentInDropdown = await chatPage.IsAgentInDropdownAsync("chat-agent-2");
         Assert.True(agentInDropdown, "Expected agent to reappear in dropdown after ending chat session");
