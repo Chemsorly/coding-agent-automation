@@ -58,9 +58,6 @@ public sealed class HappyPathTests : E2ETestBase, IClassFixture<E2EFixture>
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
 
-        // Wait for agent to be registered in the registry
-        await Task.Delay(500);
-
         // Act: navigate and start pipeline
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
@@ -90,12 +87,7 @@ public sealed class HappyPathTests : E2ETestBase, IClassFixture<E2EFixture>
 
         // Verify the run was completed by checking history service
         // (multi-agent runs are moved to history after completion)
-        await Task.Delay(500); // Allow time for hub processing
-        var history = Fixture.Factory.HistoryService;
-        var runs = history.GetRunHistory();
-        Assert.True(runs.Count > 0, "Expected at least one completed run in history");
-        var completedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "42");
-        Assert.NotNull(completedRun);
+        var completedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "42");
         Assert.Equal(PipelineStep.Completed, completedRun.FinalStep);
         Assert.Equal("https://github.com/e2e-org/e2e-repo/pull/1", completedRun.PullRequestUrl);
     }

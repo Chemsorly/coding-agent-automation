@@ -57,7 +57,6 @@ public sealed class ClosedLoopDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         // Connect fake agent
         await using var fakeAgent = new FakeAgentClient("loop-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500); // Allow registration
 
         // Act: resolve PipelineLoopService and start it manually
         var loopService = Fixture.Factory.Services.GetRequiredService<PipelineLoopService>();
@@ -74,12 +73,9 @@ public sealed class ClosedLoopDispatchTests : E2ETestBase, IClassFixture<E2EFixt
 
             // Agent completes the job
             await fakeAgent.AcceptAndCompleteJobAsync(assignment.JobId);
-            await Task.Delay(500); // Allow hub processing
 
             // Verify completion recorded in history
-            var runs = Fixture.Factory.HistoryService.GetRunHistory();
-            var completedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "100");
-            Assert.NotNull(completedRun);
+            var completedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "100");
             Assert.Equal(PipelineStep.Completed, completedRun.FinalStep);
         }
         finally

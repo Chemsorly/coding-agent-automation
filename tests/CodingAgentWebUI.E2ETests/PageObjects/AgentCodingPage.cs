@@ -40,7 +40,8 @@ public sealed class AgentCodingPage
     {
         var select = _page.Locator("[data-testid='template-select']");
 
-        // Wait for the template option to appear in the DOM
+        // Wait for the template option to appear in the DOM.
+        // Generous timeout for slow ARM CI runners where Blazor circuit establishment is slow.
         await _page.WaitForFunctionAsync(
             @"(name) => {
                 const select = document.querySelector('[data-testid=""template-select""]');
@@ -48,7 +49,7 @@ public sealed class AgentCodingPage
                 return Array.from(select.options).some(o => o.text === name);
             }",
             templateName,
-            new() { Timeout = 10_000 });
+            new() { Timeout = 20_000 });
 
         // Use Playwright's native selectOption which triggers the change event.
         // The component uses explicit @onchange handler (not @bind) for reliable event capture.

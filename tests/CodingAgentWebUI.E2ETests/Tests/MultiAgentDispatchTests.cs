@@ -23,9 +23,6 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         await using var fakeAgent = new FakeAgentClient("monitor-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
 
-        // Wait for agent registration to be processed by the hub
-        await Task.Delay(1000);
-
         // Act: navigate to the monitoring page
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
         await monitoringPage.NavigateAsync();
@@ -92,9 +89,6 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         await using var agent2 = new FakeAgentClient("multi-agent-2", "e2e");
         await agent1.ConnectAsync(BaseUrl, Fixture.ApiKey);
         await agent2.ConnectAsync(BaseUrl, Fixture.ApiKey);
-
-        // Wait for both agents to register
-        await Task.Delay(1000);
 
         // Act: dispatch first issue from the UI
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -166,10 +160,8 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         await freeAgent.ReportStepAsync(assignment2.JobId, PipelineStep.Completed);
         await freeAgent.ReportCompletionAsync(assignment2.JobId, CreateCompletionPayload("https://github.com/e2e-org/e2e-repo/pull/2"));
 
-        // Allow time for hub processing
-        await Task.Delay(1000);
-
         // Assert: history shows two completed runs
+        await WaitForHistoryAsync(r => r.IssueIdentifier == "43"); // wait for second run
         var history = Fixture.Factory.HistoryService;
         var runs = history.GetRunHistory();
         Assert.True(runs.Count >= 2, $"Expected at least 2 completed runs in history, got {runs.Count}");

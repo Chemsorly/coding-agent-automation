@@ -59,9 +59,6 @@ public sealed class ConfidenceGateTests : E2ETestBase, IClassFixture<E2EFixture>
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
 
-        // Wait for agent to be registered in the registry
-        await Task.Delay(500);
-
         // Act: navigate and dispatch
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
@@ -106,16 +103,8 @@ public sealed class ConfidenceGateTests : E2ETestBase, IClassFixture<E2EFixture>
             CodeReviewSuggestionCount = 0
         });
 
-        // Allow time for hub processing
-        await Task.Delay(500);
-
         // Assert: verify the run was recorded as failed with not_ready recommendation
-        var history = Fixture.Factory.HistoryService;
-        var runs = history.GetRunHistory();
-        Assert.True(runs.Count > 0, "Expected at least one run in history");
-
-        var failedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "42");
-        Assert.NotNull(failedRun);
+        var failedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "42");
         Assert.Equal(PipelineStep.Failed, failedRun.FinalStep);
         Assert.Equal(AnalysisGateResult.NotReady, failedRun.AnalysisRecommendation);
         Assert.Equal(0, failedRun.RetryCount);
@@ -165,9 +154,6 @@ public sealed class ConfidenceGateTests : E2ETestBase, IClassFixture<E2EFixture>
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
 
-        // Wait for agent to be registered in the registry
-        await Task.Delay(500);
-
         // Act: navigate and dispatch
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
@@ -212,16 +198,8 @@ public sealed class ConfidenceGateTests : E2ETestBase, IClassFixture<E2EFixture>
             CodeReviewSuggestionCount = 0
         });
 
-        // Allow time for hub processing
-        await Task.Delay(500);
-
         // Assert: verify the run was recorded as failed with wont_do recommendation
-        var history = Fixture.Factory.HistoryService;
-        var runs = history.GetRunHistory();
-        Assert.True(runs.Count > 0, "Expected at least one run in history");
-
-        var failedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "42");
-        Assert.NotNull(failedRun);
+        var failedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "42");
         Assert.Equal(PipelineStep.Failed, failedRun.FinalStep);
         Assert.Equal(AnalysisGateResult.WontDo, failedRun.AnalysisRecommendation);
         Assert.Equal(0, failedRun.RetryCount);

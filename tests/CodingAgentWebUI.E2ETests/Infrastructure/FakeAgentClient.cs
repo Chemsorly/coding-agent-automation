@@ -36,6 +36,8 @@ public sealed class FakeAgentClient : IAsyncDisposable
 
     /// <summary>
     /// Connects to the SignalR hub and registers as an agent.
+    /// Registration is synchronous — by the time this method returns, the agent is
+    /// in the registry with Idle status. No additional delay is needed before dispatch.
     /// </summary>
     public async Task ConnectAsync(string serverAddress, string apiKey)
     {
@@ -62,7 +64,8 @@ public sealed class FakeAgentClient : IAsyncDisposable
 
         await _connection.StartAsync();
 
-        // Register with the hub
+        // Register with the hub — InvokeAsync is request-response, so when this returns
+        // the agent IS in the registry with Idle status. No Task.Delay needed.
         await _connection.InvokeAsync("RegisterAgent", new AgentRegistrationMessage
         {
             AgentId = AgentId,

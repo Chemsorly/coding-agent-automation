@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
 
@@ -57,5 +58,53 @@ public abstract class E2ETestBase : IAsyncLifetime
 
         if (_context is not null)
             await _context.DisposeAsync();
+    }
+
+    // ── Wait Helpers ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Polls the history service until a run matching the predicate appears, or times out.
+    /// Replaces Task.Delay after completion — deterministic wait instead of arbitrary delay.
+    /// </summary>
+    protected async Task<PipelineRunSummary> WaitForHistoryAsync(
+        Func<PipelineRunSummary, bool> predicate,
+        TimeSpan? timeout = null,
+        TimeSpan? pollInterval = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));
+        var interval = pollInterval ?? TimeSpan.FromMilliseconds(50);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            var runs = Fixture.Factory.HistoryService.GetRunHistory();
+            var match = runs.FirstOrDefault(predicate);
+            if (match is not null) return match;
+            await Task.Delay(interval);
+        }
+
+        throw new TimeoutException(
+            $"No matching run appeared in history within {(timeout ?? TimeSpan.FromSeconds(10)).TotalSeconds}s");
+    }
+
+    /// <summary>
+    /// Polls a condition until it returns true, or times out.
+    /// Generic replacement for Task.Delay before assertions on server-side state.
+    /// </summary>
+    protected static async Task WaitUntilAsync(
+        Func<bool> condition,
+        TimeSpan? timeout = null,
+        TimeSpan? pollInterval = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));
+        var interval = pollInterval ?? TimeSpan.FromMilliseconds(50);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition()) return;
+            await Task.Delay(interval);
+        }
+
+        throw new TimeoutException(
+            $"Condition not met within {(timeout ?? TimeSpan.FromSeconds(10)).TotalSeconds}s");
     }
 }

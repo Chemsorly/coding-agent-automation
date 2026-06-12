@@ -57,7 +57,6 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
 
         await using var fakeAgent = new FakeAgentClient("monitor-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(2000);
 
         // Dispatch the issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -126,7 +125,6 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
 
         await using var fakeAgent = new FakeAgentClient("modal-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(2000);
 
         // Dispatch and get the run active
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -200,7 +198,6 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
 
         await using var fakeAgent = new FakeAgentClient("escape-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(2000);
 
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
@@ -272,7 +269,6 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
 
         await using var fakeAgent = new FakeAgentClient("status-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(2000);
 
         // Dispatch and accept job
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -282,8 +278,8 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await codingPage.SelectIssueAsync("73");
         await codingPage.ClickStartPipelineAsync();
 
-        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 15_000 });
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
         await fakeAgent.AcceptJobAsync(assignment.JobId);
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
         await Task.Delay(500);

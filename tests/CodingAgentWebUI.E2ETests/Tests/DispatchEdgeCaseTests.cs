@@ -114,9 +114,8 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase, IClassFixture<E2EFixtur
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
 
-        // Act: dispatch the issue first time
+        // Act
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
         await codingPage.SelectTemplateAsync("Test Template");

@@ -54,7 +54,6 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
 
         // Act: dispatch the issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -106,14 +105,8 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
             }
         });
 
-        // Allow time for hub processing
-        await Task.Delay(500);
-
         // Assert: verify the run was completed with feedback in history
-        var history = Fixture.Factory.HistoryService;
-        var runs = history.GetRunHistory();
-        var completedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "80");
-        Assert.NotNull(completedRun);
+        var completedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "80");
         Assert.Equal(PipelineStep.Completed, completedRun.FinalStep);
         Assert.NotNull(completedRun.Feedback);
         Assert.Equal(FeedbackOutcome.Success, completedRun.Feedback.Outcome);
@@ -161,7 +154,6 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-2", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
 
         // Act: dispatch the issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -209,14 +201,8 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
             }
         });
 
-        // Allow time for hub processing
-        await Task.Delay(500);
-
         // Assert: verify the run was recorded with failure feedback
-        var history = Fixture.Factory.HistoryService;
-        var runs = history.GetRunHistory();
-        var failedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "81");
-        Assert.NotNull(failedRun);
+        var failedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "81");
         Assert.Equal(PipelineStep.Failed, failedRun.FinalStep);
         Assert.NotNull(failedRun.Feedback);
         Assert.Equal(FeedbackOutcome.Failure, failedRun.Feedback.Outcome);
@@ -264,7 +250,6 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-3", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
 
         // Act: dispatch the issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -280,14 +265,8 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
         // Agent completes WITHOUT feedback (simulates pre-feature agent or failed collection)
         await fakeAgent.AcceptAndCompleteJobAsync(assignment.JobId);
 
-        // Allow time for hub processing
-        await Task.Delay(500);
-
         // Assert: run is persisted correctly with null feedback
-        var history = Fixture.Factory.HistoryService;
-        var runs = history.GetRunHistory();
-        var completedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "82");
-        Assert.NotNull(completedRun);
+        var completedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "82");
         Assert.Equal(PipelineStep.Completed, completedRun.FinalStep);
         Assert.Null(completedRun.Feedback); // No feedback in default AcceptAndCompleteJobAsync
     }
@@ -331,7 +310,6 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-4", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
 
         // Dispatch and complete with feedback
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -380,8 +358,8 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
             }
         });
 
-        // Allow time for hub processing
-        await Task.Delay(1000);
+        // Wait for history to record the run before navigating to monitoring UI
+        await WaitForHistoryAsync(r => r.IssueIdentifier == "83");
 
         // Act: navigate to monitoring page and open the run detail
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
@@ -458,7 +436,6 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-5", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
 
         // Act: dispatch and complete with comprehensive feedback
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -513,14 +490,8 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
             Feedback = feedback
         });
 
-        // Allow time for hub processing
-        await Task.Delay(500);
-
         // Assert: all feedback fields are persisted correctly
-        var history = Fixture.Factory.HistoryService;
-        var runs = history.GetRunHistory();
-        var completedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "84");
-        Assert.NotNull(completedRun);
+        var completedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "84");
         Assert.NotNull(completedRun.Feedback);
 
         // Harness feedback

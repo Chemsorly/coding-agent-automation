@@ -55,7 +55,6 @@ public sealed class DependencyBlockingTests : E2ETestBase, IClassFixture<E2EFixt
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
 
         // Act
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -118,7 +117,6 @@ public sealed class DependencyBlockingTests : E2ETestBase, IClassFixture<E2EFixt
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
 
         // Act
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -177,7 +175,6 @@ public sealed class DependencyBlockingTests : E2ETestBase, IClassFixture<E2EFixt
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
 
         // Act
         var codingPage = new AgentCodingPage(Page, BaseUrl);

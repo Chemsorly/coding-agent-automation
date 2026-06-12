@@ -58,7 +58,6 @@ public sealed class PrReviewPipelineTests : E2ETestBase, IClassFixture<E2EFixtur
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
 
         // Act: navigate, open PR drawer, select PR, dispatch
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -84,12 +83,9 @@ public sealed class PrReviewPipelineTests : E2ETestBase, IClassFixture<E2EFixtur
         // GeneratingCode → Completed). Consider adding a review-specific completion helper that reports
         // review-appropriate steps for more representative test behavior.
         await fakeAgent.AcceptAndCompleteJobAsync(assignment.JobId);
-        await Task.Delay(500);
 
         // Verify history
-        var runs = Fixture.Factory.HistoryService.GetRunHistory();
-        var completedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "99");
-        Assert.NotNull(completedRun);
+        var completedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "99");
         Assert.Equal(PipelineStep.Completed, completedRun.FinalStep);
         Assert.Equal(PipelineRunType.Review, completedRun.RunType);
 
@@ -143,7 +139,6 @@ public sealed class PrReviewPipelineTests : E2ETestBase, IClassFixture<E2EFixtur
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
 
         // Act: dispatch PR (first time)
         var codingPage = new AgentCodingPage(Page, BaseUrl);

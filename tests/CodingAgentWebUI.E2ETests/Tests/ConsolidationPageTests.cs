@@ -147,7 +147,6 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
 
         await using var fakeAgent = new FakeAgentClient("consol-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(1000);
 
         // Act: navigate and trigger harness suggestions
         var page = new ConsolidationPage(Page, BaseUrl);
@@ -210,7 +209,6 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
 
         await using var fakeAgent = new FakeAgentClient("consol-agent-2", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(1000);
 
         // Act: navigate and trigger harness suggestions
         var page = new ConsolidationPage(Page, BaseUrl);

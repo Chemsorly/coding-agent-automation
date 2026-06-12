@@ -59,7 +59,6 @@ public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixtur
         // Connect a fake agent
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
 
         // Act: navigate and dispatch
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -155,15 +154,8 @@ public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixtur
             CodeReviewSuggestionCount = 0
         });
 
-        // Allow time for hub processing
-        await Task.Delay(500);
-
         // Assert: history shows completed run
-        var history = Fixture.Factory.HistoryService;
-        var runs = history.GetRunHistory();
-        Assert.True(runs.Count > 0, "Expected at least one completed run in history");
-        var completedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "42");
-        Assert.NotNull(completedRun);
+        var completedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "42");
         Assert.Equal(PipelineStep.Completed, completedRun.FinalStep);
     }
 
@@ -207,7 +199,6 @@ public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixtur
         // Connect a fake agent
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
 
         // Act: navigate and dispatch
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -269,16 +260,8 @@ public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixtur
             CodeReviewSuggestionCount = 0
         });
 
-        // Allow time for hub processing
-        await Task.Delay(500);
-
         // Assert: history shows completed run
-        var history = Fixture.Factory.HistoryService;
-        var runs = history.GetRunHistory();
-        Assert.True(runs.Count > 0, "Expected at least one completed run in history");
-
-        var completedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "42");
-        Assert.NotNull(completedRun);
+        var completedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "42");
         Assert.Equal(PipelineStep.Completed, completedRun.FinalStep);
     }
 }
