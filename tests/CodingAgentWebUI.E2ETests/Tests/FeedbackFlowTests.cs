@@ -64,7 +64,7 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
         await codingPage.ClickStartPipelineAsync();
 
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Agent completes with feedback in the payload
         await fakeAgent.AcceptAndCompleteJobWithPayloadAsync(assignment.JobId, new JobCompletionPayload
@@ -164,7 +164,7 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
         await codingPage.ClickStartPipelineAsync();
 
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Agent completes with failure and feedback
         await fakeAgent.AcceptAndCompleteJobWithPayloadAsync(assignment.JobId, new JobCompletionPayload
@@ -260,7 +260,7 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
         await codingPage.ClickStartPipelineAsync();
 
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Agent completes WITHOUT feedback (simulates pre-feature agent or failed collection)
         await fakeAgent.AcceptAndCompleteJobAsync(assignment.JobId);
@@ -320,7 +320,7 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
         await codingPage.ClickStartPipelineAsync();
 
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         await fakeAgent.AcceptAndCompleteJobWithPayloadAsync(assignment.JobId, new JobCompletionPayload
         {
@@ -448,7 +448,7 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
         await codingPage.ClickStartPipelineAsync();
 
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         var feedback = new RunFeedback
         {

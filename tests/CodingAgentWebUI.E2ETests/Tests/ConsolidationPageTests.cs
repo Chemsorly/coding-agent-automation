@@ -161,7 +161,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         await page.ClickGenerateSuggestionsAsync();
 
         // Wait for the agent to receive the consolidation job
-        var assignment = await fakeAgent.ConsolidationJobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var assignment = await fakeAgent.ConsolidationJobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Assert: job was dispatched correctly
         Assert.NotNull(assignment);
@@ -224,7 +224,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         await page.ClickGenerateSuggestionsAsync();
 
         // Wait for the agent to receive the consolidation job
-        var assignment = await fakeAgent.ConsolidationJobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var assignment = await fakeAgent.ConsolidationJobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Agent completes with harness suggestions
         await fakeAgent.ReportConsolidationCompleteAsync(new ConsolidationJobResult

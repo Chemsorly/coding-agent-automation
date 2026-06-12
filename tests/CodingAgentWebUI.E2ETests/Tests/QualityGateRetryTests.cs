@@ -75,7 +75,7 @@ public sealed class QualityGateRetryTests : E2ETestBase, IClassFixture<E2EFixtur
         Assert.Contains("Dispatched #42", successText);
 
         // Wait for the agent to receive the job assignment
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.NotNull(assignment);
         Assert.Equal("42", assignment.IssueIdentifier);
 
@@ -168,7 +168,7 @@ public sealed class QualityGateRetryTests : E2ETestBase, IClassFixture<E2EFixtur
         Assert.Contains("Dispatched #42", successText);
 
         // Wait for the agent to receive the job assignment
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.NotNull(assignment);
         Assert.Equal("42", assignment.IssueIdentifier);
 

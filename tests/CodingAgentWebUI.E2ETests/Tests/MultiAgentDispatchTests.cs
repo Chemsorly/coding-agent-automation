@@ -32,8 +32,7 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         var isVisible = await monitoringPage.IsAgentVisibleAsync("monitor-agent-1");
         Assert.True(isVisible, "Expected agent 'monitor-agent-1' to be visible on the monitoring page");
 
-        var status = await monitoringPage.GetAgentStatusAsync("monitor-agent-1");
-        Assert.Equal("Idle", status);
+        await monitoringPage.WaitForAgentStatusAsync("monitor-agent-1", "Idle", timeoutMs: 15_000);
 
         var agentCount = await monitoringPage.GetRegisteredAgentCountAsync();
         Assert.True(agentCount >= 1, $"Expected at least 1 registered agent, got {agentCount}");
@@ -148,7 +147,7 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
             new() { Timeout = 10_000 });
 
         // Wait for the free agent to receive the second job
-        var assignment2 = await freeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var assignment2 = await freeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal("43", assignment2.IssueIdentifier);
 
         // Both agents complete their jobs

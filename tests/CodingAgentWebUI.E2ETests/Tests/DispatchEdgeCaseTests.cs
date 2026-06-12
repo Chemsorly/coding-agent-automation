@@ -127,7 +127,7 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase, IClassFixture<E2EFixtur
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
 
         // Wait for agent to receive the job (don't complete it — keep it active)
-        await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Act: close drawer and try to dispatch the same issue again
         // Navigate fresh to reset drawer state

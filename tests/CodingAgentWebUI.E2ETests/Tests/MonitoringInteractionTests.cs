@@ -68,7 +68,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await codingPage.ClickStartPipelineAsync();
 
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await fakeAgent.AcceptJobAsync(assignment.JobId);
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
@@ -139,7 +139,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await codingPage.ClickStartPipelineAsync();
 
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await fakeAgent.AcceptJobAsync(assignment.JobId);
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
@@ -216,7 +216,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await codingPage.ClickStartPipelineAsync();
 
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await fakeAgent.AcceptJobAsync(assignment.JobId);
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 

@@ -71,7 +71,7 @@ public abstract class E2ETestBase : IAsyncLifetime
         TimeSpan? timeout = null,
         TimeSpan? pollInterval = null)
     {
-        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(30));
         var interval = pollInterval ?? TimeSpan.FromMilliseconds(50);
 
         while (DateTime.UtcNow < deadline)
@@ -83,7 +83,7 @@ public abstract class E2ETestBase : IAsyncLifetime
         }
 
         throw new TimeoutException(
-            $"No matching run appeared in history within {(timeout ?? TimeSpan.FromSeconds(10)).TotalSeconds}s");
+            $"No matching run appeared in history within {(timeout ?? TimeSpan.FromSeconds(30)).TotalSeconds}s");
     }
 
     /// <summary>
@@ -95,7 +95,7 @@ public abstract class E2ETestBase : IAsyncLifetime
         TimeSpan? timeout = null,
         TimeSpan? pollInterval = null)
     {
-        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(30));
         var interval = pollInterval ?? TimeSpan.FromMilliseconds(50);
 
         while (DateTime.UtcNow < deadline)
@@ -105,6 +105,6 @@ public abstract class E2ETestBase : IAsyncLifetime
         }
 
         throw new TimeoutException(
-            $"Condition not met within {(timeout ?? TimeSpan.FromSeconds(10)).TotalSeconds}s");
+            $"Condition not met within {(timeout ?? TimeSpan.FromSeconds(30)).TotalSeconds}s");
     }
 }

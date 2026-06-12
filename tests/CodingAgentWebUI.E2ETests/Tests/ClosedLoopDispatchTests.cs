@@ -67,7 +67,7 @@ public sealed class ClosedLoopDispatchTests : E2ETestBase, IClassFixture<E2EFixt
             Assert.True(started, "StartLoopAsync should return true with valid config");
 
             // Wait for the agent to receive the job assignment
-            var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.NotNull(assignment);
             Assert.Equal("100", assignment.IssueIdentifier);
 

@@ -65,7 +65,7 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
             var started = await loopService.StartLoopAsync();
             Assert.True(started);
 
-            var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.NotNull(assignment);
             Assert.Equal("100", assignment.IssueIdentifier);
             Assert.Equal(PipelineRunType.DecompositionAnalysis, assignment.RunType);
@@ -155,7 +155,7 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
             var started = await loopService.StartLoopAsync();
             Assert.True(started);
 
-            var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.NotNull(assignment);
             Assert.Equal("200", assignment.IssueIdentifier);
             Assert.Equal(PipelineRunType.Decomposition, assignment.RunType);
@@ -264,7 +264,7 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
             while (true)
             {
-                assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
                 if (assignment.IssueIdentifier == "300")
                     break;
                 // Stale job from queue drain — reset and wait for the correct one

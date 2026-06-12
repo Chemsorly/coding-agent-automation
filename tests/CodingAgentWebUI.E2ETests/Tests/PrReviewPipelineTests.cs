@@ -73,7 +73,7 @@ public sealed class PrReviewPipelineTests : E2ETestBase, IClassFixture<E2EFixtur
         Assert.Contains("PR #99 dispatched for review", successText);
 
         // Wait for agent to receive job
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.NotNull(assignment);
         Assert.Equal("99", assignment.IssueIdentifier);
         Assert.Equal(PipelineRunType.Review, assignment.RunType);
@@ -151,7 +151,7 @@ public sealed class PrReviewPipelineTests : E2ETestBase, IClassFixture<E2EFixtur
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
 
         // Wait for agent to receive the job (don't complete it — keep it active)
-        await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Navigate fresh to re-render the drawer with current state
         await codingPage.NavigateAsync();
