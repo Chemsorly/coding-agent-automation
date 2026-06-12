@@ -69,6 +69,8 @@ public sealed class ConsolidationServiceTests : IDisposable
                     TemplateIds = new List<string> { "tmpl-1", "tmpl-2" }
                 }
             });
+        _mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(_config.PipelineJobTemplates);
     }
 
     public void Dispose()

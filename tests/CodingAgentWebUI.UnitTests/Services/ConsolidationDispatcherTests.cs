@@ -242,6 +242,8 @@ public sealed class ConsolidationDispatcherTests : IDisposable
             {
                 new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = new[] { "t1" } }
             });
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate> { template });
 
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { new() { Id = "agent-cfg", Kind = ProviderKind.Agent, ProviderType = "Kiro", DisplayName = "Agent" } });
@@ -299,6 +301,8 @@ public sealed class ConsolidationDispatcherTests : IDisposable
             {
                 new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = new[] { "t1" } }
             });
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate> { template });
 
         var repoConfig = new ProviderConfig { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" };
         var brainConfig = new ProviderConfig { Id = "bp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain" };

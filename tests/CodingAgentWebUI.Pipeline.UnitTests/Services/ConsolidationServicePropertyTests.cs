@@ -110,6 +110,8 @@ public class ConsolidationServicePropertyTests : IDisposable
                     TemplateIds = new List<string> { "tmpl-A", "tmpl-B" }
                 }
             });
+        mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config.PipelineJobTemplates);
 
         var sut = new ConsolidationService(
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
@@ -184,6 +186,8 @@ public class ConsolidationServicePropertyTests : IDisposable
                     TemplateIds = new List<string> { "tmpl-1", "tmpl-2" }
                 }
             });
+        mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config.PipelineJobTemplates);
 
         var sut = new ConsolidationService(
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
