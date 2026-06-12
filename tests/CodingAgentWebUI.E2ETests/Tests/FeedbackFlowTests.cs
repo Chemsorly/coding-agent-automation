@@ -371,7 +371,9 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
         if (historyRow is not null)
         {
             await historyRow.ClickAsync();
-            await Page.WaitForTimeoutAsync(500);
+
+            // Wait for modal/detail view to open
+            await Page.WaitForSelectorAsync(".feedback-section", new() { Timeout = 5_000 });
 
             // Assert: feedback section is visible in the modal/detail view
             var feedbackSection = await Page.QuerySelectorAsync(".feedback-section");

@@ -5,9 +5,11 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Playwright;
 
 namespace CodingAgentWebUI.E2ETests.Tests;
 
@@ -73,14 +75,19 @@ public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await fakeAgent.AcceptJobAsync(assignment.JobId);
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
-        await Task.Delay(200);
+
+        // Wait for the run to be active with expected step
+        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "60" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Simulate agent disconnect by disposing the connection
         await fakeAgent.DisposeAsync();
-        await Task.Delay(1000); // Allow time for hub to process disconnect
+
+        // Wait for hub to process disconnect and mark agent as Disconnected
+        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        await WaitUntilAsync(() => registry.GetByAgentId("disconnect-agent-1")?.Status == AgentStatus.Disconnected);
 
         // Assert: agent is marked as disconnected in the registry
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
         var agent = registry.GetByAgentId("disconnect-agent-1");
         Assert.NotNull(agent);
         Assert.Equal(AgentStatus.Disconnected, agent.Status);
@@ -138,7 +145,10 @@ public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await fakeAgent.AcceptJobAsync(assignment.JobId);
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
-        await Task.Delay(200);
+
+        // Wait for the run to be active with expected step
+        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "61" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Act: navigate to monitoring page and click Cancel on the active run
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
@@ -149,11 +159,11 @@ public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture
 
         // Click the Cancel button
         await Page.ClickAsync("button.btn-cancel-small");
-        await Task.Delay(500);
 
-        // Assert: the cancel was sent (we can verify the agent received CancelJob,
-        // but since FakeAgentClient doesn't track cancellations, we verify the button was clickable
-        // and no error appeared)
+        // Wait for the click to be processed (cancel button disappears or run clears)
+        await Page.WaitForSelectorAsync("button.btn-cancel-small", new() { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
+
+        // Assert: no error appeared
         var errorVisible = await Page.Locator(".settings-status.status-error").CountAsync();
         Assert.Equal(0, errorVisible);
     }

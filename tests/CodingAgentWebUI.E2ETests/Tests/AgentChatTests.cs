@@ -1,5 +1,7 @@
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.E2ETests.PageObjects;
+using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.E2ETests.Tests;
 
@@ -65,8 +67,11 @@ public sealed class AgentChatTests : E2ETestBase, IClassFixture<E2EFixture>
         // Act: end the chat session
         await chatPage.EndChatAsync();
 
+        // Wait for agent to return to Idle in registry
+        var registry = Fixture.Factory.AgentRegistry;
+        await WaitUntilAsync(() => registry.GetByAgentId("chat-agent-2")?.Status == AgentStatus.Idle);
+
         // Assert: agent reappears in the dropdown (back to idle)
-        await Task.Delay(500); // Allow state to propagate
         var agentInDropdown = await chatPage.IsAgentInDropdownAsync("chat-agent-2");
         Assert.True(agentInDropdown, "Expected agent to reappear in dropdown after ending chat session");
     }

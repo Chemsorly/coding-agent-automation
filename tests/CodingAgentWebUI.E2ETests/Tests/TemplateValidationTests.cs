@@ -34,7 +34,9 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
 
         // Click Save without filling name
         await Page.ClickAsync("div.form-buttons button.btn-save");
-        await Page.WaitForTimeoutAsync(500);
+
+        // Wait for validation error to appear
+        await Page.WaitForSelectorAsync("div.provider-form .settings-status.status-error", new() { Timeout = 5_000 });
 
         // Assert: validation error is shown
         var errorMsg = await Page.TextContentAsync("div.provider-form .settings-status.status-error");
@@ -64,7 +66,9 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
 
         // Click Save
         await Page.ClickAsync("div.form-buttons button.btn-save");
-        await Page.WaitForTimeoutAsync(500);
+
+        // Wait for validation error to appear
+        await Page.WaitForSelectorAsync("div.provider-form .settings-status.status-error", new() { Timeout = 5_000 });
 
         // Assert: validation error is shown
         var errorMsg = await Page.TextContentAsync("div.provider-form .settings-status.status-error");
@@ -111,7 +115,9 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
 
         // Click Save
         await Page.ClickAsync("div.form-buttons button.btn-save");
-        await Page.WaitForTimeoutAsync(500);
+
+        // Wait for duplicate validation error to appear
+        await Page.WaitForSelectorAsync("div.provider-form .settings-status.status-error", new() { Timeout = 5_000 });
 
         // Assert: duplicate validation error is shown
         var errorMsg = await Page.TextContentAsync("div.provider-form .settings-status.status-error");
@@ -146,7 +152,9 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
         await repoSelect.SelectOptionAsync(new SelectOptionValue { Label = "E2E Repo Provider" });
 
         await Page.ClickAsync("div.form-buttons button.btn-save");
-        await Page.WaitForTimeoutAsync(1000);
+
+        // Wait for success message to appear
+        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 5_000 });
 
         // Assert: success message appears
         var successMsg = await Page.QuerySelectorAsync(".settings-status.status-success");
@@ -193,7 +201,9 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
 
         // Click Remove button
         await Page.ClickAsync("button.btn-delete:has-text('Remove')");
-        await Page.WaitForTimeoutAsync(500);
+
+        // Wait for confirmation dialog to appear
+        await Page.WaitForSelectorAsync(".agent-detail-confirm", new() { Timeout = 5_000 });
 
         // Assert: confirmation dialog appears
         var confirmDialog = Page.Locator(".agent-detail-confirm");
@@ -205,7 +215,9 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
 
         // Act: confirm removal
         await Page.ClickAsync(".confirm-buttons button.btn-delete:has-text('Remove')");
-        await Page.WaitForTimeoutAsync(1000);
+
+        // Wait for confirmation dialog to disappear and success message to appear
+        await Page.WaitForSelectorAsync(".agent-detail-confirm", new() { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
 
         // Assert: template is removed — either the table no longer contains it, or the table is gone entirely (0 templates)
         var tableExists = await Page.Locator(".monitoring-table").CountAsync();
@@ -237,7 +249,9 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
 
         // Act: click Cancel
         await Page.ClickAsync("div.form-buttons button.btn-cancel");
-        await Page.WaitForTimeoutAsync(500);
+
+        // Wait for form to close
+        await Page.WaitForSelectorAsync("div.provider-form", new() { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
 
         // Assert: form is closed
         var formVisibleAfter = await Page.Locator("div.provider-form").CountAsync();

@@ -1,5 +1,6 @@
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.E2ETests.PageObjects;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -174,8 +175,9 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
             Summary = "No new feedback to analyze"
         });
 
-        // Allow time for hub processing
-        await Task.Delay(500);
+        // Wait for the agent to return to Idle (confirms hub processed the completion)
+        var registry = Fixture.Factory.AgentRegistry;
+        await WaitUntilAsync(() => registry.GetByAgentId("consol-agent-1")?.Status == AgentStatus.Idle);
     }
 
     [Fact]
@@ -253,8 +255,9 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
             }
         });
 
-        // Allow time for hub processing and UI update
-        await Task.Delay(1000);
+        // Wait for hub to process the completion and agent to return to Idle
+        var registry = Fixture.Factory.AgentRegistry;
+        await WaitUntilAsync(() => registry.GetByAgentId("consol-agent-2")?.Status == AgentStatus.Idle);
 
         // Refresh the page to see updated data
         await page.NavigateAsync();
@@ -365,8 +368,8 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         var page = new ConsolidationPage(Page, BaseUrl);
         await page.NavigateAsync();
 
-        // Allow extra time for Blazor to process OnInitializedAsync
-        await Task.Delay(1000);
+        // Wait for Blazor OnInitializedAsync to reset the badge
+        await WaitUntilAsync(() => badgeService.BadgeCount == 0);
 
         // Assert: badge was reset to zero
         Assert.Equal(0, badgeService.BadgeCount);
@@ -382,7 +385,9 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         // Act: navigate to a different page (not consolidation, so badge isn't reset)
         await Page.GotoAsync($"{BaseUrl}/agent-monitoring");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await Page.WaitForTimeoutAsync(3000);
+
+        // Wait for the sidebar badge to render (Blazor interactive circuit must be established)
+        await Page.WaitForSelectorAsync(".sidebar-badge", new() { Timeout = 10_000 });
 
         // Assert: badge is visible in the sidebar
         var badge = await Page.QuerySelectorAsync(".sidebar-badge");

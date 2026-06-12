@@ -1,6 +1,7 @@
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.E2ETests.PageObjects;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.E2ETests.Tests;
@@ -130,8 +131,9 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         await busyAgent.AcceptJobAsync(assignment1.JobId);
         await busyAgent.ReportStepAsync(assignment1.JobId, PipelineStep.CloningRepository);
 
-        // Small delay to let the hub process the acceptance
-        await Task.Delay(500);
+        // Wait for the busy agent to be marked as Busy in registry before dispatching second job
+        var registry = Fixture.Factory.AgentRegistry;
+        await WaitUntilAsync(() => registry.GetByAgentId(busyAgent.AgentId)?.Status == AgentStatus.Busy);
 
         // Navigate back to dispatch the second issue
         await codingPage.NavigateAsync();

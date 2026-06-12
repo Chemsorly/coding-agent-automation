@@ -65,7 +65,7 @@ public sealed class DependencyBlockingTests : E2ETestBase, IClassFixture<E2EFixt
         await codingPage.ClickStartPipelineAsync();
 
         // Assert: error message mentions #100
-        await Page.WaitForTimeoutAsync(1000);
+        await Page.WaitForSelectorAsync(".settings-status.status-error", new() { Timeout = 10_000 });
         var errorVisible = await Page.Locator(".settings-status.status-error").CountAsync();
         Assert.True(errorVisible > 0, "Expected an error message when issue is blocked by open dependency");
 
@@ -185,7 +185,7 @@ public sealed class DependencyBlockingTests : E2ETestBase, IClassFixture<E2EFixt
         await codingPage.ClickStartPipelineAsync();
 
         // Assert: error mentions #200 but not #100
-        await Page.WaitForTimeoutAsync(1000);
+        await Page.WaitForSelectorAsync(".settings-status.status-error", new() { Timeout = 10_000 });
         var errorVisible = await Page.Locator(".settings-status.status-error").CountAsync();
         Assert.True(errorVisible > 0, "Expected an error message when issue is partially blocked");
 

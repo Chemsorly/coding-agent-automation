@@ -97,10 +97,14 @@ public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixtur
             });
 
         // Wait briefly for the hub to process the step transitions
-        await Task.Delay(200);
+        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        await WaitUntilAsync(() =>
+        {
+            var run = runService.GetActiveRuns().FirstOrDefault(r => r.IssueIdentifier == "42");
+            return run is not null && run.CurrentStep == PipelineStep.AnalyzingCode && run.BaselineHealthPassed == true;
+        });
 
         // Assert: the run appears in active runs with metadata applied
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
         var activeRuns = runService.GetActiveRuns();
         Assert.True(activeRuns.Count > 0, "Expected at least one active run");
 
@@ -122,7 +126,12 @@ public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixtur
                 ["LinesRemoved"] = "10"
             });
 
-        await Task.Delay(200);
+        // Wait for file change stats to propagate
+        await WaitUntilAsync(() =>
+        {
+            var run = runService.GetActiveRuns().FirstOrDefault(r => r.IssueIdentifier == "42");
+            return run is not null && run.FilesChangedCount == 3;
+        });
 
         // Assert: file change stats are now available on the active run
         activeRuns = runService.GetActiveRuns();
@@ -236,7 +245,6 @@ public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixtur
         foreach (var step in steps)
         {
             await fakeAgent.ReportStepAsync(assignment.JobId, step);
-            await Task.Delay(50); // Small delay between transitions
         }
 
         // Report completion

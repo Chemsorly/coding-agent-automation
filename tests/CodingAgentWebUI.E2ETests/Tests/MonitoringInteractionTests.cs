@@ -1,6 +1,7 @@
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.E2ETests.PageObjects;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
@@ -70,7 +71,10 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await fakeAgent.AcceptJobAsync(assignment.JobId);
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
-        await Task.Delay(500);
+
+        // Wait for the run to reflect the step in server state
+        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "70" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Act: navigate to monitoring page
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
@@ -138,7 +142,10 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await fakeAgent.AcceptJobAsync(assignment.JobId);
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
-        await Task.Delay(500);
+
+        // Wait for the run to reflect the step in server state
+        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "71" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Act: navigate to monitoring and click the active run row
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
@@ -147,7 +154,9 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         // Wait for the clickable row to appear (ARM runners can be slow to render)
         await Page.WaitForSelectorAsync("tr.monitoring-row-clickable", new() { Timeout = 15_000 });
         await Page.ClickAsync("tr.monitoring-row-clickable");
-        await Page.WaitForTimeoutAsync(500);
+
+        // Wait for modal to open
+        await Page.WaitForSelectorAsync(".modal-overlay", new() { Timeout = 5_000 });
 
         // Assert: modal is open
         var modal = Page.Locator(".modal-overlay");
@@ -210,7 +219,10 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await fakeAgent.AcceptJobAsync(assignment.JobId);
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
-        await Task.Delay(500);
+
+        // Wait for the run to reflect the step in server state
+        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "72" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Navigate to monitoring and open modal
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
@@ -221,9 +233,10 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
 
         // Act: focus the modal overlay (tabindex="-1" makes it focusable) then press Escape
         await Page.FocusAsync(".modal-overlay");
-        await Page.WaitForTimeoutAsync(200);
         await Page.Keyboard.PressAsync("Escape");
-        await Page.WaitForTimeoutAsync(500);
+
+        // Wait for modal to close
+        await Page.WaitForSelectorAsync(".modal-overlay", new() { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
 
         // Assert: modal is closed
         var modalCount = await Page.Locator(".modal-overlay").CountAsync();
@@ -282,7 +295,10 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
         await fakeAgent.AcceptJobAsync(assignment.JobId);
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
-        await Task.Delay(500);
+
+        // Wait for the run to reflect the step in server state
+        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "73" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Act: navigate to monitoring
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
