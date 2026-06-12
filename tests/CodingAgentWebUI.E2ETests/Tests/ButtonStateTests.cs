@@ -185,7 +185,7 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
         await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await Task.Delay(500);
+        await Task.Delay(2000); // Allow extra time for agent registration on slow ARM runners
 
         // Act: navigate, select template, open drawer, select issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -210,8 +210,11 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
             // Button was detached, removed, or disabled after first click — expected
         }
 
-        // Wait for processing
-        await Task.Delay(1000);
+        // Wait for agent to receive the job (with timeout for slow runners)
+        await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Give extra time for any potential second dispatch to arrive
+        await Task.Delay(2000);
 
         // Assert: only one job was received by the agent
         Assert.Single(fakeAgent.ReceivedJobIds);

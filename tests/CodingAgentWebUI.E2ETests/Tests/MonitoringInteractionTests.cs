@@ -146,7 +146,8 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
         await monitoringPage.NavigateAsync();
 
-        // Click the clickable row
+        // Wait for the clickable row to appear (ARM runners can be slow to render)
+        await Page.WaitForSelectorAsync("tr.monitoring-row-clickable", new() { Timeout = 15_000 });
         await Page.ClickAsync("tr.monitoring-row-clickable");
         await Page.WaitForTimeoutAsync(500);
 
@@ -217,6 +218,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         // Navigate to monitoring and open modal
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
         await monitoringPage.NavigateAsync();
+        await Page.WaitForSelectorAsync("tr.monitoring-row-clickable", new() { Timeout = 15_000 });
         await Page.ClickAsync("tr.monitoring-row-clickable");
         await Page.WaitForSelectorAsync(".modal-overlay", new() { Timeout = 5_000 });
 
