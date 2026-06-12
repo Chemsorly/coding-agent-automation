@@ -160,8 +160,10 @@ public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture
         // Click the Cancel button
         await Page.ClickAsync("button.btn-cancel-small");
 
-        // Wait for the server to process the cancellation (run removed from active runs)
-        await WaitUntilAsync(() => !runService.GetActiveRuns().Any(r => r.IssueIdentifier == "61"));
+        // The cancel sends a CancelJob signal to the agent via SignalR (InvokeAsync = synchronous).
+        // The run remains active until the agent acknowledges, so we just verify no error appeared.
+        // Give Blazor one render cycle to potentially show an error.
+        await Page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
         // Assert: no error appeared during the cancel flow
         var errorVisible = await Page.Locator(".settings-status.status-error").CountAsync();

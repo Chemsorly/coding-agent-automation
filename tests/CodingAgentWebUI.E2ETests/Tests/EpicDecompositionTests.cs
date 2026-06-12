@@ -259,7 +259,20 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
             var started = await loopService.StartLoopAsync();
             Assert.True(started);
 
-            var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            // Wait for the job assignment — may need to skip stale drain dispatches from previous tests
+            JobAssignmentMessage assignment;
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+            while (true)
+            {
+                assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                if (assignment.IssueIdentifier == "300")
+                    break;
+                // Stale job from queue drain — reset and wait for the correct one
+                fakeAgent.ResetJobAssigned();
+                if (DateTime.UtcNow > deadline)
+                    throw new TimeoutException("Never received job for issue 300");
+            }
+
             Assert.NotNull(assignment);
             Assert.Equal("300", assignment.IssueIdentifier);
             Assert.Equal(PipelineRunType.DecompositionAnalysis, assignment.RunType);
