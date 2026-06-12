@@ -23,6 +23,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     private readonly List<QualityGateConfiguration> _qualityGateConfigs = new();
     private readonly List<ReviewerConfiguration> _reviewerConfigs = new();
     private readonly List<PipelineProject> _projects = new();
+    private readonly List<PipelineJobTemplate> _templates = new();
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     public void Reset()
@@ -39,6 +40,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         _qualityGateConfigs.Clear();
         _reviewerConfigs.Clear();
         _projects.Clear();
+        _templates.Clear();
         SeedDefaults();
     }
 
@@ -171,9 +173,9 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         if (_projects.Count > 0)
             return Task.FromResult<IReadOnlyList<PipelineProject>>(_projects.ToList());
 
-        // Auto-generate a Default project containing all template IDs from PipelineJobTemplates.
+        // Auto-generate a Default project containing all template IDs.
         // This ensures E2E tests exercise the project-based code paths.
-        var templateIds = _pipelineConfig.PipelineJobTemplates.Select(t => t.Id).ToList();
+        var templateIds = _templates.Select(t => t.Id).ToList();
         if (templateIds.Count == 0)
             return Task.FromResult<IReadOnlyList<PipelineProject>>(Array.Empty<PipelineProject>());
 
@@ -204,17 +206,15 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     }
 
     public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(_pipelineConfig.PipelineJobTemplates.ToList() as IReadOnlyList<PipelineJobTemplate>);
+        Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(_templates.ToList());
 
     public Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(_pipelineConfig.PipelineJobTemplates.ToList());
+        Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(_templates.ToList());
 
     public Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct)
     {
-        var templates = _pipelineConfig.PipelineJobTemplates.ToList();
-        templates.RemoveAll(t => t.Id == template.Id);
-        templates.Add(template);
-        _pipelineConfig = _pipelineConfig with { PipelineJobTemplates = templates };
+        _templates.RemoveAll(t => t.Id == template.Id);
+        _templates.Add(template);
 
         // Ensure project has the template ID
         var project = _projects.FirstOrDefault(p => p.Id == projectId);
@@ -228,9 +228,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
 
     public Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct)
     {
-        var templates = _pipelineConfig.PipelineJobTemplates.ToList();
-        templates.RemoveAll(t => t.Id == templateId);
-        _pipelineConfig = _pipelineConfig with { PipelineJobTemplates = templates };
+        _templates.RemoveAll(t => t.Id == templateId);
 
         var project = _projects.FirstOrDefault(p => p.Id == projectId);
         if (project != null)

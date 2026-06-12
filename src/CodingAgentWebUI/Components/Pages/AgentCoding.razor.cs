@@ -143,10 +143,11 @@ public partial class AgentCoding : IDisposable
     {
         var idx = _templates.FindIndex(t => t.Id == args.template.Id);
         if (idx < 0) return;
-        _templates[idx] = args.template with { Enabled = args.enabled };
+        var updated = args.template with { Enabled = args.enabled };
         var projectId = GetParentProject(args.template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await ProjectStore.SaveTemplateAsync(projectId, _templates[idx], CancellationToken.None); }
+        try { await ProjectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
         catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; return; }
+        _templates[idx] = updated;
         if (LoopService.IsLoopActive) { _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id); }
     }
 
@@ -154,10 +155,11 @@ public partial class AgentCoding : IDisposable
     {
         var idx = _templates.FindIndex(t => t.Id == args.template.Id);
         if (idx < 0) return;
-        _templates[idx] = args.template with { ImplementationEnabled = args.enabled };
+        var updated = args.template with { ImplementationEnabled = args.enabled };
         var projectId = GetParentProject(args.template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await ProjectStore.SaveTemplateAsync(projectId, _templates[idx], CancellationToken.None); }
+        try { await ProjectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
         catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; return; }
+        _templates[idx] = updated;
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
     }
 
@@ -165,10 +167,11 @@ public partial class AgentCoding : IDisposable
     {
         var idx = _templates.FindIndex(t => t.Id == args.template.Id);
         if (idx < 0) return;
-        _templates[idx] = args.template with { ReviewEnabled = args.enabled };
+        var updated = args.template with { ReviewEnabled = args.enabled };
         var projectId = GetParentProject(args.template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await ProjectStore.SaveTemplateAsync(projectId, _templates[idx], CancellationToken.None); }
+        try { await ProjectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
         catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; return; }
+        _templates[idx] = updated;
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
     }
 
@@ -176,10 +179,11 @@ public partial class AgentCoding : IDisposable
     {
         var idx = _templates.FindIndex(t => t.Id == args.template.Id);
         if (idx < 0) return;
-        _templates[idx] = args.template with { DecompositionEnabled = args.enabled };
+        var updated = args.template with { DecompositionEnabled = args.enabled };
         var projectId = GetParentProject(args.template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await ProjectStore.SaveTemplateAsync(projectId, _templates[idx], CancellationToken.None); }
+        try { await ProjectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
         catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; return; }
+        _templates[idx] = updated;
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
     }
 
@@ -215,8 +219,9 @@ public partial class AgentCoding : IDisposable
     {
         if (_deletingTemplate == null) return;
         var projectId = GetParentProject(_deletingTemplate.Id)?.Id ?? WellKnownIds.DefaultProjectId;
+        try { await ProjectStore.DeleteTemplateAsync(projectId, _deletingTemplate.Id, CancellationToken.None); }
+        catch (Exception ex) { _errorMessage = $"Failed to delete: {ex.Message}"; return; }
         _templates.RemoveAll(t => t.Id == _deletingTemplate.Id);
-        await ProjectStore.DeleteTemplateAsync(projectId, _deletingTemplate.Id, CancellationToken.None);
         _projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
         _showDeleteConfirm = false;
         _successMessage = $"Template \"{_deletingTemplate.Name}\" removed.";
