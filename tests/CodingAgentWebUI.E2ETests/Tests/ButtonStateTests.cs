@@ -23,20 +23,13 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
     public async Task BrowseIssues_DisabledWhenNoTemplateSelected()
     {
         // Arrange: seed a template so the dropdown has options
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-1",
-                    Name = "Test Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-1",
+            Name = "Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         // Act: navigate without selecting a template
@@ -59,20 +52,13 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
     public async Task BrowseIssues_EnabledAfterTemplateSelected()
     {
         // Arrange: seed a template and an issue
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-1",
-                    Name = "Test Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-1",
+            Name = "Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -103,20 +89,13 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
     public async Task DispatchButton_NotVisibleUntilIssueSelected()
     {
         // Arrange: seed template and issue
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-1",
-                    Name = "Test Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-1",
+            Name = "Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -150,20 +129,13 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
     public async Task DispatchButton_DoubleClick_DispatchesOnlyOnce()
     {
         // Arrange: seed template, issue, and connect an agent
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-1",
-                    Name = "Test Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-1",
+            Name = "Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -193,13 +165,15 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
         await codingPage.ClickBrowseIssuesAsync();
         await codingPage.SelectIssueAsync("99");
 
-        // Double-click the dispatch button rapidly
+        // Click the dispatch button and immediately start watching for the success message
+        // (the success message auto-clears after 3s, so we must start observing before clicking).
+        var successTask = Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 30_000 });
+
         var dispatchBtn = Page.Locator("[data-testid='dispatch-issue-btn']");
-        // Use Playwright's built-in auto-wait (retries until element is visible and stable)
         await dispatchBtn.ClickAsync(new() { Timeout = 10_000 });
-        // Attempt a second click. If the button was detached/disabled by Blazor after the first
-        // dispatch (correct behavior), Playwright will throw — which is fine,
-        // it means the UI prevented the double-dispatch at the DOM level.
+
+        // Attempt a second click. If the button was disabled/removed by Blazor after the first
+        // dispatch, Playwright will throw — expected behavior.
         try
         {
             await Page.Locator("[data-testid='dispatch-issue-btn']").ClickAsync(new() { Timeout = 2000 });
@@ -209,14 +183,13 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
             // Button was detached, removed, or disabled after first click — expected
         }
 
-        // Wait for the dispatch to complete and the success message to show
-        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 15_000 });
+        // Wait for the success message (observer was started before the click)
+        await successTask;
 
-        // Wait for agent to receive the job (with generous timeout for slow ARM runners)
+        // Wait for agent to receive the job
         await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
-        // Verify no second dispatch arrived — since SignalR InvokeAsync is request-response,
-        // any second dispatch would have completed synchronously before the success selector appeared.
+        // Verify no second dispatch arrived
         Assert.Single(fakeAgent.ReceivedJobIds);
     }
 
@@ -224,11 +197,6 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
     public async Task StartLoop_DisabledWhenNoTemplates()
     {
         // Arrange: ensure no templates exist
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
-        {
-            PipelineJobTemplates = Array.Empty<PipelineJobTemplate>()
-        }, CancellationToken.None);
 
         // Act: navigate to the page
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -247,20 +215,13 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
     public async Task DrawerPagination_PrevDisabledOnFirstPage()
     {
         // Arrange: seed template and a few issues (less than page size)
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-1",
-                    Name = "Test Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-1",
+            Name = "Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         for (var i = 1; i <= 3; i++)
@@ -294,20 +255,13 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
     public async Task DrawerPagination_NextDisabledWhenNoMoreIssues()
     {
         // Arrange: seed template and exactly 3 issues (well under page size of 25)
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-1",
-                    Name = "Test Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-1",
+            Name = "Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         for (var i = 1; i <= 3; i++)
@@ -341,28 +295,21 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
     public async Task DisabledTemplate_NotShownInManualDispatchDropdown()
     {
         // Arrange: seed one enabled and one disabled template
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-enabled",
-                    Name = "Enabled Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                },
-                new PipelineJobTemplate
-                {
-                    Id = "template-disabled",
-                    Name = "Disabled Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = false
-                }
-            }
+            Id = "template-enabled",
+            Name = "Enabled Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-disabled",
+            Name = "Disabled Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = false
         }, CancellationToken.None);
 
         // Act: navigate
