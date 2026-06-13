@@ -155,7 +155,23 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         await freeAgent.ReportCompletionAsync(assignment2.JobId, CreateCompletionPayload("https://github.com/e2e-org/e2e-repo/pull/2"));
 
         // Assert: history shows two completed runs
-        await WaitForHistoryAsync(r => r.IssueIdentifier == "43"); // wait for second run
+        try
+        {
+            await WaitForHistoryAsync(r => r.IssueIdentifier == "43"); // wait for second run
+        }
+        catch (TimeoutException)
+        {
+            var reg = Fixture.Factory.AgentRegistry;
+            var a1 = reg.GetByAgentId("multi-agent-1");
+            var a2 = reg.GetByAgentId("multi-agent-2");
+            var hist = Fixture.Factory.HistoryService.GetRunHistory();
+            Assert.Fail(
+                $"MultiAgent WaitForHistoryAsync(43) timed out. " +
+                $"agent1={(a1 is null ? "NULL" : $"{a1.Status},job={a1.ActiveJobId ?? "null"}")}, " +
+                $"agent2={(a2 is null ? "NULL" : $"{a2.Status},job={a2.ActiveJobId ?? "null"}")}, " +
+                $"historyCount={hist.Count}, " +
+                $"historyIssues=[{string.Join(",", hist.Select(r => r.IssueIdentifier))}]");
+        }
         var history = Fixture.Factory.HistoryService;
         var runs = history.GetRunHistory();
         Assert.True(runs.Count >= 2, $"Expected at least 2 completed runs in history, got {runs.Count}");

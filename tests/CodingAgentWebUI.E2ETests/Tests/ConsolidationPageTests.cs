@@ -196,9 +196,10 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
 
         // Agent completes with harness suggestions
         Exception? completionError = null;
+        string? hubDebugInfo = null;
         try
         {
-            await fakeAgent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
+            hubDebugInfo = await fakeAgent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
             {
                 JobId = assignment.JobId,
                 Success = true,
@@ -240,7 +241,8 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         // Check what connectionId the facade would look up
         var facadeLookup = facade.GetByAgentId("consol-agent-2");
 
-        var diagMsg = $"[DIAG] completionError={completionError?.GetType().Name}: {completionError?.Message}, " +
+        var diagMsg = $"[DIAG] hubDebugInfo={hubDebugInfo ?? "null"}, " +
+                      $"completionError={completionError?.GetType().Name}: {completionError?.Message}, " +
                       $"sameRegistryInstance={ReferenceEquals(registry, hubRegistry)}, " +
                       $"agentEntry={(agentEntry is null ? "NULL" : $"status={agentEntry.Status}, activeJobId={agentEntry.ActiveJobId ?? "null"}, connectionId={agentEntry.ConnectionId}")}, " +
                       $"hubAgentEntry={(hubAgentEntry is null ? "NULL" : $"status={hubAgentEntry.Status}")}, " +
@@ -270,6 +272,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
             var agentList = string.Join("; ", allAgents.Select(a => $"{a.AgentId}={a.Status}(conn={a.ConnectionId},job={a.ActiveJobId ?? "null"})"));
             Assert.Fail(
                 $"Agent 'consol-agent-2' did not reach Idle within 10s. " +
+                $"hubDebugInfo={hubDebugInfo ?? "null"}, " +
                 $"finalEntry={(finalEntry is null ? "NULL" : $"status={finalEntry.Status}, activeJobId={finalEntry.ActiveJobId ?? "null"}")}, " +
                 $"allAgents=[{agentList}], " +
                 $"sameInstance={ReferenceEquals(registry, hubRegistry)}, " +

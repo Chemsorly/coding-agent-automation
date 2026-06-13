@@ -5,6 +5,7 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgentWebUI.E2ETests.Infrastructure;
 
@@ -48,6 +49,7 @@ public sealed class FakeAgentClient : IAsyncDisposable
 
         _connection = new HubConnectionBuilder()
             .WithUrl($"{serverAddress}{HubRoutes.Agent}?agentId={AgentId}&access_token={derivedToken}")
+            .AddMessagePackProtocol()
             .Build();
 
         // Register all IAgentHubClient handlers
@@ -265,11 +267,12 @@ public sealed class FakeAgentClient : IAsyncDisposable
 
     /// <summary>
     /// Reports consolidation job completion back to the hub.
+    /// Returns diagnostic info from the hub method for test observability.
     /// </summary>
-    public async Task ReportConsolidationCompleteAsync(ConsolidationJobResult result)
+    public async Task<string?> ReportConsolidationCompleteAsync(ConsolidationJobResult result)
     {
         if (_connection is null) throw new InvalidOperationException("Not connected");
-        await _connection.InvokeAsync("ReportConsolidationComplete", result);
+        return await _connection.InvokeAsync<string>("ReportConsolidationComplete", result);
     }
 
     /// <summary>

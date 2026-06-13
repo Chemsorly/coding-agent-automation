@@ -1,6 +1,7 @@
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.E2ETests.PageObjects;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.E2ETests.Tests;
@@ -75,12 +76,36 @@ public sealed class PrReviewPipelineTests : E2ETestBase, IClassFixture<E2EFixtur
         // TODO: AcceptAndCompleteJobAsync reports implementation-style step transitions (CloningRepository →
         // GeneratingCode → Completed). Consider adding a review-specific completion helper that reports
         // review-appropriate steps for more representative test behavior.
-        await fakeAgent.AcceptAndCompleteJobAsync(assignment.JobId);
+        Exception? completionEx = null;
+        try
+        {
+            await fakeAgent.AcceptAndCompleteJobAsync(assignment.JobId);
+        }
+        catch (Exception ex)
+        {
+            completionEx = ex;
+        }
 
-        // Verify history
-        var completedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "99");
-        Assert.Equal(PipelineStep.Completed, completedRun.FinalStep);
-        Assert.Equal(PipelineRunType.Review, completedRun.RunType);
+        // Verify history (with diagnostic on failure)
+        try
+        {
+            var completedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "99");
+            Assert.Equal(PipelineStep.Completed, completedRun.FinalStep);
+            Assert.Equal(PipelineRunType.Review, completedRun.RunType);
+        }
+        catch (TimeoutException)
+        {
+            var reg = Fixture.Factory.AgentRegistry;
+            var agent = reg.GetByAgentId("fake-agent-1");
+            var history = Fixture.Factory.HistoryService.GetRunHistory();
+            Assert.Fail(
+                $"PrReview WaitForHistoryAsync timed out. " +
+                $"completionEx={completionEx?.GetType().Name}: {completionEx?.Message ?? "none"}, " +
+                $"agentStatus={(agent is null ? "NULL" : $"{agent.Status}, job={agent.ActiveJobId ?? "null"}")}, " +
+                $"historyCount={history.Count}, " +
+                $"historyIssues=[{string.Join(",", history.Select(r => r.IssueIdentifier))}], " +
+                $"fakeAgentConnected={fakeAgent.IsConnected}");
+        }
 
         // Verify label transitions were tracked
         var labelAdds = Fixture.RepositoryProvider.PrLabelChanges

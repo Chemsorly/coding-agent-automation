@@ -25,11 +25,15 @@ public sealed partial class AgentHub
     /// Agent reports consolidation job completion. Updates the consolidation run status,
     /// persists harness suggestions if present, and increments badge count for refactoring issues.
     /// </summary>
-    public async Task ReportConsolidationComplete(ConsolidationJobResult result)
+    public async Task<string> ReportConsolidationComplete(ConsolidationJobResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
 
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
+
+        // DIAGNOSTIC: Return debug info to caller for E2E test observability
+        var debugInfo = $"connId={Context.ConnectionId}, agentFound={agent is not null}, agentId={agent?.AgentId ?? "NULL"}, activeJobId={agent?.ActiveJobId ?? "NULL"}";
+        _logger.Information("ReportConsolidationComplete ENTRY: {DebugInfo}", debugInfo);
 
         // Manual job validation (cannot use [RequiresActiveJob] because that attribute
         // expects string jobId as first parameter, but this method takes a complex object).
@@ -39,7 +43,7 @@ public sealed partial class AgentHub
             _logger.Warning(
                 "ReportConsolidationComplete rejected — job {JobId} not assigned to agent {AgentId} (active: {ActiveJobId})",
                 result.JobId, agent.AgentId, agent.ActiveJobId);
-            return;
+            return $"REJECTED: {debugInfo}";
         }
 
         _logger.Information("Consolidation job {JobId} completed by agent {AgentId}: success={Success}, connectionId={ConnectionId}, agentIsNull={AgentIsNull}",
@@ -109,6 +113,8 @@ public sealed partial class AgentHub
             _logger.Information("Refactoring consolidation job {JobId} created {Count} issue(s)",
                 result.JobId, result.CreatedIssues.Count);
         }
+
+        return debugInfo;
     }
 
     // ── Consolidation-local private helpers ─────────────────────────────
