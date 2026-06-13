@@ -63,7 +63,9 @@ public sealed partial class AgentHub
             // WARNING 9: CancellationToken.None is intentional here — these are fast file I/O
             // operations that should complete even if the agent connection drops. The consolidation
             // run state must be persisted regardless of connection lifecycle.
+            var swUpdate = System.Diagnostics.Stopwatch.StartNew();
             await _consolidationService.UpdateRunAsync(result.JobId, status, summary, CancellationToken.None, totalTokens);
+            _logger.Information("Consolidation run {JobId} UpdateRunAsync completed in {ElapsedMs}ms", result.JobId, swUpdate.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {
@@ -76,8 +78,9 @@ public sealed partial class AgentHub
             try
             {
                 // CancellationToken.None: same rationale as above — suggestions must be persisted
+                var swSuggestions = System.Diagnostics.Stopwatch.StartNew();
                 await _consolidationService.SaveHarnessSuggestionsAsync(result.HarnessSuggestions, CancellationToken.None);
-                _logger.Information("Persisted harness suggestions from consolidation job {JobId}", result.JobId);
+                _logger.Information("Consolidation run {JobId} SaveHarnessSuggestionsAsync completed in {ElapsedMs}ms", result.JobId, swSuggestions.ElapsedMilliseconds);
 
                 // Increment badge count for harness suggestions
                 _badgeService.IncrementBy(result.HarnessSuggestions.Suggestions.Count);

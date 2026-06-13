@@ -155,11 +155,15 @@ public sealed partial class AgentHub
 
             if (label is not null)
             {
+                var swLabel = Stopwatch.StartNew();
                 await SwapLabelAsync(run, label, GetLabelTargetKind(run));
+                _logger.Information("Job {JobId} SwapLabelAsync completed in {ElapsedMs}ms", jobId, swLabel.ElapsedMilliseconds);
             }
 
             // Post issue feedback comment if present (non-fatal)
+            var swComment = Stopwatch.StartNew();
             await PostIssueFeedbackCommentAsync(run);
+            _logger.Information("Job {JobId} PostIssueFeedbackCommentAsync completed in {ElapsedMs}ms", jobId, swComment.ElapsedMilliseconds);
         }
     }
 

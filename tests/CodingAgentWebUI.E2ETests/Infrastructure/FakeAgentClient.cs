@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using CodingAgentWebUI.Pipeline;
@@ -24,8 +25,8 @@ public sealed class FakeAgentClient : IAsyncDisposable
     public TaskCompletionSource<JobAssignmentMessage> JobAssigned { get; private set; } = new();
     public TaskCompletionSource<ConsolidationJobMessage> ConsolidationJobAssigned { get; private set; } = new();
     public TaskCompletionSource<ChatPromptMessage> ChatPromptAssigned { get; private set; } = new();
-    public List<string> ReceivedJobIds { get; } = new();
-    public List<string> ReceivedConsolidationJobIds { get; } = new();
+    public ConcurrentBag<string> ReceivedJobIds { get; } = new();
+    public ConcurrentBag<string> ReceivedConsolidationJobIds { get; } = new();
     public bool IsConnected => _connection?.State == HubConnectionState.Connected;
 
     public FakeAgentClient(string agentId, params string[] labels)
