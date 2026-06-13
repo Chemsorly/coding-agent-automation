@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using Serilog;
 using Xunit;
@@ -19,6 +20,7 @@ public class ShutdownServiceTests
         var service = new ShutdownService(
             new FakeLifecycleShutdownAction(isRunning: true, onCancel: () => lifecycleCalled = true),
             new FakeOrchestrationShutdownAction(onCancel: () => orchestrationCalled = true),
+            new ShutdownSignal(),
             _logger);
 
         using var cts = new CancellationTokenSource();
@@ -41,6 +43,7 @@ public class ShutdownServiceTests
         var service = new ShutdownService(
             new FakeLifecycleShutdownAction(isRunning: false, onCancel: () => lifecycleCalled = true),
             new FakeOrchestrationShutdownAction(onCancel: () => orchestrationCalled = true),
+            new ShutdownSignal(),
             _logger);
 
         using var cts = new CancellationTokenSource();
@@ -60,6 +63,7 @@ public class ShutdownServiceTests
         var service = new ShutdownService(
             new FakeLifecycleShutdownAction(isRunning: false, onCancel: () => { }),
             new FakeOrchestrationShutdownAction(onCancel: () => { }, delay: TimeSpan.FromSeconds(30)),
+            new ShutdownSignal(),
             _logger,
             shutdownTimeout: TimeSpan.FromSeconds(2));
 
@@ -83,6 +87,7 @@ public class ShutdownServiceTests
         var service = new ShutdownService(
             new FakeLifecycleShutdownAction(isRunning: true, onCancel: () => throw new InvalidOperationException("boom")),
             new FakeOrchestrationShutdownAction(onCancel: () => orchestrationCalled = true),
+            new ShutdownSignal(),
             _logger);
 
         using var cts = new CancellationTokenSource();
@@ -101,6 +106,7 @@ public class ShutdownServiceTests
         var service = new ShutdownService(
             new FakeLifecycleShutdownAction(isRunning: false, onCancel: () => { }),
             new FakeOrchestrationShutdownAction(onCancel: () => throw new InvalidOperationException("network error")),
+            new ShutdownSignal(),
             _logger);
 
         using var cts = new CancellationTokenSource();

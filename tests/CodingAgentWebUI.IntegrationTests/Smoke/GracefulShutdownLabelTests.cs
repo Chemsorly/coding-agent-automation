@@ -6,6 +6,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -86,6 +87,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                 services.AddHostedService(sp => new ShutdownService(
                     sp.GetRequiredService<ILifecycleShutdownAction>(),
                     sp.GetRequiredService<IOrchestrationShutdownAction>(),
+                    new ShutdownSignal(),
                     Log.Logger));
                 ReplaceService<IConfigurationStore>(services, _mockConfigStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, _mockConfigStore.Object);
@@ -184,6 +186,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                 services.AddHostedService(sp => new ShutdownService(
                     sp.GetRequiredService<ILifecycleShutdownAction>(),
                     sp.GetRequiredService<IOrchestrationShutdownAction>(),
+                    new ShutdownSignal(),
                     Log.Logger));
                 ReplaceService<IConfigurationStore>(services, configStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, configStore.Object);
@@ -241,6 +244,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                 services.AddHostedService(sp => new ShutdownService(
                     sp.GetRequiredService<ILifecycleShutdownAction>(),
                     sp.GetRequiredService<IOrchestrationShutdownAction>(),
+                    new ShutdownSignal(),
                     Log.Logger));
                 ReplaceService<IConfigurationStore>(services, _mockConfigStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, _mockConfigStore.Object);
@@ -321,6 +325,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                 services.AddHostedService(sp => new ShutdownService(
                     sp.GetRequiredService<ILifecycleShutdownAction>(),
                     sp.GetRequiredService<IOrchestrationShutdownAction>(),
+                    new ShutdownSignal(),
                     Log.Logger));
                 ReplaceService<IConfigurationStore>(services, configStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, configStore.Object);

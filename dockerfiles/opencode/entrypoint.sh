@@ -71,7 +71,7 @@ echo "OpenCode server started (PID: $OPENCODE_PID)"
 # Order: Agent Worker first (with 10s grace period), then OpenCode server.
 # WORKER_PID may be empty at this point; cleanup() guards with [ -n "$WORKER_PID" ].
 WORKER_PID=""
-GRACE_PERIOD=10
+GRACE_PERIOD=9
 
 cleanup() {
     echo "Received shutdown signal, initiating graceful shutdown..."

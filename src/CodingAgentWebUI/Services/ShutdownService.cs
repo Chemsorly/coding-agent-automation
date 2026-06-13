@@ -17,16 +17,19 @@ public sealed class ShutdownService : IHostedLifecycleService
 
     private readonly ILifecycleShutdownAction _lifecycle;
     private readonly IOrchestrationShutdownAction _orchestration;
+    private readonly IShutdownSignal _shutdownSignal;
     private readonly Serilog.ILogger _logger;
 
     public ShutdownService(
         ILifecycleShutdownAction lifecycle,
         IOrchestrationShutdownAction orchestration,
+        IShutdownSignal shutdownSignal,
         Serilog.ILogger logger,
         TimeSpan? shutdownTimeout = null)
     {
         _lifecycle = lifecycle;
         _orchestration = orchestration;
+        _shutdownSignal = shutdownSignal;
         _logger = logger;
         _shutdownTimeout = shutdownTimeout ?? TimeSpan.FromSeconds(15);
     }
@@ -65,6 +68,11 @@ public sealed class ShutdownService : IHostedLifecycleService
 
     private async Task ExecuteShutdownAsync()
     {
+        // Signal shutdown FIRST — prevents drain service from dispatching new jobs
+        // that would immediately get cancelled by the label-swap pass below.
+        _shutdownSignal.SignalShutdown();
+        _logger.Information("Shutdown signal raised — new dispatches blocked");
+
         // Cancel active pipeline run if one is in progress
         if (_lifecycle.IsRunning)
         {

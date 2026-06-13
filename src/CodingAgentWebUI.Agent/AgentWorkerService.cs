@@ -62,6 +62,9 @@ public sealed class AgentWorkerService : BackgroundService
     private CancellationTokenSource? _jobCts;
     private Task? _activeJobTask;
     private string? _activeJobId;
+    private JobAssignmentMessage? _activeJobAssignment;
+    private DateTimeOffset? _activeJobStartedAt;
+    private PipelineRunType _activeJobRunType;
     private PipelineStep? _currentStep;
     private readonly object _busyLock = new();
 
@@ -215,6 +218,12 @@ public sealed class AgentWorkerService : BackgroundService
 
         _logger.Information("Accepted job {JobId} for issue {IssueIdentifier}",
             message.JobId, message.IssueIdentifier);
+
+        lock (_busyLock)
+        {
+            _activeJobAssignment = message;
+            _activeJobRunType = message.RunType;
+        }
 
         try
         {
@@ -716,6 +725,7 @@ public sealed class AgentWorkerService : BackgroundService
             }
 
             _activeJobId = jobId;
+            _activeJobStartedAt = DateTimeOffset.UtcNow;
             _jobCts = new CancellationTokenSource();
             busyWith = null;
             return true;
@@ -727,6 +737,9 @@ public sealed class AgentWorkerService : BackgroundService
         lock (_busyLock)
         {
             _activeJobId = null;
+            _activeJobAssignment = null;
+            _activeJobStartedAt = null;
+            _activeJobRunType = default;
             _currentStep = null;
         }
 
@@ -770,8 +783,39 @@ public sealed class AgentWorkerService : BackgroundService
         AgentId = _agentId,
         Hostname = Environment.MachineName,
         AgentType = _agentType,
-        Labels = _labels
+        Labels = _labels,
+        ActiveJob = BuildActiveJobState()
     };
+
+    private ActiveJobState? BuildActiveJobState()
+    {
+        lock (_busyLock)
+        {
+            if (_activeJobId is null || _activeJobAssignment is null)
+                return null;
+
+            return new ActiveJobState
+            {
+                RunId = _activeJobId,
+                IssueIdentifier = _activeJobAssignment.IssueIdentifier,
+                IssueTitle = _activeJobAssignment.IssueDetail?.Title ?? _activeJobAssignment.IssueIdentifier,
+                IssueProviderConfigId = _activeJobAssignment.IssueProviderConfigId ?? _activeJobAssignment.RepoProviderConfigId,
+                RepoProviderConfigId = _activeJobAssignment.RepoProviderConfigId,
+                AgentProviderConfigId = _activeJobAssignment.AgentProviderConfigId,
+                BrainProviderConfigId = _activeJobAssignment.BrainProviderConfigId,
+                PipelineProviderConfigId = _activeJobAssignment.PipelineProviderConfigId,
+                InitiatedBy = _activeJobAssignment.InitiatedBy,
+                ResolvedProfileId = _activeJobAssignment.ResolvedProfileId,
+                ProjectId = _activeJobAssignment.ProjectId,
+                ProjectName = _activeJobAssignment.ProjectName,
+                CurrentStep = _currentStep ?? PipelineStep.GeneratingCode,
+                StartedAt = _activeJobStartedAt ?? DateTimeOffset.UtcNow,
+                RunType = _activeJobRunType,
+                RepositoryName = null, // Not available on agent side from assignment message
+                ModelName = null       // Not available on agent side from assignment message
+            };
+        }
+    }
 
     private async Task SendHeartbeatAsync(CancellationToken ct)
     {
@@ -806,9 +850,21 @@ public sealed class AgentWorkerService : BackgroundService
             await GracefulShutdownHelper.CancelAndWaitAsync(
                 _jobCts,
                 _activeJobTask,
-                TimeSpan.FromSeconds(30),
+                TimeSpan.FromSeconds(5),
                 _logger,
                 "Active job shutdown");
+        }
+
+        // Cancel active chat session if running
+        if (_activeChatSessionId is not null)
+        {
+            _logger.Information("Cancelling active chat session {SessionId} due to shutdown", _activeChatSessionId);
+            await GracefulShutdownHelper.CancelAndWaitAsync(
+                _chatCts,
+                _activeChatTask,
+                TimeSpan.FromSeconds(2),
+                _logger,
+                "Active chat shutdown");
         }
 
         // Deregister from orchestrator

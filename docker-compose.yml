@@ -40,6 +40,7 @@ services:
     build:
       context: .
       dockerfile: dockerfiles/kiro/agent-kiro-dotnet10.Dockerfile
+    stop_grace_period: 10s
     volumes:
       - ./config/kiro-cli-data-1:/home/ubuntu/.local/share/kiro-cli
       - ~/.aws:/home/ubuntu/.aws:ro
@@ -71,6 +72,7 @@ services:
     build:
       context: .
       dockerfile: dockerfiles/kiro/agent-kiro-dotnet10.Dockerfile
+    stop_grace_period: 10s
     volumes:
       - ./config/kiro-cli-data-2:/home/ubuntu/.local/share/kiro-cli
       - ~/.aws:/home/ubuntu/.aws:ro
@@ -102,6 +104,7 @@ services:
     build:
       context: .
       dockerfile: dockerfiles/kiro/agent-kiro-python312.Dockerfile
+    stop_grace_period: 10s
     volumes:
       - ./config/kiro-cli-data-3:/home/ubuntu/.local/share/kiro-cli
       - ~/.aws:/home/ubuntu/.aws:ro
@@ -133,6 +136,7 @@ services:
     build:
       context: .
       dockerfile: dockerfiles/kiro/agent-kiro-java21.Dockerfile
+    stop_grace_period: 10s
     volumes:
       - ./config/kiro-cli-data-4:/home/ubuntu/.local/share/kiro-cli
       - ~/.aws:/home/ubuntu/.aws:ro
@@ -164,6 +168,7 @@ services:
     build:
       context: .
       dockerfile: dockerfiles/opencode/agent-opencode-dotnet10.Dockerfile
+    stop_grace_period: 10s
     environment:
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - AGENT_ID=agent-opencode-dotnet
@@ -194,6 +199,7 @@ services:
     build:
       context: .
       dockerfile: dockerfiles/opencode/agent-opencode-python312.Dockerfile
+    stop_grace_period: 10s
     environment:
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - AGENT_ID=agent-opencode-python
@@ -223,6 +229,7 @@ services:
     build:
       context: .
       dockerfile: dockerfiles/opencode/agent-opencode-java21.Dockerfile
+    stop_grace_period: 10s
     environment:
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - AGENT_ID=agent-opencode-java

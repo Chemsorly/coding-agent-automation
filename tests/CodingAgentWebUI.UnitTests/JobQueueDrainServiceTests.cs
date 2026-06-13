@@ -5,6 +5,7 @@ using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using Moq;
 using ILogger = Serilog.ILogger;
@@ -43,7 +44,7 @@ public class JobQueueDrainServiceTests
         _mockConsolidationService = new Mock<IConsolidationService>();
         _mockConsolidationDispatcher = new Mock<IConsolidationDispatcher>();
         _service = new JobQueueDrainService(_dispatcher, _registry, _mockJobDispatcher.Object,
-            _mockConfigStore.Object, _consolidationQueue, _mockConsolidationService.Object, _mockConsolidationDispatcher.Object, logger);
+            _mockConfigStore.Object, _consolidationQueue, _mockConsolidationService.Object, _mockConsolidationDispatcher.Object, new ShutdownSignal(), logger);
     }
 
     private AgentEntry RegisterIdleAgent(string agentId = "agent-1", IReadOnlyList<string>? labels = null)
