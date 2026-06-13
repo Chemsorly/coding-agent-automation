@@ -544,7 +544,9 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         {
             try
             {
-                using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+                // Must use CreateDirectoryClient() to include x-opencode-directory header,
+                // otherwise the server returns statuses scoped to the wrong workspace instance.
+                using var client = CreateDirectoryClient();
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
 
