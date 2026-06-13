@@ -25,6 +25,8 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     private volatile bool _isExecuting;
     private volatile bool _sseEmittedAssistantContent;
     private long _lastOutputTimeTicks; // Interlocked access for DateTime
+    private volatile string? _sessionStatus; // "idle", "busy", "retry"
+    private volatile string? _sessionStatusMessage; // Error/retry message from session.status event
     private readonly Dictionary<string, (long Input, long Output, long Reasoning, long CacheRead, long CacheWrite, double Cost)> _lastSessionTokens = new();
 
     public AgentProviderType ProviderType => AgentProviderType.OpenCode;
@@ -69,7 +71,9 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             IsExecuting = _isExecuting,
             ProcessId = null,
             IsProcessAlive = null,
-            LastOutputTime = LastOutputTime
+            LastOutputTime = LastOutputTime,
+            SessionStatus = _sessionStatus,
+            SessionStatusMessage = _sessionStatusMessage
         };
     }
 
@@ -166,6 +170,8 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     {
         _isExecuting = true;
         _sseEmittedAssistantContent = false;
+        _sessionStatus = null;
+        _sessionStatusMessage = null;
         LastOutputTime = DateTime.UtcNow; // Reset so stall monitor measures from this call's start
         try
         {
@@ -667,6 +673,31 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
                     case "session.idle":
                         // Signal completion — informational only, sync message response is primary
+                        _sessionStatus = "idle";
+                        _sessionStatusMessage = null;
+                        break;
+
+                    case "session.status":
+                        // Track session status for health reporting.
+                        // The "retry" status indicates an LLM provider error with details.
+                        if (sseEvent.Status is not null)
+                        {
+                            _sessionStatus = sseEvent.Status.Type;
+                            if (string.Equals(sseEvent.Status.Type, "retry", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var retryMsg = sseEvent.Status.Message ?? "unknown error";
+                                var provider = sseEvent.Status.Action?.Provider;
+                                _sessionStatusMessage = provider is not null
+                                    ? $"[{provider}] attempt {sseEvent.Status.Attempt}: {retryMsg}"
+                                    : $"attempt {sseEvent.Status.Attempt}: {retryMsg}";
+                                _logger.Warning("Session {SessionId} retry status: {Message}", sessionId, _sessionStatusMessage);
+                                onOutputLine?.Invoke(StripAnsiEscapes($"[session.status] retry — {_sessionStatusMessage}"));
+                            }
+                            else
+                            {
+                                _sessionStatusMessage = null;
+                            }
+                        }
                         break;
 
                     default:

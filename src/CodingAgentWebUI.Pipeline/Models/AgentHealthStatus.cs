@@ -18,6 +18,18 @@ public sealed record AgentHealthStatus
     /// <summary>Timestamp of the last output line received from the agent process.</summary>
     public DateTime? LastOutputTime { get; init; }
 
+    /// <summary>
+    /// Session-level status reported by the agent backend (e.g., OpenCode's session.status SSE event).
+    /// Values: "idle", "busy", "retry". Null when unavailable or not applicable.
+    /// </summary>
+    public string? SessionStatus { get; init; }
+
+    /// <summary>
+    /// Diagnostic message from the agent backend when in a retry/error state.
+    /// Populated from the session.status "retry" event's message field.
+    /// </summary>
+    public string? SessionStatusMessage { get; init; }
+
     /// <summary>Human-readable summary of the current status.</summary>
     public string Summary =>
         !IsExecuting ? "Idle"

@@ -107,6 +107,42 @@ public sealed record SseEvent
     public string? ToolName { get; init; }
     public string? ToolArgs { get; init; }
     public string? ToolResult { get; init; }
+
+    /// <summary>Session status payload (present on "session.status" events).</summary>
+    public SseSessionStatus? Status { get; init; }
+}
+
+/// <summary>
+/// Session status payload from the "session.status" SSE event.
+/// Maps to OpenCode's SessionStatus schema: idle | busy | retry.
+/// </summary>
+public sealed record SseSessionStatus
+{
+    /// <summary>Status type: "idle", "busy", or "retry".</summary>
+    public required string Type { get; init; }
+
+    /// <summary>Retry attempt number (only present when Type == "retry").</summary>
+    public int? Attempt { get; init; }
+
+    /// <summary>Error message describing why the retry is occurring (only present when Type == "retry").</summary>
+    public string? Message { get; init; }
+
+    /// <summary>Unix timestamp (seconds) for when the next retry will occur (only present when Type == "retry").</summary>
+    public long? Next { get; init; }
+
+    /// <summary>Action details when OpenCode surfaces provider-specific context.</summary>
+    public SseSessionStatusAction? Action { get; init; }
+}
+
+/// <summary>Provider-specific action context from a retry status event.</summary>
+public sealed record SseSessionStatusAction
+{
+    public string? Reason { get; init; }
+    public string? Provider { get; init; }
+    public string? Title { get; init; }
+    public string? Message { get; init; }
+    public string? Label { get; init; }
+    public string? Link { get; init; }
 }
 
 /// <summary>Token usage from GET /session/:id. Tracks input/output/reasoning tokens and cache hits.</summary>
