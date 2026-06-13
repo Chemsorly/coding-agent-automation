@@ -42,8 +42,8 @@ public sealed partial class AgentHub
             return;
         }
 
-        _logger.Information("Consolidation job {JobId} completed by agent {AgentId}: success={Success}",
-            result.JobId, agent?.AgentId, result.Success);
+        _logger.Information("Consolidation job {JobId} completed by agent {AgentId}: success={Success}, connectionId={ConnectionId}, agentIsNull={AgentIsNull}",
+            result.JobId, agent?.AgentId ?? "NULL", result.Success, Context.ConnectionId, agent is null);
 
         // Transition agent to Idle BEFORE slow I/O operations (file persistence).
         // This ensures agent availability is not gated on file system latency.

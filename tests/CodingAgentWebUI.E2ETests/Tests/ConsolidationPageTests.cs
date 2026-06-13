@@ -1,5 +1,6 @@
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.E2ETests.PageObjects;
+using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
@@ -233,13 +234,17 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         // DIAGNOSTIC: Capture state immediately after completion call
         var registry = Fixture.Factory.AgentRegistry;
         var hubRegistry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var facade = Fixture.Factory.Services.GetRequiredService<IAgentHubFacade>();
         var agentEntry = registry.GetByAgentId("consol-agent-2");
         var hubAgentEntry = hubRegistry.GetByAgentId("consol-agent-2");
+        // Check what connectionId the facade would look up
+        var facadeLookup = facade.GetByAgentId("consol-agent-2");
 
         var diagMsg = $"[DIAG] completionError={completionError?.GetType().Name}: {completionError?.Message}, " +
                       $"sameRegistryInstance={ReferenceEquals(registry, hubRegistry)}, " +
                       $"agentEntry={(agentEntry is null ? "NULL" : $"status={agentEntry.Status}, activeJobId={agentEntry.ActiveJobId ?? "null"}, connectionId={agentEntry.ConnectionId}")}, " +
                       $"hubAgentEntry={(hubAgentEntry is null ? "NULL" : $"status={hubAgentEntry.Status}")}, " +
+                      $"facadeLookup={(facadeLookup is null ? "NULL" : $"status={facadeLookup.Status}, connId={facadeLookup.ConnectionId}")}, " +
                       $"fakeAgentConnected={fakeAgent.IsConnected}, " +
                       $"assignmentJobId={assignment.JobId}";
 
