@@ -18,20 +18,13 @@ public sealed class DependencyBlockingTests : E2ETestBase, IClassFixture<E2EFixt
     public async Task Dispatch_BlockedByOpenDependency_ShowsBlockingError()
     {
         // Arrange: seed template and issue with dependency on open issue #100
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-1",
-                    Name = "Test Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-1",
+            Name = "Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
@@ -79,20 +72,13 @@ public sealed class DependencyBlockingTests : E2ETestBase, IClassFixture<E2EFixt
     public async Task Dispatch_DependencyResolved_DispatchesSuccessfully()
     {
         // Arrange: seed template and issue with dependency on #100, but #100 is closed
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-1",
-                    Name = "Test Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-1",
+            Name = "Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
@@ -137,20 +123,13 @@ public sealed class DependencyBlockingTests : E2ETestBase, IClassFixture<E2EFixt
     public async Task Dispatch_PartiallyBlocked_ShowsOpenDependency()
     {
         // Arrange: issue depends on #100 (closed) and #200 (open)
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-1",
-                    Name = "Test Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-1",
+            Name = "Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile

@@ -80,20 +80,13 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
     public async Task AddTemplate_DuplicateProviderCombo_ShowsValidationError()
     {
         // Arrange: seed an existing template with issue-e2e + repo-e2e
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "existing-template",
-                    Name = "Existing Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "existing-template",
+            Name = "Existing Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         // Act: navigate and try to add a duplicate
@@ -129,11 +122,6 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
     public async Task AddTemplate_Success_AppearsInTableAndShowsMessage()
     {
         // Arrange: ensure no templates exist initially
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
-        {
-            PipelineJobTemplates = Array.Empty<PipelineJobTemplate>()
-        }, CancellationToken.None);
 
         // Act: navigate and add a template
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -175,20 +163,13 @@ public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixt
     public async Task RemoveTemplate_ConfirmDialog_RemovesFromTable()
     {
         // Arrange: seed a template
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-to-remove",
-                    Name = "Template To Remove",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-to-remove",
+            Name = "Template To Remove",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         // Act: navigate

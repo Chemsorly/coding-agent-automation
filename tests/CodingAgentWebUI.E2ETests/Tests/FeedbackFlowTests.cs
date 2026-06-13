@@ -27,20 +27,13 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
             Labels = new[] { "enhancement", "agent:next" }
         });
 
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-fb-1",
-                    Name = "Feedback Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-fb-1",
+            Name = "Feedback Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
@@ -127,20 +120,13 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
             Labels = new[] { "enhancement", "agent:next" }
         });
 
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-fb-2",
-                    Name = "Failure Feedback Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-fb-2",
+            Name = "Failure Feedback Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
@@ -223,20 +209,13 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
             Labels = new[] { "enhancement", "agent:next" }
         });
 
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-fb-3",
-                    Name = "No Feedback Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-fb-3",
+            Name = "No Feedback Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
@@ -283,20 +262,13 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
             Labels = new[] { "enhancement", "agent:next" }
         });
 
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-fb-4",
-                    Name = "Feedback UI Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-fb-4",
+            Name = "Feedback UI Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
@@ -411,20 +383,13 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
             Labels = new[] { "enhancement", "agent:next" }
         });
 
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-fb-5",
-                    Name = "Full Feedback Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-fb-5",
+            Name = "Full Feedback Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile

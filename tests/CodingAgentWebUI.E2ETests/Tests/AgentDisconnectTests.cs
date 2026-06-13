@@ -26,20 +26,13 @@ public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture
     public async Task Agent_DisconnectsMidRun_AgentMarkedDisconnected()
     {
         // Arrange: seed template, issue, profile, and connect an agent
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-1",
-                    Name = "Test Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-1",
+            Name = "Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
@@ -97,20 +90,13 @@ public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture
     public async Task Cancel_ActiveRun_FromMonitoringPage()
     {
         // Arrange: seed template, issue, profile, and connect an agent
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-1",
-                    Name = "Test Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-1",
+            Name = "Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile

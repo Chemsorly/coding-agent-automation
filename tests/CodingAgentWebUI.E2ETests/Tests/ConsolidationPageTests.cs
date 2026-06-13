@@ -22,11 +22,6 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
     public async Task ConsolidationPage_NoTemplates_ShowsEmptyState()
     {
         // Arrange: ensure no enabled templates
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
-        {
-            PipelineJobTemplates = Array.Empty<PipelineJobTemplate>()
-        }, CancellationToken.None);
 
         // Act
         var page = new ConsolidationPage(Page, BaseUrl);
@@ -48,21 +43,14 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
     public async Task ConsolidationPage_WithTemplates_ShowsCards()
     {
         // Arrange: seed a template with brain and repo providers
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-consol-1",
-                    Name = "Consolidation Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    BrainProviderId = "brain-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-consol-1",
+            Name = "Consolidation Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            BrainProviderId = "brain-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         // Act
@@ -85,21 +73,14 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
     public async Task ConsolidationPage_TriggerWithNoAgent_ShowsQueuedMessage()
     {
         // Arrange: seed a template but do NOT connect any agent
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-consol-2",
-                    Name = "No Agent Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    BrainProviderId = "brain-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-consol-2",
+            Name = "No Agent Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            BrainProviderId = "brain-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         // Act: navigate and click trigger
@@ -121,20 +102,13 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
     public async Task ConsolidationPage_TriggerHarnessSuggestions_DispatchesAndCompletes()
     {
         // Arrange: seed a template and connect an agent
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-consol-3",
-                    Name = "Harness Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-consol-3",
+            Name = "Harness Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
@@ -184,20 +158,13 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
     public async Task ConsolidationPage_AgentCompletesHarness_ShowsSuggestions()
     {
         // Arrange: seed a template and connect an agent
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-consol-4",
-                    Name = "Badge Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-consol-4",
+            Name = "Badge Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
@@ -283,21 +250,14 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
     public async Task ConsolidationPage_RefactoringButton_VisibleForConfiguredTemplate()
     {
         // Arrange: seed a template with repo and issue providers (required for refactoring)
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-consol-5",
-                    Name = "Refactoring Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    BrainProviderId = "brain-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-consol-5",
+            Name = "Refactoring Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            BrainProviderId = "brain-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         // Act: navigate to the page
@@ -314,21 +274,14 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
     public async Task ConsolidationPage_TriggerWithNoAgent_ShowsQueued_ForBrainConsolidation()
     {
         // Arrange: seed a template but do NOT connect any agent
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-consol-6",
-                    Name = "Failure Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    BrainProviderId = "brain-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-consol-6",
+            Name = "Failure Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            BrainProviderId = "brain-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         // Act: navigate and click brain consolidation trigger (no agent available)

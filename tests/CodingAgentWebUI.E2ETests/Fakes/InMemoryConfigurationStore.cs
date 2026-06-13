@@ -77,6 +77,14 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
                 ["agent"] = "agent-e2e"
             }
         };
+
+        _projects.Add(new PipelineProject
+        {
+            Id = WellKnownIds.DefaultProjectId,
+            Name = "Default",
+            Enabled = true,
+            TemplateIds = new List<string>()
+        });
     }
 
     // Pipeline config
@@ -86,9 +94,6 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     public Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct)
     {
         _pipelineConfig = config;
-        // Sync templates from config so LoadAllTemplatesAsync returns them (E2E tests seed via PipelineJobTemplates)
-        _templates.Clear();
-        _templates.AddRange(config.PipelineJobTemplates);
         return Task.CompletedTask;
     }
 
@@ -171,26 +176,8 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     }
 
     // Projects
-    public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
-    {
-        if (_projects.Count > 0)
-            return Task.FromResult<IReadOnlyList<PipelineProject>>(_projects.ToList());
-
-        // Auto-generate a Default project containing all template IDs.
-        // This ensures E2E tests exercise the project-based code paths.
-        var templateIds = _templates.Select(t => t.Id).ToList();
-        if (templateIds.Count == 0)
-            return Task.FromResult<IReadOnlyList<PipelineProject>>(Array.Empty<PipelineProject>());
-
-        var defaultProject = new PipelineProject
-        {
-            Id = WellKnownIds.DefaultProjectId,
-            Name = "Default",
-            Enabled = true,
-            TemplateIds = templateIds
-        };
-        return Task.FromResult<IReadOnlyList<PipelineProject>>(new List<PipelineProject> { defaultProject });
-    }
+    public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<PipelineProject>>(_projects.ToList());
 
     public Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct) =>
         Task.FromResult(_projects.FirstOrDefault(p => p.Id == id));

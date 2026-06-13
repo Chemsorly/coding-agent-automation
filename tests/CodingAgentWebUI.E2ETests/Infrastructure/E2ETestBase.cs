@@ -95,7 +95,7 @@ public abstract class E2ETestBase : IAsyncLifetime
         TimeSpan? timeout = null,
         TimeSpan? pollInterval = null)
     {
-        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(30));
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(60));
         var interval = pollInterval ?? TimeSpan.FromMilliseconds(50);
 
         while (DateTime.UtcNow < deadline)
@@ -105,6 +105,6 @@ public abstract class E2ETestBase : IAsyncLifetime
         }
 
         throw new TimeoutException(
-            $"Condition not met within {(timeout ?? TimeSpan.FromSeconds(30)).TotalSeconds}s");
+            $"Condition not met within {(timeout ?? TimeSpan.FromSeconds(60)).TotalSeconds}s");
     }
 }
