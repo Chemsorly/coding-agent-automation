@@ -66,6 +66,11 @@ public interface IAgentHubFacade
     PipelineRun? GetRun(string jobId);
 
     /// <summary>
+    /// Adds a pipeline run to the active runs collection.
+    /// </summary>
+    void AddRun(PipelineRun run);
+
+    /// <summary>
     /// Gets or creates the per-run output ring buffer.
     /// </summary>
     OutputRingBuffer GetOutputBuffer(string jobId);
@@ -98,6 +103,11 @@ public interface IAgentHubFacade
     /// Persists a completed pipeline run to history.
     /// </summary>
     void AddRunToHistory(PipelineRun run);
+
+    /// <summary>
+    /// Returns all completed pipeline run summaries from history.
+    /// </summary>
+    IReadOnlyList<PipelineRunSummary> GetRunHistory();
 
     // ── Issue provider operations ───────────────────────────────────────
 

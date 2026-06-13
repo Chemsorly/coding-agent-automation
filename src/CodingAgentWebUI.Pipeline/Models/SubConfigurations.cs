@@ -45,6 +45,12 @@ public sealed record ExternalCiConfiguration
 /// </summary>
 public sealed record ClosedLoopConfiguration
 {
+    /// <summary>
+    /// When true, the pipeline loop starts automatically on application startup.
+    /// Set to true when user starts the loop, false when user stops it.
+    /// </summary>
+    public bool AutoStart { get; init; }
+
     public TimeSpan ClosedLoopPollInterval { get; init; } = PipelineConstants.DefaultClosedLoopPollInterval;
     public int ClosedLoopMaxRunsPerCycle { get; init; } = 0;
 

@@ -25,6 +25,10 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     private volatile bool _isExecuting;
     private volatile bool _sseEmittedAssistantContent;
     private long _lastOutputTimeTicks; // Interlocked access for DateTime
+    private volatile string? _sessionStatus; // "idle", "busy", "retry"
+    private volatile string? _sessionStatusMessage; // Error/retry message from session.status event
+    private volatile string? _allSessionsSummary; // Cached summary from polling GET /session/status
+    private CancellationTokenSource? _sessionStatusPollCts; // Controls the background polling loop
     private readonly Dictionary<string, (long Input, long Output, long Reasoning, long CacheRead, long CacheWrite, double Cost)> _lastSessionTokens = new();
 
     public AgentProviderType ProviderType => AgentProviderType.OpenCode;
@@ -69,7 +73,10 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             IsExecuting = _isExecuting,
             ProcessId = null,
             IsProcessAlive = null,
-            LastOutputTime = LastOutputTime
+            LastOutputTime = LastOutputTime,
+            SessionStatus = _sessionStatus,
+            SessionStatusMessage = _sessionStatusMessage,
+            AllSessionsSummary = _allSessionsSummary
         };
     }
 
@@ -166,7 +173,15 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     {
         _isExecuting = true;
         _sseEmittedAssistantContent = false;
+        _sessionStatus = null;
+        _sessionStatusMessage = null;
+        _allSessionsSummary = null;
         LastOutputTime = DateTime.UtcNow; // Reset so stall monitor measures from this call's start
+
+        // Start background session-status polling (provides observability into subagent retries)
+        _sessionStatusPollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var pollTask = PollAllSessionStatusesAsync(_sessionStatusPollCts.Token);
+
         try
         {
             // 1. Session selection
@@ -325,6 +340,11 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         finally
         {
             _isExecuting = false;
+            // Stop session-status polling
+            try { _sessionStatusPollCts?.Cancel(); } catch { }
+            try { await pollTask.ConfigureAwait(false); } catch { }
+            _sessionStatusPollCts?.Dispose();
+            _sessionStatusPollCts = null;
         }
     }
 
@@ -511,6 +531,84 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     }
 
     /// <summary>
+    /// Background loop that polls GET /session/status every 10s and caches a human-readable
+    /// summary of all session statuses (including child/subagent sessions). This provides
+    /// observability into subagent retries that don't surface on the parent session's SSE stream.
+    /// </summary>
+    private async Task PollAllSessionStatusesAsync(CancellationToken ct)
+    {
+        // Small initial delay to let the session start
+        try { await Task.Delay(2000, ct); } catch (OperationCanceledException) { return; }
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                // Must use CreateDirectoryClient() to include x-opencode-directory header,
+                // otherwise the server returns statuses scoped to the wrong workspace instance.
+                using var client = CreateDirectoryClient();
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+
+                var response = await client.GetAsync("/session/status", timeoutCts.Token);
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync(timeoutCts.Token);
+                    var statuses = JsonSerializer.Deserialize<Dictionary<string, SseSessionStatus>>(json, OpenCodeJson.JsonOptions);
+
+                    if (statuses is not null && statuses.Count > 0)
+                    {
+                        var parts = new List<string>();
+                        var retryCount = 0;
+                        var busyCount = 0;
+                        var idleCount = 0;
+
+                        foreach (var (_, status) in statuses)
+                        {
+                            if (string.Equals(status.Type, "retry", StringComparison.OrdinalIgnoreCase))
+                                retryCount++;
+                            else if (string.Equals(status.Type, "busy", StringComparison.OrdinalIgnoreCase))
+                                busyCount++;
+                            else
+                                idleCount++;
+                        }
+
+                        parts.Add($"{statuses.Count} total");
+                        if (retryCount > 0) parts.Add($"{retryCount} retrying");
+                        if (busyCount > 0) parts.Add($"{busyCount} busy");
+                        if (idleCount > 0) parts.Add($"{idleCount} idle");
+
+                        // Add retry details (first 3)
+                        var retryDetails = statuses
+                            .Where(kv => string.Equals(kv.Value.Type, "retry", StringComparison.OrdinalIgnoreCase))
+                            .Take(3)
+                            .Select(kv => $"attempt {kv.Value.Attempt}: {kv.Value.Message ?? "unknown"}")
+                            .ToList();
+                        if (retryDetails.Count > 0)
+                            parts.Add($"detail: {string.Join("; ", retryDetails)}");
+
+                        _allSessionsSummary = string.Join(", ", parts);
+                    }
+                    else
+                    {
+                        _allSessionsSummary = null;
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch
+            {
+                // Best-effort — don't fail the execution over diagnostic polling
+            }
+
+            try { await Task.Delay(10_000, ct); } catch (OperationCanceledException) { break; }
+        }
+    }
+
+    /// <summary>
     /// Queries the session for token usage, computes the delta from last known values,
     /// logs it, and returns the delta as (TokenUsage?, decimal? Cost).
     /// Best-effort — failures return (null, null).
@@ -667,6 +765,31 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
                     case "session.idle":
                         // Signal completion — informational only, sync message response is primary
+                        _sessionStatus = "idle";
+                        _sessionStatusMessage = null;
+                        break;
+
+                    case "session.status":
+                        // Track session status for health reporting.
+                        // The "retry" status indicates an LLM provider error with details.
+                        if (sseEvent.Status is not null)
+                        {
+                            _sessionStatus = sseEvent.Status.Type;
+                            if (string.Equals(sseEvent.Status.Type, "retry", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var retryMsg = sseEvent.Status.Message ?? "unknown error";
+                                var provider = sseEvent.Status.Action?.Provider;
+                                _sessionStatusMessage = provider is not null
+                                    ? $"[{provider}] attempt {sseEvent.Status.Attempt}: {retryMsg}"
+                                    : $"attempt {sseEvent.Status.Attempt}: {retryMsg}";
+                                _logger.Warning("Session {SessionId} retry status: {Message}", sessionId, _sessionStatusMessage);
+                                onOutputLine?.Invoke(StripAnsiEscapes($"[session.status] retry — {_sessionStatusMessage}"));
+                            }
+                            else
+                            {
+                                _sessionStatusMessage = null;
+                            }
+                        }
                         break;
 
                     default:

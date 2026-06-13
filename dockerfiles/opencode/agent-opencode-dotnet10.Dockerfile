@@ -37,7 +37,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0.301 AS runtime
 ARG TARGETARCH
 
 # Pin OpenCode version via build ARG for reproducible builds
-ARG OPENCODE_VERSION=1.14.50
+ARG OPENCODE_VERSION=1.17.4
 
 # Install runtime dependencies: tini (PID 1), curl (health checks), git (workspace ops)
 RUN apt-get update && \

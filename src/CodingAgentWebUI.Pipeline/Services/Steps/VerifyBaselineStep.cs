@@ -50,6 +50,39 @@ internal sealed class VerifyBaselineStep : IPipelineStep
         }
     }
 
+    private static void EmitReportDetails(PipelineStepContext context, QualityGateReport report)
+    {
+        if (report.QgcResults.Count > 0)
+        {
+            foreach (var qgc in report.QgcResults.Where(r => !r.Passed))
+            {
+                context.Callbacks.EmitOutputLine($"  ▸ QGC '{qgc.DisplayName}':");
+                if (qgc.Compilation is { Passed: false })
+                    context.Callbacks.EmitOutputLine($"    ❌ Compilation: {qgc.Compilation.Details}");
+                if (qgc.Tests is { Passed: false })
+                    context.Callbacks.EmitOutputLine($"    ❌ Tests: {qgc.Tests.Details}");
+                if (qgc.Coverage is { Passed: false })
+                    context.Callbacks.EmitOutputLine($"    ❌ Coverage: {qgc.Coverage.Details}");
+                if (qgc.SecurityScan is { Passed: false })
+                    context.Callbacks.EmitOutputLine($"    ❌ Security: {qgc.SecurityScan.Details}");
+            }
+        }
+        else
+        {
+            // Fallback to aggregate fields for backward compat
+            if (report.Compilation is { Passed: false })
+                context.Callbacks.EmitOutputLine($"  ❌ Compilation: {report.Compilation.Details}");
+            if (report.Tests is { Passed: false })
+                context.Callbacks.EmitOutputLine($"  ❌ Tests: {report.Tests.Details}");
+            if (report.Coverage is { Passed: false })
+                context.Callbacks.EmitOutputLine($"  ❌ Coverage: {report.Coverage.Details}");
+            if (report.SecurityScan is { Passed: false })
+                context.Callbacks.EmitOutputLine($"  ❌ Security: {report.SecurityScan.Details}");
+            if (report.ExternalCi is { Passed: false })
+                context.Callbacks.EmitOutputLine($"  ❌ External CI: {report.ExternalCi.Details}");
+        }
+    }
+
     private static async Task RunWorkspaceBaselineAsync(PipelineStepContext context, CancellationToken ct)
     {
         if (context.QualityGateValidator is null || string.IsNullOrEmpty(context.Run.WorkspacePath))
@@ -84,9 +117,14 @@ internal sealed class VerifyBaselineStep : IPipelineStep
             context.Run.BaselineHealthPassed = report.AllPassed;
 
             if (report.AllPassed)
+            {
                 context.Callbacks.EmitOutputLine("✅ Workspace baseline healthy");
+            }
             else
-                context.Callbacks.EmitOutputLine("⚠️ Workspace baseline has pre-existing issues (non-fatal)");
+            {
+                context.Callbacks.EmitOutputLine("⚠️ Workspace baseline has pre-existing issues (non-fatal):");
+                EmitReportDetails(context, report);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

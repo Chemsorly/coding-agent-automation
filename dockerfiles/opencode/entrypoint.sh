@@ -56,9 +56,13 @@ echo "OpenCode server started (PID: $OPENCODE_PID)"
 # Filter out high-volume noise: bus streaming deltas, internal pub/sub bookkeeping,
 # and tool registry resolution spam (~91% of lines). Keeps: session lifecycle, LLM calls,
 # provider init, permission checks, errors/warnings, and startup logs.
+# ERROR lines always pass through unfiltered for diagnostics.
 (sleep 2 && tail -F /home/ubuntu/.local/share/opencode/log/*.log 2>/dev/null \
-  | grep -v -E 'service=bus type=(message\.part\.(delta|updated)|message\.updated|session\.(updated|diff|status|next\.|created)|\* subscribing)|service=tool\.registry status=' \
+  | grep -v -E '(service=bus type=(message\.part\.(delta|updated)|message\.updated|session\.(updated|diff|status|next\.|created)|\* subscribing)|service=tool\.registry status=)' \
   | sed 's/^/[opencode] /' &) &
+(sleep 2 && tail -F /home/ubuntu/.local/share/opencode/log/*.log 2>/dev/null \
+  | grep -E '\bERROR\b' \
+  | sed 's/^/[opencode:ERROR] /' &) &
 
 # -----------------------------------------------------------------------------
 # Signal handling — graceful shutdown (set up early, before health check loop)
@@ -67,7 +71,7 @@ echo "OpenCode server started (PID: $OPENCODE_PID)"
 # Order: Agent Worker first (with 10s grace period), then OpenCode server.
 # WORKER_PID may be empty at this point; cleanup() guards with [ -n "$WORKER_PID" ].
 WORKER_PID=""
-GRACE_PERIOD=10
+GRACE_PERIOD=9
 
 cleanup() {
     echo "Received shutdown signal, initiating graceful shutdown..."

@@ -329,6 +329,16 @@ public sealed record PipelineConfiguration
     }
 
     /// <summary>
+    /// When true, the pipeline loop starts automatically on application startup.
+    /// Set to true when user starts the loop, false when user stops it.
+    /// </summary>
+    public bool ClosedLoopAutoStart
+    {
+        get => ClosedLoop.AutoStart;
+        init => ClosedLoop = ClosedLoop with { AutoStart = value };
+    }
+
+    /// <summary>
     /// Poll interval for the closed pipeline loop when checking for new agent:next issues.
     /// Default: 60 seconds.
     /// </summary>

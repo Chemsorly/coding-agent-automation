@@ -1,5 +1,6 @@
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.E2ETests.PageObjects;
+using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
@@ -194,37 +195,89 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         var assignment = await fakeAgent.ConsolidationJobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Agent completes with harness suggestions
-        await fakeAgent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
+        Exception? completionError = null;
+        string? hubDebugInfo = null;
+        try
         {
-            JobId = assignment.JobId,
-            Success = true,
-            Summary = "Generated 2 suggestions from 10 runs",
-            HarnessSuggestions = new HarnessSuggestions
+            hubDebugInfo = await fakeAgent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
             {
-                GeneratedAtUtc = DateTime.UtcNow,
-                BasedOnRunCount = 10,
-                SuccessRate = 75.0m,
-                Suggestions = new[]
+                JobId = assignment.JobId,
+                Success = true,
+                Summary = "Generated 2 suggestions from 10 runs",
+                HarnessSuggestions = new HarnessSuggestions
                 {
-                    new HarnessSuggestion
+                    GeneratedAtUtc = DateTime.UtcNow,
+                    BasedOnRunCount = 10,
+                    SuccessRate = 75.0m,
+                    Suggestions = new[]
                     {
-                        Text = "Add project structure to initial context",
-                        Rationale = "Agent frequently spent time exploring directory layout",
-                        Frequency = 7
-                    },
-                    new HarnessSuggestion
-                    {
-                        Text = "Include test framework config in prompt",
-                        Rationale = "Agent often guessed wrong test runner",
-                        Frequency = 4
+                        new HarnessSuggestion
+                        {
+                            Text = "Add project structure to initial context",
+                            Rationale = "Agent frequently spent time exploring directory layout",
+                            Frequency = 7
+                        },
+                        new HarnessSuggestion
+                        {
+                            Text = "Include test framework config in prompt",
+                            Rationale = "Agent often guessed wrong test runner",
+                            Frequency = 4
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
+        catch (Exception ex)
+        {
+            completionError = ex;
+        }
+
+        // DIAGNOSTIC: Capture state immediately after completion call
+        var registry = Fixture.Factory.AgentRegistry;
+        var hubRegistry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var facade = Fixture.Factory.Services.GetRequiredService<IAgentHubFacade>();
+        var agentEntry = registry.GetByAgentId("consol-agent-2");
+        var hubAgentEntry = hubRegistry.GetByAgentId("consol-agent-2");
+        // Check what connectionId the facade would look up
+        var facadeLookup = facade.GetByAgentId("consol-agent-2");
+
+        var diagMsg = $"[DIAG] hubDebugInfo={hubDebugInfo ?? "null"}, " +
+                      $"completionError={completionError?.GetType().Name}: {completionError?.Message}, " +
+                      $"sameRegistryInstance={ReferenceEquals(registry, hubRegistry)}, " +
+                      $"agentEntry={(agentEntry is null ? "NULL" : $"status={agentEntry.Status}, activeJobId={agentEntry.ActiveJobId ?? "null"}, connectionId={agentEntry.ConnectionId}")}, " +
+                      $"hubAgentEntry={(hubAgentEntry is null ? "NULL" : $"status={hubAgentEntry.Status}")}, " +
+                      $"facadeLookup={(facadeLookup is null ? "NULL" : $"status={facadeLookup.Status}, connId={facadeLookup.ConnectionId}")}, " +
+                      $"fakeAgentConnected={fakeAgent.IsConnected}, " +
+                      $"assignmentJobId={assignment.JobId}";
+
+        // Output diagnostic to test output (visible in CI trx/console)
+        Assert.True(completionError is null,
+            $"ReportConsolidationCompleteAsync threw: {completionError?.GetType().Name}: {completionError?.Message}. Diag: {diagMsg}");
 
         // Wait for hub to process the completion and agent to return to Idle
-        var registry = Fixture.Factory.AgentRegistry;
-        await WaitUntilAsync(() => registry.GetByAgentId("consol-agent-2")?.Status == AgentStatus.Idle);
+        // Use a shorter initial check + diagnostic on failure
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            var entry = registry.GetByAgentId("consol-agent-2");
+            if (entry?.Status == AgentStatus.Idle) break;
+            await Task.Delay(50);
+        }
+
+        // If still not Idle, capture detailed state and fail with diagnostic
+        var finalEntry = registry.GetByAgentId("consol-agent-2");
+        if (finalEntry?.Status != AgentStatus.Idle)
+        {
+            var allAgents = registry.GetAllAgents();
+            var agentList = string.Join("; ", allAgents.Select(a => $"{a.AgentId}={a.Status}(conn={a.ConnectionId},job={a.ActiveJobId ?? "null"})"));
+            Assert.Fail(
+                $"Agent 'consol-agent-2' did not reach Idle within 10s. " +
+                $"hubDebugInfo={hubDebugInfo ?? "null"}, " +
+                $"finalEntry={(finalEntry is null ? "NULL" : $"status={finalEntry.Status}, activeJobId={finalEntry.ActiveJobId ?? "null"}")}, " +
+                $"allAgents=[{agentList}], " +
+                $"sameInstance={ReferenceEquals(registry, hubRegistry)}, " +
+                $"completionError={completionError?.Message ?? "none"}");
+        }
 
         // Refresh the page to see updated data
         await page.NavigateAsync();

@@ -37,6 +37,7 @@ public sealed class JobQueueDrainService : BackgroundService
     private readonly ConsolidationQueueService _consolidationQueue;
     private readonly IConsolidationService _consolidationService;
     private readonly IConsolidationDispatcher _consolidationDispatcher;
+    private readonly IShutdownSignal _shutdownSignal;
     private readonly ILogger _logger;
 
     private readonly SemaphoreSlim _wakeSignal = new(0, int.MaxValue);
@@ -54,6 +55,7 @@ public sealed class JobQueueDrainService : BackgroundService
         ConsolidationQueueService consolidationQueue,
         IConsolidationService consolidationService,
         IConsolidationDispatcher consolidationDispatcher,
+        IShutdownSignal shutdownSignal,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
@@ -63,6 +65,7 @@ public sealed class JobQueueDrainService : BackgroundService
         ArgumentNullException.ThrowIfNull(consolidationQueue);
         ArgumentNullException.ThrowIfNull(consolidationService);
         ArgumentNullException.ThrowIfNull(consolidationDispatcher);
+        ArgumentNullException.ThrowIfNull(shutdownSignal);
         ArgumentNullException.ThrowIfNull(logger);
 
         _dispatcher = dispatcher;
@@ -72,6 +75,7 @@ public sealed class JobQueueDrainService : BackgroundService
         _consolidationQueue = consolidationQueue;
         _consolidationService = consolidationService;
         _consolidationDispatcher = consolidationDispatcher;
+        _shutdownSignal = shutdownSignal;
         _logger = logger;
     }
 
@@ -130,6 +134,9 @@ public sealed class JobQueueDrainService : BackgroundService
     /// </summary>
     internal async Task DrainAsync(CancellationToken ct)
     {
+        if (_shutdownSignal.IsShuttingDown)
+            return;
+
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("DrainCycle");
 
         try
@@ -168,7 +175,7 @@ public sealed class JobQueueDrainService : BackgroundService
 
         foreach (var agent in idleAgents)
         {
-            if (ct.IsCancellationRequested)
+            if (ct.IsCancellationRequested || _shutdownSignal.IsShuttingDown)
                 break;
 
             var pendingJob = _dispatcher.DequeueForAgent(agent);
@@ -181,6 +188,17 @@ public sealed class JobQueueDrainService : BackgroundService
             _logger.Information(
                 "Drain: dequeued job for issue {IssueIdentifier} → agent {AgentId}",
                 pendingJob.IssueIdentifier, agent.AgentId);
+
+            // Re-check after dequeue — if shutdown was signalled while we were selecting,
+            // put the job back rather than dispatching into a cancellation.
+            if (_shutdownSignal.IsShuttingDown)
+            {
+                _logger.Information(
+                    "Drain: shutdown signalled, re-enqueuing job for issue {IssueIdentifier}",
+                    pendingJob.IssueIdentifier);
+                _dispatcher.ReEnqueue(pendingJob);
+                break;
+            }
 
             try
             {
@@ -249,7 +267,7 @@ public sealed class JobQueueDrainService : BackgroundService
 
         foreach (var agent in idleAgents)
         {
-            if (ct.IsCancellationRequested)
+            if (ct.IsCancellationRequested || _shutdownSignal.IsShuttingDown)
                 break;
 
             var job = _consolidationQueue.DequeueForAgent(agent);

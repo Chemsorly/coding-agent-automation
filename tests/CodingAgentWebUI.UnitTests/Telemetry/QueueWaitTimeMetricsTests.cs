@@ -5,6 +5,7 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using Moq;
 using ILogger = Serilog.ILogger;
@@ -58,7 +59,7 @@ public class QueueWaitTimeMetricsTests : IDisposable
         _drainService = new JobQueueDrainService(
             _dispatcher, _registry, _mockJobDispatcher.Object,
             mockConfigStore.Object, consolidationQueue, new Mock<IConsolidationService>().Object,
-            new Mock<IConsolidationDispatcher>().Object, logger);
+            new Mock<IConsolidationDispatcher>().Object, new ShutdownSignal(), logger);
     }
 
     public void Dispose() => _listener.Dispose();

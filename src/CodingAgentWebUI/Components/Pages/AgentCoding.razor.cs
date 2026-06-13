@@ -257,9 +257,18 @@ public partial class AgentCoding : IDisposable
             else if (LoopService.IsLoopActive) _errorMessage = "Loop is already active.";
             else _errorMessage = "A manual run is in progress. Wait for it to complete.";
         }
+        else
+        {
+            await ConfigStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = true }, CancellationToken.None);
+        }
     }
 
-    private void StopLoop() => LoopService.StopLoop();
+    private async Task StopLoop()
+    {
+        LoopService.StopLoop();
+        await ConfigStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = false }, CancellationToken.None);
+    }
+
     private void ResumeLoop() => LoopService.ResumeLoop();
 
     // ── Issue Drawer ──

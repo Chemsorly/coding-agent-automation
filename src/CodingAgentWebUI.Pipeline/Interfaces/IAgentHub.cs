@@ -51,7 +51,7 @@ public interface IAgentHub
     Task ReportFetchModelsResult(FetchModelsResponse response);
 
     // Consolidation
-    Task ReportConsolidationComplete(ConsolidationJobResult result);
+    Task<string> ReportConsolidationComplete(ConsolidationJobResult result);
 }
 
 /// <summary>

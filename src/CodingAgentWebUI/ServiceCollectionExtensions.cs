@@ -87,10 +87,22 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<Pipeline.Interfaces.IOrchestrationShutdownAction>(sp =>
             sp.GetRequiredService<PipelineOrchestrationService>());
 
+        // Shutdown signal: cooperative flag to prevent dispatch-during-shutdown races
+        services.AddSingleton<Pipeline.Interfaces.IShutdownSignal>(new Pipeline.Services.ShutdownSignal());
+
         // Graceful shutdown via IHostedLifecycleService (async, 15s timeout, non-blocking)
         services.AddHostedService(sp => new ShutdownService(
             sp.GetRequiredService<Pipeline.Interfaces.ILifecycleShutdownAction>(),
             sp.GetRequiredService<Pipeline.Interfaces.IOrchestrationShutdownAction>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IShutdownSignal>(),
+            Log.Logger));
+
+        services.AddHostedService(sp => new OrphanedLabelRecoveryService(
+            sp.GetRequiredService<OrchestratorRunService>(),
+            sp.GetRequiredService<IProjectStore>(),
+            sp.GetRequiredService<IProviderConfigStore>(),
+            sp.GetRequiredService<IProviderFactory>(),
+            sp.GetRequiredService<ILabelSwapper>(),
             Log.Logger));
 
         services.AddSingleton<IDependencyChecker>(sp => new DependencyChecker(Log.Logger));
@@ -155,6 +167,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ConsolidationQueueService>(),
             sp.GetRequiredService<IConsolidationService>(),
             sp.GetRequiredService<IConsolidationDispatcher>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IShutdownSignal>(),
             Log.Logger));
         services.AddHostedService(sp => sp.GetRequiredService<JobQueueDrainService>());
 
@@ -192,6 +205,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ILabelSwapper>(),
             sp.GetRequiredService<DispatchResolutionService>(),
             sp.GetRequiredService<IAgentCommunication>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IShutdownSignal>(),
             Log.Logger));
 
         services.AddSingleton<IAgentHubFacade>(sp => new AgentHubFacade(

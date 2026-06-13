@@ -82,9 +82,8 @@ public class EpicDeduplicationPropertyTests
                 mockConfigStore.Object,
                 mockLogger.Object),
             mockAgentComm.Object,
-            mockLogger.Object);
-
-        return (dispatcher, runService, jobService, new List<IDisposable> { orchestration });
+            new ShutdownSignal(),
+            mockLogger.Object);        return (dispatcher, runService, jobService, new List<IDisposable> { orchestration });
     }
 
     /// <summary>

@@ -132,9 +132,19 @@ internal static class AgentStallMonitor
                     if (silence >= config.StallWarningInterval && timeSinceLastWarn >= config.StallWarningInterval)
                     {
                         var elapsed = DateTime.UtcNow - run.StartedAt;
+                        var statusDetail = health.SessionStatus is not null
+                            ? $" Session status: {health.SessionStatus}."
+                            : "";
+                        var statusMsg = health.SessionStatusMessage is not null
+                            ? $" Detail: {health.SessionStatusMessage}"
+                            : "";
+                        var sessionsSummary = health.AllSessionsSummary is not null
+                            ? $" Sessions: [{health.AllSessionsSummary}]"
+                            : "";
                         var msg = $"{phaseDescription} — no output for {silence.TotalMinutes:F0}m. " +
                                   $"Agent call still in progress. " +
-                                  $"Total elapsed: {elapsed:hh\\:mm\\:ss}. Timeout: {config.AgentTimeout:hh\\:mm\\:ss}.";
+                                  $"Total elapsed: {elapsed:hh\\:mm\\:ss}. Timeout: {config.AgentTimeout:hh\\:mm\\:ss}." +
+                                  statusDetail + statusMsg + sessionsSummary;
                         logger.Warning("Pipeline {RunId} {StallMessage}", run.RunId, msg);
                         run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = msg });
                         onChange?.Invoke();

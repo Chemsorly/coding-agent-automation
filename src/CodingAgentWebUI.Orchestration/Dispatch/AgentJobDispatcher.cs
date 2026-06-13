@@ -56,6 +56,7 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
     private readonly ILabelSwapper _labelSwapper;
     private readonly DispatchResolutionService _resolution;
     private readonly IAgentCommunication _agentComm;
+    private readonly IShutdownSignal _shutdownSignal;
     private readonly ILogger _logger;
 
     public AgentJobDispatcher(
@@ -68,6 +69,7 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
         ILabelSwapper labelSwapper,
         DispatchResolutionService resolution,
         IAgentCommunication agentComm,
+        IShutdownSignal shutdownSignal,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
@@ -79,6 +81,7 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
         ArgumentNullException.ThrowIfNull(labelSwapper);
         ArgumentNullException.ThrowIfNull(resolution);
         ArgumentNullException.ThrowIfNull(agentComm);
+        ArgumentNullException.ThrowIfNull(shutdownSignal);
         ArgumentNullException.ThrowIfNull(logger);
 
         _dispatcher = dispatcher;
@@ -90,6 +93,7 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
         _labelSwapper = labelSwapper;
         _resolution = resolution;
         _agentComm = agentComm;
+        _shutdownSignal = shutdownSignal;
         _logger = logger;
     }
 

@@ -653,6 +653,89 @@ public sealed class AgentHubBehaviorTests : IDisposable
         run.HighWaterMark.Should().Be(PipelineStep.RunningQualityGates); // Should NOT go backward
     }
 
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesRetryCount()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var metadata = new Dictionary<string, string>
+        {
+            ["RetryCount"] = "2",
+            ["InfrastructureRetryCount"] = "1"
+        };
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, metadata);
+
+        run.RetryCount.Should().Be(2);
+        run.InfrastructureRetryCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesTotalTokensAndCost()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var metadata = new Dictionary<string, string>
+        {
+            ["TotalTokens"] = "150000",
+            ["TotalCost"] = "4.56"
+        };
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow, metadata);
+
+        run.TotalTokens.Should().Be(150000);
+        run.TotalCost.Should().Be(4.56m);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesCodeReviewCounts()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var metadata = new Dictionary<string, string>
+        {
+            ["CodeReviewCriticalCount"] = "3",
+            ["CodeReviewWarningCount"] = "5",
+            ["CodeReviewSuggestionCount"] = "7",
+            ["CodeReviewAgentsRun"] = "security-agent\x1Fstyle-agent"
+        };
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow, metadata);
+
+        run.CodeReviewCriticalCount.Should().Be(3);
+        run.CodeReviewWarningCount.Should().Be(5);
+        run.CodeReviewSuggestionCount.Should().Be(7);
+        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "security-agent", "style-agent" });
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_CodeReviewCounts_AppliedAtomically()
+    {
+        var run = CreateRun();
+        // Pre-set some values to verify they get replaced, not added to
+        run.SetCodeReviewCounts(10, 20, 30);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        // Only send Critical — Warning and Suggestion should keep existing values
+        var metadata = new Dictionary<string, string>
+        {
+            ["CodeReviewCriticalCount"] = "5"
+        };
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow, metadata);
+
+        run.CodeReviewCriticalCount.Should().Be(5);
+        run.CodeReviewWarningCount.Should().Be(20); // Preserved
+        run.CodeReviewSuggestionCount.Should().Be(30); // Preserved
+    }
+
     #endregion
 
     #region ReportChatResponse / ReportChatCompleted — Session Ownership

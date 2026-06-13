@@ -113,7 +113,30 @@ public sealed partial class AgentHub
                 jobId, payload.FinalStep, payload.PullRequestUrl ?? "none");
 
             _orchestration.NotifyChange();
+        }
 
+        // Transition agent to Idle BEFORE slow I/O operations (label swap, comment posting).
+        // This ensures agent availability is not gated on external provider latency.
+        if (agent is not null)
+        {
+            agent.ActiveJobId = null;
+            agent.OrphanRestoredAt = null;
+            agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
+            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+
+            // Mark issue as no longer processing in the dispatcher
+            if (run is not null)
+                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+
+            // Signal the drain service to attempt dispatch for this now-idle agent
+            _facade.Signal();
+        }
+
+        // Non-fatal post-completion bookkeeping: label swap and feedback comment.
+        // These may involve external API calls and can be slow — executed after agent
+        // is already marked Idle so it doesn't block availability.
+        if (run is not null)
+        {
             // Swap label based on final outcome (non-fatal).
             // The agent may also attempt a label swap via RequestLabelChange during its own
             // error handling, but that call can race with this handler (run already removed).
@@ -132,27 +155,15 @@ public sealed partial class AgentHub
 
             if (label is not null)
             {
+                var swLabel = Stopwatch.StartNew();
                 await SwapLabelAsync(run, label, GetLabelTargetKind(run));
+                _logger.Information("Job {JobId} SwapLabelAsync completed in {ElapsedMs}ms", jobId, swLabel.ElapsedMilliseconds);
             }
 
             // Post issue feedback comment if present (non-fatal)
+            var swComment = Stopwatch.StartNew();
             await PostIssueFeedbackCommentAsync(run);
-        }
-
-        // Transition agent to Idle and clear active job
-        if (agent is not null)
-        {
-            agent.ActiveJobId = null;
-            agent.OrphanRestoredAt = null;
-            agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
-            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-
-            // Mark issue as no longer processing in the dispatcher
-            if (run is not null)
-                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
-
-            // Signal the drain service to attempt dispatch for this now-idle agent
-            _facade.Signal();
+            _logger.Information("Job {JobId} PostIssueFeedbackCommentAsync completed in {ElapsedMs}ms", jobId, swComment.ElapsedMilliseconds);
         }
     }
 
@@ -201,6 +212,9 @@ public sealed partial class AgentHub
     /// </summary>
     private static void ApplyStepMetadata(PipelineRun run, Dictionary<string, string> metadata)
     {
+        // Collect code review counts for single-pass atomic update
+        int? pendingCritical = null, pendingWarning = null, pendingSuggestion = null;
+
         foreach (var (key, value) in metadata)
         {
             switch (key)
@@ -241,7 +255,41 @@ public sealed partial class AgentHub
                 case "DecompositionSubIssuesAttempted":
                     if (int.TryParse(value, out var dsia)) run.DecompositionSubIssuesAttempted = dsia;
                     break;
+                case "RetryCount":
+                    if (int.TryParse(value, out var rc)) run.RetryCount = rc;
+                    break;
+                case "InfrastructureRetryCount":
+                    if (int.TryParse(value, out var irc)) run.InfrastructureRetryCount = irc;
+                    break;
+                case "TotalTokens":
+                    if (long.TryParse(value, out var tt)) run.TotalTokens = tt;
+                    break;
+                case "TotalCost":
+                    if (decimal.TryParse(value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var tc))
+                        run.TotalCost = tc;
+                    break;
+                case "CodeReviewCriticalCount":
+                    if (int.TryParse(value, out var crc)) pendingCritical = crc;
+                    break;
+                case "CodeReviewWarningCount":
+                    if (int.TryParse(value, out var crw)) pendingWarning = crw;
+                    break;
+                case "CodeReviewSuggestionCount":
+                    if (int.TryParse(value, out var crs)) pendingSuggestion = crs;
+                    break;
+                case "CodeReviewAgentsRun":
+                    run.CodeReviewAgentsRun = value.Split('\x1F', StringSplitOptions.RemoveEmptyEntries);
+                    break;
             }
+        }
+
+        // Apply code review counts atomically in a single call (avoids iteration-order dependency)
+        if (pendingCritical.HasValue || pendingWarning.HasValue || pendingSuggestion.HasValue)
+        {
+            run.SetCodeReviewCounts(
+                pendingCritical ?? run.CodeReviewCriticalCount,
+                pendingWarning ?? run.CodeReviewWarningCount,
+                pendingSuggestion ?? run.CodeReviewSuggestionCount);
         }
     }
 

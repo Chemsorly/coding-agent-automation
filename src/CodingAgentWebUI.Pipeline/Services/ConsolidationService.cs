@@ -566,6 +566,9 @@ public sealed class ConsolidationService : IConsolidationService
 
     private readonly ConcurrentDictionary<string, string> _feedbackDataCache = new();
 
+    /// <summary>Clears in-memory concurrency state. Used by E2E tests for isolation.</summary>
+    internal void Reset() => _runningRuns.Clear();
+
     private async Task<T?> LoadAsync<T>(string filePath, CancellationToken ct) where T : class
     {
         var json = await File.ReadAllTextAsync(filePath, ct);

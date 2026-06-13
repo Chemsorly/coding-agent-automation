@@ -117,6 +117,72 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
         _facade.Register(message, Context.ConnectionId);
 
+        // Re-track active job from agent state (handles orchestrator restart scenario)
+        if (message.ActiveJob is not null)
+        {
+            var existingRun = _facade.GetRun(message.ActiveJob.RunId);
+            if (existingRun is null)
+            {
+                // Check history — don't re-register a completed run
+                var inHistory = _facade.GetRunHistory()
+                    .Any(r => r.RunId == message.ActiveJob.RunId);
+
+                if (!inHistory)
+                {
+                    #pragma warning disable CS0618 // StartedAt is obsolete but required for PipelineRun construction
+                    var restoredRun = new PipelineRun
+                    {
+                        RunId = message.ActiveJob.RunId,
+                        IssueIdentifier = message.ActiveJob.IssueIdentifier,
+                        IssueTitle = message.ActiveJob.IssueTitle,
+                        IssueProviderConfigId = message.ActiveJob.IssueProviderConfigId,
+                        RepoProviderConfigId = message.ActiveJob.RepoProviderConfigId,
+                        AgentProviderConfigId = message.ActiveJob.AgentProviderConfigId,
+                        BrainProviderConfigId = message.ActiveJob.BrainProviderConfigId,
+                        PipelineProviderConfigId = message.ActiveJob.PipelineProviderConfigId,
+                        StartedAt = message.ActiveJob.StartedAt.UtcDateTime,
+                        StartedAtOffset = message.ActiveJob.StartedAt,
+                        CurrentStep = message.ActiveJob.CurrentStep,
+                        AgentId = message.AgentId,
+                        InitiatedBy = message.ActiveJob.InitiatedBy,
+                        ResolvedProfileId = message.ActiveJob.ResolvedProfileId,
+                        ProjectId = message.ActiveJob.ProjectId,
+                        ProjectName = message.ActiveJob.ProjectName,
+                        RunType = message.ActiveJob.RunType,
+                        RepositoryName = message.ActiveJob.RepositoryName,
+                        ModelName = message.ActiveJob.ModelName
+                    };
+                    #pragma warning restore CS0618
+
+                    _facade.AddRun(restoredRun);
+
+                    // Set agent as busy with this job
+                    var restoredEntry = _facade.GetByAgentId(message.AgentId);
+                    if (restoredEntry is not null)
+                    {
+                        restoredEntry.ActiveJobId = message.ActiveJob.RunId;
+                        _facade.TransitionStatus(message.AgentId, AgentStatus.Busy);
+                    }
+
+                    _logger.Information(
+                        "Restored active run {RunId} for agent {AgentId} (issue {IssueIdentifier}, step {Step}) — orchestrator state recovery",
+                        message.ActiveJob.RunId, message.AgentId, message.ActiveJob.IssueIdentifier, message.ActiveJob.CurrentStep);
+
+                    _orchestration.NotifyChange();
+                }
+                else
+                {
+                    _logger.Information(
+                        "Agent {AgentId} reported active job {RunId} but it's already in history — ignoring stale state",
+                        message.AgentId, message.ActiveJob.RunId);
+                }
+            }
+            else
+            {
+                _logger.Debug("Agent {AgentId} active job {RunId} already tracked", message.AgentId, message.ActiveJob.RunId);
+            }
+        }
+
         // Detect orphaned runs: if the orchestrator tracks active runs for this agent
         // but the agent registered without an active job, restore the ActiveJobId on the
         // registry entry so the HeartbeatMonitor grace period logic can handle cleanup.

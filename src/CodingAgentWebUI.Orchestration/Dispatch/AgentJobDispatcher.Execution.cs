@@ -108,7 +108,8 @@ public sealed partial class AgentJobDispatcher
                 ProjectSecrets = project.Secrets,
                 TraceContext = CaptureTraceContext(),
                 ProjectSteeringContent = project.SteeringContent,
-                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId)?.SteeringContent
+                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId)?.SteeringContent,
+                IssueProviderConfigId = issueProviderId
             };
 
             await AssignAndSendAsync(agent, run.RunId, message, ct);
@@ -273,7 +274,8 @@ public sealed partial class AgentJobDispatcher
                 ProjectSecrets = project.Secrets,
                 TraceContext = CaptureTraceContext(),
                 ProjectSteeringContent = project.SteeringContent,
-                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == request.RepoProviderId)?.SteeringContent
+                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == request.RepoProviderId)?.SteeringContent,
+                IssueProviderConfigId = request.IssueProviderId
             };
 
             await AssignAndSendAsync(agent, run.RunId, message, ct);
@@ -461,7 +463,8 @@ public sealed partial class AgentJobDispatcher
                 ProjectSecrets = project.Secrets,
                 TraceContext = CaptureTraceContext(),
                 ProjectSteeringContent = project.SteeringContent,
-                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId)?.SteeringContent
+                RepoSteeringContent = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId)?.SteeringContent,
+                IssueProviderConfigId = issueProviderId
             };
 
             // Swap label to agent:in-progress before dispatch so the epic is immediately marked

@@ -147,4 +147,12 @@ public sealed class ConsolidationQueueService
             }
         }
     }
+
+    /// <summary>Clears all queued jobs. Used by E2E tests for state isolation.</summary>
+    internal void Reset()
+    {
+        _queuedRunIds.Clear();
+        _cancelledRunIds.Clear();
+        while (_queue.TryDequeue(out _)) { }
+    }
 }

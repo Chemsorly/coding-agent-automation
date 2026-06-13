@@ -158,6 +158,13 @@ public sealed partial class AgentJobDispatcher
         string logMessageTemplate,
         CancellationToken ct)
     {
+        // Prevent dispatch during shutdown — avoids creating runs that immediately get cancelled
+        if (_shutdownSignal.IsShuttingDown)
+        {
+            _logger.Information("Dispatch suppressed for {Identifier} — shutdown in progress", identifier);
+            return false;
+        }
+
         var config = await _resolution.ConfigStore.LoadPipelineConfigAsync(ct);
         var repoConfig = await _resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
         var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);

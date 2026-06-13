@@ -19,6 +19,39 @@ public sealed record AgentRegistrationMessage
 
     [Key(3)]
     public required IReadOnlyList<string> Labels { get; init; }
+
+    /// <summary>
+    /// Active job state included when agent has a running job during registration.
+    /// Enables orchestrator to re-track runs after restart.
+    /// </summary>
+    [Key(4)]
+    public ActiveJobState? ActiveJob { get; init; }
+}
+
+/// <summary>
+/// Agent → Orchestrator: Active job state included in registration when agent has a running job.
+/// Enables orchestrator to re-track runs after restart.
+/// </summary>
+[MessagePackObject]
+public sealed record ActiveJobState
+{
+    [Key(0)] public required string RunId { get; init; }
+    [Key(1)] public required string IssueIdentifier { get; init; }
+    [Key(2)] public required string IssueTitle { get; init; }
+    [Key(3)] public required string IssueProviderConfigId { get; init; }
+    [Key(4)] public required string RepoProviderConfigId { get; init; }
+    [Key(5)] public required string AgentProviderConfigId { get; init; }
+    [Key(6)] public string? BrainProviderConfigId { get; init; }
+    [Key(7)] public string? PipelineProviderConfigId { get; init; }
+    [Key(8)] public required string InitiatedBy { get; init; }
+    [Key(9)] public string? ResolvedProfileId { get; init; }
+    [Key(10)] public string? ProjectId { get; init; }
+    [Key(11)] public string? ProjectName { get; init; }
+    [Key(12)] public required PipelineStep CurrentStep { get; init; }
+    [Key(13)] public required DateTimeOffset StartedAt { get; init; }
+    [Key(14)] public PipelineRunType RunType { get; init; }
+    [Key(15)] public string? RepositoryName { get; init; }
+    [Key(16)] public string? ModelName { get; init; }
 }
 
 /// <summary>
@@ -176,6 +209,13 @@ public sealed record JobAssignmentMessage
     // Using Key(30) to avoid breaking wire compatibility with deployed agents.
     [Key(30)]
     public Dictionary<string, string>? TraceContext { get; init; }
+
+    /// <summary>
+    /// Issue provider config ID from the orchestrator's dispatch context.
+    /// Passed to the agent so it can relay back in ActiveJobState on re-registration.
+    /// </summary>
+    [Key(31)]
+    public string? IssueProviderConfigId { get; init; }
 }
 
 /// <summary>

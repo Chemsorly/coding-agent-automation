@@ -25,14 +25,44 @@ public sealed partial class AgentHub
     /// Agent reports consolidation job completion. Updates the consolidation run status,
     /// persists harness suggestions if present, and increments badge count for refactoring issues.
     /// </summary>
-    [RequiresActiveJob]
-    public async Task ReportConsolidationComplete(ConsolidationJobResult result)
+    public async Task<string> ReportConsolidationComplete(ConsolidationJobResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
 
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
-        _logger.Information("Consolidation job {JobId} completed by agent {AgentId}: success={Success}",
-            result.JobId, agent?.AgentId, result.Success);
+
+        // DIAGNOSTIC: Return debug info to caller for E2E test observability
+        var debugInfo = $"connId={Context.ConnectionId}, agentFound={agent is not null}, agentId={agent?.AgentId ?? "NULL"}, activeJobId={agent?.ActiveJobId ?? "NULL"}";
+        _logger.Information("ReportConsolidationComplete ENTRY: {DebugInfo}", debugInfo);
+
+        // Manual job validation (cannot use [RequiresActiveJob] because that attribute
+        // expects string jobId as first parameter, but this method takes a complex object).
+        if (agent is not null && agent.ActiveJobId is not null
+            && !string.Equals(agent.ActiveJobId, result.JobId, StringComparison.Ordinal))
+        {
+            _logger.Warning(
+                "ReportConsolidationComplete rejected — job {JobId} not assigned to agent {AgentId} (active: {ActiveJobId})",
+                result.JobId, agent.AgentId, agent.ActiveJobId);
+            return $"REJECTED: {debugInfo}";
+        }
+
+        _logger.Information("Consolidation job {JobId} completed by agent {AgentId}: success={Success}, connectionId={ConnectionId}, agentIsNull={AgentIsNull}",
+            result.JobId, agent?.AgentId ?? "NULL", result.Success, Context.ConnectionId, agent is null);
+
+        // Transition agent to Idle BEFORE slow I/O operations (file persistence).
+        // This ensures agent availability is not gated on file system latency.
+        if (agent is not null)
+        {
+            agent.ActiveJobId = null;
+            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+            _facade.Signal();
+        }
+
+        _orchestration.NotifyChange();
+
+        // Non-fatal post-completion bookkeeping: run status update, suggestion persistence, badges.
+        // These involve file I/O and can be slow under CI Docker overlay — executed after agent
+        // is already marked Idle so it doesn't block availability or test assertions.
 
         // Sum token usage from review, refinement, and diff summary calls
         var totalTokens = SumTokenUsage(result.ReviewTokenUsage, result.RefinementTokenUsage, result.DiffSummaryTokenUsage);
@@ -48,7 +78,9 @@ public sealed partial class AgentHub
             // WARNING 9: CancellationToken.None is intentional here — these are fast file I/O
             // operations that should complete even if the agent connection drops. The consolidation
             // run state must be persisted regardless of connection lifecycle.
+            var swUpdate = System.Diagnostics.Stopwatch.StartNew();
             await _consolidationService.UpdateRunAsync(result.JobId, status, summary, CancellationToken.None, totalTokens);
+            _logger.Information("Consolidation run {JobId} UpdateRunAsync completed in {ElapsedMs}ms", result.JobId, swUpdate.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {
@@ -61,8 +93,9 @@ public sealed partial class AgentHub
             try
             {
                 // CancellationToken.None: same rationale as above — suggestions must be persisted
+                var swSuggestions = System.Diagnostics.Stopwatch.StartNew();
                 await _consolidationService.SaveHarnessSuggestionsAsync(result.HarnessSuggestions, CancellationToken.None);
-                _logger.Information("Persisted harness suggestions from consolidation job {JobId}", result.JobId);
+                _logger.Information("Consolidation run {JobId} SaveHarnessSuggestionsAsync completed in {ElapsedMs}ms", result.JobId, swSuggestions.ElapsedMilliseconds);
 
                 // Increment badge count for harness suggestions
                 _badgeService.IncrementBy(result.HarnessSuggestions.Suggestions.Count);
@@ -81,15 +114,7 @@ public sealed partial class AgentHub
                 result.JobId, result.CreatedIssues.Count);
         }
 
-        // Transition agent back to Idle
-        if (agent is not null)
-        {
-            agent.ActiveJobId = null;
-            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-            _facade.Signal();
-        }
-
-        _orchestration.NotifyChange();
+        return debugInfo;
     }
 
     // ── Consolidation-local private helpers ─────────────────────────────

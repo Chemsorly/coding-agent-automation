@@ -824,6 +824,28 @@ public sealed class LocalPipelineExecutor
             Add("DecompositionSubIssuesAttempted", run.DecompositionSubIssuesAttempted.ToString());
         }
 
+        // Quality gate retry count — report whenever retries have occurred
+        if (run.RetryCount > 0)
+            Add("RetryCount", run.RetryCount.ToString());
+        if (run.InfrastructureRetryCount > 0)
+            Add("InfrastructureRetryCount", run.InfrastructureRetryCount.ToString());
+
+        // Token/cost accumulation — allows UI to show running totals
+        if (run.TotalTokens > 0)
+            Add("TotalTokens", run.TotalTokens.ToString());
+        if (run.TotalCost is > 0m)
+            Add("TotalCost", run.TotalCost.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        // Code review findings — populated during ReviewingCode step
+        if (run.CodeReviewCriticalCount > 0)
+            Add("CodeReviewCriticalCount", run.CodeReviewCriticalCount.ToString());
+        if (run.CodeReviewWarningCount > 0)
+            Add("CodeReviewWarningCount", run.CodeReviewWarningCount.ToString());
+        if (run.CodeReviewSuggestionCount > 0)
+            Add("CodeReviewSuggestionCount", run.CodeReviewSuggestionCount.ToString());
+        if (run.CodeReviewAgentsRun.Count > 0)
+            Add("CodeReviewAgentsRun", string.Join("\x1F", run.CodeReviewAgentsRun));
+
         return metadata;
     }
 

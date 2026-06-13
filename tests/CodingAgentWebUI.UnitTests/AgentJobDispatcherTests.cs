@@ -87,6 +87,7 @@ public class AgentJobDispatcherTests : IDisposable
                 _mockConfigStore.Object,
                 _mockLogger.Object),
             _mockAgentComm.Object,
+            new ShutdownSignal(),
             _mockLogger.Object);
     }
 

@@ -81,6 +81,10 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _runService.GetRun(jobId);
 
     /// <inheritdoc />
+    public void AddRun(PipelineRun run)
+        => _runService.AddRun(run);
+
+    /// <inheritdoc />
     public OutputRingBuffer GetOutputBuffer(string jobId)
         => _runService.GetOutputBuffer(jobId);
 
@@ -107,6 +111,10 @@ public sealed class AgentHubFacade : IAgentHubFacade
     /// <inheritdoc />
     public void AddRunToHistory(PipelineRun run)
         => _historyService.AddRunToHistory(run);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PipelineRunSummary> GetRunHistory()
+        => _historyService.GetRunHistory();
 
     // ── Issue provider operations ───────────────────────────────────────
 

@@ -1,6 +1,7 @@
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.E2ETests.PageObjects;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.Playwright;
 
@@ -187,10 +188,27 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
         await successTask;
 
         // Wait for agent to receive the job
-        await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        try
+        {
+            await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+        catch (TimeoutException)
+        {
+            var reg = Fixture.Factory.AgentRegistry;
+            var agent = reg.GetByAgentId("fake-agent-1");
+            var allAgents = reg.GetAllAgents();
+            Assert.Fail(
+                $"ButtonState DoubleClick: agent never received job. " +
+                $"agentEntry={(agent is null ? "NULL" : $"{agent.Status},job={agent.ActiveJobId ?? "null"},conn={agent.ConnectionId}")}, " +
+                $"allAgents=[{string.Join(";", allAgents.Select(a => $"{a.AgentId}={a.Status}"))}], " +
+                $"fakeAgentConnected={fakeAgent.IsConnected}, " +
+                $"receivedJobIds={fakeAgent.ReceivedJobIds.Count}");
+        }
 
         // Verify no second dispatch arrived
-        Assert.Single(fakeAgent.ReceivedJobIds);
+        Assert.True(fakeAgent.ReceivedJobIds.Count == 1,
+            $"Expected exactly 1 job, got {fakeAgent.ReceivedJobIds.Count}. " +
+            $"Jobs=[{string.Join(",", fakeAgent.ReceivedJobIds)}]");
     }
 
     [Fact]
