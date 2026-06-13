@@ -26,22 +26,19 @@ public sealed class ClosedLoopDispatchTests : E2ETestBase, IClassFixture<E2EFixt
             Labels = new[] { "agent:next" }
         });
 
-        // Save config with template and short poll interval (default is 60s)
+        // Save config with short poll interval (default is 60s)
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         await Fixture.ConfigStore.SavePipelineConfigAsync(config with
         {
-            ClosedLoopPollInterval = TimeSpan.FromSeconds(1),
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-loop",
-                    Name = "Loop Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            ClosedLoopPollInterval = TimeSpan.FromSeconds(1)
+        }, CancellationToken.None);
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-loop",
+            Name = "Loop Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         // Agent profile matching the fake agent's labels

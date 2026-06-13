@@ -30,19 +30,16 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         await Fixture.ConfigStore.SavePipelineConfigAsync(config with
         {
-            ClosedLoopPollInterval = TimeSpan.FromSeconds(1),
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-decomp",
-                    Name = "Decomp Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true,
-                    DecompositionEnabled = true
-                }
-            }
+            ClosedLoopPollInterval = TimeSpan.FromSeconds(1)
+        }, CancellationToken.None);
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-decomp",
+            Name = "Decomp Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true,
+            DecompositionEnabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
@@ -120,19 +117,16 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         await Fixture.ConfigStore.SavePipelineConfigAsync(config with
         {
-            ClosedLoopPollInterval = TimeSpan.FromSeconds(1),
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-decomp",
-                    Name = "Decomp Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true,
-                    DecompositionEnabled = true
-                }
-            }
+            ClosedLoopPollInterval = TimeSpan.FromSeconds(1)
+        }, CancellationToken.None);
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-decomp",
+            Name = "Decomp Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true,
+            DecompositionEnabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
@@ -224,19 +218,16 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         await Fixture.ConfigStore.SavePipelineConfigAsync(config with
         {
-            ClosedLoopPollInterval = TimeSpan.FromSeconds(1),
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-decomp",
-                    Name = "Decomp Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true,
-                    DecompositionEnabled = true
-                }
-            }
+            ClosedLoopPollInterval = TimeSpan.FromSeconds(1)
+        }, CancellationToken.None);
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-decomp",
+            Name = "Decomp Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true,
+            DecompositionEnabled = true
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile

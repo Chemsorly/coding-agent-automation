@@ -18,20 +18,13 @@ public sealed class TemplateCrudTests : E2ETestBase, IClassFixture<E2EFixture>
     public async Task Templates_PreSeededTemplate_AppearsInDropdown()
     {
         // Arrange: seed a pipeline job template in the config store
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            PipelineJobTemplates = new[]
-            {
-                new PipelineJobTemplate
-                {
-                    Id = "template-crud-test",
-                    Name = "CRUD Test Template",
-                    IssueProviderId = "issue-e2e",
-                    RepoProviderId = "repo-e2e",
-                    Enabled = true
-                }
-            }
+            Id = "template-crud-test",
+            Name = "CRUD Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         // Act: navigate to /agent-coding
