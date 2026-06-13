@@ -165,13 +165,15 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
         await codingPage.ClickBrowseIssuesAsync();
         await codingPage.SelectIssueAsync("99");
 
-        // Double-click the dispatch button rapidly
+        // Click the dispatch button and immediately start watching for the success message
+        // (the success message auto-clears after 3s, so we must start observing before clicking).
+        var successTask = Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 30_000 });
+
         var dispatchBtn = Page.Locator("[data-testid='dispatch-issue-btn']");
-        // Use Playwright's built-in auto-wait (retries until element is visible and stable)
         await dispatchBtn.ClickAsync(new() { Timeout = 10_000 });
-        // Attempt a second click. If the button was detached/disabled by Blazor after the first
-        // dispatch (correct behavior), Playwright will throw — which is fine,
-        // it means the UI prevented the double-dispatch at the DOM level.
+
+        // Attempt a second click. If the button was disabled/removed by Blazor after the first
+        // dispatch, Playwright will throw — expected behavior.
         try
         {
             await Page.Locator("[data-testid='dispatch-issue-btn']").ClickAsync(new() { Timeout = 2000 });
@@ -181,14 +183,13 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
             // Button was detached, removed, or disabled after first click — expected
         }
 
-        // Wait for the dispatch to complete and the success message to show
-        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 30_000 });
+        // Wait for the success message (observer was started before the click)
+        await successTask;
 
-        // Wait for agent to receive the job (with generous timeout for slow ARM runners)
-        await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        // Wait for agent to receive the job
+        await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
-        // Verify no second dispatch arrived — since SignalR InvokeAsync is request-response,
-        // any second dispatch would have completed synchronously before the success selector appeared.
+        // Verify no second dispatch arrived
         Assert.Single(fakeAgent.ReceivedJobIds);
     }
 
