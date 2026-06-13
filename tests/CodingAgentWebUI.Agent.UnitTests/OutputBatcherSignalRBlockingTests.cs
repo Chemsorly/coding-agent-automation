@@ -71,6 +71,7 @@ public class OutputBatcherSignalRBlockingTests
         var flushStarted = new TaskCompletionSource();
         var flushCanComplete = new TaskCompletionSource();
         var flushCount = 0;
+        var secondFlushFired = new TaskCompletionSource();
 
         await using var batcher = new OutputBatcher();
         batcher.OnFlush += async _ =>
@@ -81,6 +82,11 @@ public class OutputBatcherSignalRBlockingTests
                 // First flush blocks (simulating SignalR issue)
                 flushStarted.TrySetResult();
                 await flushCanComplete.Task;
+            }
+            else
+            {
+                // Second (or later) flush — signal test completion
+                secondFlushFired.TrySetResult();
             }
         };
 
@@ -102,12 +108,14 @@ public class OutputBatcherSignalRBlockingTests
         flushCanComplete.SetResult();
         await triggerTask;
 
-        // Wait for timer to flush the extra line
-        await Task.Delay(500);
-
-        // Both flushes should have fired: the threshold flush and the timer flush
-        Interlocked.CompareExchange(ref flushCount, 0, 0).Should().BeGreaterThan(1,
+        // Wait deterministically for the timer-based flush to fire (up to 5s)
+        var secondFired = await Task.WhenAny(secondFlushFired.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        secondFired.Should().Be(secondFlushFired.Task,
             "timer-based flushes should operate independently of a blocked send");
+
+        // Verify at least two flushes occurred
+        Interlocked.CompareExchange(ref flushCount, 0, 0).Should().BeGreaterThan(1,
+            "both threshold flush and timer flush should have fired");
     }
 
     /// <summary>
