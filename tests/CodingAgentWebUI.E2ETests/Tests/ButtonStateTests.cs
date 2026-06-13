@@ -182,10 +182,10 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
         }
 
         // Wait for the dispatch to complete and the success message to show
-        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 15_000 });
+        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 30_000 });
 
         // Wait for agent to receive the job (with generous timeout for slow ARM runners)
-        await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(60));
 
         // Verify no second dispatch arrived — since SignalR InvokeAsync is request-response,
         // any second dispatch would have completed synchronously before the success selector appeared.
