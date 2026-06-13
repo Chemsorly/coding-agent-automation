@@ -189,7 +189,7 @@
                             </div>
 
                             <div class="monitoring-detail-grid">
-                                <div><strong>Retries:</strong> @modalRun.RetryCount</div>
+                                <div><strong>Retries:</strong> @modalRun.RetryCount/@_maxRetries</div>
                                 @if (modalRun.TotalCost is not null and > 0m)
                                 {
                                     <div><strong>Cost:</strong> @CostFormatter.FormatCost(modalRun.TotalCost)</div>

@@ -1264,6 +1264,64 @@ public class LocalPipelineExecutorTests : IDisposable
         metadata.Should().BeNull();
     }
 
+    [Fact]
+    public void BuildStepMetadata_WithRetryCount_IncludesRetryCount()
+    {
+        var run = CreateMinimalRun();
+        run.RetryCount = 2;
+        run.InfrastructureRetryCount = 1;
+
+        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.GeneratingCode);
+
+        metadata.Should().NotBeNull();
+        metadata!["RetryCount"].Should().Be("2");
+        metadata["InfrastructureRetryCount"].Should().Be("1");
+    }
+
+    [Fact]
+    public void BuildStepMetadata_WithTokensAndCost_IncludesAccumulatedMetrics()
+    {
+        var run = CreateMinimalRun();
+        run.TotalTokens = 75000;
+        run.TotalCost = 1.23m;
+
+        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.GeneratingCode);
+
+        metadata.Should().NotBeNull();
+        metadata!["TotalTokens"].Should().Be("75000");
+        metadata["TotalCost"].Should().Be("1.23");
+    }
+
+    [Fact]
+    public void BuildStepMetadata_WithCodeReviewFindings_IncludesCounts()
+    {
+        var run = CreateMinimalRun();
+        run.AddCodeReviewCounts(3, 5, 7);
+        run.CodeReviewAgentsRun = new[] { "security-agent", "style-agent" };
+
+        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.RunningQualityGates);
+
+        metadata.Should().NotBeNull();
+        metadata!["CodeReviewCriticalCount"].Should().Be("3");
+        metadata["CodeReviewWarningCount"].Should().Be("5");
+        metadata["CodeReviewSuggestionCount"].Should().Be("7");
+        metadata["CodeReviewAgentsRun"].Should().Be("security-agent\x1Fstyle-agent");
+    }
+
+    [Fact]
+    public void BuildStepMetadata_ZeroRetryCount_DoesNotIncludeRetryCount()
+    {
+        var run = CreateMinimalRun();
+        run.RetryCount = 0;
+        run.TotalTokens = 0;
+
+        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.GeneratingCode);
+
+        // No data to report → null or missing keys
+        metadata?.ContainsKey("RetryCount").Should().NotBe(true);
+        metadata?.ContainsKey("TotalTokens").Should().NotBe(true);
+    }
+
     private static PipelineRun CreateMinimalRun() => new()
     {
         RunId = "run-meta",
