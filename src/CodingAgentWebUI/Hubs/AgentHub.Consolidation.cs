@@ -25,12 +25,23 @@ public sealed partial class AgentHub
     /// Agent reports consolidation job completion. Updates the consolidation run status,
     /// persists harness suggestions if present, and increments badge count for refactoring issues.
     /// </summary>
-    [RequiresActiveJob]
     public async Task ReportConsolidationComplete(ConsolidationJobResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
 
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
+
+        // Manual job validation (cannot use [RequiresActiveJob] because that attribute
+        // expects string jobId as first parameter, but this method takes a complex object).
+        if (agent is not null && agent.ActiveJobId is not null
+            && !string.Equals(agent.ActiveJobId, result.JobId, StringComparison.Ordinal))
+        {
+            _logger.Warning(
+                "ReportConsolidationComplete rejected — job {JobId} not assigned to agent {AgentId} (active: {ActiveJobId})",
+                result.JobId, agent.AgentId, agent.ActiveJobId);
+            return;
+        }
+
         _logger.Information("Consolidation job {JobId} completed by agent {AgentId}: success={Success}",
             result.JobId, agent?.AgentId, result.Success);
 
