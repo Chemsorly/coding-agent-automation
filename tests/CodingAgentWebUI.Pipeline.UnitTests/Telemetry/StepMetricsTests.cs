@@ -114,18 +114,20 @@ public class StepMetricsTests : IDisposable
     [Fact]
     public void AccumulateTokenUsage_NullResult_DoesNotEmit()
     {
-        var run = CreateRun();
+        var run = CreateRun(projectId: "null-result-test");
         run.AccumulateTokenUsage(null);
-        _counters.Should().NotContain(c => c.Name == "agent.tokens.used");
+        _counters.Should().NotContain(c => c.Name == "agent.tokens.used"
+            && c.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "null-result-test")));
     }
 
     [Fact]
     public void AccumulateTokenUsage_NullUsage_DoesNotEmit()
     {
-        var run = CreateRun();
+        var run = CreateRun(projectId: "null-usage-test");
         var result = new AgentResult { ExitCode = 0, OutputLines = [], Usage = null };
         run.AccumulateTokenUsage(result);
-        _counters.Should().NotContain(c => c.Name == "agent.tokens.used");
+        _counters.Should().NotContain(c => c.Name == "agent.tokens.used"
+            && c.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "null-usage-test")));
     }
 
     [Fact]
@@ -154,7 +156,7 @@ public class StepMetricsTests : IDisposable
     [Fact]
     public void AccumulateTokenUsage_NullCost_DoesNotEmitCostUsd()
     {
-        var run = CreateRun(PipelineRunType.Implementation, "proj-1", "TestProj");
+        var run = CreateRun(PipelineRunType.Implementation, "null-cost-test", "TestProj");
         var result = new AgentResult
         {
             ExitCode = 0,
@@ -165,7 +167,8 @@ public class StepMetricsTests : IDisposable
 
         run.AccumulateTokenUsage(result);
 
-        _histograms.Should().NotContain(h => h.Name == "agent.cost.usd");
+        _histograms.Should().NotContain(h => h.Name == "agent.cost.usd"
+            && h.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "null-cost-test")));
     }
 
     [Fact]

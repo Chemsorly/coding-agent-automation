@@ -71,6 +71,7 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `QualityGate.Coverage` | `gate_name` | Coverage report parsing (child of RunQualityGates) |
 | `ReviewCode` | `pipeline.run_id`, `pipeline.issue` | Multi-agent code review |
 | `CreatePullRequest` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR creation step |
+| `GeneratePrDescription` | `pipeline.run_id`, `pipeline.issue` | Agent-generated PR description |
 | `FinalizePullRequest` | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR finalization (when existing draft PR is promoted) |
 | `PostReviewFindings` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting review findings to PR |
 | `ExtractLinkedIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Extracting linked issues from PR |
@@ -201,6 +202,8 @@ ExecutePipeline
 │   ├── QualityGate.Tests
 │   ├── QualityGate.Coverage
 │   └── ReviewCode
+├── CreatePullRequest
+├── GeneratePrDescription
 └── FinalizePullRequest
     ├── Reflection
     ├── BrainSyncPostRun

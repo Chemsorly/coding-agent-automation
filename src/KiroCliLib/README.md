@@ -20,7 +20,7 @@ No other external dependencies. The library is self-contained and does not refer
 The primary interface for consumers:
 
 ```csharp
-public interface IKiroCliOrchestrator
+public interface IKiroCliOrchestrator : IDisposable
 {
     bool IsExecuting { get; }
     int? ActiveProcessId { get; }
@@ -32,7 +32,8 @@ public interface IKiroCliOrchestrator
         string workspaceDirectory,
         bool useResume,
         CancellationToken cancellationToken,
-        Action<string>? onOutputLine = null);
+        Func<string, Task>? onOutputLine = null,
+        string? resumeSessionId = null);
 
     void Kill();
 }
@@ -42,11 +43,12 @@ public interface IKiroCliOrchestrator
 
 | Member | Description |
 |--------|-------------|
-| `ExecutePromptAsync` | Sends a prompt to Kiro CLI and returns the process exit code |
+| `ExecutePromptAsync` | Sends a prompt to Kiro CLI and returns the process exit code. Accepts an optional `resumeSessionId` to target a specific session |
 | `Kill` | Forcefully terminates the active agent process |
 | `IsExecuting` | Whether a prompt execution is currently in progress |
 | `ActiveProcessId` | OS process ID of the running agent (for external monitoring) |
 | `LastOutputTime` | Timestamp of the last output line (for stall detection) |
+| `IDisposable` | Implements `IDisposable` for cleanup of managed resources |
 
 ### Configuration
 

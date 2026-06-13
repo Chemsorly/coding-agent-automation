@@ -44,7 +44,8 @@ stateDiagram-v2
     FinalQualityCheck --> GeneratingCode : failed, retries remaining
     FinalQualityCheck --> CreatingPullRequest : failed, retries exhausted (draft PR)
 
-    CreatingPullRequest --> ReflectingOnRun
+    CreatingPullRequest --> GeneratingPrDescription
+    GeneratingPrDescription --> ReflectingOnRun
     ReflectingOnRun --> SyncingBrainRepoPostRun
     SyncingBrainRepoPostRun --> Completed
 
@@ -77,7 +78,7 @@ Created → CloningRepository → RunningEnvironmentSetup → SyncingBrainRepoPr
   → VerifyingBaseline → AnalyzingCode → ReviewingAnalysis → PostingAnalysis → [Confidence Gate]
   → GeneratingCode → ReviewingCode → RunningQualityGates → [Quality Gate Decision]
   → PreparingForPullRequest → [Final Quality Gate]
-  → CreatingPullRequest → ReflectingOnRun → SyncingBrainRepoPostRun → Completed
+  → CreatingPullRequest → GeneratingPrDescription → ReflectingOnRun → SyncingBrainRepoPostRun → Completed
 ```
 
 Each step is represented by the `PipelineStep` enum. The pipeline tracks both the current step and a `HighWaterMark` (highest step ever reached), which the UI uses to show revisited steps during retries.
@@ -100,6 +101,7 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 | **RunningQualityGates** | Build, tests, coverage, and external CI checks run |
 | **PreparingForPullRequest** | Agent cleans up the working directory (removes debug artifacts, unused code, formatting). Quality gates run one final time after cleanup |
 | **CreatingPullRequest** | PR created (normal or draft). Blacklisted file detection happens here |
+| **GeneratingPrDescription** | Agent generates a structured PR description summarizing the changes (non-fatal on failure) |
 | **ReflectingOnRun** | Agent reviews the entire run and enriches `.brain/` knowledge (if brain repo configured). Feedback collected here — questions appended to the reflection prompt |
 | **SyncingBrainRepoPostRun** | Brain updates committed and pushed to brain repository |
 | **Completed** | Terminal state — run succeeded (or `wont_do` assessment) |
