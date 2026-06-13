@@ -113,7 +113,30 @@ public sealed partial class AgentHub
                 jobId, payload.FinalStep, payload.PullRequestUrl ?? "none");
 
             _orchestration.NotifyChange();
+        }
 
+        // Transition agent to Idle BEFORE slow I/O operations (label swap, comment posting).
+        // This ensures agent availability is not gated on external provider latency.
+        if (agent is not null)
+        {
+            agent.ActiveJobId = null;
+            agent.OrphanRestoredAt = null;
+            agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
+            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+
+            // Mark issue as no longer processing in the dispatcher
+            if (run is not null)
+                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+
+            // Signal the drain service to attempt dispatch for this now-idle agent
+            _facade.Signal();
+        }
+
+        // Non-fatal post-completion bookkeeping: label swap and feedback comment.
+        // These may involve external API calls and can be slow — executed after agent
+        // is already marked Idle so it doesn't block availability.
+        if (run is not null)
+        {
             // Swap label based on final outcome (non-fatal).
             // The agent may also attempt a label swap via RequestLabelChange during its own
             // error handling, but that call can race with this handler (run already removed).
@@ -137,22 +160,6 @@ public sealed partial class AgentHub
 
             // Post issue feedback comment if present (non-fatal)
             await PostIssueFeedbackCommentAsync(run);
-        }
-
-        // Transition agent to Idle and clear active job
-        if (agent is not null)
-        {
-            agent.ActiveJobId = null;
-            agent.OrphanRestoredAt = null;
-            agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
-            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-
-            // Mark issue as no longer processing in the dispatcher
-            if (run is not null)
-                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
-
-            // Signal the drain service to attempt dispatch for this now-idle agent
-            _facade.Signal();
         }
     }
 

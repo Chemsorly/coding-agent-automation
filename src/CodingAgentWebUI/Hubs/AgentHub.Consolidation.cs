@@ -34,6 +34,21 @@ public sealed partial class AgentHub
         _logger.Information("Consolidation job {JobId} completed by agent {AgentId}: success={Success}",
             result.JobId, agent?.AgentId, result.Success);
 
+        // Transition agent to Idle BEFORE slow I/O operations (file persistence).
+        // This ensures agent availability is not gated on file system latency.
+        if (agent is not null)
+        {
+            agent.ActiveJobId = null;
+            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+            _facade.Signal();
+        }
+
+        _orchestration.NotifyChange();
+
+        // Non-fatal post-completion bookkeeping: run status update, suggestion persistence, badges.
+        // These involve file I/O and can be slow under CI Docker overlay — executed after agent
+        // is already marked Idle so it doesn't block availability or test assertions.
+
         // Sum token usage from review, refinement, and diff summary calls
         var totalTokens = SumTokenUsage(result.ReviewTokenUsage, result.RefinementTokenUsage, result.DiffSummaryTokenUsage);
 
@@ -80,16 +95,6 @@ public sealed partial class AgentHub
             _logger.Information("Refactoring consolidation job {JobId} created {Count} issue(s)",
                 result.JobId, result.CreatedIssues.Count);
         }
-
-        // Transition agent back to Idle
-        if (agent is not null)
-        {
-            agent.ActiveJobId = null;
-            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-            _facade.Signal();
-        }
-
-        _orchestration.NotifyChange();
     }
 
     // ── Consolidation-local private helpers ─────────────────────────────
