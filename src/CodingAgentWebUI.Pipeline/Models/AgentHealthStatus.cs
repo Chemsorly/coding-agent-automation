@@ -30,6 +30,13 @@ public sealed record AgentHealthStatus
     /// </summary>
     public string? SessionStatusMessage { get; init; }
 
+    /// <summary>
+    /// Aggregated status of all sessions (including child/subagent sessions).
+    /// Only populated by providers that support session status polling (e.g., OpenCode).
+    /// Format: human-readable summary like "4 sessions: 2 retry, 1 busy, 1 idle".
+    /// </summary>
+    public string? AllSessionsSummary { get; init; }
+
     /// <summary>Human-readable summary of the current status.</summary>
     public string Summary =>
         !IsExecuting ? "Idle"
