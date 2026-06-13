@@ -171,6 +171,17 @@ if (queuedRuns.Count > 0)
     }
 }
 
+// Auto-start pipeline loop if configured
+if (pipelineConfig.ClosedLoopAutoStart)
+{
+    var loopService = app.Services.GetRequiredService<PipelineLoopService>();
+    var loopStarted = await loopService.StartLoopAsync();
+    if (loopStarted)
+        Log.Information("Pipeline loop auto-started (ClosedLoopAutoStart=true)");
+    else
+        Log.Warning("Pipeline loop auto-start requested but StartLoopAsync returned false (no valid templates?)");
+}
+
 app.Run();
 
 // Make Program class accessible for WebApplicationFactory in tests

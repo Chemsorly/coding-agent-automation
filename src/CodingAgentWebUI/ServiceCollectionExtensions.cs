@@ -97,6 +97,14 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<Pipeline.Interfaces.IShutdownSignal>(),
             Log.Logger));
 
+        services.AddHostedService(sp => new OrphanedLabelRecoveryService(
+            sp.GetRequiredService<OrchestratorRunService>(),
+            sp.GetRequiredService<IProjectStore>(),
+            sp.GetRequiredService<IProviderConfigStore>(),
+            sp.GetRequiredService<IProviderFactory>(),
+            sp.GetRequiredService<ILabelSwapper>(),
+            Log.Logger));
+
         services.AddSingleton<IDependencyChecker>(sp => new DependencyChecker(Log.Logger));
         services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(
             sp.GetRequiredService<PipelineOrchestrationService>(),
