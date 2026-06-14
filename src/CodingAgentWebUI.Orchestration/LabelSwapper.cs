@@ -42,6 +42,10 @@ public sealed class LabelSwapper : ILabelSwapper
         ArgumentNullException.ThrowIfNull(identifier);
         ArgumentNullException.ThrowIfNull(newLabel);
 
+        _logger.Information(
+            "Label swap: {Identifier} → {NewLabel} (target={TargetKind}, provider={ProviderConfigId})",
+            identifier, newLabel, targetKind, providerConfigId);
+
         try
         {
             switch (targetKind)
@@ -58,6 +62,8 @@ public sealed class LabelSwapper : ILabelSwapper
                     _logger.Warning("Unknown LabelTargetKind {TargetKind}, skipping label swap", targetKind);
                     break;
             }
+
+            _logger.Debug("Label swap completed: {Identifier} → {NewLabel}", identifier, newLabel);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
