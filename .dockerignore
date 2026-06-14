@@ -31,16 +31,17 @@ tests/
 # But allow E2E tests (needed by e2e-tests.Dockerfile)
 !tests/CodingAgentWebUI.E2ETests/
 
-# Kiro CLI auth data — mounted as volumes at runtime, not baked into images
-config/kiro-cli-data/
-config/kiro-cli-data-1/
-config/kiro-cli-data-2/
-config/kiro-cli-data-3/
-config/kiro-cli-data-4/
+# Config — all runtime-mounted, not needed in build context
+config/
 
-# Other non-build directories
-config/pipeline/runs/
-config/pipeline/consolidation-runs/
-config/opencode/
-config/kiro-settings/
 docs/
+
+# Helm chart — not needed in Docker build context
+helm/
+
+# GitHub Actions workflows — not needed in build context
+.github/
+
+# SQLite databases and credentials
+*.sqlite3
+*credentials*

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-orchestrator-env
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+data:
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.otel.endpoint | quote }}
+  OTEL_EXPORTER_OTLP_PROTOCOL: {{ .Values.otel.protocol | quote }}
+  OTEL_SERVICE_NAME: {{ .Values.otel.serviceName | quote }}
+  OTEL_RESOURCE_ATTRIBUTES: {{ .Values.otel.resourceAttributes | quote }}
+  PIPELINE_LOOP_STARTUP_DELAY_SECONDS: {{ .Values.orchestrator.env.pipelineLoopStartupDelaySeconds | quote }}
+  READINESS_DRAIN_DELAY_SECONDS: {{ .Values.orchestrator.env.readinessDrainDelaySeconds | quote }}
+  LOG_LEVEL: {{ .Values.orchestrator.env.logLevel | quote }}

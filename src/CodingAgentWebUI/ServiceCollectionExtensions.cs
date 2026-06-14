@@ -97,6 +97,14 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<Pipeline.Interfaces.IShutdownSignal>(),
             Log.Logger));
 
+        // Readiness drain: marks /readyz as 503 during shutdown, then waits for endpoint removal.
+        // Registered AFTER ShutdownService — StoppingAsync fires in REVERSE order,
+        // so drain runs FIRST (flips readiness, waits), THEN ShutdownService cancels work.
+        services.AddSingleton<ReadinessState>();
+        services.AddHostedService(sp => new ReadinessDrainService(
+            sp.GetRequiredService<ReadinessState>(),
+            Log.Logger));
+
         services.AddHostedService(sp => new OrphanedLabelRecoveryService(
             sp.GetRequiredService<OrchestratorRunService>(),
             sp.GetRequiredService<IProjectStore>(),
@@ -116,6 +124,12 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IJobDispatcher>(),
             sp.GetRequiredService<IDependencyChecker>()));
         services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
+
+        // Loop state persistence: auto-resumes loop after pod restart if previously active
+        services.AddSingleton(sp => new LoopStatePersistenceService(
+            sp.GetRequiredService<PipelineLoopService>(),
+            Log.Logger));
+        services.AddHostedService(sp => sp.GetRequiredService<LoopStatePersistenceService>());
 
         services.AddTransient<IssueDescriptionParser>();
 

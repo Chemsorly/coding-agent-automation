@@ -1,6 +1,8 @@
 # Coding Agent Automation
 
-An automated development pipeline that uses AI coding agents to implement issues end-to-end: analyze the issue, generate code, run quality gates, and create a pull request — all orchestrated through a web UI running in Docker.
+An automated development pipeline that uses AI coding agents to implement issues end-to-end: analyze the issue, generate code, run quality gates, and create a pull request — all orchestrated through a web UI running in Containers.
+
+Note: This system has been mainly build by AI.
 
 ## How It Works
 

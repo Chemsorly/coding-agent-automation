@@ -1,0 +1,4 @@
+# CI validation overrides — used by helm lint / helm template in CI pipeline.
+# Provides placeholder values for required secrets that would otherwise fail validation.
+secrets:
+  agentApiKey: ci-placeholder

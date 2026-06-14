@@ -26,6 +26,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddSingleton(BuildInfo.Load());
 
+// Host shutdown timeout: drain delay (15s) + ShutdownService timeout (15s) + buffer (10s) = 40s
+builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(40));
+
 // Pipeline — Configuration Store (created eagerly to load config before DI container is built)
 var configStore = new JsonConfigurationStore(PipelineConstants.ConfigBaseDirectory);
 var pipelineConfig = await configStore.LoadPipelineConfigAsync(CancellationToken.None);
@@ -114,7 +117,10 @@ _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
 // Kubernetes-style health probes — anonymous, no auth required
 app.MapGet("/healthz", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }))
     .AllowAnonymous();
-app.MapGet("/readyz", () => Results.Ok(new { status = "ready", timestamp = DateTime.UtcNow }))
+app.MapGet("/readyz", (CodingAgentWebUI.Services.ReadinessState readiness) =>
+    readiness.IsReady
+        ? Results.Ok(new { status = "ready", timestamp = DateTime.UtcNow })
+        : Results.Json(new { status = "draining", timestamp = DateTime.UtcNow }, statusCode: 503))
     .AllowAnonymous();
 
 // Redirect root "/" to the main page

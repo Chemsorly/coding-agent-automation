@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*.*.*']
   pull_request:
 
 concurrency:
@@ -59,6 +60,37 @@ jobs:
       #     name: test-results
       #     path: TestResults
       #   if: ${{ always() }}
+
+  # Secret scanning — detect leaked credentials in code
+  gitleaks:
+    runs-on: arc-runner-set-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Helm chart validation — runs on ALL branches/PRs to catch chart errors early
+  helm-lint:
+    runs-on: arc-runner-set-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Helm
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.17.0
+
+      - name: Helm lint
+        run: helm lint helm/coding-agent-automation/ -f helm/coding-agent-automation/ci-values.yaml
+
+      - name: Helm template
+        run: helm template test-release helm/coding-agent-automation/ -f helm/coding-agent-automation/ci-values.yaml > /dev/null
 
   docker:
     needs: [build-and-test]
@@ -129,12 +161,117 @@ jobs:
             ${BUILD_ARGS} \
             .
 
-          # Push manifest (multi-arch) only on main
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+          # Push manifests only on main branch or tag pushes
+          if [ "${{ github.ref }}" = "refs/heads/main" ] || echo "${{ github.ref }}" | grep -q "^refs/tags/v"; then
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+
+            # Push to chemsorly/dev (backward compatibility — existing tag)
             buildah manifest push \
               --storage-driver vfs \
               --authfile /run/containers/0/auth.json \
               --all \
               docker.io/chemsorly/dev:${{ matrix.tag }} \
               docker://docker.io/chemsorly/dev:${{ matrix.tag }}
+
+            # Push to chemsorly/coding-agent (public registry — unversioned rolling tag)
+            buildah manifest push \
+              --storage-driver vfs \
+              --authfile /run/containers/0/auth.json \
+              --all \
+              docker.io/chemsorly/dev:${{ matrix.tag }} \
+              docker://docker.io/chemsorly/coding-agent:${{ matrix.tag }}
+
+            # Push SHA-tagged image (pinnable version)
+            buildah manifest push \
+              --storage-driver vfs \
+              --authfile /run/containers/0/auth.json \
+              --all \
+              docker.io/chemsorly/dev:${{ matrix.tag }} \
+              docker://docker.io/chemsorly/coding-agent:${{ matrix.tag }}-${SHORT_SHA}
+
+            # Push latest-tagged image (mutable tag for dev/testing)
+            buildah manifest push \
+              --storage-driver vfs \
+              --authfile /run/containers/0/auth.json \
+              --all \
+              docker.io/chemsorly/dev:${{ matrix.tag }} \
+              docker://docker.io/chemsorly/coding-agent:${{ matrix.tag }}-latest
           fi
+
+  # Chart publishing — only on tag pushes (release)
+  publish-chart:
+    needs: [build-and-test, helm-lint, docker]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: arc-runner-set-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Validate tag format
+        id: parse
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if ! echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid tag format: $TAG. Expected vMAJOR.MINOR.PATCH (e.g., v1.2.3)"
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Update chart version and image tags
+        env:
+          VERSION: ${{ steps.parse.outputs.version }}
+          SHORT_SHA: ${{ steps.parse.outputs.short_sha }}
+        run: |
+          CHART_DIR="helm/coding-agent-automation"
+
+          # Update Chart.yaml version and appVersion
+          sed -i "s/^version:.*/version: ${VERSION}/" "${CHART_DIR}/Chart.yaml"
+          sed -i "s/^appVersion:.*/appVersion: \"${SHORT_SHA}\"/" "${CHART_DIR}/Chart.yaml"
+
+          # Update all image tags in values.yaml to SHA-suffixed versions
+          sed -i "s/tag: coding-agent-webui$/tag: coding-agent-webui-${SHORT_SHA}/" "${CHART_DIR}/values.yaml"
+          sed -i "s/tag: coding-agent-kiro-dotnet10$/tag: coding-agent-kiro-dotnet10-${SHORT_SHA}/" "${CHART_DIR}/values.yaml"
+          sed -i "s/tag: coding-agent-kiro-python312$/tag: coding-agent-kiro-python312-${SHORT_SHA}/" "${CHART_DIR}/values.yaml"
+          sed -i "s/tag: coding-agent-kiro-java21$/tag: coding-agent-kiro-java21-${SHORT_SHA}/" "${CHART_DIR}/values.yaml"
+          sed -i "s/tag: coding-agent-opencode-dotnet10$/tag: coding-agent-opencode-dotnet10-${SHORT_SHA}/" "${CHART_DIR}/values.yaml"
+          sed -i "s/tag: coding-agent-opencode-java21$/tag: coding-agent-opencode-java21-${SHORT_SHA}/" "${CHART_DIR}/values.yaml"
+          sed -i "s/tag: coding-agent-opencode-python312$/tag: coding-agent-opencode-python312-${SHORT_SHA}/" "${CHART_DIR}/values.yaml"
+
+          # Add auto-generated header
+          sed -i '1i # Auto-generated by release workflow — do not edit manually' "${CHART_DIR}/values.yaml"
+
+          echo "Chart version: ${VERSION}, appVersion: ${SHORT_SHA}"
+          cat "${CHART_DIR}/Chart.yaml"
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.HELM_APP_ID }}
+          private-key: ${{ secrets.HELM_APP_PRIVATE_KEY }}
+          owner: Chemsorly
+          repositories: helm-charts
+
+      - name: Push chart to helm-charts repository
+        env:
+          VERSION: ${{ steps.parse.outputs.version }}
+          SHORT_SHA: ${{ steps.parse.outputs.short_sha }}
+          TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git clone "https://x-access-token:${TOKEN}@github.com/Chemsorly/helm-charts.git" /tmp/helm-charts
+          cd /tmp/helm-charts
+
+          # Remove old chart source and copy fresh
+          rm -rf charts/coding-agent-automation/
+          mkdir -p charts/coding-agent-automation/
+          cp -r "${GITHUB_WORKSPACE}/helm/coding-agent-automation/"* charts/coding-agent-automation/
+          rm -f charts/coding-agent-automation/ci-values.yaml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: update coding-agent-automation chart v${VERSION} (app: ${SHORT_SHA})" || echo "No changes to commit"
+          git push || (git pull --rebase && git push)

@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-orchestrator
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestrator
+spec:
+  replicas: {{ .Values.orchestrator.replicas }}
+  strategy:
+    type: {{ .Values.orchestrator.strategy.type }}
+    {{- if eq .Values.orchestrator.strategy.type "RollingUpdate" }}
+    rollingUpdate:
+      maxUnavailable: {{ .Values.orchestrator.strategy.rollingUpdate.maxUnavailable }}
+      maxSurge: {{ .Values.orchestrator.strategy.rollingUpdate.maxSurge }}
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: orchestrator
+  template:
+    metadata:
+      labels:
+        {{- include "coding-agent-automation.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: orchestrator
+    spec:
+      serviceAccountName: {{ include "coding-agent-automation.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.orchestrator.terminationGracePeriodSeconds }}
+      {{- with .Values.orchestrator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.orchestrator.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.orchestrator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: orchestrator
+          image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.orchestrator.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.orchestrator.service.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.orchestrator.probes.liveness.path }}
+              port: {{ .Values.orchestrator.probes.liveness.port }}
+            initialDelaySeconds: {{ .Values.orchestrator.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.orchestrator.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.orchestrator.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.orchestrator.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.orchestrator.probes.readiness.path }}
+              port: {{ .Values.orchestrator.probes.readiness.port }}
+            initialDelaySeconds: {{ .Values.orchestrator.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.orchestrator.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.orchestrator.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.orchestrator.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.orchestrator.resources | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "coding-agent-automation.fullname" . }}-orchestrator-env
+          env:
+            - name: AGENT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coding-agent-automation.secretName" . }}
+                  key: agent-api-key
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coding-agent-automation.secretName" . }}
+                  key: otel-headers
+                  optional: true
+          volumeMounts:
+            - name: pipeline-config
+              mountPath: /app/config/pipeline
+      volumes:
+        - name: pipeline-config
+          {{- if eq .Values.orchestrator.persistence.type "pvc" }}
+          persistentVolumeClaim:
+            claimName: {{ include "coding-agent-automation.fullname" . }}-orchestrator-config
+          {{- else if eq .Values.orchestrator.persistence.type "hostPath" }}
+          hostPath:
+            path: {{ .Values.orchestrator.persistence.hostPath }}
+            type: DirectoryOrCreate
+          {{- else }}
+          emptyDir:
+            sizeLimit: 1Gi
+          {{- end }}
