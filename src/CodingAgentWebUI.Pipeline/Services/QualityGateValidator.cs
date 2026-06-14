@@ -217,8 +217,9 @@ public class QualityGateValidator : IQualityGateValidator
                 ? string.Join(" ", qgc.CompilationArguments)
                 : string.Empty;
 
+            var timeout = TimeSpan.FromSeconds(qgc.ProcessTimeoutSeconds);
             var (exitCode, stdout, stderr) = await RunProcessAsync(
-                qgc.CompilationCommand, arguments, workspacePath, ct);
+                qgc.CompilationCommand, arguments, workspacePath, ct, timeout);
 
             WriteGateOutput(workspacePath, $"{qgc.DisplayName}-compilation", stdout, stderr);
 
@@ -238,6 +239,16 @@ public class QualityGateValidator : IQualityGateValidator
                 GateName = "Compilation",
                 Passed = exitCode == ExitCodes.Success,
                 Details = details
+            };
+        }
+        catch (TimeoutException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return new GateResult
+            {
+                GateName = "Compilation",
+                Passed = false,
+                Details = $"Compilation timed out after {qgc.ProcessTimeoutSeconds}s"
             };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -288,8 +299,23 @@ public class QualityGateValidator : IQualityGateValidator
             fullArgs = arguments;
         }
 
-        var (exitCode, stdout, stderr) = await RunProcessAsync(
-            qgc.TestCommand, fullArgs, workspacePath, ct);
+        int exitCode;
+        string stdout, stderr;
+        try
+        {
+            (exitCode, stdout, stderr) = await RunProcessAsync(
+                qgc.TestCommand, fullArgs, workspacePath, ct, TimeSpan.FromSeconds(qgc.ProcessTimeoutSeconds));
+        }
+        catch (TimeoutException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return new GateResult
+            {
+                GateName = "Tests",
+                Passed = false,
+                Details = $"Tests timed out after {qgc.ProcessTimeoutSeconds}s"
+            };
+        }
 
         WriteGateOutput(workspacePath, $"{qgc.DisplayName}-tests", stdout, stderr);
 
@@ -635,7 +661,7 @@ public class QualityGateValidator : IQualityGateValidator
         try
         {
             var (exitCode, stdout, _) = await RunProcessAsync(
-                "git", $"diff --name-only origin/{baseBranch ?? "main"}...HEAD", workspacePath, ct);
+                "git", $"diff --name-only origin/{baseBranch ?? "main"}...HEAD", workspacePath, ct, TimeSpan.FromSeconds(30));
 
             if (exitCode != 0)
             {
@@ -653,7 +679,7 @@ public class QualityGateValidator : IQualityGateValidator
     }
 
     private protected virtual async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
-        string fileName, string arguments, string workingDirectory, CancellationToken ct)
+        string fileName, string arguments, string workingDirectory, CancellationToken ct, TimeSpan timeout)
     {
         var psi = new ProcessStartInfo
         {
@@ -672,7 +698,21 @@ public class QualityGateValidator : IQualityGateValidator
         var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
         var stderrTask = process.StandardError.ReadToEndAsync(ct);
 
-        await process.WaitForExitAsync(ct);
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(timeout);
+
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            // TODO: stdoutTask/stderrTask use original ct with no secondary timeout — could hang if Kill fails to release pipe handles
+            try { await stdoutTask; } catch { }
+            try { await stderrTask; } catch { }
+            throw new TimeoutException($"Process '{fileName} {arguments}' timed out after {timeout.TotalSeconds}s");
+        }
 
         var stdout = await stdoutTask;
         var stderr = await stderrTask;

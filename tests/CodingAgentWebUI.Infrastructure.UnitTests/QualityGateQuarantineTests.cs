@@ -295,7 +295,7 @@ public class QualityGateQuarantineTests : IDisposable
         }
 
         private protected override Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
-            string fileName, string arguments, string workingDirectory, CancellationToken ct)
+            string fileName, string arguments, string workingDirectory, CancellationToken ct, TimeSpan timeout)
         {
             // Compilation always passes
             if (arguments.Contains("build"))
@@ -354,7 +354,7 @@ public class QualityGateQuarantineTests : IDisposable
         public GitDiffCapturingValidator() : base(Log.Logger) { }
 
         private protected override Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
-            string fileName, string arguments, string workingDirectory, CancellationToken ct)
+            string fileName, string arguments, string workingDirectory, CancellationToken ct, TimeSpan timeout)
         {
             if (fileName == "git")
             {

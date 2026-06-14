@@ -65,4 +65,12 @@ public sealed record QualityGateConfiguration
     /// </summary>
     [Key(13)]
     public TestQuarantineConfiguration? TestQuarantine { get; init; }
+
+    /// <summary>
+    /// Maximum execution time in seconds for quality gate processes (compilation, tests).
+    /// Processes exceeding this timeout are killed (entire process tree) and the gate is reported as failed.
+    /// Default: 600 seconds (10 minutes).
+    /// </summary>
+    [Key(14)]
+    public int ProcessTimeoutSeconds { get; init; } = 600;
 }

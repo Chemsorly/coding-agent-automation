@@ -726,6 +726,79 @@ public class QualityGateValidatorTests
         File.WriteAllText(path, xml);
         return path;
     }
+
+    [Fact]
+    public async Task Compilation_Timeout_ReturnsFailedGateResult()
+    {
+        var validator = new TimeoutSimulatingValidator(simulateTimeout: true);
+        var qgc = new QualityGateConfiguration
+        {
+            DisplayName = "Test",
+            CompilationCommand = "dotnet",
+            CompilationArguments = ["build"],
+            ProcessTimeoutSeconds = 1
+        };
+
+        var report = await validator.ValidateAsync("/tmp", [qgc], CancellationToken.None);
+
+        report.Compilation.Passed.Should().BeFalse();
+        report.QgcResults[0].Compilation!.Details.Should().Contain("timed out");
+    }
+
+    [Fact]
+    public async Task Tests_Timeout_ReturnsFailedGateResult()
+    {
+        var validator = new TimeoutSimulatingValidator(simulateTimeout: true);
+        var qgc = new QualityGateConfiguration
+        {
+            DisplayName = "Test",
+            TestCommand = "dotnet",
+            TestArguments = ["test"],
+            ProcessTimeoutSeconds = 1
+        };
+
+        var report = await validator.ValidateAsync("/tmp", [qgc], CancellationToken.None);
+
+        report.Tests!.Passed.Should().BeFalse();
+        report.QgcResults[0].Tests!.Details.Should().Contain("timed out");
+    }
+
+    [Fact]
+    public async Task NormalExecution_WithTimeout_CompletesSuccessfully()
+    {
+        var validator = new TimeoutSimulatingValidator(simulateTimeout: false);
+        var qgc = new QualityGateConfiguration
+        {
+            DisplayName = "Test",
+            CompilationCommand = "dotnet",
+            CompilationArguments = ["build"],
+            ProcessTimeoutSeconds = 600
+        };
+
+        var report = await validator.ValidateAsync("/tmp", [qgc], CancellationToken.None);
+
+        report.Compilation.Passed.Should().BeTrue();
+        report.Compilation.Details.Should().NotContain("timed out");
+    }
+
+    private sealed class TimeoutSimulatingValidator : QualityGateValidator
+    {
+        private readonly bool _simulateTimeout;
+
+        public TimeoutSimulatingValidator(bool simulateTimeout) : base(Serilog.Log.Logger)
+        {
+            _simulateTimeout = simulateTimeout;
+        }
+
+        private protected override Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+            string fileName, string arguments, string workingDirectory, CancellationToken ct, TimeSpan timeout)
+        {
+            if (_simulateTimeout)
+                throw new TimeoutException($"Process '{fileName} {arguments}' timed out after {timeout.TotalSeconds}s");
+
+            return Task.FromResult((0, "Build succeeded.", ""));
+        }
+    }
 }
 
 
