@@ -184,6 +184,9 @@ public sealed partial class AgentHub
         if (run is not null)
         {
             run.CurrentStep = step;
+            // TODO: `timestamp` is client-supplied. A compromised agent could send a far-future value
+            // to prevent progress timeout from triggering. Consider clamping to <= DateTimeOffset.UtcNow.
+            run.LastStepChangeAt = timestamp;
 
             // Update HighWaterMark — only advance, never go backward
             // Exclude terminal states (Completed, Failed, Cancelled) from high water mark

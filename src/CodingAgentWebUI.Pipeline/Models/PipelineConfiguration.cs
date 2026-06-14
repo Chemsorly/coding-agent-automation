@@ -433,6 +433,16 @@ public sealed record PipelineConfiguration
     }
 
     /// <summary>
+    /// How long a busy agent can go without pipeline step progress before being marked as stuck.
+    /// Default: 60 minutes.
+    /// </summary>
+    public TimeSpan AgentBusyProgressTimeout
+    {
+        get => Agent.AgentBusyProgressTimeout;
+        init => Agent = Agent with { AgentBusyProgressTimeout = value };
+    }
+
+    /// <summary>
     /// Maximum number of output lines to retain per active pipeline run (ring buffer capacity).
     /// Default: 10,000.
     /// </summary>

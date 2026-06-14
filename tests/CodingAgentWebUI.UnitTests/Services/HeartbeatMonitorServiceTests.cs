@@ -350,6 +350,142 @@ public class HeartbeatMonitorServiceTests : IDisposable
         _runService.GetRun("active-1").Should().NotBeNull();
     }
 
+    [Fact]
+    public async Task SweepAsync_BusyAgent_ProgressWithinTimeout_StaysBusy()
+    {
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-1";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            LastStepChangeAt = DateTimeOffset.UtcNow.AddMinutes(-10) // Well within 60min default
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Agent should still be busy
+        _registry.GetByAgentId("agent-1")!.Status.Should().Be(AgentStatus.Busy);
+        _runService.GetRun("job-1").Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_ProgressTimeoutExceeded_MarksRunFailed()
+    {
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AgentBusyProgressTimeout = TimeSpan.FromMinutes(30) });
+
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-1";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            LastStepChangeAt = DateTimeOffset.UtcNow.AddMinutes(-45) // Exceeds 30min timeout
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Agent should be idle
+        var agent = _registry.GetByAgentId("agent-1")!;
+        agent.Status.Should().Be(AgentStatus.Idle);
+        agent.ActiveJobId.Should().BeNull();
+
+        // Run should be removed from active runs
+        _runService.GetRun("job-1").Should().BeNull();
+
+        // History should have been called with progress timeout failure reason
+        _mockHistoryService.Verify(h => h.AddRunToHistory(It.Is<PipelineRun>(r =>
+            r.RunId == "job-1" &&
+            r.FailureReason!.Contains("progress timeout") &&
+            r.CurrentStep == PipelineStep.Failed)), Times.Once);
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_ProgressTimeout_NoRun_NoException()
+    {
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-missing";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        // No run added for this job — simulates race condition
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Agent stays busy (no crash, no action)
+        _registry.GetByAgentId("agent-1")!.Status.Should().Be(AgentStatus.Busy);
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_ProgressTimeout_SwapsLabelToError()
+    {
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AgentBusyProgressTimeout = TimeSpan.FromMinutes(5) });
+
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-1";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#10",
+            IssueTitle = "Stuck",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            LastStepChangeAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+            RunType = PipelineRunType.Implementation
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#10", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_DefaultLastStepChangeAt_SkipsProgressCheck()
+    {
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AgentBusyProgressTimeout = TimeSpan.FromMinutes(1) });
+
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-1";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        // LastStepChangeAt = default (pre-existing run without the new field)
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Legacy",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1"
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Should NOT be timed out — default value guard protects legacy runs
+        _registry.GetByAgentId("agent-1")!.Status.Should().Be(AgentStatus.Busy);
+        _runService.GetRun("job-1").Should().NotBeNull();
+    }
+
     private AgentEntry RegisterAgent(string agentId, string connectionId)
     {
         return _registry.Register(new AgentRegistrationMessage

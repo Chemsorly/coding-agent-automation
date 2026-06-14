@@ -142,6 +142,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
                         PipelineProviderConfigId = message.ActiveJob.PipelineProviderConfigId,
                         StartedAt = message.ActiveJob.StartedAt.UtcDateTime,
                         StartedAtOffset = message.ActiveJob.StartedAt,
+                        LastStepChangeAt = DateTimeOffset.UtcNow,
                         CurrentStep = message.ActiveJob.CurrentStep,
                         AgentId = message.AgentId,
                         InitiatedBy = message.ActiveJob.InitiatedBy,
