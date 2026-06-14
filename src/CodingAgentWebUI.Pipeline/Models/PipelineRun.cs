@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Threading;
 using CodingAgentWebUI.Pipeline.Services;
 
@@ -94,7 +95,7 @@ public sealed class PipelineRun
     public string? InlineCommentsDegradedReason { get; set; }
 
     /// <summary>Per-agent findings accumulated across all review iterations.</summary>
-    public Dictionary<string, string> CodeReviewAgentFindings { get; } = new();
+    public ConcurrentDictionary<string, string> CodeReviewAgentFindings { get; } = new();
 
     /// <summary>Thread-safe collections — mutated by orchestration service while UI reads via OnChange.</summary>
     public BoundedConcurrentQueue<string> RetryErrors { get; init; } = new(PipelineConstants.DefaultRetryErrorsCapacity);
