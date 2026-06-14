@@ -206,4 +206,94 @@ public class ActivityErrorRecordingTests : IDisposable
             return Task.FromResult(StepResult.Continue);
         }
     }
+
+    // --- RecordMaskedError tests ---
+
+    private static readonly Dictionary<string, string> TestSecrets = new()
+    {
+        { "API_KEY", "super-secret-token-1234" },
+        { "DB_PASS", "my-database-password" }
+    };
+
+    [Fact]
+    public void RecordMaskedError_MasksSecretInStatusDescription()
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("Test");
+        var ex = new InvalidOperationException("Connection failed with super-secret-token-1234");
+
+        activity.RecordMaskedError(ex, TestSecrets);
+
+        activity!.Status.Should().Be(ActivityStatusCode.Error);
+        activity.StatusDescription.Should().NotContain("super-secret-token-1234");
+        activity.StatusDescription.Should().Contain("***");
+    }
+
+    [Fact]
+    public void RecordMaskedError_MasksSecretInExceptionEvent()
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("Test");
+        var ex = new InvalidOperationException("Failed: my-database-password invalid");
+
+        activity.RecordMaskedError(ex, TestSecrets);
+
+        var exceptionEvent = activity!.Events.Should().ContainSingle(e => e.Name == "exception").Which;
+        var message = exceptionEvent.Tags.First(t => t.Key == "exception.message").Value as string;
+        message.Should().NotContain("my-database-password");
+        message.Should().Contain("***");
+    }
+
+    [Fact]
+    public void RecordMaskedError_PreservesExceptionType()
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("Test");
+        var ex = new InvalidOperationException("error with super-secret-token-1234");
+
+        activity.RecordMaskedError(ex, TestSecrets);
+
+        var exceptionEvent = activity!.Events.Should().ContainSingle(e => e.Name == "exception").Which;
+        var type = exceptionEvent.Tags.First(t => t.Key == "exception.type").Value as string;
+        type.Should().Be(typeof(InvalidOperationException).FullName);
+    }
+
+    [Fact]
+    public void RecordMaskedError_PreservesStackTrace()
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("Test");
+        Exception ex;
+        try { throw new InvalidOperationException("error with super-secret-token-1234"); }
+        catch (Exception caught) { ex = caught; }
+
+        activity.RecordMaskedError(ex, TestSecrets);
+
+        var exceptionEvent = activity!.Events.Should().ContainSingle(e => e.Name == "exception").Which;
+        var stackTrace = exceptionEvent.Tags.First(t => t.Key == "exception.stacktrace").Value as string;
+        stackTrace.Should().NotBeNullOrEmpty();
+        stackTrace.Should().Contain("RecordMaskedError_PreservesStackTrace");
+    }
+
+    [Fact]
+    public void RecordMaskedError_GracefulCancellation_SetsCancelledTag()
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("Test");
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var ex = new OperationCanceledException(cts.Token);
+
+        activity.RecordMaskedError(ex, TestSecrets, cts.Token);
+
+        activity!.Status.Should().Be(ActivityStatusCode.Unset);
+        activity.GetTagItem("pipeline.cancelled").Should().Be(true);
+        activity.Events.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RecordMaskedError_NullActivity_DoesNotThrow()
+    {
+        Activity? activity = null;
+        var ex = new InvalidOperationException("error with super-secret-token-1234");
+
+        var act = () => activity.RecordMaskedError(ex, TestSecrets);
+
+        act.Should().NotThrow();
+    }
 }
