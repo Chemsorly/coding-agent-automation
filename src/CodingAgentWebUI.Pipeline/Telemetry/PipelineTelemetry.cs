@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using OpenTelemetry;
 using OpenTelemetry.Context.Propagation;
 
@@ -163,6 +164,33 @@ public static class PipelineTelemetry
         }
         activity.SetStatus(ActivityStatusCode.Error, ex.Message);
         activity.AddException(ex);
+    }
+
+    /// <summary>
+    /// Records an error with secret-masked exception message. Use this instead of <see cref="RecordError"/>
+    /// when the exception message may contain secret values from environment variables.
+    /// </summary>
+    // TODO: Add ArgumentNullException.ThrowIfNull for ex and secrets parameters for clearer error reporting at the API boundary.
+    public static void RecordMaskedError(this Activity? activity, Exception ex,
+        IEnumerable<KeyValuePair<string, string>> secrets, CancellationToken ct = default)
+    {
+        if (activity is null) return;
+        if (ex is OperationCanceledException && ct.IsCancellationRequested)
+        {
+            activity.SetTag("pipeline.cancelled", true);
+            return;
+        }
+
+        var maskedMessage = SecretMasker.Mask(ex.Message, secrets);
+        activity.SetStatus(ActivityStatusCode.Error, maskedMessage);
+        activity.AddEvent(new ActivityEvent("exception", tags: new ActivityTagsCollection
+        {
+            // TODO: FullName can technically return null for dynamically-generated types; consider using a fallback.
+            { "exception.type", ex.GetType().FullName! },
+            { "exception.message", maskedMessage },
+            // TODO: Consider masking stack trace as well for defense-in-depth against edge cases where secrets could appear.
+            { "exception.stacktrace", ex.StackTrace ?? string.Empty }
+        }));
     }
 
     private static readonly TraceContextPropagator TraceContextPropagator = new();

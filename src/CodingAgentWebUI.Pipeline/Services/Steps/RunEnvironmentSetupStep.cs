@@ -114,8 +114,7 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
             }
             catch (Exception ex)
             {
-                // TODO: Exception recorded to telemetry is not passed through SecretMasker — may leak injected secrets to trace storage.
-                Activity.Current?.RecordError(ex);
+                Activity.Current?.RecordMaskedError(ex, secrets);
                 var failureMessage = $"Setup step '{step.Name}' threw an exception: {ex.Message}";
                 await context.FailRunAsync(SecretMasker.Mask(failureMessage, secrets), ct);
                 return StepResult.Stop;
