@@ -17,7 +17,7 @@ public class ProviderFactory : IProviderFactory
     private readonly Dictionary<string, Func<ProviderConfig, IIssueProvider>> _issueFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Func<ProviderConfig, IRepositoryProvider>> _repoFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Func<ProviderConfig, IAgentProvider>> _agentFactories = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, Func<ProviderConfig, IPipelineProvider>> _pipelineFactories = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Func<ProviderConfig, TimeSpan, IPipelineProvider>> _pipelineFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, GitHubAppAuthService> _authServiceCache = new(StringComparer.Ordinal);
     private readonly IPipelineConfigStore _pipelineConfigStore;
 
@@ -50,7 +50,7 @@ public class ProviderFactory : IProviderFactory
             return new GitHubRepositoryProvider(connection, authService.GetTokenAsync, config.Settings[ProviderSettingKeys.BaseBranch]);
         });
 
-        RegisterPipelineProvider("GitHub", config =>
+        RegisterPipelineProvider("GitHub", (config, pollInterval) =>
         {
             ValidateRequiredSettings(config, ProviderSettingKeys.ApiUrl, ProviderSettingKeys.ClientId, ProviderSettingKeys.InstallationId, ProviderSettingKeys.PrivateKeyBase64, ProviderSettingKeys.Owner, ProviderSettingKeys.Repo);
             var authService = GetOrCreateAuthService(config);
@@ -58,8 +58,7 @@ public class ProviderFactory : IProviderFactory
                 config.Settings[ProviderSettingKeys.ApiUrl],
                 config.Settings[ProviderSettingKeys.Owner],
                 config.Settings[ProviderSettingKeys.Repo]);
-            var currentConfig = _pipelineConfigStore.LoadPipelineConfigAsync(CancellationToken.None).GetAwaiter().GetResult();
-            return new GitHubActionsPipelineProvider(connection, authService.GetTokenAsync, currentConfig.ExternalCiPollInterval);
+            return new GitHubActionsPipelineProvider(connection, authService.GetTokenAsync, pollInterval);
         });
 
         // Register GitLab providers
@@ -92,19 +91,18 @@ public class ProviderFactory : IProviderFactory
                 baseBranch);
         });
 
-        RegisterPipelineProvider("GitLab", config =>
+        RegisterPipelineProvider("GitLab", (config, pollInterval) =>
         {
             ValidateRequiredSettings(config,
                 ProviderSettingKeys.ApiUrl,
                 ProviderSettingKeys.AccessToken,
                 ProviderSettingKeys.ProjectId);
             var projectId = ParseProjectId(config);
-            var currentConfig = _pipelineConfigStore.LoadPipelineConfigAsync(CancellationToken.None).GetAwaiter().GetResult();
             return new GitLabCiPipelineProvider(
                 config.Settings[ProviderSettingKeys.ApiUrl],
                 config.Settings[ProviderSettingKeys.AccessToken],
                 projectId,
-                currentConfig.ExternalCiPollInterval);
+                pollInterval);
         });
     }
 
@@ -117,7 +115,7 @@ public class ProviderFactory : IProviderFactory
     private void RegisterAgentProvider(string providerType, Func<ProviderConfig, IAgentProvider> factory)
         => _agentFactories[providerType] = factory;
 
-    private void RegisterPipelineProvider(string providerType, Func<ProviderConfig, IPipelineProvider> factory)
+    private void RegisterPipelineProvider(string providerType, Func<ProviderConfig, TimeSpan, IPipelineProvider> factory)
         => _pipelineFactories[providerType] = factory;
 
     public IIssueProvider CreateIssueProvider(ProviderConfig config)
@@ -147,11 +145,14 @@ public class ProviderFactory : IProviderFactory
             $"Unsupported agent provider type: '{config.ProviderType}'. Supported: {string.Join(", ", _agentFactories.Keys)}");
     }
 
-    public IPipelineProvider CreatePipelineProvider(ProviderConfig config)
+    public async Task<IPipelineProvider> CreatePipelineProviderAsync(ProviderConfig config, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(config);
         if (_pipelineFactories.TryGetValue(config.ProviderType, out var factory))
-            return factory(config);
+        {
+            var currentConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
+            return factory(config, currentConfig.ExternalCiPollInterval);
+        }
         throw new NotSupportedException(
             $"Unsupported pipeline provider type: '{config.ProviderType}'. Supported: {string.Join(", ", _pipelineFactories.Keys)}");
     }

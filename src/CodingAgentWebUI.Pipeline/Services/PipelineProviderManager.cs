@@ -103,7 +103,7 @@ public class PipelineProviderManager : IAsyncDisposable
 
         if (pipelineProviderConfig is not null)
         {
-            ActivePipelineProvider = _providerFactory.CreatePipelineProvider(pipelineProviderConfig);
+            ActivePipelineProvider = await _providerFactory.CreatePipelineProviderAsync(pipelineProviderConfig, ct);
             return pipelineProviderConfig.Id;
         }
 

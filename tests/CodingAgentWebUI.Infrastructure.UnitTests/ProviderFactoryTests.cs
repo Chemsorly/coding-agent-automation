@@ -29,7 +29,7 @@ public class ProviderFactoryTests
     // --- REQ-4.5: ExternalCiPollInterval wiring ---
 
     [Fact]
-    public void CreatePipelineProvider_UsesPollIntervalFromPipelineConfiguration()
+    public async Task CreatePipelineProviderAsync_UsesPollIntervalFromPipelineConfiguration()
     {
         // Arrange — configure a specific poll interval
         var expectedInterval = TimeSpan.FromSeconds(45);
@@ -61,7 +61,7 @@ public class ProviderFactoryTests
         };
 
         // Act
-        var provider = factory.CreatePipelineProvider(providerConfig);
+        var provider = await factory.CreatePipelineProviderAsync(providerConfig, CancellationToken.None);
 
         // Assert — verify the poll interval was passed through via reflection
         var pollIntervalField = typeof(GitHubActionsPipelineProvider)
@@ -74,7 +74,7 @@ public class ProviderFactoryTests
     }
 
     [Fact]
-    public void CreatePipelineProvider_DefaultPollInterval_IsThirtySeconds()
+    public async Task CreatePipelineProviderAsync_DefaultPollInterval_IsThirtySeconds()
     {
         // Arrange — use default PipelineConfiguration
         var pipelineConfig = new PipelineConfiguration();
@@ -101,7 +101,7 @@ public class ProviderFactoryTests
         };
 
         // Act
-        var provider = factory.CreatePipelineProvider(providerConfig);
+        var provider = await factory.CreatePipelineProviderAsync(providerConfig, CancellationToken.None);
 
         // Assert — default ExternalCiPollInterval is 30 seconds
         var pollIntervalField = typeof(GitHubActionsPipelineProvider)
@@ -116,7 +116,7 @@ public class ProviderFactoryTests
     // --- REQ-11: Runtime Configuration Refresh for ProviderFactory ---
 
     [Fact]
-    public void CreatePipelineProvider_ResolvesCurrentConfigPerCreation_NotStartupSnapshot()
+    public async Task CreatePipelineProviderAsync_ResolvesCurrentConfigPerCreation_NotStartupSnapshot()
     {
         // Arrange — mock store returns different configs on successive calls
         var firstConfig = new PipelineConfiguration { ExternalCiPollInterval = TimeSpan.FromSeconds(15) };
@@ -149,11 +149,11 @@ public class ProviderFactoryTests
             .GetField("_pollInterval", BindingFlags.NonPublic | BindingFlags.Instance)!;
 
         // Act — create first provider
-        var provider1 = factory.CreatePipelineProvider(providerConfig);
+        var provider1 = await factory.CreatePipelineProviderAsync(providerConfig, CancellationToken.None);
         var interval1 = (TimeSpan)pollIntervalField.GetValue(provider1)!;
 
         // Act — create second provider (simulates config change between creations)
-        var provider2 = factory.CreatePipelineProvider(providerConfig);
+        var provider2 = await factory.CreatePipelineProviderAsync(providerConfig, CancellationToken.None);
         var interval2 = (TimeSpan)pollIntervalField.GetValue(provider2)!;
 
         // Assert — each creation uses the CURRENT config, not a captured snapshot
