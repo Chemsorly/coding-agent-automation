@@ -89,4 +89,17 @@ public class GracefulShutdownHelperTests
             l => l.Warning(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan>()),
             Times.Never);
     }
+
+    [Fact]
+    public async Task CancelAndWaitAsync_DisposedCts_DoesNotThrow()
+    {
+        // A disposed CTS should not crash — the defensive catch handles it
+        var cts = new CancellationTokenSource();
+        cts.Dispose();
+
+        var task = Task.CompletedTask;
+
+        await GracefulShutdownHelper.CancelAndWaitAsync(
+            cts, task, TimeSpan.FromSeconds(5), _mockLogger.Object, "DisposedOp");
+    }
 }

@@ -27,7 +27,8 @@ public static class GracefulShutdownHelper
     {
         if (task is null) return;
 
-        cts?.Cancel();
+        try { cts?.Cancel(); }
+        catch (ObjectDisposedException) { }
 
         try
         {

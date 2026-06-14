@@ -269,6 +269,43 @@ public class AgentWorkerServiceTests
         service.IsBusy.Should().BeFalse();
     }
 
+    // ── Requirement 4.4b: Cancel with disposed CTS does not throw ───────
+
+    [Fact]
+    public async Task HandleCancelJob_DisposedCts_DoesNotThrow()
+    {
+        // Arrange
+        var service = CreateService();
+        var cts = new CancellationTokenSource();
+        cts.Dispose();
+
+        SetPrivateField(service, "_activeJobId", "job-123");
+        SetPrivateField(service, "_jobCts", cts);
+
+        // Act — should not throw ObjectDisposedException
+        var handler = GetPrivateMethod(service, "HandleCancelJobAsync");
+        var task = (Task)handler.Invoke(service, ["job-123"])!;
+        await task;
+    }
+
+    [Fact]
+    public async Task HandleCancelChat_DisposedCts_DoesNotThrow()
+    {
+        // Arrange
+        var service = CreateService();
+        var cts = new CancellationTokenSource();
+        cts.Dispose();
+
+        SetPrivateField(service, "_activeChatSessionId", "session-1");
+        SetPrivateField(service, "_chatCts", cts);
+        SetPrivateField(service, "_activeChatTask", Task.CompletedTask);
+
+        // Act — should not throw ObjectDisposedException
+        var handler = GetPrivateMethod(service, "HandleCancelChatAsync");
+        var task = (Task)handler.Invoke(service, ["session-1"])!;
+        await task;
+    }
+
     // ── Requirement 4.5: ShutdownAsync Stops Hub Connection ─────────────
 
     [Fact]

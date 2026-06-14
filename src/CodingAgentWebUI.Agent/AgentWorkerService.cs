@@ -239,8 +239,8 @@ public sealed class AgentWorkerService : BackgroundService
             {
                 _activeJobId = null;
             }
-            _jobCts?.Dispose();
-            _jobCts = null;
+            var oldCts = Interlocked.Exchange(ref _jobCts, null);
+            oldCts?.Dispose();
             return;
         }
 
@@ -325,7 +325,10 @@ public sealed class AgentWorkerService : BackgroundService
         }
 
         _logger.Information("Cancelling job {JobId}", jobId);
-        _jobCts?.Cancel();
+        // TODO: Use Interlocked.CompareExchange(ref _jobCts, null, null) or declare field volatile for correct memory ordering on ARM64
+        var cts = _jobCts;
+        try { cts?.Cancel(); }
+        catch (ObjectDisposedException) { }
         return Task.CompletedTask;
     }
 
@@ -421,8 +424,8 @@ public sealed class AgentWorkerService : BackgroundService
                 _activeChatSessionId = null;
             }
 
-            _chatCts?.Dispose();
-            _chatCts = null;
+            var oldCts = Interlocked.Exchange(ref _chatCts, null);
+            oldCts?.Dispose();
 
             // Do NOT send AgentReady — the chat session is still active.
             // The agent will be released when CancelChat is received (End Chat / navigate away).
@@ -508,8 +511,10 @@ public sealed class AgentWorkerService : BackgroundService
         }
 
         _logger.Information("Cancelling chat session {SessionId}", sessionId);
+        // TODO: Use Interlocked.CompareExchange(ref _chatCts, null, null) or declare field volatile for correct memory ordering on ARM64
         var cts = _chatCts;
-        cts?.Cancel();
+        try { cts?.Cancel(); }
+        catch (ObjectDisposedException) { }
 
         if (chatTask is not null)
         {
@@ -743,8 +748,8 @@ public sealed class AgentWorkerService : BackgroundService
             _currentStep = null;
         }
 
-        _jobCts?.Dispose();
-        _jobCts = null;
+        var oldCts = Interlocked.Exchange(ref _jobCts, null);
+        oldCts?.Dispose();
 
         await SignalAgentReadyAsync();
     }
