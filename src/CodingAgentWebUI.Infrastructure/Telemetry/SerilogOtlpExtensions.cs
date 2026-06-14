@@ -23,7 +23,8 @@ public static class SerilogOtlpExtensions
         string serviceName,
         string? environmentName = null)
     {
-        // TODO: Add ArgumentNullException.ThrowIfNull for loggerConfiguration and serviceName to match codebase conventions
+        ArgumentNullException.ThrowIfNull(loggerConfiguration);
+        ArgumentNullException.ThrowIfNull(serviceName);
         var endpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
         if (string.IsNullOrWhiteSpace(endpoint))
             return loggerConfiguration;
