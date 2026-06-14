@@ -113,4 +113,7 @@ public static class PipelineConstants
 
     /// <summary>Default grace period before marking a disconnected agent as lost (5 minutes).</summary>
     public static readonly TimeSpan DefaultAgentDisconnectGracePeriod = TimeSpan.FromMinutes(5);
+
+    /// <summary>Default timeout for quality gate processes — compilation and tests (10 minutes).</summary>
+    public static readonly TimeSpan DefaultQualityGateProcessTimeout = TimeSpan.FromSeconds(600);
 }
