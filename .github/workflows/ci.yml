@@ -52,12 +52,13 @@ jobs:
         run: cat CoverageReport/Summary.md >> $GITHUB_STEP_SUMMARY
         if: ${{ always() && hashFiles('CoverageReport/Summary.md') != '' }}
 
-      - name: Upload test results
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: test-results
-          path: TestResults
-        if: ${{ always() }}
+      # TODO: Reactivate on next billing cycle (storage budget exhausted)
+      # - name: Upload test results
+      #   uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      #   with:
+      #     name: test-results
+      #     path: TestResults
+      #   if: ${{ always() }}
 
   docker:
     needs: [build-and-test]
