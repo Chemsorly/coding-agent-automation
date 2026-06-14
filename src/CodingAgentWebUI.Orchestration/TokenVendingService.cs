@@ -215,6 +215,18 @@ public sealed partial class TokenVendingService : ITokenVendingService
                 }
                 catch (Exception ex)
                 {
+                    // Critical provider: primary work repo must have valid credentials
+                    // TODO: Issue provider configs are not passed to this method (handled separately in PrepareIssueContextAsync).
+                    //       If issue provider configs are ever added to this path, extend this check to treat them as critical.
+                    if (config.Id == repoConfigId)
+                    {
+                        _logger.Error(ex, "Token generation failed for critical provider {ConfigId} ({DisplayName}). Aborting dispatch.",
+                            config.Id, config.DisplayName);
+                        throw new InvalidOperationException(
+                            $"Token generation failed for critical provider '{config.DisplayName}' (ID: {config.Id}): {ex.Message}", ex);
+                    }
+
+                    // Non-critical provider (brain, pipeline, additional repos): degrade gracefully
                     _logger.Warning(ex, "Failed to generate token for config {ConfigId} ({DisplayName}), stripping private key only",
                         config.Id, config.DisplayName);
 
