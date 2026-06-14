@@ -259,20 +259,3 @@ ExecuteConsolidation
 └── HarnessSuggestion.AdversarialReview
 ```
 
-### Resilience Retry Events
-
-All resilience pipelines (`ResiliencePipelineFactory` and `TokenVendingService` internal pipeline) emit `ActivityEvent("retry")` on each retry attempt, attached to whatever parent span is active. Event tags:
-
-| Tag | Description |
-|-----|-------------|
-| `attempt` | Retry attempt number (1-based) |
-| `exception.type` | Exception type name that triggered the retry |
-| `exception.message` | Exception message (truncated to 200 chars) |
-
-### Background Service Spans
-
-`DrainCycle` spans are root spans (no parent) because `JobQueueDrainService` runs as a `BackgroundService` with no ambient `Activity.Current`. They appear as independent traces in observability backends.
-
-## Completed
-
-All planned infrastructure step tracing has been implemented. See the Traces table above for the full list of instrumented spans.

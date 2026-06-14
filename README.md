@@ -11,202 +11,136 @@ An automated development pipeline that uses AI coding agents to implement issues
 5. **Retry loop** — If quality gates fail, the agent gets feedback and retries (configurable max retries)
 6. **Pull request** — On success, a PR is created with the changes, linked to the original issue
 
+## Documentation
+
+Detailed documentation lives in the [`docs/`](docs/) folder:
+
+1. [Pipeline Orchestration](docs/pipeline-orchestration.md) — Core state machine, step descriptions, retry logic, error handling
+2. [PR Review](docs/pr-review.md) — PR review pipeline, inline comments, configuration
+3. [Epic Decomposition](docs/epic-decomposition.md) — Two-phase workflow, label state machine, approval process
+4. [Issue Workflows](docs/github-issue-workflows.md) — Label system, user flows, closed-loop mode
+5. [Label Routing](docs/label-routing.md) — Label hierarchy, agent selection, quality gate configs
+6. [Configuration](docs/configuration.md) — Pipeline settings, job templates, provider setup, MCP servers
+7. [Pipeline Projects](docs/projects.md) — Multi-repository grouping, project-level configuration
+8. [Feedback & Consolidation](docs/feedback-and-consolidation.md) — Agent feedback loops, brain consolidation
+9. [Observability](docs/observability.md) — Metrics, traces, OTLP configuration
+10. [Deployment](docs/deployment.md) — Docker setup, volume mounts, scaling agents, architecture
+
+## Agent Execution Flow
+
+A single implementation run orchestrates multiple agent sessions across three phases:
+
+```mermaid
+flowchart TD
+    subgraph Phase1["Phase 1 — Analysis"]
+        A1[🤖 Analysis Agent<br/>analyze issue + codebase]
+        A2[🔍 Review Agent<br/>adversarial critique]
+        A3[🤖 Analysis Agent<br/>implements feedback]
+        A5{Confidence<br/>Gate}
+
+        A1 --> A2
+        A2 --> A3
+        A3 --> A5
+    end
+
+    A5 -->|not ready| FAIL1[❌ Needs Refinement]
+    A5 -->|wont do| SKIP[⏭️ Won't Do]
+    A5 -->|ready| B1
+
+    subgraph Phase2["Phase 2 — Code Generation"]
+        B1[🤖 Implementation Agent<br/>write code]
+        C1[🔍 Review Agents<br/>N agents in parallel]
+        C2[🤖 Implementation Agent<br/>implements feedback]
+        D1[🏗️ Build + Test + Coverage]
+        D2[🤖 Implementation Agent<br/>implements error feedback]
+
+        B1 --> C1
+        C1 --> C2
+        C2 -->|next iteration| C1
+        C2 -->|done| D1
+        D1 -->|fail, retries left| D2
+        D2 --> D1
+    end
+
+    D1 -->|pass| E1
+    D1 -->|fail, exhausted| E2
+
+    subgraph Phase3["Phase 3 — Finalization"]
+        E1[✅ Create PR]
+        E2[📝 Draft PR]
+        E3[🤖 Generate PR Description]
+
+        E1 --> E3
+        E2 --> E3
+    end
+```
+
+**Session design:** One persistent session carries context from analysis → implementation → fixes. All review/critique agents use isolated sessions (no shared context with the generator) to avoid bias.
+
+### PR Review Flow
+
+```mermaid
+flowchart TD
+    subgraph Review["PR Review Pipeline"]
+        R1[🤖 Review Agents<br/>N agents in parallel]
+        R2[📝 Post Findings<br/>as PR review comment]
+
+        R1 --> R2
+    end
+```
+
+The PR review pipeline is read-only — agents analyze the diff and post findings but never modify code. See [PR Review](docs/pr-review.md) for details.
+
+### Epic Decomposition Flow
+
+```mermaid
+flowchart TD
+    subgraph Phase1D["Phase 1 — Analysis"]
+        D1[🤖 Analysis Agent<br/>explore codebase, generate plan]
+        D2[🔍 Review Agent<br/>adversarial critique]
+        D3[🤖 Analysis Agent<br/>implements feedback]
+        D4[📝 Post Plan<br/>for human review]
+
+        D1 --> D2
+        D2 --> D3
+        D3 --> D4
+    end
+
+    D4 -->|human approves| E1
+
+    subgraph Phase2D["Phase 2 — Creation"]
+        E1[🤖 Decomposition Agent<br/>generate sub-issue JSONs]
+        E2[📝 Create Sub-Issues<br/>on issue tracker]
+
+        E1 --> E2
+    end
+```
+
+Phase 1 produces a plan for human review. Phase 2 runs only after explicit approval (`agent:epic-approved` label). See [Epic Decomposition](docs/epic-decomposition.md) for details.
+
 ## Key Concepts
 
 - **Brain repository** — A `.brain/` folder in the target repo containing markdown files (lessons learned, architecture decisions, project context). Agents read it before starting and write to it after completing a run, accumulating knowledge across runs.
-- **Confidence gate** — After analysis, the pipeline evaluates whether the issue is clear enough to implement. Vague or blocked issues are rejected with specific feedback rather than producing bad code.
+- **Confidence gate** — After analysis, the pipeline evaluates whether the issue is clear enough to implement. Vague or blocked issues are rejected with feedback (`agent:needs-refinement`), and issues that don't require code changes are closed as won't-do (`agent:wont-do`).
 - **Quality gates** — Automated checks that must pass before a PR is created: compilation, tests, code coverage, and optionally external CI pipelines.
 - **Closed-loop mode** — The pipeline polls for labeled issues and processes them autonomously without manual dispatch. Configurable poll interval and backoff.
-- **PR review pipeline** — A parallel workflow that picks up pull requests labeled `agent:next` and runs automated multi-agent code review, posting findings as a PR review comment. Uses the same dispatch mechanism and label lifecycle as the implementation pipeline.
-- **Epic decomposition pipeline** — A two-phase workflow that breaks down high-level epics into implementation-ready sub-issues. Phase 1 produces a validated plan for human review; Phase 2 creates sub-issues after approval. See [Epic Decomposition Pipeline](#epic-decomposition-pipeline) below.
 - **Label routing** — Repository labels determine which agent container handles the job, which quality gates run, and which review agents are used.
-- **Harness suggestions** — Automated improvement recommendations for the pipeline itself, derived from accumulated run feedback patterns.
-
-## PR Review Pipeline
-
-The pipeline can also perform automated code review on pull requests. This uses the same `agent:next` label mechanism as the implementation pipeline but runs a shorter workflow focused on review.
-
-### How to Use
-
-1. Add the `agent:next` label to any open pull request
-2. The pipeline picks up the PR on the next poll cycle
-3. The agent clones the repo, checks out the PR branch, and runs multi-agent code review
-4. Review findings are posted as a PR review comment
-5. The label transitions: `agent:next` → `agent:in-progress` → `agent:done` (or `agent:error`)
-
-### Expected Workflow
-
-```
-Label PR with agent:next → Pipeline picks up PR → Clone → Checkout PR branch
-  → [Brain sync] → Extract linked issues → Code review → Post findings → Done
-```
-
-Draft PRs are included in review dispatch (a warning is shown in the UI). To re-review after changes, remove `agent:done` and re-add `agent:next`.
-
-### Inline Review Comments
-
-The pipeline can post code review findings as native inline comments on specific file:line positions in the diff, giving PR authors precise feedback at the exact location of each issue — in addition to the summary body comment.
-
-#### How to Enable
-
-Inline comments are enabled by default. To disable them, set `InlineComments.Enabled` to `false` in the Code Review configuration (via the web UI under Settings → Quality Gates → Code Review → Inline Review Comments, or directly in the pipeline config JSON):
-
-```json
-{
-  "CodeReview": {
-    "MaxIterations": 2,
-    "ReviewIsolation": "Isolated",
-    "InlineComments": {
-      "Enabled": true,
-      "SeverityThreshold": "Warning",
-      "MaxInlineComments": 15,
-      "OrderBySeverity": true,
-      "MaxRetries": 1
-    }
-  }
-}
-```
-
-#### Configuration Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `Enabled` | bool | `true` | Master switch. When false, body-only reviews are posted (existing behavior) |
-| `SeverityThreshold` | enum | `Warning` | Minimum severity for inline posting. Options: `Suggestion`, `Warning`, `Critical` |
-| `MaxInlineComments` | int | `15` | Maximum inline comments per review (range: 1–50). Highest-severity findings are prioritized |
-| `OrderBySeverity` | bool | `true` | Sort findings by severity (Critical first) when selecting which to post inline |
-| `MaxRetries` | int | `1` | Times to re-ask the agent for structured output if it doesn't include file:line references (range: 0–5). Each retry adds one LLM API call per agent |
-
-#### Behavior
-
-- **When enabled**: Review agents are instructed to output findings in `[SEVERITY] path/to/file.ext:LINE — message` format. The pipeline parses these, filters by severity threshold, caps at the configured limit, and posts them as inline comments via the GitHub Pull Request Reviews API.
-- **When disabled**: The pipeline posts a single body-level review comment (existing behavior). No parsing or prompt enhancement occurs.
-- **Graceful degradation**: If structured output parsing fails, the GitHub API rejects inline comments (HTTP 422), or any other error occurs in the inline path, the pipeline falls back to body-only submission. Inline comments never fail the pipeline.
-- **Findings without location**: Findings that don't reference a specific file:line appear only in the body summary, regardless of inline settings.
-
-### Configuration
-
-Each pipeline job template has three independent toggles:
-
-| Property | Default | Effect |
-|----------|---------|--------|
-| `ImplementationEnabled` | `true` | Template processes issues for implementation |
-| `ReviewEnabled` | `true` | Template processes PRs for code review |
-| `DecompositionEnabled` | `false` | Template processes epics for decomposition |
-
-Set `ReviewEnabled: false` to disable PR review for a template, or `ImplementationEnabled: false` to create a review-only template. See [Pipeline Orchestration](docs/pipeline-orchestration.md) for details.
-
-## Epic Decomposition Pipeline
-
-The pipeline can decompose high-level epics into implementation-ready sub-issues. This bridges the gap between broad goals and the atomic issues the implementation pipeline requires.
-
-### How to Use
-
-1. **Label an epic** — Add the `agent:epic` label to a GitHub issue describing a high-level feature or goal
-2. **Phase 1 (Analysis)** — The pipeline picks up the epic, explores the codebase, and posts a decomposition plan as a comment on the epic
-3. **Review the plan** — The epic transitions to `agent:epic-review`. Review the proposed sub-issues on GitHub
-4. **Approve or reject** — To approve, swap the label to `agent:epic-approved`. To request changes, post a comment with feedback and swap back to `agent:epic`
-5. **Phase 2 (Creation)** — After approval, the pipeline creates implementation-ready sub-issues with dependencies resolved
-
-### Two-Phase Workflow
-
-```
-Label epic with agent:epic → Phase 1: Clone → Brain sync → Download open issues
-  → Agent explores codebase → Adversarial review → Post plan comment
-  → Label: agent:epic-review (awaiting human approval)
-
-Approve: swap to agent:epic-approved → Phase 2: Clone → Brain sync
-  → Agent generates sub-issue JSON → Parse & validate → Create issues sequentially
-  → Post summary comment → Label: agent:done
-```
-
-### Label State Machine
-
-| Current Label | Trigger | Next Label |
-|---------------|---------|------------|
-| `agent:epic` | Phase 1 dispatched | `agent:in-progress` |
-| `agent:in-progress` | Phase 1 success | `agent:epic-review` |
-| `agent:in-progress` | Phase 1/2 failure | `agent:error` |
-| `agent:epic-review` | User approves | `agent:epic-approved` |
-| `agent:epic-review` | User requests re-analysis | `agent:epic` |
-| `agent:epic-approved` | Phase 2 dispatched | `agent:in-progress` |
-| `agent:in-progress` | Phase 2 success | `agent:done` |
-| `agent:error` | User retries Phase 1 | `agent:epic` |
-| `agent:error` | User retries Phase 2 | `agent:epic-approved` |
-
-### Approval Process
-
-After Phase 1 posts the decomposition plan:
-
-- **Approve**: Remove `agent:epic-review`, add `agent:epic-approved` → Phase 2 runs automatically
-- **Request changes**: Post a comment on the epic with feedback, then remove `agent:epic-review` and add `agent:epic` → Phase 1 re-runs with your feedback as context
-- **The plan comment is updated** (not duplicated) on re-runs, identified by the `<!-- agent:decomposition-plan -->` marker
-
-### Configuration
-
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `DecompositionEnabled` | `bool` | `false` | Enable decomposition polling for this template |
-| `MaxDecompositionSubIssues` | `int` | `10` | Maximum sub-issues per epic (range: 1–20) |
-| `MaxConcurrentDecompositions` | `int` | `2` | Maximum simultaneous decomposition runs |
-| `DecompositionTimeout` | `TimeSpan` | `15 min` | Timeout for each decomposition phase |
-| `MaxOpenIssuesForContext` | `int` | `50` | Open issues downloaded for deduplication context |
-
-Example template configuration:
-```json
-{
-  "Name": "Full Pipeline with Decomposition",
-  "Enabled": true,
-  "ImplementationEnabled": true,
-  "ReviewEnabled": true,
-  "DecompositionEnabled": true
-}
-```
-
-See [Pipeline Orchestration — Epic Decomposition](docs/pipeline-orchestration.md#epic-decomposition-pipeline) for the full technical reference.
-
-## Documentation
-
-Detailed documentation lives in the [`docs/`](docs/) folder. Suggested reading order:
-
-1. [Pipeline Orchestration](docs/pipeline-orchestration.md) — Core state machine, step descriptions, retry logic, error handling
-2. [Issue Workflows](docs/github-issue-workflows.md) — Label system, user flows, closed-loop mode
-3. [Label Routing](docs/label-routing.md) — Label hierarchy, agent selection, quality gate configs, setting up new stacks
-4. [Configuration](docs/configuration.md) — Pipeline settings, job templates, MCP server support
-5. [Pipeline Projects](docs/projects.md) — Multi-repository grouping, project-level configuration
-6. [Feedback & Consolidation](docs/feedback-and-consolidation.md) — Agent feedback loops, brain consolidation, refactoring detection
-7. [Observability](docs/observability.md) — Metrics, traces, OTLP configuration, verification
 
 ## Features
 
 - **Multi-agent architecture** — Multiple agent containers run in parallel, picking jobs from a shared queue
-- **Multi-stack support** — Label-based routing dispatches jobs to the right agent (dotnet, python, java) with stack-specific quality gates and review agents
-- **PR review pipeline** — Automated code review for pull requests using the same multi-agent review infrastructure, triggered by labeling PRs with `agent:next`
-- **Epic decomposition pipeline** — Two-phase workflow that breaks epics into implementation-ready sub-issues with human approval checkpoint, triggered by labeling issues with `agent:epic`
-- **Brain repository** — Shared knowledge repo that agents read/write across runs
-- **Multi-agent code review** — Specialized review agents (Correctness, Security, AcceptanceCriteria, etc.) analyze changes sequentially
-- **Confidence gate** — Rejects vague issues with specific feedback before attempting implementation
-- **Issue dependency tracking** — Issues referencing `Blocked by #N`, `Depends on #N`, `Requires #N`, or `After #N` in their body are automatically held until all referenced issues are closed
+- **Multi-stack support** — Label-based routing dispatches jobs to the right agent and backend (dotnet, python, java × Kiro CLI, OpenCode) with stack-specific quality gates
+- **PR review pipeline** — Automated code review for pull requests, triggered by labeling PRs with `agent:next`
+- **Epic decomposition** — Two-phase workflow that breaks epics into implementation-ready sub-issues with human approval
+- **Multi-agent code review** — Specialized review agents (Correctness, Security, etc.) run in parallel with inline PR comments
+- **Issue dependency tracking** — `Blocked by #N` / `Depends on #N` patterns hold dispatch until dependencies close
 - **Closed-loop automation** — Polls for labeled issues and PRs, processing them autonomously
-- **PR rework** — Re-queue an issue with an open PR to incorporate review feedback
 - **External CI integration** — Optionally waits for CI pipelines to pass before creating the final PR
-- **Agent feedback loops** — Structured feedback collected after every run for continuous improvement
-- **Consolidation loops** — Brain pruning, refactoring detection, and harness suggestions
-- **Real-time web UI** — Live output streaming, pipeline step sidebar, agent monitoring
-- **Agent chat** — Interactive agent sessions dispatched to available workers via the web UI
-- **Model selection** — Configurable LLM model per agent provider
-- **Agent effort level** — Configurable reasoning effort (`auto`, `low`, `medium`, `high`, `xhigh`, `max`) per agent provider, controlling depth vs. speed tradeoffs
-- **Parallelized code review** — Review agents execute concurrently (for providers that support it), reducing review wall-clock time
+- **Brain repository** — Shared knowledge repo that agents read/write across runs
+- **Agent feedback & consolidation** — Structured feedback, brain pruning, refactoring detection, harness suggestions
+- **Real-time web UI** — Live output streaming, pipeline step sidebar, agent monitoring, interactive chat
 - **Pipeline projects** — Multi-repository grouping with shared configuration and project-level context
-- **MCP server injection** — Agents receive MCP server configs for tool access (written to workspace before execution)
-- **Steering injection** — Pipeline context and conventions written to agent workspaces (`.kiro/steering/` for Kiro, `AGENTS.md` for OpenCode)
-- **Environment setup steps** — Per-repository shell commands (package restore, auth, tool install) executed after clone with injected secrets, before agent execution
-- **Agent health monitoring** — Heartbeat-based liveness detection, stall warnings, automatic reconnection after pod rollover
-- **Token vending** — Orchestrator generates short-lived GitHub installation tokens for agents (private keys never leave the orchestrator)
-- **HMAC-derived agent keys** — Each agent derives its own auth key from the shared master secret via HMAC(key, agent_id), enabling per-agent revocation without rotating the master key
-- **Baseline health check** — Validates build/tests pass before the agent writes code (catches broken base branches early)
-- **Inline review comments** — Code review findings posted as native inline comments at specific file:line positions in the PR diff
-- **Acceptance criteria compliance** — Dedicated parallel agent evaluates implementation against issue acceptance criteria, producing a structured compliance table in PR bodies and review comments
+- **MCP server & steering injection** — Agents receive tool configs and context conventions per workspace
 
 ## Quick Start
 
@@ -215,13 +149,12 @@ Detailed documentation lives in the [`docs/`](docs/) folder. Suggested reading o
 - **Docker** — For building and running the application
 - **.NET 10 SDK** — For local development (optional if only running via Docker)
 - **Issue tracker credentials** — App credentials for issue/repository access and PR creation (e.g., a GitHub App with Issues + Contents + Pull Requests permissions)
-- **Agent CLI authentication** — Each agent container needs CLI auth tokens (see First-Time Setup below)
+- **Agent CLI authentication** — Kiro agent containers need CLI auth tokens (see First-Time Setup below)
 
 ### Run with Docker Compose
 
 ```bash
 # 1. Create a .env file with a shared secret for orchestrator↔agent authentication
-#    (used as the master key — each agent derives its own key via HMAC(master, agent_id))
 echo "AGENT_API_KEY=$(openssl rand -hex 32)" > .env
 
 # 2. Start the orchestrator and all agent containers
@@ -230,192 +163,21 @@ docker compose up --build
 
 Open `http://localhost:8080` in your browser.
 
-The `docker-compose.yml` defines 8 services: 1 orchestrator + 2 Kiro .NET agents + 1 Kiro Python agent + 1 Kiro Java agent + 1 OpenCode .NET agent + 1 OpenCode Python agent + 1 OpenCode Java agent. To add more agents, copy a service definition with a new name and volume — don't use `--scale` (each agent needs its own named volume to avoid SQLite corruption).
-
 ### First-Time Setup
 
-1. **Authenticate the agent CLI** — Exec into each agent container and run the login flow:
+1. **Authenticate Kiro CLI agents** — Exec into each Kiro agent container and run the login flow:
    ```bash
    docker exec -it coding-agent-automation-agent-dotnet-1-1 kiro-cli login
    ```
-   Follow the device code flow in your browser. Auth tokens persist via the volume mount, so this is a one-time step per agent.
+   Follow the device code flow in your browser. Auth tokens persist via the volume mount (one-time step per Kiro agent). OpenCode agents authenticate via environment variables and don't require this step.
 
-2. **Configure providers** — Go to Settings → Providers in the web UI and set up:
-   - **Issue Provider** — Connects to your issue tracker (requires app credentials)
-   - **Repository Provider** — Connects to your code host for clone/push operations
-   - **Agent Provider** — Points to the agent CLI binary (pre-configured in Docker)
-   - **Pipeline Provider** (optional) — Connects to your CI system for external checks
+2. **Configure providers** — Go to Settings → Providers in the web UI and set up Issue, Repository, Agent, and (optionally) Pipeline/CI providers.
 
-3. **Configure label routing** — Go to Settings → Label Routing and set up Agent Profiles, Quality Gate Configs, and Reviewer Configs for your stack.
+3. **Configure label routing** — Set up Agent Profiles, Quality Gate Configs, and Reviewer Configs for your stack.
 
-4. **Create a pipeline job template** — Go to Agent Coding and add a template linking your providers.
+4. **Create a pipeline job template** — Link your providers and enable the desired work types (implementation, review, decomposition).
 
 5. **Start a run** — Select a template, browse issues, and dispatch. Or enable closed-loop mode to process `agent:next` issues automatically.
-
-## Provider Configuration
-
-The pipeline supports multiple provider backends. Each provider type requires specific settings.
-
-### GitHub Configuration
-
-```json
-{
-  "providerType": "GitHub",
-  "settings": {
-    "owner": "my-org",
-    "repo": "my-repo",
-    "appId": "123456",
-    "privateKeyBase64": "base64-encoded-pem-key",
-    "installationId": "78901234"
-  }
-}
-```
-
-### GitLab Configuration
-
-```json
-{
-  "providerType": "GitLab",
-  "settings": {
-    "apiUrl": "https://gitlab.com",
-    "accessToken": "glpat-xxxxxxxxxxxxxxxxxxxx",
-    "projectId": "12345",
-    "baseBranch": "main"
-  }
-}
-```
-
-## Project Structure
-
-```
-src/
-  CodingAgentWebUI/                    — Blazor Server app (UI, DI wiring, entry point)
-  CodingAgentWebUI.Pipeline/           — Core library (interfaces, models, orchestration)
-  CodingAgentWebUI.Pipeline.CodeReview/ — Code review parsing (findings parser, inline comments, diff hunks)
-  CodingAgentWebUI.Infrastructure/     — Provider implementations (see table below)
-  CodingAgentWebUI.Orchestration/      — Agent registry, job dispatch, run tracking
-  CodingAgentWebUI.Agent/              — Agent worker container (SignalR client, CLI invocation)
-  CodingAgentWebUI.Agent.KiroCli/      — Kiro CLI agent provider (process wrapper)
-  CodingAgentWebUI.Agent.OpenCode/     — OpenCode agent provider (alternative agent backend)
-  KiroCliLib/                          — Shared library (agent CLI process management)
-tests/
-  CodingAgentWebUI.UnitTests/              — WebUI unit tests
-  CodingAgentWebUI.Pipeline.UnitTests/     — Pipeline core unit + property tests
-  CodingAgentWebUI.Infrastructure.UnitTests/ — Infrastructure unit tests
-  CodingAgentWebUI.Infrastructure.IntegrationTests/ — Infrastructure integration tests
-  CodingAgentWebUI.Agent.UnitTests/        — Agent unit tests
-  CodingAgentWebUI.IntegrationTests/       — Integration tests (bUnit)
-  CodingAgentWebUI.E2ETests/               — End-to-end tests
-  KiroCliLib.UnitTests/                    — KiroCliLib unit tests
-  CodingAgentWebUI.TestUtilities/          — Shared test utilities
-dockerfiles/
-  webui.Dockerfile                    — Orchestrator (web UI)
-  kiro/
-    agent-kiro-dotnet10.Dockerfile      — Kiro CLI .NET 10 agent container
-    agent-kiro-python312.Dockerfile     — Kiro CLI Python 3.12 agent container
-    agent-kiro-java21.Dockerfile        — Kiro CLI Java 21 agent container
-  opencode/
-    agent-opencode-dotnet10.Dockerfile  — OpenCode .NET 10 agent container
-    agent-opencode-java21.Dockerfile    — OpenCode Java 21 agent container
-    agent-opencode-python312.Dockerfile — OpenCode Python 3.12 agent container
-    entrypoint.sh                       — OpenCode agent entrypoint script
-  e2e-tests.Dockerfile                — E2E test runner
-config/
-  pipeline/          — Provider configs, quality gates, profiles, run history
-  appsettings.json   — Application configuration
-```
-
-## Volume Mounts
-
-### Orchestrator
-
-| Mount | Container Path | Purpose |
-|-------|---------------|---------|
-| Pipeline config | `/app/config/pipeline` | Provider configs, quality gates, profiles, run history (persists across restarts) |
-
-### Agent Containers
-
-| Mount | Container Path | Purpose |
-|-------|---------------|---------|
-| Agent CLI auth | `/home/ubuntu/.local/share/kiro-cli` | Agent CLI login tokens |
-| SSO cache | `/home/ubuntu/.aws` | SSO cache for agent CLI auth (mounted read-only) |
-
-Each agent container needs its own CLI data volume to avoid SQLite corruption from concurrent access. Workspaces are created inside the container at `/app/workspaces/` — no volume mount needed.
-
-## Architecture
-
-The application follows Clean Architecture with a multi-container deployment:
-
-```mermaid
-graph TB
-    Browser[Web Browser]
-    
-    subgraph Orchestrator["Orchestrator Container"]
-        WebUI[WebUI<br/>Blazor Server]
-        Orch[Orchestration<br/>dispatch, tracking]
-        Infra[Infrastructure<br/>providers, config store]
-        Core[Pipeline Core<br/>interfaces, models]
-    end
-    
-    subgraph Agents["Agent Containers"]
-        A1[Agent .NET<br/>KiroCliLib]
-        A2[Agent Python<br/>KiroCliLib]
-        A3[Agent Java<br/>KiroCliLib]
-    end
-    
-    Browser -->|HTTP/SignalR| WebUI
-    WebUI --> Orch
-    Orch --> Infra
-    Orch --> Core
-    Infra --> Core
-    Orch -->|SignalR<br/>job dispatch| A1
-    Orch -->|SignalR<br/>job dispatch| A2
-    Orch -->|SignalR<br/>job dispatch| A3
-```
-
-- **Pipeline (Core)** — Interfaces, models, orchestration services. Zero infrastructure dependencies.
-- **Infrastructure** — Provider implementations (see table below).
-- **Orchestration** — Agent registry, job dispatch, run tracking, token vending (issues short-lived auth tokens to agent containers for API calls).
-- **WebUI** — Blazor Server components, SignalR hub for agent communication.
-- **Agent** — Standalone worker container connecting via SignalR, executes coding agent CLI.
-- **KiroCliLib** — Shared library for agent CLI process management and output parsing.
-
-### Provider Implementations
-
-The pipeline defines abstract provider interfaces in the core layer. Concrete implementations live in the Infrastructure and Agent projects.
-
-| Provider | Interface | Purpose | Implementations |
-|----------|-----------|---------|----------------|
-| Issue | `IIssueProvider` | Fetch issues, manage labels, post comments, create issues | GitHub (Octokit), GitLab (NGitLab) |
-| Repository | `IRepositoryProvider` | Clone repos, create branches, commit/push, create MRs/PRs | GitHub (LibGit2Sharp + Octokit), GitLab (LibGit2Sharp + NGitLab) |
-| Agent | `IAgentProvider` | Execute coding agent for analysis/implementation/review | Kiro CLI (process wrapper) |
-| Pipeline/CI | `IPipelineProvider` | Check external CI status for a branch/commit | GitHub Actions (Octokit), GitLab CI (NGitLab) |
-
-Adding a new implementation requires implementing the corresponding interface and registering it in the provider factory. GitLab is a working example of this extensibility — see the `src/CodingAgentWebUI.Infrastructure/GitLab/` directory for the full implementation pattern.
-
-## Testing
-
-```bash
-# Run all tests
-dotnet test
-
-# Run in Docker (Linux)
-docker run --rm -v "${PWD}:/app" -w /app mcr.microsoft.com/dotnet/sdk:10.0.300 dotnet test
-```
-
-## Development
-
-```bash
-dotnet build
-dotnet run --project src/CodingAgentWebUI
-```
-
-### Code Conventions
-
-- Microsoft C# coding conventions, SOLID principles
-- Immutability patterns (`init`-only properties, `IReadOnlyList<T>`)
-- Input validation with `ArgumentNullException.ThrowIfNull`
-- Async I/O with `CancellationToken` propagation
 
 ## License
 

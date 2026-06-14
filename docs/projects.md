@@ -172,26 +172,6 @@ On first startup (or upgrade from a pre-projects version), the system automatica
 
 The Default project behaves identically to any other project: you can rename it, disable it, override settings, and move templates in or out. The only restriction is deletion.
 
-### Migration Behavior
-
-```mermaid
-flowchart TD
-    A[System startup] --> B{Projects directory<br/>has files?}
-    B -->|Yes| C[Load existing projects]
-    B -->|No| D{Templates exist in<br/>pipeline-config.json?}
-    D -->|Yes| E[Create Default project<br/>with all template IDs]
-    D -->|No| F[Create empty Default project]
-    E --> G[Log: Migrated N templates]
-    F --> G
-    C --> H{Default project<br/>file present?}
-    H -->|Yes| I[Normal operation]
-    H -->|No| J[Self-heal: recreate Default]
-    J --> I
-    G --> I
-```
-
-The migration is idempotent — running it multiple times produces the same result. Templates remain stored in `pipeline-config.json` (Phase 1) — projects only hold ownership IDs referencing them.
-
 ## Template Management
 
 Every template belongs to exactly one project. There is no "unassigned" state.
@@ -238,19 +218,6 @@ A single-project setup where the goal is behavioral customization without cross-
    - `AnalysisPrompt`: Custom Java-focused instructions
 
 **Result:** All runs dispatched from templates in this project use the overridden settings. Other projects continue using global defaults.
-
-### Data Flow
-
-```mermaid
-flowchart TD
-    A[Poll Cycle] --> B[Load projects]
-    B --> C[Flatten: Java Monolith templates]
-    C --> D[Poll template issue provider]
-    D --> E{Issue found?}
-    E -->|Yes| F[Resolve settings:<br/>Global → Project overrides]
-    F --> G[Dispatch with resolved config]
-    G --> H[Agent receives Java-tuned config]
-```
 
 ## Use Case: Multi-Repo (Cross-Repo Decomposition)
 
@@ -338,47 +305,8 @@ All created issues receive the `agent:next` and `agent:generated` labels regardl
 
 The project-level epic flow coexists with existing per-template decomposition:
 
-- **Without `EpicIssueProviderId`:** Each template with `DecompositionEnabled` polls its own issue provider for epics (existing behavior, unchanged)
-- **With `EpicIssueProviderId`:** The project additionally polls the centralized tracker. Both sources are active simultaneously
-- **Deduplication:** The same epic cannot be dispatched twice — the system checks `IsIssueBeingProcessed` / `IsIssueQueued` across both polling sources
-
-## Pipeline Loop Integration
-
-The pipeline loop iterates projects instead of reading templates directly from the global config:
-
-```mermaid
-flowchart TD
-    A[Poll cycle start] --> B[LoadProjectsAsync]
-    B --> C[FlattenTemplates]
-    C --> D[For each enabled project<br/>alphabetical by name]
-    D --> E[For each template in TemplateIds order]
-    E --> F{Project enabled?}
-    F -->|No| G[Skip all templates]
-    F -->|Yes| H{Template enabled?}
-    H -->|No| I[Skip template]
-    H -->|Yes| J[Poll for issues/PRs/epics]
-    J --> K[Dispatch with project reference]
-```
-
-**Key behaviors:**
-- A disabled project skips ALL its templates regardless of individual template `Enabled` flags
-- All templates share a single FIFO dispatch queue (no per-project parallelization)
-- The project reference is captured at cycle start and passed through to dispatch for settings resolution
-- Orphaned templates (data corruption) are auto-assigned to the Default project on load
-
-## Observability
-
-Pipeline runs carry project metadata for filtering and debugging:
-
-| Field | Location | Description |
-|-------|----------|-------------|
-| `ProjectId` | PipelineRun | Project that owned the template at dispatch time |
-| `ProjectName` | PipelineRun, PipelineRunSummary | Display name for UI rendering |
-| `DecompositionSource` | PipelineRun | `"project-level"` or `"template-level"` for decomposition runs |
-| `pipeline.project_id` | OpenTelemetry tag | Project ID on all pipeline activities |
-| `pipeline.project_name` | OpenTelemetry tag | Project name on all pipeline activities |
-
-The run history table includes a "Project" column for quick filtering.
+- **Without `EpicIssueProviderId`:** Each template with `DecompositionEnabled` polls its own issue provider for epics
+- **With `EpicIssueProviderId`:** The project additionally polls the centralized tracker
 
 ## UI Management
 
