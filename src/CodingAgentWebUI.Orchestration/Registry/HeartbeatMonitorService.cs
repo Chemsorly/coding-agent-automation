@@ -236,6 +236,10 @@ public sealed class HeartbeatMonitorService : BackgroundService
             ? run.RepoProviderConfigId
             : run.IssueProviderConfigId;
 
+        _logger.Warning(
+            "HeartbeatMonitor swapping label to agent:error for run {RunId} (issue={IssueIdentifier}, agent={AgentId}, reason={FailureReason})",
+            run.RunId, run.IssueIdentifier, run.AgentId, run.FailureReason);
+
         return _labelSwapper.SwapLabelAsync(providerConfigId, run.IssueIdentifier, AgentLabels.Error, targetKind, ct);
     }
 }

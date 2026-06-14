@@ -230,6 +230,8 @@ public sealed partial class AgentJobDispatcher
             // Swap label to agent:in-progress before dispatch so the PR is immediately marked
             // in-progress, preventing the loop from re-dispatching it on the next cycle.
             // CloneRepositoryStep skips the swap for agent-dispatched runs (AgentId is set).
+            _logger.Information("Dispatch (review): swapping label to agent:in-progress for PR {PrIdentifier} (provider={ProviderId})",
+                request.PrIdentifier, request.RepoProviderId);
             await _labelSwapper.SwapLabelAsync(
                 request.RepoProviderId, request.PrIdentifier, AgentLabels.InProgress, LabelTargetKind.PullRequest, ct);
 
@@ -469,6 +471,8 @@ public sealed partial class AgentJobDispatcher
 
             // Swap label to agent:in-progress before dispatch so the epic is immediately marked
             // in-progress, preventing the loop from re-dispatching it on the next cycle.
+            _logger.Information("Dispatch (decomposition): swapping label to agent:in-progress for epic {EpicIdentifier} (provider={ProviderId})",
+                epicIdentifier, issueProviderId);
             await _labelSwapper.SwapLabelAsync(issueProviderId, epicIdentifier, AgentLabels.InProgress, ct);
 
             await AssignAndSendAsync(agent, run.RunId, message, ct);
@@ -688,6 +692,8 @@ public sealed partial class AgentJobDispatcher
         }
 
         // Swap label to agent:in-progress before dispatch (REQ-7.2)
+        _logger.Information("Dispatch: swapping label to agent:in-progress for issue {IssueIdentifier} (provider={ProviderId})",
+            issueIdentifier, issueProviderId);
         await _labelSwapper.SwapLabelAsync(issueProviderId, issueIdentifier, AgentLabels.InProgress, ct);
 
         // Detect existing analysis and rework state from comments

@@ -653,6 +653,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     }
     private async Task SwapAgentLabelAsync(PipelineRun run, string issueId, string newLabel, CancellationToken ct)
     {
+        _logger.Information(
+            "Pipeline {RunId} SwapAgentLabelAsync: {IssueIdentifier} → {Label} (runType={RunType}, step={CurrentStep})",
+            run.RunId, issueId, newLabel, run.RunType, run.CurrentStep);
         try
         {
             if (run.RunType == PipelineRunType.Review)
@@ -664,6 +667,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             else
             {
                 // Implementation runs: use the active issue provider directly (existing behavior)
+                _logger.Debug(
+                    "Pipeline {RunId} SwapAgentLabelAsync using direct provider path (bypassing LabelSwapper) for issue {IssueIdentifier} → {Label}",
+                    run.RunId, issueId, newLabel);
                 await AgentLabelOperations.SwapAsync(
                     (label, c) => _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, c),
                     (label, c) => _providerManager.ActiveIssueProvider!.AddLabelAsync(issueId, label, c),
@@ -705,6 +711,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         run.FailureReason = reason;
         run.CompletedAt = DateTime.UtcNow;
         run.CompletedAtOffset = DateTimeOffset.UtcNow;
+        _logger.Information(
+            "Pipeline {RunId} PipelineOrchestrationService.FailRunAsync swapping label to agent:error for issue {IssueIdentifier} (reason={Reason}, step={CurrentStep})",
+            run.RunId, run.IssueIdentifier, reason, run.CurrentStep);
         await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Error, ct);
         _lifecycle.EmitOutputLine($"❌ Pipeline failed: {reason}");
         _lifecycle.TransitionTo(run, PipelineStep.Failed);

@@ -54,6 +54,8 @@ public sealed partial class AgentHub
             // in case of misconfiguration. Human intervention needed to retry.
             try
             {
+                _logger.Warning("JobRejected: swapping label to agent:error for issue {IssueIdentifier} (jobId={JobId})",
+                    run.IssueIdentifier, jobId);
                 await SwapLabelAsync(run, AgentLabels.Error, GetLabelTargetKind(run));
             }
             catch (Exception ex)
@@ -155,6 +157,9 @@ public sealed partial class AgentHub
 
             if (label is not null)
             {
+                _logger.Information(
+                    "Job {JobId} ReportJobCompleted swapping label to {Label} for issue {IssueIdentifier} (finalStep={FinalStep}, finalLabel={FinalLabel})",
+                    jobId, label, run.IssueIdentifier, payload.FinalStep, payload.FinalLabel ?? "null");
                 var swLabel = Stopwatch.StartNew();
                 await SwapLabelAsync(run, label, GetLabelTargetKind(run));
                 _logger.Information("Job {JobId} SwapLabelAsync completed in {ElapsedMs}ms", jobId, swLabel.ElapsedMilliseconds);
@@ -435,6 +440,10 @@ public sealed partial class AgentHub
         // Derive targetKind from the run's RunType rather than trusting the caller-supplied value.
         // This prevents a buggy or compromised agent from routing label operations to the wrong entity.
         var kind = GetLabelTargetKind(run);
+
+        _logger.Information(
+            "RequestLabelChange: job {JobId} requesting label {Label} for issue {IssueIdentifier} (agent={AgentId}, currentStep={CurrentStep})",
+            jobId, newLabel, run.IssueIdentifier, run.AgentId, run.CurrentStep);
 
         await SwapLabelAsync(run, newLabel, kind);
     }
