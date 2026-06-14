@@ -147,6 +147,22 @@ public class SerilogOtlpExtensionsTests : IDisposable
         logger.Dispose();
     }
 
+    [Fact]
+    public void WriteToOtlpIfConfigured_NullLoggerConfiguration_ThrowsArgumentNullException()
+    {
+        var ex = Assert.Throws<ArgumentNullException>(() =>
+            SerilogOtlpExtensions.WriteToOtlpIfConfigured(null!, "svc"));
+        Assert.Equal("loggerConfiguration", ex.ParamName);
+    }
+
+    [Fact]
+    public void WriteToOtlpIfConfigured_NullServiceName_ThrowsArgumentNullException()
+    {
+        var ex = Assert.Throws<ArgumentNullException>(() =>
+            new LoggerConfiguration().WriteToOtlpIfConfigured(null!));
+        Assert.Equal("serviceName", ex.ParamName);
+    }
+
     private static void SetEnvVar(string name, string? value) =>
         Environment.SetEnvironmentVariable(name, value);
 }
