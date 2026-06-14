@@ -108,6 +108,10 @@ public sealed partial class PipelineLoopService
             }
 
             // Step 3: Poll per-template queues (issues + PRs + decomposition)
+            var failuresBefore = snapshot.PollableTemplates.DistinctBy(t => t.Id).ToDictionary(
+                t => t.Id,
+                t => _templateStatuses.TryGetValue(t.Id, out var s) ? s.ConsecutiveFailures : 0);
+
             var (issueQueues, prQueues, decompositionQueues) = await PollTemplateQueuesAsync(
                 snapshot.PollableTemplates, snapshot.MaxPagesToFetch, ct);
 
@@ -120,12 +124,20 @@ public sealed partial class PipelineLoopService
             if (_stopRequested || ct.IsCancellationRequested) break;
 
             // Emit cycle-level poll metrics
-            // TODO: totalItemsFound does not include projectLevelDecompositionQueues — issues_found under-reports when project-level epics are found
             var totalItemsFound = issueQueues.Values.Sum(q => q.Count)
                 + prQueues.Values.Sum(q => q.Count)
-                + decompositionQueues.Values.Sum(q => q.Count);
-            // TODO: LoopPolls emits "success" even when individual template polls failed (caught per-template). Consider emitting "failure" when all templates failed within the cycle.
-            PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", "success"));
+                + decompositionQueues.Values.Sum(q => q.Count)
+                + projectLevelDecompositionQueues.Values.Sum(q => q.Count);
+            var templatePollFailures = snapshot.PollableTemplates.Count(t =>
+            {
+                var before = failuresBefore[t.Id];
+                var after = _templateStatuses.TryGetValue(t.Id, out var s) ? s.ConsecutiveFailures : 0;
+                return after > before;
+            });
+            var pollResult = templatePollFailures == 0 ? "success"
+                : snapshot.PollableTemplates.Count > 0 && templatePollFailures >= snapshot.PollableTemplates.Count ? "failure"
+                : "partial_failure";
+            PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", pollResult));
             if (totalItemsFound > 0)
                 PipelineTelemetry.LoopIssuesFound.Add(totalItemsFound);
 
@@ -910,7 +922,10 @@ public sealed partial class PipelineLoopService
         }
 
         // Emit skipped_max_runs for items remaining in queues after budget exhaustion
-        // TODO: Remaining queue items may include items that would have been skipped for other reasons (label, already processing, dependency) — this may overcount skipped_max_runs
+        // NOTE: This is a known approximation — remaining queue items may include items that would
+        // have been skipped for other reasons (label mismatch, already processing, dependency blocked).
+        // Filtering them here would duplicate the dispatch eligibility logic. The overcount is acceptable
+        // for operational dashboards as it indicates backpressure from the max_runs_per_cycle limit.
         if (remaining <= 0)
         {
             var remainingItems = issueQueues.Values.Sum(q => q.Count)

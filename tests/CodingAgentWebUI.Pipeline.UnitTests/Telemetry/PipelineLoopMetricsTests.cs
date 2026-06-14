@@ -51,6 +51,15 @@ public class PipelineLoopMetricsTests : IDisposable
     }
 
     [Fact]
+    public void LoopPolls_EmitsWithResultPartialFailure()
+    {
+        PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", "partial_failure"));
+
+        _counters.Should().Contain(c => c.Name == "pipeline.loop.polls"
+            && c.Tags.Contains(new KeyValuePair<string, object?>("result", "partial_failure")));
+    }
+
+    [Fact]
     public void LoopIssuesFound_EmitsWithCorrectCount()
     {
         PipelineTelemetry.LoopIssuesFound.Add(7);
