@@ -155,150 +155,159 @@ internal partial class AgentPhaseExecutor
                 run.RunId, agents.Count, context.AgentProvider.ProviderType);
         }
 
-        for (var i = 0; i < maxIterations; i++)
+        AgentResult? acAgentResult = null;
+        try
         {
-            using var iterationActivity = PipelineTelemetry.ActivitySource.StartActivity("CodeReview.Iteration");
-            iterationActivity?.SetTag("pipeline.run_id", run.RunId);
-            iterationActivity?.SetTag("pipeline.issue", run.IssueIdentifier);
-            iterationActivity?.SetTag("code_review.iteration", i + 1);
-            iterationActivity?.SetTag("code_review.max_iterations", maxIterations);
-            iterationActivity?.SetTag("code_review.parallel", useParallel);
-
-            run.CodeReviewIterationInProgress = i + 1;
-            context.Callbacks.TransitionTo(PipelineStep.ReviewingCode);
-            _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
-                run.RunId, i + 1, maxIterations);
-
-            context.Callbacks.EmitOutputLine(useParallel
-                ? $"🔍 Starting code review iteration {i + 1}/{maxIterations} — parallel (agents: {string.Join(", ", agents.Select(a => a.Name))})"
-                : $"🔍 Starting code review iteration {i + 1}/{maxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
-
-            run.ChatHistory.Enqueue(new ChatEntry
+            for (var i = 0; i < maxIterations; i++)
             {
-                Role = ChatRole.System,
-                Content = $"Code review iteration {i + 1}/{config.CodeReview.MaxIterations} starting{(useParallel ? " (parallel)" : "")}..."
-            });
-            context.Callbacks.NotifyChange();
+                using var iterationActivity = PipelineTelemetry.ActivitySource.StartActivity("CodeReview.Iteration");
+                iterationActivity?.SetTag("pipeline.run_id", run.RunId);
+                iterationActivity?.SetTag("pipeline.issue", run.IssueIdentifier);
+                iterationActivity?.SetTag("code_review.iteration", i + 1);
+                iterationActivity?.SetTag("code_review.max_iterations", maxIterations);
+                iterationActivity?.SetTag("code_review.parallel", useParallel);
 
-            var iterationFindings = new System.Text.StringBuilder();
-            var iterationCriticalCount = 0;
-            var agentsRun = new List<string>();
+                run.CodeReviewIterationInProgress = i + 1;
+                context.Callbacks.TransitionTo(PipelineStep.ReviewingCode);
+                _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
+                    run.RunId, i + 1, maxIterations);
 
-            try
-            {
-                if (useParallel)
-                {
-                    iterationCriticalCount = await ExecuteReviewAgentsParallelAsync(
-                        context, agents, i, isolated,
-                        iterationFindings, agentsRun, ct);
-                }
-                else
-                {
-                    iterationCriticalCount = await ExecuteReviewAgentsSequentialAsync(
-                        context, agents, i, isolated,
-                        iterationFindings, agentsRun, ct);
-                }
+                context.Callbacks.EmitOutputLine(useParallel
+                    ? $"🔍 Starting code review iteration {i + 1}/{maxIterations} — parallel (agents: {string.Join(", ", agents.Select(a => a.Name))})"
+                    : $"🔍 Starting code review iteration {i + 1}/{maxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
 
-                run.CodeReviewAgentsRun = agentsRun;
-                var iterationFindingsText = iterationFindings.ToString();
-                run.CodeReviewIterationsCompleted++;
-
-                // NOTE: [UX-16] CodeReview*Count fields are cumulative across iterations — per-iteration counters deferred to separate issue
-                context.Callbacks.EmitOutputLine($"📝 Code review: {run.CodeReviewCriticalCount} critical, {run.CodeReviewWarningCount} warning, {run.CodeReviewSuggestionCount} suggestion");
-
-                if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt) && iterationCriticalCount > 0)
-                {
-                    _logger.Information("Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected across {AgentCount} agent(s), sending fix prompt",
-                        run.RunId, i + 1, iterationCriticalCount, agents.Count);
-                    context.Callbacks.EmitOutputLine($"📝 Code review: {iterationCriticalCount} critical findings — sending fix prompt");
-
-                    // Write concatenated findings from all agents to the file so the fix agent can read it
-                    var findingsFileForFix = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReviewFindingsFilePath);
-                    await File.WriteAllTextAsync(findingsFileForFix, iterationFindingsText, ct);
-
-                    var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt);
-                    _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
-
-                    await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
-                        context.AgentProvider, fixPrompt, run, config,
-                        $"Code review fix agent (iteration {i + 1})",
-                        context.Callbacks, _logger, ct,
-                        recordOutputToHistory: false,
-                        resumeSessionId: run.CodegenSessionId);
-
-                    run.ChatHistory.Enqueue(new ChatEntry
-                    {
-                        Role = ChatRole.Agent,
-                        Content = $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes"
-                    });
-                    context.Callbacks.NotifyChange();
-                }
-                else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt) && !string.IsNullOrEmpty(iterationFindingsText))
-                {
-                    // No critical findings but warnings/suggestions exist — send fix prompt then exit.
-                    // Warnings are actionable (TODO comments per fixPrompt instructions) but don't
-                    // warrant another full review cycle since no code logic changes.
-                    _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings but warnings present, sending fix prompt then exiting review loop",
-                        run.RunId, i + 1);
-                    context.Callbacks.EmitOutputLine($"📝 Code review: no critical findings, applying warning fixes then completing review");
-
-                    var findingsFileForFix = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReviewFindingsFilePath);
-                    await File.WriteAllTextAsync(findingsFileForFix, iterationFindingsText, ct);
-
-                    var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt);
-                    _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
-
-                    await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
-                        context.AgentProvider, fixPrompt, run, config,
-                        $"Code review fix agent (iteration {i + 1})",
-                        context.Callbacks, _logger, ct,
-                        recordOutputToHistory: false,
-                        resumeSessionId: run.CodegenSessionId);
-
-                    run.ChatHistory.Enqueue(new ChatEntry
-                    {
-                        Role = ChatRole.Agent,
-                        Content = $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)"
-                    });
-                    context.Callbacks.NotifyChange();
-                    break;
-                }
-                else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt))
-                {
-                    _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no findings, exiting review loop",
-                        run.RunId, i + 1);
-
-                    // Early exit: no findings at all — re-reviewing won't produce different results.
-                    break;
-                }
-            }
-            catch (OperationCanceledException) when (context.OrchestratorCts?.IsCancellationRequested == true)
-            {
-                run.CodeReviewAgentsRun = agentsRun;
-                throw;
-            }
-            catch (Exception ex)
-            {
-                run.CodeReviewAgentsRun = agentsRun;
-                _logger.Warning(ex, "Pipeline {RunId} code review iteration {Iteration} failed, skipping remaining reviews",
-                    run.RunId, i + 1);
                 run.ChatHistory.Enqueue(new ChatEntry
                 {
                     Role = ChatRole.System,
-                    Content = $"Code review iteration {i + 1} failed: {ex.Message}"
+                    Content = $"Code review iteration {i + 1}/{config.CodeReview.MaxIterations} starting{(useParallel ? " (parallel)" : "")}..."
                 });
                 context.Callbacks.NotifyChange();
-                break;
+
+                var iterationFindings = new System.Text.StringBuilder();
+                var iterationCriticalCount = 0;
+                var agentsRun = new List<string>();
+
+                try
+                {
+                    if (useParallel)
+                    {
+                        iterationCriticalCount = await ExecuteReviewAgentsParallelAsync(
+                            context, agents, i, isolated,
+                            iterationFindings, agentsRun, ct);
+                    }
+                    else
+                    {
+                        iterationCriticalCount = await ExecuteReviewAgentsSequentialAsync(
+                            context, agents, i, isolated,
+                            iterationFindings, agentsRun, ct);
+                    }
+
+                    run.CodeReviewAgentsRun = agentsRun;
+                    var iterationFindingsText = iterationFindings.ToString();
+                    run.CodeReviewIterationsCompleted++;
+
+                    // NOTE: [UX-16] CodeReview*Count fields are cumulative across iterations — per-iteration counters deferred to separate issue
+                    context.Callbacks.EmitOutputLine($"📝 Code review: {run.CodeReviewCriticalCount} critical, {run.CodeReviewWarningCount} warning, {run.CodeReviewSuggestionCount} suggestion");
+
+                    if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt) && iterationCriticalCount > 0)
+                    {
+                        _logger.Information("Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected across {AgentCount} agent(s), sending fix prompt",
+                            run.RunId, i + 1, iterationCriticalCount, agents.Count);
+                        context.Callbacks.EmitOutputLine($"📝 Code review: {iterationCriticalCount} critical findings — sending fix prompt");
+
+                        // Write concatenated findings from all agents to the file so the fix agent can read it
+                        var findingsFileForFix = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReviewFindingsFilePath);
+                        await File.WriteAllTextAsync(findingsFileForFix, iterationFindingsText, ct);
+
+                        var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt);
+                        _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
+
+                        await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
+                            context.AgentProvider, fixPrompt, run, config,
+                            $"Code review fix agent (iteration {i + 1})",
+                            context.Callbacks, _logger, ct,
+                            recordOutputToHistory: false,
+                            resumeSessionId: run.CodegenSessionId);
+
+                        run.ChatHistory.Enqueue(new ChatEntry
+                        {
+                            Role = ChatRole.Agent,
+                            Content = $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes"
+                        });
+                        context.Callbacks.NotifyChange();
+                    }
+                    else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt) && !string.IsNullOrEmpty(iterationFindingsText))
+                    {
+                        // No critical findings but warnings/suggestions exist — send fix prompt then exit.
+                        // Warnings are actionable (TODO comments per fixPrompt instructions) but don't
+                        // warrant another full review cycle since no code logic changes.
+                        _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings but warnings present, sending fix prompt then exiting review loop",
+                            run.RunId, i + 1);
+                        context.Callbacks.EmitOutputLine($"📝 Code review: no critical findings, applying warning fixes then completing review");
+
+                        var findingsFileForFix = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReviewFindingsFilePath);
+                        await File.WriteAllTextAsync(findingsFileForFix, iterationFindingsText, ct);
+
+                        var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt);
+                        _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
+
+                        await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
+                            context.AgentProvider, fixPrompt, run, config,
+                            $"Code review fix agent (iteration {i + 1})",
+                            context.Callbacks, _logger, ct,
+                            recordOutputToHistory: false,
+                            resumeSessionId: run.CodegenSessionId);
+
+                        run.ChatHistory.Enqueue(new ChatEntry
+                        {
+                            Role = ChatRole.Agent,
+                            Content = $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)"
+                        });
+                        context.Callbacks.NotifyChange();
+                        break;
+                    }
+                    else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt))
+                    {
+                        _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no findings, exiting review loop",
+                            run.RunId, i + 1);
+
+                        // Early exit: no findings at all — re-reviewing won't produce different results.
+                        break;
+                    }
+                }
+                catch (OperationCanceledException) when (context.OrchestratorCts?.IsCancellationRequested == true)
+                {
+                    run.CodeReviewAgentsRun = agentsRun;
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    run.CodeReviewAgentsRun = agentsRun;
+                    _logger.Warning(ex, "Pipeline {RunId} code review iteration {Iteration} failed, skipping remaining reviews",
+                        run.RunId, i + 1);
+                    run.ChatHistory.Enqueue(new ChatEntry
+                    {
+                        Role = ChatRole.System,
+                        Content = $"Code review iteration {i + 1} failed: {ex.Message}"
+                    });
+                    context.Callbacks.NotifyChange();
+                    break;
+                }
             }
+
+            run.CodeReviewIterationInProgress = 0;
+
+            // Await acceptance criteria task and parse results
+            acAgentResult = await acceptanceCriteriaTask;
+        }
+        finally
+        {
+            // Ensure the task is observed even if the loop threw (e.g., OperationCanceledException).
+            // Awaiting an already-completed task is a no-op.
+            try { await acceptanceCriteriaTask.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
         }
 
-        run.CodeReviewIterationInProgress = 0;
-
-        // TODO: If the review loop exits via OperationCanceledException (line 277), acceptanceCriteriaTask
-        // is never awaited and may still be running briefly. Consider wrapping in a finally block to await
-        // or cancel the task explicitly on early exit.
-        // Await acceptance criteria task and parse results
-        var acAgentResult = await acceptanceCriteriaTask;
         if (acAgentResult is not null)
         {
             run.AccumulateTokenUsage(acAgentResult);
