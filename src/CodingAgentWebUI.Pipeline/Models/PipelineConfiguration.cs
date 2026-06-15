@@ -388,6 +388,16 @@ public sealed record PipelineConfiguration
         init => ClosedLoop = ClosedLoop with { ClosedLoopMaxPagesToFetch = value };
     }
 
+    /// <summary>
+    /// Cooldown duration before the circuit breaker auto-resumes polling.
+    /// After this period the loop resets failure counters and retries. Default: 5 minutes.
+    /// </summary>
+    public TimeSpan ClosedLoopCircuitBreakerCooldown
+    {
+        get => ClosedLoop.ClosedLoopCircuitBreakerCooldown;
+        init => ClosedLoop = ClosedLoop with { ClosedLoopCircuitBreakerCooldown = value };
+    }
+
     // ── Multi-agent fields ──────────────────────────────────────────────
 
     /// <summary>
