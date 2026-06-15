@@ -142,7 +142,7 @@ public sealed partial class PipelineLoopService
                 PipelineTelemetry.LoopIssuesFound.Add(totalItemsFound);
 
             // Step 4: Circuit breaker
-            if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.MaxConsecutiveFailures, ct))
+            if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.MaxConsecutiveFailures, snapshot.CircuitBreakerCooldown, ct))
                 continue;
 
             // Step 5: Fair dispatch
@@ -175,6 +175,7 @@ public sealed partial class PipelineLoopService
         TimeSpan PollInterval,
         int MaxRunsPerCycle,
         int MaxConsecutiveFailures,
+        TimeSpan CircuitBreakerCooldown,
         int MaxPagesToFetch);
 
     /// <summary>
@@ -188,6 +189,7 @@ public sealed partial class PipelineLoopService
         var pollInterval = config.ClosedLoopPollInterval;
         var maxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
         var maxConsecutiveFailures = config.ClosedLoopMaxConsecutivePollFailures;
+        var circuitBreakerCooldown = config.ClosedLoopCircuitBreakerCooldown;
         var maxPagesToFetch = config.ClosedLoopMaxPagesToFetch;
 
         // Load projects and flatten templates using project-based ordering
@@ -243,7 +245,7 @@ public sealed partial class PipelineLoopService
 
         return new CycleSnapshot(
             config, projects, flattenedTemplates, enabledTemplates.AsReadOnly(), pollableTemplates.AsReadOnly(),
-            templateLookup.AsReadOnly(), pollInterval, maxRunsPerCycle, maxConsecutiveFailures, maxPagesToFetch);
+            templateLookup.AsReadOnly(), pollInterval, maxRunsPerCycle, maxConsecutiveFailures, circuitBreakerCooldown, maxPagesToFetch);
     }
 
     /// <summary>
@@ -498,11 +500,14 @@ public sealed partial class PipelineLoopService
 
     /// <summary>
     /// Step 4: Circuit breaker — trips only when ALL enabled templates are failing.
-    /// Returns true if the circuit breaker tripped (caller should continue to next cycle).
+    /// Pauses the loop for a configurable cooldown, then auto-resumes. Manual Resume/Stop
+    /// can interrupt the cooldown early. Returns true if the circuit breaker tripped
+    /// (caller should continue to next cycle).
     /// </summary>
     private async Task<bool> CheckCircuitBreakerAsync(
         IReadOnlyList<PipelineJobTemplate> enabledTemplates,
         int maxConsecutiveFailures,
+        TimeSpan cooldown,
         CancellationToken ct)
     {
         var allFailing = enabledTemplates.Count > 0 && enabledTemplates.All(t =>
@@ -516,15 +521,29 @@ public sealed partial class PipelineLoopService
 
         IsCircuitBroken = true;
         PipelineTelemetry.LoopCircuitBreakerTrips.Add(1);
-        StatusMessage = $"⚠️ Loop paused — all {enabledTemplates.Count} templates failing.";
+        StatusMessage = $"⚠️ Loop paused — all {enabledTemplates.Count} templates failing. Auto-resume in {cooldown.TotalMinutes:0.#} min.";
         NotifyChange();
-        _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures",
-            enabledTemplates.Count, maxConsecutiveFailures);
+        _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures. Auto-resuming in {Cooldown}",
+            enabledTemplates.Count, maxConsecutiveFailures, cooldown);
 
         _resumeSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        try { await _resumeSignal.Task.WaitAsync(ct); }
+        try
+        {
+            // Wait for either: manual resume/stop signal OR cooldown expiry
+            await Task.WhenAny(_resumeSignal.Task, Task.Delay(cooldown, ct)).ConfigureAwait(false);
+        }
         catch (OperationCanceledException) { return true; }
+
         if (_stopRequested) return true;
+
+        // Auto-resume: reset failure counters so next cycle gets a fresh attempt
+        ConsecutivePollFailures = 0;
+        IsCircuitBroken = false;
+        LastPollError = null;
+        StatusMessage = "🔄 Circuit breaker auto-resumed, retrying poll.";
+        NotifyChange();
+        _logger.Information("Circuit breaker auto-resumed after cooldown ({Cooldown})", cooldown);
+
         return true;
     }
 

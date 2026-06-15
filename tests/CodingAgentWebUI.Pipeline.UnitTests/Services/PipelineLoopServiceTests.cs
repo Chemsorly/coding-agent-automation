@@ -969,6 +969,72 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Loop_CircuitBreakerAutoResumes_AfterCooldownExpires()
+    {
+        var callCount = 0;
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns<int, int, IReadOnlyList<string>?, CancellationToken>((_, _, _, _) =>
+            {
+                callCount++;
+                // Fail first 3 calls to trip the breaker, then succeed
+                if (callCount <= 3)
+                    throw new HttpRequestException("Network error");
+                return Task.FromResult(new PagedResult<IssueSummary>
+                {
+                    Items = new List<IssueSummary>(),
+                    Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                });
+            });
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                PipelineJobTemplates = DefaultTemplates,
+                ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
+                ClosedLoopMaxConsecutivePollFailures = 3,
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(100),
+                ClosedLoopCircuitBreakerCooldown = TimeSpan.FromMilliseconds(300)
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        await svc.StartLoopAsync();
+
+        // Wait for circuit breaker to trip
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        Assert.True(svc.IsCircuitBroken);
+
+        // Wait for auto-resume (cooldown is 300ms)
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsCircuitBroken && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        // Should have auto-resumed without manual intervention
+        Assert.False(svc.IsCircuitBroken);
+        Assert.Equal(0, svc.ConsecutivePollFailures);
+        Assert.True(svc.IsLoopActive);
+
+        // Verify polling continued after auto-resume
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (callCount < 4 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        Assert.True(callCount >= 4, $"Expected at least 4 poll attempts (3 failures + 1 after resume), got {callCount}");
+
+        svc.StopLoop();
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
+
+    [Fact]
     public async Task Loop_RateLimitWaitsUntilReset_DoesNotIncrementFailures()
     {
         var callCount = 0;

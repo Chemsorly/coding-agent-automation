@@ -111,6 +111,9 @@ public static class PipelineConstants
     /// <summary>Default maximum backoff interval for closed-loop polling (15 minutes).</summary>
     public static readonly TimeSpan DefaultClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15);
 
+    /// <summary>Default cooldown before the circuit breaker auto-resumes polling (5 minutes).</summary>
+    public static readonly TimeSpan DefaultClosedLoopCircuitBreakerCooldown = TimeSpan.FromMinutes(5);
+
     /// <summary>Default grace period before marking a disconnected agent as lost (5 minutes).</summary>
     public static readonly TimeSpan DefaultAgentDisconnectGracePeriod = TimeSpan.FromMinutes(5);
 

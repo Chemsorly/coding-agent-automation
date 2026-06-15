@@ -65,6 +65,12 @@ public sealed record ClosedLoopConfiguration
 
     public TimeSpan ClosedLoopMaxBackoffInterval { get; init; } = PipelineConstants.DefaultClosedLoopMaxBackoffInterval;
 
+    /// <summary>
+    /// Cooldown duration before the circuit breaker auto-resumes polling.
+    /// After this period the loop resets failure counters and retries. Default: 5 minutes.
+    /// </summary>
+    public TimeSpan ClosedLoopCircuitBreakerCooldown { get; init; } = PipelineConstants.DefaultClosedLoopCircuitBreakerCooldown;
+
     public int ClosedLoopMaxPagesToFetch
     {
         get => _closedLoopMaxPagesToFetch;
