@@ -166,6 +166,57 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     }
 
     [Fact]
+    public async Task Analysis_NullRecommendation_RetriesThenFails()
+    {
+        // Agent writes assessment file with explicit null recommendation — treated as incomplete
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+            {
+                var agentDir = Path.Combine(_workspacePath, ".agent");
+                Directory.CreateDirectory(agentDir);
+                File.WriteAllText(
+                    Path.Combine(_workspacePath, AgentWorkspacePaths.AnalysisFilePath),
+                    new string('x', PipelineConstants.MinAnalysisLength + 100));
+                // Write assessment with explicit null recommendation value
+                File.WriteAllText(
+                    Path.Combine(_workspacePath, AgentWorkspacePaths.AnalysisAssessmentFilePath),
+                    """{"recommendation": null, "reason": "some analysis", "concerns": []}""");
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+
+        result.Should().BeFalse();
+        _run.FailureReason.Should().Contain("Analysis failed");
+        _run.FailureReason.Should().Contain("recommendation");
+    }
+
+    [Fact]
+    public async Task Analysis_EmptyRecommendation_RetriesThenFails()
+    {
+        // Agent writes assessment with empty string recommendation — treated as incomplete
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+            {
+                var agentDir = Path.Combine(_workspacePath, ".agent");
+                Directory.CreateDirectory(agentDir);
+                File.WriteAllText(
+                    Path.Combine(_workspacePath, AgentWorkspacePaths.AnalysisFilePath),
+                    new string('x', PipelineConstants.MinAnalysisLength + 100));
+                File.WriteAllText(
+                    Path.Combine(_workspacePath, AgentWorkspacePaths.AnalysisAssessmentFilePath),
+                    """{"recommendation": "", "reason": "forgot to fill this in"}""");
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+
+        result.Should().BeFalse();
+        _run.FailureReason.Should().Contain("Analysis failed");
+        _run.FailureReason.Should().Contain("recommendation");
+    }
+
+    [Fact]
     public async Task Analysis_ExistingAnalysisComment_SkipsAgentExecution()
     {
         var comments = new[]

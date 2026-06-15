@@ -91,6 +91,43 @@ public class AnalysisConfidenceGateTests
         assessment.EstimatedComplexity.Should().BeNull();
     }
 
+    [Fact]
+    public void AnalysisAssessment_Deserializes_NullRecommendation_WhenFieldOmitted()
+    {
+        // With default JsonSerializerOptions, STJ enforces `required` and throws.
+        // With PipelineJsonOptions.Lenient (used in production), the same behavior applies.
+        // This verifies that missing 'recommendation' field throws JsonException,
+        // which ReadAssessmentAsync catches as "malformed JSON" and retries.
+        var json = """{"reason": "some reason", "concerns": []}""";
+
+        var act = () => JsonSerializer.Deserialize<AnalysisAssessment>(json, JsonOptions);
+
+        act.Should().Throw<JsonException>();
+    }
+
+    [Fact]
+    public void AnalysisAssessment_Deserializes_NullValueRecommendation()
+    {
+        // When the field is present but explicitly null — STJ assigns null despite `required string`.
+        // This is the gap that ReadAssessmentAsync's null check must catch.
+        var json = """{"recommendation": null, "reason": "forgot"}""";
+
+        var assessment = JsonSerializer.Deserialize<AnalysisAssessment>(json, JsonOptions)!;
+
+        assessment.Recommendation.Should().BeNull(
+            "because STJ allows null assignment to a required non-nullable string property");
+    }
+
+    [Fact]
+    public void AnalysisAssessment_Deserializes_EmptyRecommendation()
+    {
+        var json = """{"recommendation": ""}""";
+
+        var assessment = JsonSerializer.Deserialize<AnalysisAssessment>(json, JsonOptions)!;
+
+        assessment.Recommendation.Should().BeEmpty();
+    }
+
     // --- BuildNotReadyComment ---
 
     [Fact]

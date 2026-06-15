@@ -6,7 +6,9 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// </summary>
 public sealed class AnalysisAssessment
 {
-    // NOTE: [ARC-08a] `required` is not enforced by System.Text.Json deserialization — Recommendation can be null at runtime despite non-nullable type. Consider changing to `string?` or adding post-deserialization validation.
+    // NOTE: [ARC-08a] STJ throws when the field is entirely missing (enforced at deserialization).
+    // However, an explicit null value (e.g., {"recommendation": null}) bypasses this check and
+    // assigns null to the non-nullable string. ReadAssessmentAsync validates post-deserialization.
     public required string Recommendation { get; init; }
     public string? Reason { get; init; }
     public IReadOnlyList<string> Concerns { get; init; } = Array.Empty<string>();
