@@ -83,9 +83,9 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Helm
-        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
         with:
-          version: v3.17.0
+          version: v4.2.1
 
       - name: Helm lint
         run: helm lint helm/coding-agent-automation/ -f helm/coding-agent-automation/ci-values.yaml
@@ -249,7 +249,7 @@ jobs:
 
       - name: Generate GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.HELM_APP_ID }}
           private-key: ${{ secrets.HELM_APP_PRIVATE_KEY }}
