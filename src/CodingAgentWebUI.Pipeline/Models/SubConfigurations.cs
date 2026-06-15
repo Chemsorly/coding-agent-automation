@@ -96,6 +96,7 @@ public sealed record AgentConfiguration
 {
     public string? DefaultRequiredAgentLabels { get; init; }
     public TimeSpan AgentDisconnectGracePeriod { get; init; } = PipelineConstants.DefaultAgentDisconnectGracePeriod;
+    public TimeSpan AgentBusyProgressTimeout { get; init; } = PipelineConstants.DefaultAgentBusyProgressTimeout;
     public int OutputBufferCapacity { get; init; } = PipelineConstants.DefaultOutputBufferCapacity;
     public int OutputLinesCapacity { get; init; } = PipelineConstants.DefaultOutputLinesCapacity;
     public int ChatHistoryCapacity { get; init; } = PipelineConstants.DefaultChatHistoryCapacity;

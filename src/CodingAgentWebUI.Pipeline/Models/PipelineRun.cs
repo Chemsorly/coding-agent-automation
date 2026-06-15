@@ -28,6 +28,10 @@ public sealed class PipelineRun
 
     /// <summary>Timezone-safe shadow of <see cref="CompletedAt"/>. Set alongside the original property.</summary>
     public DateTimeOffset? CompletedAtOffset { get; set; }
+
+    /// <summary>Last time the pipeline step changed (set via ReportStepTransition). Used by HeartbeatMonitorService to detect stuck-in-Busy agents.</summary>
+    public DateTimeOffset LastStepChangeAt { get; set; }
+
     public string? WorkspacePath { get; set; }
     public string? BranchName { get; set; }
     public string? FailureReason { get; set; }
