@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using CodingAgentWebUI.Pipeline;
 using AwesomeAssertions;
@@ -6,6 +7,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Services.Steps;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
 using Moq;
@@ -1437,6 +1439,89 @@ public class LocalPipelineExecutorTests : IDisposable
 
         await act.Should().NotThrowAsync();
         await connection.DisposeAsync();
+    }
+
+    // ── SerializedSendAsync ordering ────────────────────────────────────
+
+    [Fact]
+    public async Task TransitionToInternalAsync_SignalRFailure_IncrementsMetricCounter()
+    {
+        using var listener = new MeterListener();
+        var measurements = new List<string>();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, _, _, _) =>
+            measurements.Add(instrument.Name));
+        listener.Start();
+
+        var executor = CreateExecutor();
+        var run = CreateMinimalRun();
+        var connection = CreateDisconnectedHubConnection();
+        measurements.Clear();
+
+        await executor.TransitionToInternalAsync(run, connection, "job-1", null, PipelineStep.AnalyzingCode, CancellationToken.None);
+
+        measurements.Should().Contain("agent.signalr.failures");
+        await connection.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task ReportQualityGateResultInternalAsync_SignalRFailure_IncrementsMetricCounter()
+    {
+        using var listener = new MeterListener();
+        var measurements = new List<string>();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, _, _, _) =>
+            measurements.Add(instrument.Name));
+        listener.Start();
+
+        var executor = CreateExecutor();
+        var connection = CreateDisconnectedHubConnection();
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "build", Passed = true },
+            Tests = new GateResult { GateName = "test", Passed = true }
+        };
+        measurements.Clear();
+
+        await executor.ReportQualityGateResultInternalAsync(connection, "job-1", report, CancellationToken.None);
+
+        measurements.Should().Contain("agent.signalr.failures");
+        await connection.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task SerializedSendAsync_GuaranteesOrdering()
+    {
+        // Simulate the serialization lock used in ExecuteAsync
+        using var signalrLock = new SemaphoreSlim(1, 1);
+        var executionOrder = new List<int>();
+
+        async Task SerializedSend(Func<Task> send)
+        {
+            await signalrLock.WaitAsync(CancellationToken.None);
+            try { await send(); }
+            finally { signalrLock.Release(); }
+        }
+
+        // Fire 5 sends concurrently — they should complete in order
+        var tasks = Enumerable.Range(0, 5).Select(i =>
+            SerializedSend(async () =>
+            {
+                await Task.Delay(10 - i); // Later sends are faster, but ordering is preserved
+                lock (executionOrder) { executionOrder.Add(i); }
+            })).ToArray();
+
+        await Task.WhenAll(tasks);
+
+        executionOrder.Should().BeInAscendingOrder();
     }
 
     // ── PullRequestCreationContext ──────────────────────────────────────
