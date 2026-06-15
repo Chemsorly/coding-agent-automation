@@ -51,6 +51,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var config = await _configStore.LoadPipelineConfigAsync(stoppingToken);
+        // TODO: No validation — zero or negative HeartbeatSweepIntervalSeconds will throw ArgumentOutOfRangeException from PeriodicTimer.
         var sweepInterval = TimeSpan.FromSeconds(config.HeartbeatSweepIntervalSeconds);
         _logger.Information("HeartbeatMonitorService started, sweep interval: {Interval}s", sweepInterval.TotalSeconds);
 

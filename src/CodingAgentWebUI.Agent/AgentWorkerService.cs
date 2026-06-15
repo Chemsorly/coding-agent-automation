@@ -207,6 +207,7 @@ public sealed class AgentWorkerService : BackgroundService
                 var oldManager = _hubManager;
                 var newManager = _hubManagerFactory.Create();
                 WireEventHandlers(newManager);
+                // TODO: If StartAsync fails, newManager is abandoned without disposal, leaking HubConnection resources.
                 await newManager.StartAsync(CancellationToken.None);
 
                 _hubManager = newManager;
@@ -875,6 +876,8 @@ public sealed class AgentWorkerService : BackgroundService
             MemoryUsageMb = Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024)
         };
 
+        // TODO: Race condition — if HandleTerminalClosedAsync swaps _hubManager while this read is in flight,
+        // we may invoke on a disposed connection. Consider capturing a local reference at loop start.
         await _hubManager.Connection.InvokeAsync(HubMethodNames.Heartbeat, heartbeat, ct);
     }
 
