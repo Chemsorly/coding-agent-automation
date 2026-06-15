@@ -171,10 +171,10 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// </summary>
     public CancellationToken CreateLinkedCancellationToken(CancellationToken externalToken)
     {
-        // TODO: Dispose-then-assign is not atomic. If CancelPipelineAsync() calls .Cancel() concurrently, it may hit the disposed CTS. Use Interlocked.Exchange or a lock to swap safely.
-        _cancellationTokenSource?.Dispose();
-        _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
-        return _cancellationTokenSource.Token;
+        var newCts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
+        var old = Interlocked.Exchange(ref _cancellationTokenSource, newCts);
+        old?.Dispose();
+        return newCts.Token;
     }
 
     /// <summary>Cancels the active pipeline run if one is running.</summary>
@@ -185,6 +185,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         var run = ActiveRun;
         _logger.Information("Pipeline {RunId} cancellation requested", run.RunId);
 
+        // TODO: _cancellationTokenSource is read non-atomically here. A concurrent CreateLinkedCancellationToken can Exchange+Dispose the CTS between this read and .Cancel(), causing ObjectDisposedException. Use Interlocked read or capture a local snapshot.
         _cancellationTokenSource?.Cancel();
         run.CompletedAt = DateTime.UtcNow;
         run.CompletedAtOffset = DateTimeOffset.UtcNow;

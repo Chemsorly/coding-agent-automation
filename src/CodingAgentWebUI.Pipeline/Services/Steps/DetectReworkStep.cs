@@ -18,6 +18,7 @@ internal sealed class DetectReworkStep : IPipelineStep
             if (agentPrs.Count > 0)
             {
                 // TODO: Only the most recent PR is checked; older draft PRs for the same issue remain orphaned. Consider iterating all draft PRs in agentPrs to close them.
+                // TODO: No check that a non-draft PR is still open before entering rework mode. If it was already merged, pushing to it downstream will fail.
                 var selectedPr = agentPrs.OrderByDescending(pr => pr.Number).First();
 
                 // Close stale draft PRs to prevent orphaned accumulation

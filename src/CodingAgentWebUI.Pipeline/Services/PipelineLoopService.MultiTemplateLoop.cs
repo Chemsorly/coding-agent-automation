@@ -156,8 +156,7 @@ public sealed partial class PipelineLoopService
             if (_stopRequested || ct.IsCancellationRequested) break;
 
             // Step 6: Wait before next cycle
-            // TODO: StatusMessage writes in this file (lines 159, 265, 656, 728, 808, 873) are not wrapped in lock(_lock), which can race with ResumeLoop()/StopLoop() that reset state under _lock.
-            StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} templates every {(int)snapshot.PollInterval.TotalSeconds}s.";
+            lock (_lock) { StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} templates every {(int)snapshot.PollInterval.TotalSeconds}s."; }
             NotifyChange();
             await DelayOrStop(snapshot.PollInterval, ct);
         }
@@ -263,7 +262,7 @@ public sealed partial class PipelineLoopService
 
             var template = pollableTemplates[i];
             CurrentCycleTemplateIndex = i;
-            StatusMessage = $"🔄 Polling template '{template.Name}' ({i + 1} of {pollableTemplates.Count})";
+            lock (_lock) { StatusMessage = $"🔄 Polling template '{template.Name}' ({i + 1} of {pollableTemplates.Count})"; }
 
             // Mark as currently polling
             _templateStatuses[template.Id] = (_templateStatuses.TryGetValue(template.Id, out var prev) ? prev : ConfigStatusSnapshot.Empty)
@@ -515,17 +514,17 @@ public sealed partial class PipelineLoopService
 
         if (!allFailing) return false;
 
+        // TODO: Circuit breaker now waits indefinitely for manual ResumeLoop(). For unattended closed-loop deployments, consider adding a configurable max pause duration to allow self-healing on transient failures.
         lock (_lock)
         {
             IsCircuitBroken = true;
             StatusMessage = $"⚠️ Loop paused — all {enabledTemplates.Count} templates failing.";
+            _resumeSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         }
         PipelineTelemetry.LoopCircuitBreakerTrips.Add(1);
         NotifyChange();
         _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures",
             enabledTemplates.Count, maxConsecutiveFailures);
-
-        _resumeSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try { await _resumeSignal.Task.WaitAsync(ct); }
         catch (OperationCanceledException) { return true; }
         if (_stopRequested) return true;
@@ -654,7 +653,7 @@ public sealed partial class PipelineLoopService
                     if (issue is null) return DispatchAttemptResult.Skip;
 
                     CurrentIssueIdentifier = issue.Identifier;
-                    StatusMessage = $"🔄 Dispatching #{issue.Identifier} from '{template.Name}'";
+                    lock (_lock) { StatusMessage = $"🔄 Dispatching #{issue.Identifier} from '{template.Name}'"; }
                     NotifyChange();
 
                     var dispatchProject = templateProjectLookup.GetValueOrDefault(template.Id);
@@ -726,7 +725,7 @@ public sealed partial class PipelineLoopService
                     if (pr is null) return DispatchAttemptResult.Skip;
 
                     CurrentIssueIdentifier = pr.Identifier;
-                    StatusMessage = $"🔄 Dispatching PR #{pr.Identifier} review from '{template.Name}'";
+                    lock (_lock) { StatusMessage = $"🔄 Dispatching PR #{pr.Identifier} review from '{template.Name}'"; }
                     NotifyChange();
 
                     var dispatched = await _jobDispatcher!.TryDispatchReviewAsync(
@@ -806,7 +805,7 @@ public sealed partial class PipelineLoopService
                     var phaseLabel = epicItem.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
 
                     CurrentIssueIdentifier = epicItem.Issue.Identifier;
-                    StatusMessage = $"🧩 Dispatching epic #{epicItem.Issue.Identifier} {phaseLabel} from '{template.Name}'";
+                    lock (_lock) { StatusMessage = $"🧩 Dispatching epic #{epicItem.Issue.Identifier} {phaseLabel} from '{template.Name}'"; }
                     NotifyChange();
 
                     var dispatched = await _jobDispatcher!.TryDispatchDecompositionAsync(
@@ -871,7 +870,7 @@ public sealed partial class PipelineLoopService
                         var phaseLabel = candidate.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
 
                         CurrentIssueIdentifier = candidate.Issue.Identifier;
-                        StatusMessage = $"🧩 Dispatching project-level epic #{candidate.Issue.Identifier} {phaseLabel} from '{candidate.Template.Name}'";
+                        lock (_lock) { StatusMessage = $"🧩 Dispatching project-level epic #{candidate.Issue.Identifier} {phaseLabel} from '{candidate.Template.Name}'"; }
                         NotifyChange();
 
                         try
