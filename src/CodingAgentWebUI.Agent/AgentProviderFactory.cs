@@ -77,15 +77,15 @@ public sealed class AgentProviderFactory : IProviderFactory
             $"Unsupported agent provider type: '{config.ProviderType}'");
     }
 
-    public IPipelineProvider CreatePipelineProvider(ProviderConfig config)
+    public Task<IPipelineProvider> CreatePipelineProviderAsync(ProviderConfig config, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(config);
 
         if (config.ProviderType.Equals("GitHub", StringComparison.OrdinalIgnoreCase))
-            return CreateGitHubPipelineProvider(config);
+            return Task.FromResult<IPipelineProvider>(CreateGitHubPipelineProvider(config));
 
         if (config.ProviderType.Equals("GitLab", StringComparison.OrdinalIgnoreCase))
-            return CreateGitLabPipelineProvider(config);
+            return Task.FromResult<IPipelineProvider>(CreateGitLabPipelineProvider(config));
 
         throw new NotSupportedException(
             $"Unsupported pipeline provider type: '{config.ProviderType}'");

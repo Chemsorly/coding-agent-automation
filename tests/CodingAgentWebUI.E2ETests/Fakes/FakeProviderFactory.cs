@@ -25,5 +25,5 @@ public sealed class FakeProviderFactory : IProviderFactory
     public IIssueProvider CreateIssueProvider(ProviderConfig config) => IssueProvider;
     public IRepositoryProvider CreateRepositoryProvider(ProviderConfig config) => RepositoryProvider;
     public IAgentProvider CreateAgentProvider(ProviderConfig config) => AgentProvider;
-    public IPipelineProvider CreatePipelineProvider(ProviderConfig config) => PipelineProvider;
+    public Task<IPipelineProvider> CreatePipelineProviderAsync(ProviderConfig config, CancellationToken ct) => Task.FromResult<IPipelineProvider>(PipelineProvider);
 }

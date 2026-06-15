@@ -161,7 +161,7 @@ public sealed class LocalPipelineExecutor
             {
                 var pipelineConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.PipelineProviderConfigId);
                 if (pipelineConfig is not null)
-                    pipelineProvider = providerFactory.CreatePipelineProvider(pipelineConfig);
+                    pipelineProvider = await providerFactory.CreatePipelineProviderAsync(pipelineConfig, ct);
             }
 
             // Resolve additional repo providers for cross-repo decomposition

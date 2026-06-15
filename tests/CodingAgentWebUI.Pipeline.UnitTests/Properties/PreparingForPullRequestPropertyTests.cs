@@ -259,8 +259,8 @@ public class PreparingForPullRequestPropertyTests
                     Jobs = new List<PipelineJobResult>()
                 });
 
-            factory.Setup(f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>()))
-                .Returns(mockPipelineProvider.Object);
+            factory.Setup(f => f.CreatePipelineProviderAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(mockPipelineProvider.Object);
 
             configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new List<ProviderConfig>

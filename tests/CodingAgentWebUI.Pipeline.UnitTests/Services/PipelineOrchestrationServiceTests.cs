@@ -976,10 +976,10 @@ public class PipelineOrchestrationServiceTests : IDisposable
             .ReturnsAsync(new List<ProviderConfig>());
 
         var mockPipelineProvider = new Mock<IPipelineProvider>();
-        _mockFactory.Setup(f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>())).Returns(mockPipelineProvider.Object);
+        _mockFactory.Setup(f => f.CreatePipelineProviderAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>())).ReturnsAsync(mockPipelineProvider.Object);
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        _mockFactory.Verify(f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>()), Times.Never);
+        _mockFactory.Verify(f => f.CreatePipelineProviderAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()), Times.Never);
         run.CurrentStep.Should().NotBe(PipelineStep.Failed);
     }
 
@@ -995,7 +995,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         mockPipelineProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = Array.Empty<PipelineJobResult>() });
-        _mockFactory.Setup(f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>())).Returns(mockPipelineProvider.Object);
+        _mockFactory.Setup(f => f.CreatePipelineProviderAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>())).ReturnsAsync(mockPipelineProvider.Object);
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         mockPipelineProvider.Verify(p => p.ValidateAsync(It.IsAny<CancellationToken>()), Times.Once);
@@ -1012,7 +1012,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         var mockPipelineProvider = new Mock<IPipelineProvider>();
         mockPipelineProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new HttpRequestException("GitHub API returned 401"));
-        _mockFactory.Setup(f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>())).Returns(mockPipelineProvider.Object);
+        _mockFactory.Setup(f => f.CreatePipelineProviderAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>())).ReturnsAsync(mockPipelineProvider.Object);
 
         var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         var ex = await act.Should().ThrowAsync<InvalidOperationException>();
@@ -2584,7 +2584,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 State = PipelineRunState.Failed,
                 Jobs = Array.Empty<PipelineJobResult>()
             });
-        _mockFactory.Setup(f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>())).Returns(mockPipelineProvider.Object);
+        _mockFactory.Setup(f => f.CreatePipelineProviderAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>())).ReturnsAsync(mockPipelineProvider.Object);
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
@@ -3022,7 +3022,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 State = PipelineRunState.Passed,
                 Jobs = new[] { new PipelineJobResult { Name = "build", State = PipelineRunState.Passed } }
             });
-        _mockFactory.Setup(f => f.CreatePipelineProvider(It.IsAny<ProviderConfig>())).Returns(mockPipelineProvider.Object);
+        _mockFactory.Setup(f => f.CreatePipelineProviderAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>())).ReturnsAsync(mockPipelineProvider.Object);
 
         // CommitAllAsync (4-param with blacklist): succeeds on first call (initial QG),
         // throws "No changes to commit" on second call (final QG after cleanup — no changes)

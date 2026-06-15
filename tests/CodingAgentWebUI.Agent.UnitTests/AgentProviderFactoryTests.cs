@@ -190,26 +190,26 @@ public class AgentProviderFactoryTests
     }
 
     [Fact]
-    public void CreatePipelineProvider_NullConfig_Throws()
+    public async Task CreatePipelineProviderAsync_NullConfig_Throws()
     {
         var factory = CreateFactory();
-        var act = () => factory.CreatePipelineProvider(null!);
-        act.Should().Throw<ArgumentNullException>();
+        var act = () => factory.CreatePipelineProviderAsync(null!, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentNullException>();
     }
 
     [Fact]
-    public void CreatePipelineProvider_UnsupportedType_Throws()
+    public async Task CreatePipelineProviderAsync_UnsupportedType_Throws()
     {
         var factory = CreateFactory();
         var config = CreateProviderConfig(ProviderKind.Pipeline, "Jenkins");
 
-        var act = () => factory.CreatePipelineProvider(config);
-        act.Should().Throw<NotSupportedException>()
+        var act = () => factory.CreatePipelineProviderAsync(config, CancellationToken.None);
+        await act.Should().ThrowAsync<NotSupportedException>()
             .WithMessage("*Jenkins*");
     }
 
     [Fact]
-    public void CreatePipelineProvider_GitHub_ValidConfig_ReturnsProvider()
+    public async Task CreatePipelineProviderAsync_GitHub_ValidConfig_ReturnsProvider()
     {
         var factory = CreateFactory();
         var config = new ProviderConfig
@@ -227,7 +227,7 @@ public class AgentProviderFactoryTests
             }
         };
 
-        var provider = factory.CreatePipelineProvider(config);
+        var provider = await factory.CreatePipelineProviderAsync(config, CancellationToken.None);
         provider.Should().NotBeNull();
         provider.Should().BeAssignableTo<IPipelineProvider>();
     }
@@ -283,7 +283,7 @@ public class AgentProviderFactoryTests
     }
 
     [Fact]
-    public void CreatePipelineProvider_WithOrchestratorProxy_DoesNotRequireToken()
+    public async Task CreatePipelineProviderAsync_WithOrchestratorProxy_DoesNotRequireToken()
     {
         var proxy = CreateTestProxy();
         var factory = CreateFactory(orchestratorProxy: proxy);
@@ -302,7 +302,7 @@ public class AgentProviderFactoryTests
             }
         };
 
-        var provider = factory.CreatePipelineProvider(config);
+        var provider = await factory.CreatePipelineProviderAsync(config, CancellationToken.None);
         provider.Should().NotBeNull();
         provider.Should().BeAssignableTo<IPipelineProvider>();
     }
