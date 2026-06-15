@@ -18,6 +18,8 @@
 @inject IConsolidationService ConsolidationService
 @inject ConsolidationQueueService ConsolidationQueue
 @inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
+@inject ILabelSwapper LabelSwapper
+@inject IPipelineRunHistoryService HistoryService
 @inject IJSRuntime JS
 @using Microsoft.AspNetCore.SignalR
 
@@ -904,6 +906,41 @@
 
         var agent = Registry.GetByAgentId(run.AgentId);
         if (agent == null) return;
+
+        // Short-circuit: if the run is orphan-restored (agent crashed and lost its state),
+        // the agent can't act on CancelJob — fail the run immediately on the orchestrator side.
+        if (agent.OrphanRestoredAt is not null)
+        {
+            Log.Information("Cancel short-circuit: run {RunId} is orphan-restored, failing immediately on orchestrator", run.RunId);
+            run.FailureReason = "Cancelled — agent lost job state (container restart)";
+            run.CompletedAt = DateTime.UtcNow;
+            run.CompletedAtOffset = DateTimeOffset.UtcNow;
+            run.CurrentStep = PipelineStep.Cancelled;
+
+            HistoryService.AddRunToHistory(run);
+            RunService.RemoveRun(run.RunId);
+            Dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+
+            lock (agent.SyncRoot)
+            {
+                agent.ActiveJobId = null;
+                agent.OrphanRestoredAt = null;
+            }
+            Registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+
+            try
+            {
+                await LabelSwapper.SwapLabelAsync(
+                    run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Cancelled,
+                    run.RunType == PipelineRunType.Review ? LabelTargetKind.PullRequest : LabelTargetKind.Issue,
+                    CancellationToken.None);
+            }
+            catch (Exception ex) { Log.Warning(ex, "Failed to swap label for cancelled orphan run {RunId}", run.RunId); }
+
+            RefreshData();
+            StateHasChanged();
+            return;
+        }
 
         try
         {

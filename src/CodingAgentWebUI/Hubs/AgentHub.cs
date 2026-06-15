@@ -208,8 +208,11 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
                     // disconnect grace period timer applies. If the agent truly lost the job,
                     // the HeartbeatMonitor will fail it after the grace period expires.
                     var mostRecent = orphanedRuns[^1];
-                    entry.ActiveJobId = mostRecent.RunId;
-                    entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
+                    lock (entry.SyncRoot)
+                    {
+                        entry.ActiveJobId = mostRecent.RunId;
+                        entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
+                    }
                     _facade.TransitionStatus(message.AgentId, AgentStatus.Busy);
 
                     _logger.Warning(
@@ -227,9 +230,28 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         }
         else if (entry is { ActiveJobId: not null })
         {
-            _logger.Information(
-                "Agent {AgentId} registered with active job {ActiveJobId} (status={Status})",
-                message.AgentId, entry.ActiveJobId, entry.Status);
+            // Crash recovery detection: agent registered without an active job but the
+            // registry already restored ActiveJobId (from its own prior state in the update factory).
+            // This means the agent lost its in-memory state (container restart) while the orchestrator
+            // still thinks it's working. Set OrphanRestoredAt so HeartbeatMonitor Phase 1.5 will
+            // fail the run after the grace period if the agent doesn't report progress.
+            if (message.ActiveJob is null && entry.OrphanRestoredAt is null)
+            {
+                lock (entry.SyncRoot)
+                {
+                    entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
+                }
+                _logger.Warning(
+                    "Agent {AgentId} re-registered without active job but orchestrator has {JobId} assigned (crash recovery). " +
+                    "Setting OrphanRestoredAt — HeartbeatMonitor will fail run after grace period if agent does not resume.",
+                    message.AgentId, entry.ActiveJobId);
+            }
+            else
+            {
+                _logger.Information(
+                    "Agent {AgentId} registered with active job {ActiveJobId} (status={Status})",
+                    message.AgentId, entry.ActiveJobId, entry.Status);
+            }
         }
 
         return Task.CompletedTask;

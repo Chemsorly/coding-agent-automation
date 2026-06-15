@@ -273,6 +273,111 @@ public class HeartbeatMonitorServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SweepAsync_OrphanRestoredBusy_WithinGracePeriod_DoesNotFail()
+    {
+        // Phase 1.5: Agent is Busy with OrphanRestoredAt set but still within grace period.
+        // Simulates a container restart where the orchestrator detected the crash and is waiting
+        // for the agent to resume (which it won't, but grace period hasn't expired yet).
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-1";
+        entry.OrphanRestoredAt = DateTimeOffset.UtcNow; // just now — well within 5min grace
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#50",
+            IssueTitle = "Stuck run",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = "agent-1"
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Run should still be active (grace period not expired)
+        _runService.GetRun("job-1").Should().NotBeNull();
+        entry.Status.Should().Be(AgentStatus.Busy);
+        entry.OrphanRestoredAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task SweepAsync_OrphanRestoredBusy_PastGracePeriod_FailsRunAndReturnsToIdle()
+    {
+        // Phase 1.5: Agent is Busy with OrphanRestoredAt past grace period.
+        // This is the core crash-recovery scenario: agent container restarted, re-registered
+        // without its active job, orchestrator set OrphanRestoredAt, and now the grace period
+        // expired without the agent reporting progress. Run should be failed.
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AgentDisconnectGracePeriod = TimeSpan.FromMinutes(5) });
+
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-1";
+        entry.OrphanRestoredAt = DateTimeOffset.UtcNow.AddMinutes(-10); // well past 5min
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#50",
+            IssueTitle = "Stuck run",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = "agent-1",
+            RunType = PipelineRunType.Implementation
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Run should be removed from active runs and marked failed
+        _runService.GetRun("job-1").Should().BeNull();
+        _mockHistoryService.Verify(h => h.AddRunToHistory(It.Is<PipelineRun>(r =>
+            r.RunId == "job-1" &&
+            r.FailureReason == "Agent did not resume orphaned job within grace period" &&
+            r.CurrentStep == PipelineStep.Failed)), Times.Once);
+
+        // Agent should be returned to Idle
+        entry.Status.Should().Be(AgentStatus.Idle);
+        entry.ActiveJobId.Should().BeNull();
+        entry.OrphanRestoredAt.Should().BeNull();
+
+        // Label should be swapped to error
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#50", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SweepAsync_OrphanRestoredBusy_NoOrphanRestoredAt_DoesNotTriggerPhase15()
+    {
+        // Busy agent WITHOUT OrphanRestoredAt (normal operation) should not be affected by Phase 1.5.
+        // This ensures the fix doesn't accidentally kill healthy running agents.
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-1";
+        entry.OrphanRestoredAt = null; // normal busy agent — not crash-recovered
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#50",
+            IssueTitle = "Normal run",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = "agent-1"
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Run should still be active (no OrphanRestoredAt means Phase 1.5 skips it)
+        _runService.GetRun("job-1").Should().NotBeNull();
+        entry.Status.Should().Be(AgentStatus.Busy);
+    }
+
+    [Fact]
     public async Task SweepAsync_OrphanedRun_AgentNotInRegistry_MarksRunFailedAndSwapsLabel()
     {
         // Run assigned to an agent that is NOT in the registry (orphaned)
