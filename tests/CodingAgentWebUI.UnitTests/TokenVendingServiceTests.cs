@@ -138,7 +138,7 @@ public class TokenVendingServiceTests
     }
 
     [Fact]
-    public async Task PrepareAgentConfigsAsync_ConfigWithPrivateKey_StripsKeyOnFailure()
+    public async Task PrepareAgentConfigsAsync_NonCriticalConfigWithPrivateKey_StripsKeyOnFailure()
     {
         // Use a real HttpClient that will fail (no mock handler needed — the JWT generation
         // will fail because the private key is not a valid PEM)
@@ -162,11 +162,44 @@ public class TokenVendingServiceTests
             }
         };
 
-        var result = await service.PrepareAgentConfigsAsync(configs, "repo-1", CancellationToken.None);
+        // Use a non-matching repoConfigId so this tests the non-critical fallback path
+        var result = await service.PrepareAgentConfigsAsync(configs, "other-repo-id", CancellationToken.None);
 
         // Should strip the private key even on failure
         result.Should().HaveCount(1);
         result[0].Settings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
+    }
+
+    [Fact]
+    public async Task PrepareAgentConfigsAsync_CriticalConfig_ThrowsWithDescriptiveMessage()
+    {
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
+        var configs = new List<ProviderConfig>
+        {
+            new()
+            {
+                Id = "repo-1",
+                Kind = ProviderKind.Repository,
+                ProviderType = "GitHub",
+                DisplayName = "Test Repo",
+                Settings = new Dictionary<string, string>
+                {
+                    [ProviderSettingKeys.PrivateKeyBase64] = "bm90LWEtcmVhbC1rZXk=", // "not-a-real-key"
+                    [ProviderSettingKeys.ClientId] = "client-123",
+                    [ProviderSettingKeys.InstallationId] = "456",
+                    [ProviderSettingKeys.Owner] = "test",
+                    [ProviderSettingKeys.Repo] = "test"
+                }
+            }
+        };
+
+        // Config ID matches repoConfigId — this is a critical provider
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.PrepareAgentConfigsAsync(configs, "repo-1", CancellationToken.None));
+
+        ex.Message.Should().Contain("Test Repo");
+        ex.Message.Should().Contain("repo-1");
+        ex.InnerException.Should().NotBeNull();
     }
 
     [Fact]
@@ -485,7 +518,7 @@ public class TokenVendingServiceTests
     /// **Validates: Requirements 14.2**
     /// </summary>
     [Property(MaxTest = 20)]
-    public bool PrepareAgentConfigsAsync_AnyConfigWithPrivateKey_StripsPrivateKeyBase64(
+    public bool PrepareAgentConfigsAsync_NonCriticalConfigWithPrivateKey_StripsPrivateKeyBase64(
         NonEmptyString privateKeyValue,
         NonEmptyString configId,
         ProviderKind kind)
@@ -509,14 +542,57 @@ public class TokenVendingServiceTests
 
         var service = new TokenVendingService(new Mock<ILogger>().Object, new HttpClient());
 
-        // Act: PrepareAgentConfigsAsync will fail token generation (invalid key)
-        // but should still strip the privateKeyBase64 setting
+        // Act: Use a non-matching repoConfigId so this tests the non-critical fallback path
         var result = service.PrepareAgentConfigsAsync(
-            new List<ProviderConfig> { config }, configId.Get, CancellationToken.None)
+            new List<ProviderConfig> { config }, "non-matching-repo-id", CancellationToken.None)
             .GetAwaiter().GetResult();
 
         // Assert: privateKeyBase64 must NOT be present in the result
         return result.Count == 1 && !result[0].Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64);
+    }
+
+    /// <summary>
+    /// Property 7: PrepareAgentConfigsAsync throws for critical provider token failure
+    /// When token generation fails for a config whose ID matches repoConfigId,
+    /// PrepareAgentConfigsAsync SHALL throw InvalidOperationException.
+    /// </summary>
+    [Property(MaxTest = 20)]
+    public bool PrepareAgentConfigsAsync_CriticalConfigWithPrivateKey_ThrowsOnFailure(
+        NonEmptyString privateKeyValue,
+        NonEmptyString configId,
+        ProviderKind kind)
+    {
+        // Arrange: Create a ProviderConfig with a privateKeyBase64 setting
+        var config = new ProviderConfig
+        {
+            Id = configId.Get,
+            Kind = kind,
+            ProviderType = "GitHub",
+            DisplayName = "Test Config",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.PrivateKeyBase64] = privateKeyValue.Get,
+                [ProviderSettingKeys.ClientId] = "client-123",
+                [ProviderSettingKeys.InstallationId] = "456",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo"
+            }
+        };
+
+        var service = new TokenVendingService(new Mock<ILogger>().Object, new HttpClient());
+
+        // Act & Assert: When config ID matches repoConfigId, token failure should throw
+        try
+        {
+            service.PrepareAgentConfigsAsync(
+                new List<ProviderConfig> { config }, configId.Get, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            return false; // Should have thrown
+        }
+        catch (InvalidOperationException ex)
+        {
+            return ex.Message.Contains(config.DisplayName) && ex.Message.Contains(config.Id);
+        }
     }
 
     #endregion

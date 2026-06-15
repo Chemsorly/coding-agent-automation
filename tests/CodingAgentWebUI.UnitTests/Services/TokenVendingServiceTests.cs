@@ -208,7 +208,7 @@ public class TokenVendingServiceTests
     }
 
     [Fact]
-    public async Task PrepareAgentConfigsAsync_ConfigWithPrivateKey_StripsKeyOnFailure()
+    public async Task PrepareAgentConfigsAsync_NonCriticalConfigWithPrivateKey_StripsKeyOnFailure()
     {
         var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
         // This config has a privateKeyBase64 but it's invalid, so token generation will fail
@@ -232,12 +232,46 @@ public class TokenVendingServiceTests
             }
         };
 
-        var result = await service.PrepareAgentConfigsAsync(configs, "rp-1", CancellationToken.None);
+        // Use a non-matching repoConfigId so this tests the non-critical fallback path
+        var result = await service.PrepareAgentConfigsAsync(configs, "other-repo-id", CancellationToken.None);
 
         result.Should().HaveCount(1);
         result[0].Id.Should().Be("rp-1");
         result[0].Settings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
         result[0].Settings.Should().ContainKey(ProviderSettingKeys.Owner);
+    }
+
+    [Fact]
+    public async Task PrepareAgentConfigsAsync_CriticalConfigWithPrivateKey_ThrowsOnFailure()
+    {
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
+        var notPemBase64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("not a pem key"));
+        var configs = new List<ProviderConfig>
+        {
+            new()
+            {
+                Id = "rp-1",
+                Kind = ProviderKind.Repository,
+                ProviderType = "GitHub",
+                DisplayName = "Repo",
+                Settings = new Dictionary<string, string>
+                {
+                    [ProviderSettingKeys.PrivateKeyBase64] = notPemBase64,
+                    [ProviderSettingKeys.ClientId] = "123",
+                    [ProviderSettingKeys.InstallationId] = "456",
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo"
+                }
+            }
+        };
+
+        // Config ID matches repoConfigId — this is a critical provider
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.PrepareAgentConfigsAsync(configs, "rp-1", CancellationToken.None));
+
+        ex.Message.Should().Contain("Repo");
+        ex.Message.Should().Contain("rp-1");
+        ex.InnerException.Should().NotBeNull();
     }
 
     [Fact]
