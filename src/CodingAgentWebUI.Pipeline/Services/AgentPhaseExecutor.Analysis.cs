@@ -289,7 +289,11 @@ internal partial class AgentPhaseExecutor
         {
             var json = await File.ReadAllTextAsync(assessmentPath, ct);
             var result = JsonSerializer.Deserialize<AnalysisAssessment>(json, PipelineJsonOptions.Lenient);
-            return result ?? throw new AnalysisIncompleteException("analysis-assessment.json deserialized to null");
+            if (result is null)
+                throw new AnalysisIncompleteException("analysis-assessment.json deserialized to null");
+            if (string.IsNullOrWhiteSpace(result.Recommendation))
+                throw new AnalysisIncompleteException("analysis-assessment.json missing required 'recommendation' field");
+            return result;
         }
         catch (JsonException ex)
         {
