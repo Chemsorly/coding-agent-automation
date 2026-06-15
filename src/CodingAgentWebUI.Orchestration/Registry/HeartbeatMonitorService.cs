@@ -22,9 +22,6 @@ public sealed class HeartbeatMonitorService : BackgroundService
     private readonly IConfigurationStore _configStore;
     private readonly ILogger _logger;
 
-    private static readonly TimeSpan SweepInterval = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan HeartbeatTimeout = TimeSpan.FromSeconds(90);
-
     public HeartbeatMonitorService(
         AgentRegistryService registry,
         OrchestratorRunService runService,
@@ -53,9 +50,12 @@ public sealed class HeartbeatMonitorService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.Information("HeartbeatMonitorService started, sweep interval: {Interval}s", SweepInterval.TotalSeconds);
+        var config = await _configStore.LoadPipelineConfigAsync(stoppingToken);
+        // TODO: No validation — zero or negative HeartbeatSweepIntervalSeconds will throw ArgumentOutOfRangeException from PeriodicTimer.
+        var sweepInterval = TimeSpan.FromSeconds(config.HeartbeatSweepIntervalSeconds);
+        _logger.Information("HeartbeatMonitorService started, sweep interval: {Interval}s", sweepInterval.TotalSeconds);
 
-        using var timer = new PeriodicTimer(SweepInterval);
+        using var timer = new PeriodicTimer(sweepInterval);
 
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
@@ -86,6 +86,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         var agents = _registry.GetAllAgents();
         var pipelineConfig = await _configStore.LoadPipelineConfigAsync(ct);
         var gracePeriod = pipelineConfig.AgentDisconnectGracePeriod;
+        var heartbeatTimeout = TimeSpan.FromSeconds(pipelineConfig.HeartbeatTimeoutSeconds);
 
         foreach (var agent in agents)
         {
@@ -93,7 +94,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
             if (agent.Status != AgentStatus.Disconnected)
             {
                 var heartbeatAge = now - agent.LastHeartbeatAt;
-                if (heartbeatAge > HeartbeatTimeout)
+                if (heartbeatAge > heartbeatTimeout)
                 {
                     _logger.Warning(
                         "Agent {AgentId} heartbeat stale ({Age:F0}s), transitioning to Disconnected",

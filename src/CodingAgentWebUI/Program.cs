@@ -70,8 +70,16 @@ builder.Services.AddAuthorization(options =>
 });
 
 // Configure Serilog
+var orchestratorLogLevel = Environment.GetEnvironmentVariable("LOG_LEVEL")?.ToLowerInvariant() switch
+{
+    "debug" or "dbg" => Serilog.Events.LogEventLevel.Debug,
+    "verbose" or "trace" => Serilog.Events.LogEventLevel.Verbose,
+    "warning" or "warn" => Serilog.Events.LogEventLevel.Warning,
+    "error" or "err" => Serilog.Events.LogEventLevel.Error,
+    _ => Serilog.Events.LogEventLevel.Information
+};
 builder.Host.UseSerilog((ctx, lc) => lc
-    .MinimumLevel.Is(Serilog.Events.LogEventLevel.Information)
+    .MinimumLevel.Is(orchestratorLogLevel)
     // Suppress noisy ASP.NET Core framework logging (health checks, static files, Blazor negotiation, auth)
     .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()

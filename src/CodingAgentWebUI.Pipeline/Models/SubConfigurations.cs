@@ -103,6 +103,8 @@ public sealed record AgentConfiguration
     public int RetryErrorsCapacity { get; init; } = PipelineConstants.DefaultRetryErrorsCapacity;
     public int BrainPushMaxRetries { get; init; } = 3;
     public bool BrainReadOnly { get; init; } = false;
+    public int HeartbeatSweepIntervalSeconds { get; init; } = PipelineConstants.DefaultHeartbeatSweepIntervalSeconds;
+    public int HeartbeatTimeoutSeconds { get; init; } = PipelineConstants.DefaultHeartbeatTimeoutSeconds;
 }
 
 /// <summary>
