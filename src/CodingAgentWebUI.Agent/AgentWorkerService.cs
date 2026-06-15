@@ -41,9 +41,7 @@ namespace CodingAgentWebUI.Agent;
 /// </remarks>
 public sealed class AgentWorkerService : BackgroundService
 {
-    private readonly HubConnectionManager _hubManager;
-    // TODO: _hubManagerFactory is unused after the reconnection loop was simplified. Restore the outer
-    // reconnection loop (dispose + factory.Create()) to handle terminal Closed state, or remove this field.
+    private volatile HubConnectionManager _hubManager;
     private readonly HubConnectionManagerFactory _hubManagerFactory;
     private readonly LocalPipelineExecutor _executor;
     private readonly LocalConsolidationExecutor _consolidationExecutor;
@@ -127,19 +125,7 @@ public sealed class AgentWorkerService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // TODO: The outer reconnection loop (dispose old connection, create fresh via factory) was removed.
-        // WithAutomaticReconnect(InfiniteRetryPolicy) handles transient failures, but if the connection
-        // reaches terminal Closed state the agent will now crash instead of recovering. Consider restoring
-        // the factory-based fresh reconnection as a defense-in-depth fallback.
-
-        // Wire up event handlers
-        _hubManager.OnAssignJob += HandleAssignJobAsync;
-        _hubManager.OnCancelJob += HandleCancelJobAsync;
-        _hubManager.OnAssignChatPrompt += HandleChatPromptAsync;
-        _hubManager.OnCancelChat += HandleCancelChatAsync;
-        _hubManager.OnFetchModels += HandleFetchModelsAsync;
-        _hubManager.OnAssignConsolidationJob += HandleAssignConsolidationJobAsync;
-        _hubManager.OnReconnected += HandleReconnectedAsync;
+        WireEventHandlers(_hubManager);
 
         try
         {
@@ -187,6 +173,63 @@ public sealed class AgentWorkerService : BackgroundService
         {
             await ShutdownAsync();
         }
+    }
+
+    private void WireEventHandlers(HubConnectionManager hubManager)
+    {
+        hubManager.OnAssignJob += HandleAssignJobAsync;
+        hubManager.OnCancelJob += HandleCancelJobAsync;
+        hubManager.OnAssignChatPrompt += HandleChatPromptAsync;
+        hubManager.OnCancelChat += HandleCancelChatAsync;
+        hubManager.OnFetchModels += HandleFetchModelsAsync;
+        hubManager.OnAssignConsolidationJob += HandleAssignConsolidationJobAsync;
+        hubManager.OnReconnected += HandleReconnectedAsync;
+        hubManager.OnClosed += HandleTerminalClosedAsync;
+    }
+
+    // TODO: HandleTerminalClosedAsync uses CancellationToken.None — reconnection loop won't observe host shutdown.
+    // Consider wiring _hostApplicationLifetime.ApplicationStopping to abort retries during graceful shutdown.
+    private async Task HandleTerminalClosedAsync(Exception? error)
+    {
+        _logger.Warning(error, "SignalR connection entered terminal Closed state, attempting fresh reconnection");
+
+        const int maxAttempts = 10;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            var delay = CalculateReconnectionDelay(attempt);
+            _logger.Information("Reconnection attempt {Attempt}/{Max} after {Delay:F1}s",
+                attempt, maxAttempts, delay.TotalSeconds);
+
+            await Task.Delay(delay);
+
+            try
+            {
+                var oldManager = _hubManager;
+                var newManager = _hubManagerFactory.Create();
+                WireEventHandlers(newManager);
+                await newManager.StartAsync(CancellationToken.None);
+
+                _hubManager = newManager;
+
+                // Re-register with orchestrator
+                var registration = BuildRegistrationMessage();
+                await _signalRPipeline.ExecuteAsync(async token =>
+                    await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), CancellationToken.None);
+
+                _logger.Information("Agent {AgentId} reconnected and re-registered after terminal close", _agentId);
+
+                // Dispose old manager after successful swap
+                await oldManager.DisposeAsync();
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Reconnection attempt {Attempt} failed", attempt);
+            }
+        }
+
+        _logger.Error("All {MaxAttempts} reconnection attempts exhausted, shutting down agent", maxAttempts);
+        _hostApplicationLifetime.StopApplication();
     }
 
     private async Task HandleAssignJobAsync(JobAssignmentMessage message)
@@ -835,9 +878,7 @@ public sealed class AgentWorkerService : BackgroundService
         await _hubManager.Connection.InvokeAsync(HubMethodNames.Heartbeat, heartbeat, ct);
     }
 
-    // TODO: This method is no longer called in production code after the reconnection loop removal.
-    // It remains for test compatibility. Restore usage if the outer reconnection loop is re-added.
-    private static TimeSpan CalculateReconnectionDelay(int attempt)
+    internal static TimeSpan CalculateReconnectionDelay(int attempt)
     {
         var baseSeconds = Math.Min(Math.Pow(2, attempt), 120);
         var jitter = Random.Shared.NextDouble(); // 0–1s

@@ -7,6 +7,12 @@ namespace KiroCliLib.Core;
 /// <summary>
 /// Manages the Kiro CLI process lifecycle with WSL integration support.
 /// </summary>
+/// <remarks>
+/// <b>Accepted risk:</b> No OS-level process group protection (Job Object on Windows,
+/// PR_SET_PDEATHSIG on Linux). If the agent process crashes (e.g., OOM kill), child
+/// processes could become orphans. This is mitigated by the Docker deployment model:
+/// container death triggers cgroup cleanup which kills all processes in the container.
+/// </remarks>
 public class ProcessWrapper : IProcessWrapper
 {
     private const int WslKillTimeoutMs = 2000;

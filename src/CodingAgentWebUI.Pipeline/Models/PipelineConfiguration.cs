@@ -472,6 +472,26 @@ public sealed record PipelineConfiguration
         init => Agent = Agent with { RetryErrorsCapacity = value };
     }
 
+    /// <summary>
+    /// Interval in seconds between heartbeat monitor sweeps. Requires restart to take effect.
+    /// Default: 60.
+    /// </summary>
+    public int HeartbeatSweepIntervalSeconds
+    {
+        get => Agent.HeartbeatSweepIntervalSeconds;
+        init => Agent = Agent with { HeartbeatSweepIntervalSeconds = value };
+    }
+
+    /// <summary>
+    /// Seconds without a heartbeat before an agent is considered stale.
+    /// Default: 90.
+    /// </summary>
+    public int HeartbeatTimeoutSeconds
+    {
+        get => Agent.HeartbeatTimeoutSeconds;
+        init => Agent = Agent with { HeartbeatTimeoutSeconds = value };
+    }
+
     // ── Multi-repo pipeline loop ────────────────────────────────────────
 
     /// <summary>

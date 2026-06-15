@@ -52,7 +52,10 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
         ArgumentNullException.ThrowIfNull(run);
         var summary = run.ToSummary();
         lock (_lock) { _runHistory.Insert(0, summary); }
-        // Fire-and-forget: existing behavior is non-blocking persist
+        // Fire-and-forget: disk persistence is best-effort. The in-memory list is the source of truth
+        // while running. Disk failure only matters across restarts (rare). AtomicFileWriter handles
+        // partial writes, and retries won't help transient disk issues (e.g., full disk).
+        // Accepted risk: a Warning log is sufficient for operational awareness.
         _ = PersistRunSummaryAsync(summary);
     }
 

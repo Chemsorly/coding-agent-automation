@@ -345,4 +345,13 @@ public sealed class JobQueueDrainService : BackgroundService
 
         return dispatchedCount;
     }
+
+    // TODO: _wakeSignal is disposed before base.Dispose(). If Dispose is called without prior StopAsync,
+    // ExecuteAsync may still be running and could hit ObjectDisposedException on the semaphore.
+    // Safer order: base.Dispose() first, then _wakeSignal.Dispose().
+    public override void Dispose()
+    {
+        _wakeSignal.Dispose();
+        base.Dispose();
+    }
 }
