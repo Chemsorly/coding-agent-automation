@@ -19,6 +19,7 @@
 @inject ConsolidationQueueService ConsolidationQueue
 @inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
 @inject ILabelSwapper LabelSwapper
+@inject IPipelineRunHistoryService HistoryService
 @inject IJSRuntime JS
 @using Microsoft.AspNetCore.SignalR
 
@@ -916,7 +917,7 @@
             run.CompletedAtOffset = DateTimeOffset.UtcNow;
             run.CurrentStep = PipelineStep.Cancelled;
 
-            PipelineService.AddRunToHistory(run);
+            HistoryService.AddRunToHistory(run);
             RunService.RemoveRun(run.RunId);
             Dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
