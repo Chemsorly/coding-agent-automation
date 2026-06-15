@@ -59,9 +59,8 @@ ENV AGENT_API_KEY=""
 
 EXPOSE 8080
 
-# Copy published app and Docker-specific config (owned by ubuntu user)
+# Copy published app (owned by ubuntu user)
 COPY --from=build --chown=ubuntu:ubuntu /app/publish .
-COPY --chown=ubuntu:ubuntu config/appsettings.docker.json config/appsettings.json
 
 # Generate build-info.json from build args (populated by CI, defaults to "local" for dev builds)
 ARG BUILD_COMMIT_SHA=local

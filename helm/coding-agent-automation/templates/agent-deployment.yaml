@@ -1,0 +1,128 @@
+{{- range .Values.agents }}
+{{- if .enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coding-agent-automation.agentFullname" (dict "agentName" .name "root" $) }}
+  labels:
+    {{- include "coding-agent-automation.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/agent-name: {{ .name }}
+spec:
+  replicas: 1
+  strategy:
+    type: {{ .strategy.type }}
+  selector:
+    matchLabels:
+      {{- include "coding-agent-automation.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: agent
+      app.kubernetes.io/agent-name: {{ .name }}
+  template:
+    metadata:
+      labels:
+        {{- include "coding-agent-automation.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: agent
+        app.kubernetes.io/agent-name: {{ .name }}
+    spec:
+      serviceAccountName: {{ include "coding-agent-automation.serviceAccountName" $ }}
+      terminationGracePeriodSeconds: {{ .terminationGracePeriodSeconds }}
+      {{- with .nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: agent
+          image: "{{ $.Values.image.registry }}/{{ $.Values.image.repository }}:{{ .image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .resources | nindent 12 }}
+          env:
+            - name: ORCHESTRATOR_URL
+              value: "http://{{ include "coding-agent-automation.fullname" $ }}-orchestrator:{{ $.Values.orchestrator.service.port }}"
+            - name: AGENT_ID
+              value: {{ .agentId | quote }}
+            - name: AGENT_TYPE
+              value: {{ .agentType | quote }}
+            - name: AGENT_LABELS
+              value: {{ .labels | quote }}
+            - name: AGENT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coding-agent-automation.secretName" $ }}
+                  key: agent-api-key
+            - name: LOG_LEVEL
+              value: {{ .logLevel | default "Information" | quote }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ $.Values.otel.endpoint | quote }}
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coding-agent-automation.secretName" $ }}
+                  key: otel-headers
+                  optional: true
+            - name: OTEL_SERVICE_NAME
+              value: "coding-agent-{{ .name }}"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ $.Values.otel.resourceAttributes | quote }}
+          volumeMounts:
+            {{- if eq .providerType "kiro" }}
+            - name: kiro-cli-data
+              mountPath: /home/ubuntu/.local/share/kiro-cli
+            {{- else if eq .providerType "opencode" }}
+            - name: opencode-config
+              mountPath: /app/config/opencode
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- if eq .providerType "kiro" }}
+        - name: kiro-cli-data
+          {{- if eq .persistence.type "pvc" }}
+          persistentVolumeClaim:
+            claimName: {{ include "coding-agent-automation.agentFullname" (dict "agentName" .name "root" $) }}-data
+          {{- else if eq .persistence.type "hostPath" }}
+          hostPath:
+            path: {{ .persistence.hostPath }}
+            type: DirectoryOrCreate
+          {{- else }}
+          emptyDir:
+            sizeLimit: 1Gi
+          {{- end }}
+        {{- else if eq .providerType "opencode" }}
+        - name: opencode-config
+          secret:
+            secretName: {{ include "coding-agent-automation.secretName" $ }}
+            items:
+              - key: opencode-config-content
+                path: opencode.json
+        {{- end }}
+{{- end }}
+{{- end }}

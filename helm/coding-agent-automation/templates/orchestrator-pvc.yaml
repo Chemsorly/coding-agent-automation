@@ -1,0 +1,18 @@
+{{- if eq .Values.orchestrator.persistence.type "pvc" }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-orchestrator-config
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestrator
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.orchestrator.persistence.pvc.storageClassName }}
+  storageClassName: {{ .Values.orchestrator.persistence.pvc.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.orchestrator.persistence.pvc.size }}
+{{- end }}

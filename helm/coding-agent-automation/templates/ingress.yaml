@@ -1,0 +1,41 @@
+{{- if .Values.orchestrator.ingress.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-orchestrator
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+  {{- with .Values.orchestrator.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.orchestrator.ingress.className }}
+  ingressClassName: {{ .Values.orchestrator.ingress.className }}
+  {{- end }}
+  {{- if .Values.orchestrator.ingress.tls }}
+  tls:
+    {{- range .Values.orchestrator.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.orchestrator.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "coding-agent-automation.fullname" $ }}-orchestrator
+                port:
+                  number: {{ $.Values.orchestrator.service.port }}
+          {{- end }}
+    {{- end }}
+{{- end }}

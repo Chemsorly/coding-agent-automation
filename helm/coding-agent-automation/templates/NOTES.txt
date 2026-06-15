@@ -1,0 +1,21 @@
+Thank you for installing {{ .Chart.Name }}.
+
+Your release is named: {{ .Release.Name }}
+
+To add the Helm repository:
+  helm repo add chemsorly https://chemsorly.github.io/helm-charts
+  helm repo update
+
+To install (example):
+  helm install my-release chemsorly/coding-agent-automation \
+    --set secrets.agentApiKey=YOUR_API_KEY
+
+The orchestrator is available at:
+  http://{{ include "coding-agent-automation.fullname" . }}-orchestrator:{{ .Values.orchestrator.service.port }}
+
+{{- if .Values.orchestrator.ingress.enabled }}
+Ingress is enabled. Access the UI at:
+{{- range .Values.orchestrator.ingress.hosts }}
+  http{{ if $.Values.orchestrator.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- end }}

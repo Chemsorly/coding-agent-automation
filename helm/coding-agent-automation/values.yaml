@@ -1,0 +1,159 @@
+# coding-agent-automation Helm chart values
+# See README for full documentation.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  registry: docker.io
+  repository: chemsorly/coding-agent
+  pullPolicy: IfNotPresent
+
+# ── Orchestrator ─────────────────────────────────────────────────────────────
+
+orchestrator:
+  image:
+    # Tag for the orchestrator image. On release, CI overwrites this to SHA-suffixed value.
+    tag: coding-agent-webui
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  persistence:
+    # Storage backend: pvc (default/cloud), hostPath (bare-metal), emptyDir (testing)
+    type: pvc
+    hostPath: ""
+    pvc:
+      # StorageClass name. Empty string = cluster default.
+      # Recommendation: use a storageClass with WaitForFirstConsumer volume binding mode
+      # for topology-aware provisioning (PVC provisioned on same node as pod).
+      storageClassName: ""
+      size: 5Gi
+  probes:
+    liveness:
+      path: /healthz
+      port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      path: /readyz
+      port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+  terminationGracePeriodSeconds: 60
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    #  - host: coding-agent.example.com
+    #    paths:
+    #      - path: /
+    #        pathType: Prefix
+    tls: []
+    #  - secretName: coding-agent-tls
+    #    hosts:
+    #      - coding-agent.example.com
+  env:
+    # Seconds to wait before resuming pipeline loop after pod restart (prevents dispatch to
+    # agents mid-termination during rolling updates). Must be > agent terminationGracePeriodSeconds.
+    pipelineLoopStartupDelaySeconds: 90
+    # Seconds to wait after marking /readyz as 503 before proceeding with shutdown.
+    readinessDrainDelaySeconds: 15
+    # Log level for the orchestrator application
+    logLevel: Information
+
+# ── Agents ───────────────────────────────────────────────────────────────────
+
+# Agents are defined as a list. Each entry produces its own Deployment + optional PVC.
+# This allows multiple instances of the same type with different names and dedicated storage.
+agents:
+  - name: agent-kiro-dotnet-1
+    enabled: true
+    image:
+      tag: coding-agent-kiro-dotnet10
+    agentId: agent-1
+    agentType: kiro-dotnet10
+    # Provider type determines volume mount profile:
+    #   kiro    → mounts kiro-cli-data volume + AWS credentials
+    #   opencode → mounts opencode config file from Secret
+    providerType: kiro
+    labels: "kiro,dotnet,dotnet10"
+    persistence:
+      # Storage backend: pvc (default/cloud), hostPath (bare-metal), emptyDir (testing)
+      # Recommendation: use a storageClass with WaitForFirstConsumer volume binding mode.
+      type: pvc
+      hostPath: ""
+      pvc:
+        storageClassName: ""
+        size: 1Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: "4"
+        memory: 8Gi
+    terminationGracePeriodSeconds: 45
+    strategy:
+      type: Recreate
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    logLevel: Information
+
+# ── Secrets ──────────────────────────────────────────────────────────────────
+
+secrets:
+  # REQUIRED: API key for agent-orchestrator authentication.
+  # Plain string value. Chart fails if empty and no existingSecret is set.
+  agentApiKey: ""
+
+  # Optional: OTEL exporter authorization header (e.g., "Api-Token dt0c01.xxx" for Dynatrace)
+  otelHeaders: ""
+
+  # Optional: OpenCode configuration JSON content (mounted as file for opencode agents)
+  # Multi-line JSON string containing the opencode provider configuration.
+  opencodeConfigContent: ""
+
+# Name of an existing Kubernetes Secret to use instead of creating one.
+# When set, the chart does NOT create a Secret resource and references this name
+# in all volume mounts and env var sources.
+# The referenced Secret must contain keys: agent-api-key, otel-headers,
+# opencode-config-content
+existingSecret: ""
+
+# ── OpenTelemetry ────────────────────────────────────────────────────────────
+
+otel:
+  endpoint: ""
+  protocol: grpc
+  serviceName: coding-agent-orchestrator
+  resourceAttributes: ""
+
+# ── ServiceAccount ───────────────────────────────────────────────────────────
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+  annotations: {}
+  name: ""

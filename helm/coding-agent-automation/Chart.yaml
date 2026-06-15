@@ -1,0 +1,6 @@
+apiVersion: v2
+name: coding-agent-automation
+description: Multi-agent coding automation platform with orchestrator and configurable agent workers
+type: application
+version: 0.0.0-dev
+appVersion: "local"
