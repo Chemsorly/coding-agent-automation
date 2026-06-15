@@ -77,6 +77,8 @@ public static class PipelineTelemetry
         "agent.heartbeat.failures", "{failure}", "Agent heartbeat failures");
     public static readonly Counter<long> AgentReconnections = Meter.CreateCounter<long>(
         "agent.reconnections", "{reconnection}", "Agent reconnection events");
+    public static readonly Counter<long> AgentSignalRFailures = Meter.CreateCounter<long>(
+        "agent.signalr.failures", "{failure}", "Failed or dropped SignalR messages from agent");
 
     internal static class LoopDecisions
     {

@@ -307,8 +307,11 @@ public sealed class LocalPipelineExecutor
             : null;
 
         // Fire-and-forget wrappers — delegate to class-level async methods for testability.
-        void TransitionTo(PipelineStep step) => _ = TransitionToInternalAsync(run, connection, job.JobId, onStepChanged, step, ct);
-        void ReportQualityGateResult(QualityGateReport report) => _ = ReportQualityGateResultInternalAsync(connection, job.JobId, report, ct);
+        // Serialized via signalrLock to guarantee ordering at the orchestrator.
+        // Not using 'using' — disposed manually after draining in-flight sends.
+        var signalrLock = new SemaphoreSlim(1, 1);
+        void TransitionTo(PipelineStep step) => _ = SerializedSendAsync(signalrLock, () => TransitionToInternalAsync(run, connection, job.JobId, onStepChanged, step, ct), ct);
+        void ReportQualityGateResult(QualityGateReport report) => _ = SerializedSendAsync(signalrLock, () => ReportQualityGateResultInternalAsync(connection, job.JobId, report, ct), ct);
 
         CancellationTokenSource? localCts = null;
         PipelineStepContext? context = null;
@@ -316,6 +319,9 @@ public sealed class LocalPipelineExecutor
         // Wrap EmitOutputLine so ALL output is masked once secrets are populated.
         // context.InjectedSecrets is null until RunEnvironmentSetupStep populates it,
         // so output before that step passes through unmasked (no secrets exist yet).
+        // TODO: EmitOutputLineInternalAsync is not serialized via signalrLock. If output lines and
+        // step transitions share the same SignalR connection, interleaving could affect perceived
+        // ordering at the orchestrator.
         void EmitOutputLine(string line)
         {
             var masked = MaskSecretsInOutput(line, context);
@@ -402,7 +408,9 @@ public sealed class LocalPipelineExecutor
             run.CompletedAt = DateTime.UtcNow;
             run.CompletedAtOffset = DateTimeOffset.UtcNow;
 
-            TransitionTo(PipelineStep.Cancelled);
+            // Await directly with CancellationToken.None — ct is already cancelled so the
+            // fire-and-forget wrapper would fail to acquire the semaphore.
+            await SerializedSendAsync(signalrLock, () => TransitionToInternalAsync(run, connection, job.JobId, onStepChanged, PipelineStep.Cancelled, CancellationToken.None), CancellationToken.None);
             EmitOutputLine("🚫 Pipeline cancelled");
 
             run.FinalLabel = AgentLabels.Cancelled;
@@ -447,6 +455,14 @@ public sealed class LocalPipelineExecutor
             {
                 _logger.Warning(ex, "Failed to clean up workspace {WorkspacePath}", run.WorkspacePath);
             }
+
+            // Drain in-flight serialized sends before disposing the semaphore.
+            // TODO: This drain only waits for the currently-held lock. If a fire-and-forget
+            // SerializedSendAsync task is queued but hasn't yet called WaitAsync, Dispose() may
+            // cause ObjectDisposedException when that task eventually tries to acquire the semaphore.
+            try { await signalrLock.WaitAsync(CancellationToken.None); signalrLock.Release(); }
+            catch { /* best-effort drain */ }
+            signalrLock.Dispose();
         }
     }
 
@@ -486,9 +502,13 @@ public sealed class LocalPipelineExecutor
             onStepChanged?.Invoke(step);
 
             var metadata = BuildStepMetadata(run, step);
-            await connection.InvokeAsync(HubMethodNames.ReportStepTransition, jobId, step, DateTimeOffset.UtcNow, metadata, ct);
+            await connection.SendAsync(HubMethodNames.ReportStepTransition, jobId, step, DateTimeOffset.UtcNow, metadata, ct);
         }
-        catch (Exception ex) { _logger.Warning(ex, "Failed to report step transition to {Step}", step); }
+        catch (Exception ex)
+        {
+            PipelineTelemetry.AgentSignalRFailures.Add(1);
+            _logger.Warning(ex, "Failed to report step transition to {Step}", step);
+        }
     }
 
     /// <summary>
@@ -513,8 +533,25 @@ public sealed class LocalPipelineExecutor
     internal async Task ReportQualityGateResultInternalAsync(
         HubConnection connection, string jobId, QualityGateReport report, CancellationToken ct)
     {
-        try { await connection.InvokeAsync(HubMethodNames.ReportQualityGateResult, jobId, report, ct); }
-        catch (Exception ex) { _logger.Warning(ex, "Failed to report quality gate result"); }
+        try { await connection.SendAsync(HubMethodNames.ReportQualityGateResult, jobId, report, ct); }
+        catch (Exception ex)
+        {
+            PipelineTelemetry.AgentSignalRFailures.Add(1);
+            _logger.Warning(ex, "Failed to report quality gate result");
+        }
+    }
+
+    /// <summary>
+    /// Serializes a fire-and-forget SignalR send behind a semaphore to guarantee ordering.
+    /// </summary>
+    // TODO: SerializedSendAsync does not catch OperationCanceledException from WaitAsync(ct).
+    // Since callers discard the task, cancellation exceptions become unobserved. Consider catching
+    // and logging, or using CancellationToken.None for the wait since inner send already uses ct.
+    private static async Task SerializedSendAsync(SemaphoreSlim signalrLock, Func<Task> send, CancellationToken ct)
+    {
+        await signalrLock.WaitAsync(ct);
+        try { await send(); }
+        finally { signalrLock.Release(); }
     }
 
     /// <summary>
