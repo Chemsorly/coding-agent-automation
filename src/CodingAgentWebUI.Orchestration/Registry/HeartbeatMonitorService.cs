@@ -150,6 +150,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
                 else if (agent is { Status: AgentStatus.Busy, OrphanRestoredAt: null } && agent.ActiveJobId is not null)
                 {
                     var run = _runService.GetRun(agent.ActiveJobId);
+                    // TODO: When LastStepChangeAt == default the progress check is silently skipped.
+                    // Consider logging a warning so operators can detect runs missing this timestamp.
                     if (run is not null && run.LastStepChangeAt != default)
                     {
                         var progressTimeout = pipelineConfig.AgentBusyProgressTimeout;
