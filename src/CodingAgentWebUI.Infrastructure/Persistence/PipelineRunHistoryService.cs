@@ -16,6 +16,9 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     private readonly string _runsDirectory;
     private readonly Serilog.ILogger _logger;
 
+    /// <summary>Maximum number of run summaries kept in memory. Older entries remain on disk.</summary>
+    internal const int MaxHistorySize = 1000;
+
     private static System.Text.Json.JsonSerializerOptions JsonOptions => PipelineJsonOptions.Default;
 
     public PipelineRunHistoryService(Serilog.ILogger logger, string runsDirectory = PipelineConstants.RunsDirectory)
@@ -51,11 +54,13 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     {
         ArgumentNullException.ThrowIfNull(run);
         var summary = run.ToSummary();
-        lock (_lock) { _runHistory.Insert(0, summary); }
-        // Fire-and-forget: disk persistence is best-effort. The in-memory list is the source of truth
-        // while running. Disk failure only matters across restarts (rare). AtomicFileWriter handles
-        // partial writes, and retries won't help transient disk issues (e.g., full disk).
-        // Accepted risk: a Warning log is sufficient for operational awareness.
+        lock (_lock)
+        {
+            _runHistory.Insert(0, summary);
+            if (_runHistory.Count > MaxHistorySize)
+                _runHistory.RemoveAt(_runHistory.Count - 1);
+        }
+        // Fire-and-forget: existing behavior is non-blocking persist
         _ = PersistRunSummaryAsync(summary);
     }
 
@@ -80,19 +85,23 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
             if (!Directory.Exists(_runsDirectory))
                 return;
 
+            var files = new DirectoryInfo(_runsDirectory).GetFiles("*.json")
+                .OrderByDescending(f => f.LastWriteTimeUtc)
+                .Take(MaxHistorySize);
+
             var summaries = new List<PipelineRunSummary>();
-            foreach (var file in Directory.GetFiles(_runsDirectory, "*.json"))
+            foreach (var file in files)
             {
                 try
                 {
-                    var json = File.ReadAllText(file);
+                    var json = File.ReadAllText(file.FullName);
                     var summary = System.Text.Json.JsonSerializer.Deserialize<PipelineRunSummary>(json, JsonOptions);
                     if (summary != null)
                         summaries.Add(summary);
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warning(ex, "Failed to load run summary from {File}", file);
+                    _logger.Warning(ex, "Failed to load run summary from {File}", file.FullName);
                 }
             }
 

@@ -17,12 +17,26 @@ internal sealed class DetectReworkStep : IPipelineStep
             var agentPrs = await context.RepoProvider.GetAgentPullRequestsAsync(context.Run.IssueIdentifier, ct);
             if (agentPrs.Count > 0)
             {
+                // TODO: Only the most recent PR is checked; older draft PRs for the same issue remain orphaned. Consider iterating all draft PRs in agentPrs to close them.
                 var selectedPr = agentPrs.OrderByDescending(pr => pr.Number).First();
-                context.Run.LinkedPullRequest = selectedPr;
-                context.Callbacks.EmitOutputLine($"🔄 Rework mode: updating existing PR #{selectedPr.Number}");
-                context.Logger.Information(
-                    "Pipeline {RunId} detected existing agent PR #{PrNumber} for issue {IssueIdentifier}, entering rework mode",
-                    context.Run.RunId, selectedPr.Number, context.Run.IssueIdentifier);
+
+                // Close stale draft PRs to prevent orphaned accumulation
+                if (selectedPr.IsDraft)
+                {
+                    await context.RepoProvider.ClosePullRequestAsync(selectedPr.Number, ct);
+                    context.Callbacks.EmitOutputLine($"🗑️ Closed stale draft PR #{selectedPr.Number}");
+                    context.Logger.Information(
+                        "Pipeline {RunId} closed stale draft PR #{PrNumber} for issue {IssueIdentifier}",
+                        context.Run.RunId, selectedPr.Number, context.Run.IssueIdentifier);
+                }
+                else
+                {
+                    context.Run.LinkedPullRequest = selectedPr;
+                    context.Callbacks.EmitOutputLine($"🔄 Rework mode: updating existing PR #{selectedPr.Number}");
+                    context.Logger.Information(
+                        "Pipeline {RunId} detected existing agent PR #{PrNumber} for issue {IssueIdentifier}, entering rework mode",
+                        context.Run.RunId, selectedPr.Number, context.Run.IssueIdentifier);
+                }
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

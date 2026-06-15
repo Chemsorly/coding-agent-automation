@@ -171,6 +171,8 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// </summary>
     public CancellationToken CreateLinkedCancellationToken(CancellationToken externalToken)
     {
+        // TODO: Dispose-then-assign is not atomic. If CancelPipelineAsync() calls .Cancel() concurrently, it may hit the disposed CTS. Use Interlocked.Exchange or a lock to swap safely.
+        _cancellationTokenSource?.Dispose();
         _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
         return _cancellationTokenSource.Token;
     }

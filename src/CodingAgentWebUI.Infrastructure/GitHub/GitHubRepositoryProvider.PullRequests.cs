@@ -169,6 +169,16 @@ public partial class GitHubRepositoryProvider
     }
 
     /// <inheritdoc />
+    public async Task ClosePullRequestAsync(int pullRequestNumber, CancellationToken ct)
+    {
+        await ExecuteWithResilienceAsync(
+            client => client.PullRequest.Update(Owner, Repo, pullRequestNumber,
+                new PullRequestUpdate { State = ItemState.Closed }),
+            "ClosePullRequest", ct);
+        Log.Information("Closed PR #{PrNumber} in {Owner}/{Repo}", pullRequestNumber, Owner, Repo);
+    }
+
+    /// <inheritdoc />
     public async Task<PagedResult<PullRequestSummary>> ListOpenPullRequestsAsync(
         int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)
     {

@@ -38,6 +38,9 @@ public sealed class ConsolidationQueueService
     /// <summary>How long cancelled run IDs are retained before eviction.</summary>
     internal static readonly TimeSpan EvictionWindow = TimeSpan.FromMinutes(5);
 
+    /// <summary>Maximum time a job can remain queued before being expired.</summary>
+    internal static readonly TimeSpan MaxQueueAge = TimeSpan.FromHours(24);
+
     public ConsolidationQueueService(ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(logger);
@@ -85,6 +88,14 @@ public sealed class ConsolidationQueueService
             {
                 if (!_queue.TryDequeue(out var job))
                     break;
+
+                // Expire jobs that have been queued too long
+                if (job.EnqueuedAt + MaxQueueAge < DateTimeOffset.UtcNow)
+                {
+                    _queuedRunIds.TryRemove(job.RunId, out _);
+                    _logger.Warning("Consolidation job {RunId} expired after {MaxAge}h in queue", job.RunId, MaxQueueAge.TotalHours);
+                    continue;
+                }
 
                 if (LabelMatchHelper.IsLabelMatch(agent.Labels, job.RequiredLabels))
                 {

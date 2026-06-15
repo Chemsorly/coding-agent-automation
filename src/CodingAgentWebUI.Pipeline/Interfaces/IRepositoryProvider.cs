@@ -91,6 +91,13 @@ public interface IRepositoryProvider : IAsyncDisposable
         => Task.FromResult<IReadOnlyList<LinkedPullRequest>>(Array.Empty<LinkedPullRequest>());
 
     /// <summary>
+    /// Closes an open pull request/merge request by number.
+    /// Default is a no-op for providers that don't support it.
+    /// </summary>
+    Task ClosePullRequestAsync(int pullRequestNumber, CancellationToken ct)
+        => Task.CompletedTask;
+
+    /// <summary>
     /// Checks out an existing remote branch after clone, creating a local tracking branch.
     /// </summary>
     Task CheckoutRemoteBranchAsync(string workspacePath, string branchName, CancellationToken ct)
