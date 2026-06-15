@@ -100,6 +100,45 @@ public sealed class ConsolidationQueueServiceTests
         _sut.QueueLength.Should().Be(1);
     }
 
+    [Fact]
+    public void DequeueForAgent_ExpiresJobsOlderThanMaxQueueAge()
+    {
+        var job = new PendingConsolidationJob
+        {
+            RunId = "expired-run",
+            Type = ConsolidationRunType.BrainConsolidation,
+            WorkspacePath = "/tmp/test",
+            RequiredLabels = Array.Empty<string>(),
+            EnqueuedAt = DateTimeOffset.UtcNow - ConsolidationQueueService.MaxQueueAge - TimeSpan.FromMinutes(1)
+        };
+        _sut.EnqueueJob(job);
+        _sut.QueueLength.Should().Be(1);
+
+        var result = _sut.DequeueForAgent(CreateAgent());
+
+        result.Should().BeNull();
+        _sut.QueueLength.Should().Be(0);
+    }
+
+    [Fact]
+    public void DequeueForAgent_DoesNotExpireRecentJobs()
+    {
+        var job = new PendingConsolidationJob
+        {
+            RunId = "recent-run",
+            Type = ConsolidationRunType.BrainConsolidation,
+            WorkspacePath = "/tmp/test",
+            RequiredLabels = new[] { "dotnet" },
+            EnqueuedAt = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(5)
+        };
+        _sut.EnqueueJob(job);
+
+        var result = _sut.DequeueForAgent(CreateAgent(labels: new[] { "dotnet" }));
+
+        result.Should().NotBeNull();
+        result!.RunId.Should().Be("recent-run");
+    }
+
     private ConcurrentDictionary<string, DateTimeOffset> GetCancelledRunIds()
     {
         var field = typeof(ConsolidationQueueService)

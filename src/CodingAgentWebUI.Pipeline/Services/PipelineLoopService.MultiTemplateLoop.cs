@@ -525,6 +525,7 @@ public sealed partial class PipelineLoopService
         NotifyChange();
         _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures",
             enabledTemplates.Count, maxConsecutiveFailures);
+        // TODO: _resumeSignal is read outside the lock here. Field is not volatile — on ARM64, JIT reordering could theoretically cache a stale value. Consider marking volatile or capturing to a local inside the lock.
         try { await _resumeSignal.Task.WaitAsync(ct); }
         catch (OperationCanceledException) { return true; }
         if (_stopRequested) return true;

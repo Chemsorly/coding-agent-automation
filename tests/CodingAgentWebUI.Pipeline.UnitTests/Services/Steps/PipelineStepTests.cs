@@ -272,6 +272,24 @@ public class PipelineStepTests
     }
 
     [Fact]
+    public async Task DetectReworkStep_DraftPr_ClosesAndDoesNotLink()
+    {
+        var pr = new LinkedPullRequest { Number = 7, BranchName = "feature/auto-42", Url = "http://pr/7", IsDraft = true };
+        _repoProvider.Setup(p => p.GetAgentPullRequestsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LinkedPullRequest> { pr });
+        _repoProvider.Setup(p => p.ClosePullRequestAsync(7, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var step = new DetectReworkStep();
+        var context = BuildContext();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepResult.Continue, result);
+        _run.LinkedPullRequest.Should().BeNull();
+        _repoProvider.Verify(p => p.ClosePullRequestAsync(7, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task DetectReworkStep_AlreadyLinked_Skips()
     {
         _run.LinkedPullRequest = new LinkedPullRequest { Number = 3, BranchName = "existing", Url = "http://pr/3", IsDraft = false };
