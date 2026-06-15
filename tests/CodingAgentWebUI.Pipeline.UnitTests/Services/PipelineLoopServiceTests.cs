@@ -995,7 +995,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
                 ClosedLoopMaxConsecutivePollFailures = 3,
                 ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(100),
-                ClosedLoopCircuitBreakerCooldown = TimeSpan.FromMilliseconds(300)
+                ClosedLoopCircuitBreakerCooldown = TimeSpan.FromSeconds(1)
             });
 
         var svc = CreateService();

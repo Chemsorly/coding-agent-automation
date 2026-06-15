@@ -536,10 +536,21 @@ public sealed partial class PipelineLoopService
 
         if (_stopRequested) return true;
 
+        // If ResumeLoop() already handled the reset, skip redundant auto-resume logic
+        if (!IsCircuitBroken) return true;
+
         // Auto-resume: reset failure counters so next cycle gets a fresh attempt
         ConsecutivePollFailures = 0;
         IsCircuitBroken = false;
         LastPollError = null;
+
+        // Reset per-template failure counters to allow a clean retry
+        foreach (var template in enabledTemplates)
+        {
+            if (_templateStatuses.TryGetValue(template.Id, out var status) && status.ConsecutiveFailures > 0)
+                _templateStatuses[template.Id] = status with { ConsecutiveFailures = 0, LastError = null };
+        }
+
         StatusMessage = "🔄 Circuit breaker auto-resumed, retrying poll.";
         NotifyChange();
         _logger.Information("Circuit breaker auto-resumed after cooldown ({Cooldown})", cooldown);

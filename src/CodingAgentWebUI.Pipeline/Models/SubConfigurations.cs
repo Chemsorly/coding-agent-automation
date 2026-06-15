@@ -68,8 +68,16 @@ public sealed record ClosedLoopConfiguration
     /// <summary>
     /// Cooldown duration before the circuit breaker auto-resumes polling.
     /// After this period the loop resets failure counters and retries. Default: 5 minutes.
+    /// Must be at least 1 second.
     /// </summary>
-    public TimeSpan ClosedLoopCircuitBreakerCooldown { get; init; } = PipelineConstants.DefaultClosedLoopCircuitBreakerCooldown;
+    public TimeSpan ClosedLoopCircuitBreakerCooldown
+    {
+        get => _closedLoopCircuitBreakerCooldown;
+        init => _closedLoopCircuitBreakerCooldown = value >= TimeSpan.FromSeconds(1)
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(ClosedLoopCircuitBreakerCooldown), value, "Value must be at least 1 second.");
+    }
+    private readonly TimeSpan _closedLoopCircuitBreakerCooldown = PipelineConstants.DefaultClosedLoopCircuitBreakerCooldown;
 
     public int ClosedLoopMaxPagesToFetch
     {
