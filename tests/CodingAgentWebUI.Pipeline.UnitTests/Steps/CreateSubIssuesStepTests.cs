@@ -360,12 +360,16 @@ public class CreateSubIssuesStepTests : IDisposable
         });
         listener.Start();
 
+        // Capture baseline — other tests in the process may have already incremented the counter
+        var baseline = Interlocked.Read(ref createdCount);
+
         var run = CreateRun();
         var context = BuildContext(run);
         var step = new CreateSubIssuesStep();
 
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        createdCount.Should().Be(1);
+        var delta = Interlocked.Read(ref createdCount) - baseline;
+        delta.Should().Be(1);
     }
 }
