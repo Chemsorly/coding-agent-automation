@@ -94,7 +94,9 @@ public class TemplateMigrationTests : IDisposable
         await TemplateMigrationService.MigrateAsync(_store, config, CancellationToken.None);
 
         var projects = await _store.LoadProjectsAsync(CancellationToken.None);
-        projects.Should().BeEmpty();
+        // Only the auto-created Default project should exist — migration added nothing
+        projects.Should().ContainSingle()
+            .Which.Id.Should().Be(WellKnownIds.DefaultProjectId);
     }
 
     [Fact]
