@@ -72,7 +72,6 @@ RUN mkdir -p /app/workspaces
 
 ENV ORCHESTRATOR_URL=""
 ENV AGENT_ID=""
-ENV AGENT_TYPE=kiro-python312
 ENV AGENT_API_KEY=""
 ENV AGENT_LABELS=kiro,python,python312
 

@@ -82,8 +82,6 @@ USER ubuntu
 ENV ORCHESTRATOR_URL=""
 # Optional: Agent identifier (defaults to container hostname if not set)
 ENV AGENT_ID=""
-# Required: Agent type for routing
-ENV AGENT_TYPE=opencode-dotnet10
 # Required: Shared secret for authenticating with the orchestrator
 ENV AGENT_API_KEY=""
 # Predefined agent labels for this image type (overridable at runtime)

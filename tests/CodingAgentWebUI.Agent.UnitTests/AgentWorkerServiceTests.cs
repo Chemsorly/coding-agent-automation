@@ -15,7 +15,7 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// through its observable state.
 /// </summary>
 /// <remarks>
-/// This class mutates process-global environment variables (AGENT_TYPE, AGENT_ID, AGENT_LABELS).
+/// This class mutates process-global environment variables (AGENT_ID, AGENT_LABELS).
 /// It shares the "EnvironmentVariables" collection with <see cref="HealthEndpointsTests"/> to
 /// prevent parallel execution — environment variables are process-wide shared state.
 /// </remarks>
@@ -75,37 +75,6 @@ public class AgentWorkerServiceTests
         var service = CreateService();
         // Before starting, the hub manager is not connected
         service.IsConnected.Should().BeFalse();
-    }
-
-    [Fact]
-    public void Constructor_ReadsAgentTypeFromEnvironment()
-    {
-        // AGENT_TYPE is required — if not set, constructor throws
-        var originalType = Environment.GetEnvironmentVariable("AGENT_TYPE");
-        try
-        {
-            // Must clear the env var completely
-            Environment.SetEnvironmentVariable("AGENT_TYPE", null);
-
-            // Verify it's actually cleared
-            var currentValue = Environment.GetEnvironmentVariable("AGENT_TYPE");
-            if (currentValue is not null)
-            {
-                // Skip test if we can't clear the env var (e.g., set at process level)
-                return;
-            }
-
-            var mockLogger = new Mock<Serilog.ILogger>();
-            var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
-            var act = () => new AgentWorkerService(
-                CreateTestHubManager(), CreateTestHubManagerFactory(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
-            act.Should().Throw<InvalidOperationException>()
-                .WithMessage("*AGENT_TYPE*");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("AGENT_TYPE", originalType ?? "kiro-dotnet");
-        }
     }
 
     [Fact]
@@ -702,9 +671,6 @@ public class AgentWorkerServiceTests
     public async Task HandleReconnectedAsync_AllRetriesFail_CallsStopApplication()
     {
         // Arrange
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AGENT_TYPE")))
-            Environment.SetEnvironmentVariable("AGENT_TYPE", "kiro-dotnet");
-
         var mockLifetime = new Mock<IHostApplicationLifetime>();
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
@@ -772,10 +738,6 @@ public class AgentWorkerServiceTests
 
     private static AgentWorkerService CreateService()
     {
-        // Ensure AGENT_TYPE is set for the constructor
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AGENT_TYPE")))
-            Environment.SetEnvironmentVariable("AGENT_TYPE", "kiro-dotnet");
-
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         return new AgentWorkerService(
@@ -792,9 +754,6 @@ public class AgentWorkerServiceTests
 
     private static AgentWorkerService CreateServiceWithOrchestrator(KiroCliLib.Core.IKiroCliOrchestrator orchestrator)
     {
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AGENT_TYPE")))
-            Environment.SetEnvironmentVariable("AGENT_TYPE", "kiro-dotnet");
-
         // Ensure the KiroCli code path is active. When AGENT_PROVIDER_TYPE=OpenCode,
         // the service routes chat prompts through OpenCodeAgentProvider instead of the
         // mock IKiroCliOrchestrator, causing Moq verification failures.

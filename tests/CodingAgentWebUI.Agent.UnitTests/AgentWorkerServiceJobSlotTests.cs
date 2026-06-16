@@ -220,9 +220,6 @@ public class AgentWorkerServiceJobSlotTests
 
     private static AgentWorkerService CreateService()
     {
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AGENT_TYPE")))
-            Environment.SetEnvironmentVariable("AGENT_TYPE", "kiro-dotnet");
-
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 

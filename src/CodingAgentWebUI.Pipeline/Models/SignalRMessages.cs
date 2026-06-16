@@ -15,7 +15,7 @@ public sealed record AgentRegistrationMessage
     public required string Hostname { get; init; }
 
     [Key(2)]
-    public required string AgentType { get; init; }
+    public string? AgentType { get; init; }
 
     [Key(3)]
     public required IReadOnlyList<string> Labels { get; init; }

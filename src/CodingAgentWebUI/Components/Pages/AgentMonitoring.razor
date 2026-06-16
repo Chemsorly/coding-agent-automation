@@ -224,8 +224,6 @@
                                         <div class="detail-value detail-mono">@modalAgent.AgentId</div>
                                         <div class="detail-label">Hostname</div>
                                         <div class="detail-value">@modalAgent.Hostname</div>
-                                        <div class="detail-label">Type</div>
-                                        <div class="detail-value">@modalAgent.AgentType</div>
                                         <div class="detail-label">Labels</div>
                                         <div class="detail-value">
                                             @foreach (var label in modalAgent.Labels)
@@ -338,7 +336,6 @@
                     <thead>
                         <tr>
                             <th>Agent ID</th>
-                            <th>Type</th>
                             <th>Labels</th>
                             <th>Status</th>
                             <th>Active Job</th>
@@ -352,7 +349,6 @@
                             <tr class="monitoring-row-@agent.Status.ToString().ToLowerInvariant() @(agent.Disabled ? "monitoring-row-disabled" : "") monitoring-row-clickable"
                                 @onclick="() => SelectAgent(agent.AgentId)">
                                 <td class="monitoring-mono" title="@agent.AgentId">@agent.AgentId</td>
-                                <td>@agent.AgentType</td>
                                 <td>
                                     @foreach (var label in agent.Labels)
                                     {

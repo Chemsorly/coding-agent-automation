@@ -17,7 +17,7 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// Uses an in-memory test server to verify the /healthz, /readyz, and /startupz endpoints.
 /// </summary>
 /// <remarks>
-/// This class constructs <see cref="AgentWorkerService"/> which reads AGENT_TYPE from the environment.
+/// This class constructs <see cref="AgentWorkerService"/> which reads environment variables.
 /// It shares the "EnvironmentVariables" collection with <see cref="AgentWorkerServiceTests"/> to
 /// prevent parallel execution — environment variables are process-wide shared state.
 /// </remarks>
@@ -29,10 +29,6 @@ public class HealthEndpointsTests : IAsyncDisposable
 
     public HealthEndpointsTests()
     {
-        // Ensure AGENT_TYPE is set before any test method runs.
-        // AgentWorkerServiceTests in the same assembly may clear this env var;
-        // setting it here prevents race conditions during parallel test execution.
-        Environment.SetEnvironmentVariable("AGENT_TYPE", "kiro-dotnet");
     }
 
     private async Task<HttpClient> CreateTestClient(bool isConnected)
@@ -43,9 +39,6 @@ public class HealthEndpointsTests : IAsyncDisposable
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var mockQualityGateValidator = new Mock<IQualityGateValidator>();
-
-        // Ensure AGENT_TYPE is set
-        Environment.SetEnvironmentVariable("AGENT_TYPE", "kiro-dotnet");
 
         var hubManagerFactory = new HubConnectionManagerFactory(
             "http://localhost:9999",

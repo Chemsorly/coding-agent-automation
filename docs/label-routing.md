@@ -78,7 +78,7 @@ Resolution: all Reviewer Configurations whose labels intersect with the job's la
 
 ## Setting Up a New Stack
 
-1. **Create an agent container** — Add a service to `docker-compose.yml` with the appropriate `AGENT_TYPE` and `AGENT_LABELS`
+1. **Create an agent container** — Add a service to `docker-compose.yml` with the appropriate `AGENT_LABELS`
 2. **Create an Agent Profile** — In Settings → Label Routing → Agent Profiles, map the labels to a provider config
 3. **Create a QGC** — In Settings → Label Routing → Quality Gate Configs, define the build/test commands for the stack
 4. **Create a Reviewer Config** (optional) — In Settings → Label Routing → Reviewer Configs, define stack-specific review agents

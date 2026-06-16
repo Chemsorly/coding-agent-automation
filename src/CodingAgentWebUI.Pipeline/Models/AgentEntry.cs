@@ -37,7 +37,7 @@ public sealed record AgentEntry
 
     public required string Hostname { get; init; }
 
-    public required string AgentType { get; init; }
+    public string? AgentType { get; init; }
 
     public required IReadOnlyList<string> Labels { get; init; }
 
