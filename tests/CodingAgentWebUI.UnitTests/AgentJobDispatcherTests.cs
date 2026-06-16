@@ -105,7 +105,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-1",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-1");
 
@@ -227,7 +226,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-1",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-1");
 
@@ -256,7 +254,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-fail",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-fail");
 
@@ -387,7 +384,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-review",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-review");
 
@@ -484,7 +480,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-rev-exc",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-rev-exc");
 
@@ -528,7 +523,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-decomp",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-decomp");
 
@@ -552,7 +546,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-decomp2",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-decomp2");
 
@@ -574,7 +567,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-decomp-exc",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-decomp-exc");
 
@@ -603,7 +595,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-decomp-exc2",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-decomp-exc2");
 
@@ -635,7 +626,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-happy",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-happy");
 
@@ -659,7 +649,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-noprof",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-noprof");
 
@@ -682,7 +671,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-exc",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-exc");
 
@@ -711,7 +699,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-noip",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-noip");
 
@@ -739,7 +726,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-cap",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-cap");
 
@@ -776,7 +762,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-fr",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-fr");
 
@@ -846,7 +831,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-direct-null",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-direct-null");
 
@@ -864,7 +848,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-direct-nrl",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-direct-nrl");
 
@@ -892,7 +875,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-direct-impl",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-direct-impl");
 
@@ -926,7 +908,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-direct-rev",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-direct-rev");
 
@@ -975,7 +956,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-direct-decomp",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-direct-decomp");
 
@@ -1021,7 +1001,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-direct-dedup",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-direct-dedup");
 
@@ -1060,7 +1039,6 @@ public class AgentJobDispatcherTests : IDisposable
         {
             AgentId = "agent-direct-fail",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-direct-fail");
 

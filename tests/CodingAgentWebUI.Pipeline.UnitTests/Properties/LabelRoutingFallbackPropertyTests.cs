@@ -118,7 +118,6 @@ public class LabelRoutingFallbackPropertyTests
         {
             AgentId = "agent-1",
             Hostname = "host1",
-            AgentType = "kiro-dotnet",
             Labels = agentLabels
         }, "conn-1");
 
@@ -149,7 +148,6 @@ public class LabelRoutingFallbackPropertyTests
         {
             AgentId = "agent-1",
             Hostname = "host1",
-            AgentType = "kiro-dotnet",
             Labels = agentLabels
         }, "conn-1");
 

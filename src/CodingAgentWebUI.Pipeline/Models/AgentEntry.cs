@@ -37,8 +37,6 @@ public sealed record AgentEntry
 
     public required string Hostname { get; init; }
 
-    public string? AgentType { get; init; }
-
     public required IReadOnlyList<string> Labels { get; init; }
 
     /// <summary>Current agent status — transitions between Idle, Busy, and Disconnected.</summary>

@@ -121,7 +121,6 @@ public sealed class ConsolidationQueueServiceTests
         AgentId = "agent-1",
         ConnectionId = "conn-1",
         Hostname = "host",
-        AgentType = "kiro",
         Labels = labels ?? new[] { "kiro", "dotnet" },
         RegisteredAt = DateTimeOffset.UtcNow
     };

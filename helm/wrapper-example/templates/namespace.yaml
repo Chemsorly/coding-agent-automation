@@ -1,4 +1,6 @@
+{{- if .Values.createNamespace }}
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: coding-agent
+  name: {{ .Release.Namespace }}
+{{- end }}

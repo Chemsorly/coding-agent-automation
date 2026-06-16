@@ -30,14 +30,13 @@ public class AgentRegistryPropertyTests
     /// **Validates: Requirements 2.2, 2.3**
     /// </summary>
     [Property(MaxTest = 20)]
-    public void Registration_ProducesExactlyOneIdleEntry(NonEmptyString agentId, NonEmptyString hostname, NonEmptyString agentType, NonEmptyString connectionId)
+    public void Registration_ProducesExactlyOneIdleEntry(NonEmptyString agentId, NonEmptyString hostname, NonEmptyString connectionId)
     {
         var registry = CreateRegistry();
         var message = new AgentRegistrationMessage
         {
             AgentId = agentId.Get,
             Hostname = hostname.Get,
-            AgentType = agentType.Get,
             Labels = new[] { "kiro", "dotnet" }
         };
 
@@ -63,7 +62,6 @@ public class AgentRegistryPropertyTests
         {
             AgentId = agentId.Get,
             Hostname = "host1",
-            AgentType = "kiro-dotnet",
             Labels = new[] { "kiro" }
         };
 
@@ -87,7 +85,6 @@ public class AgentRegistryPropertyTests
         {
             AgentId = agentId.Get,
             Hostname = "host1",
-            AgentType = "kiro-dotnet",
             Labels = new[] { "kiro" }
         };
 

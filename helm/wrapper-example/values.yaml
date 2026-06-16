@@ -1,6 +1,9 @@
 # Wrapper chart values for bare-metal deployment
 # Overrides for the coding-agent-automation subchart.
 
+# Set to true to create the namespace resource (useful when ArgoCD doesn't manage it)
+createNamespace: false
+
 coding-agent-automation:
   image:
     pullPolicy: Always

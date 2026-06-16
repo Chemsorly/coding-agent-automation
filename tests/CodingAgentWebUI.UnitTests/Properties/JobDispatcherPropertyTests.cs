@@ -30,7 +30,6 @@ public class JobDispatcherPropertyTests
         {
             AgentId = agentId,
             Hostname = $"host-{agentId}",
-            AgentType = "kiro-dotnet",
             Labels = labels
         }, $"conn-{agentId}");
     }

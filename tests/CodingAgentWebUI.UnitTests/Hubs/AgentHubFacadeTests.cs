@@ -100,7 +100,7 @@ public sealed class AgentHubFacadeTests
     [Fact]
     public void Register_DelegatesToRegistry()
     {
-        var msg = new AgentRegistrationMessage { AgentId = "a1", Hostname = "h1", AgentType = "kiro", Labels = new[] { "dotnet" } };
+        var msg = new AgentRegistrationMessage { AgentId = "a1", Hostname = "h1", Labels = new[] { "dotnet" } };
         var result = _facade.Register(msg, "conn-1");
         result.Should().NotBeNull();
         result.AgentId.Should().Be("a1");
@@ -109,7 +109,7 @@ public sealed class AgentHubFacadeTests
     [Fact]
     public void Deregister_DelegatesToRegistry()
     {
-        var msg = new AgentRegistrationMessage { AgentId = "a1", Hostname = "h1", AgentType = "kiro", Labels = Array.Empty<string>() };
+        var msg = new AgentRegistrationMessage { AgentId = "a1", Hostname = "h1", Labels = Array.Empty<string>() };
         _facade.Register(msg, "conn-1");
         _facade.Deregister("a1").Should().BeTrue();
     }
@@ -117,7 +117,7 @@ public sealed class AgentHubFacadeTests
     [Fact]
     public void GetByAgentId_DelegatesToRegistry()
     {
-        var msg = new AgentRegistrationMessage { AgentId = "a1", Hostname = "h1", AgentType = "kiro", Labels = Array.Empty<string>() };
+        var msg = new AgentRegistrationMessage { AgentId = "a1", Hostname = "h1", Labels = Array.Empty<string>() };
         _facade.Register(msg, "conn-1");
         _facade.GetByAgentId("a1").Should().NotBeNull();
         _facade.GetByAgentId("unknown").Should().BeNull();
@@ -126,7 +126,7 @@ public sealed class AgentHubFacadeTests
     [Fact]
     public void GetByConnectionId_DelegatesToRegistry()
     {
-        var msg = new AgentRegistrationMessage { AgentId = "a1", Hostname = "h1", AgentType = "kiro", Labels = Array.Empty<string>() };
+        var msg = new AgentRegistrationMessage { AgentId = "a1", Hostname = "h1", Labels = Array.Empty<string>() };
         _facade.Register(msg, "conn-1");
         _facade.GetByConnectionId("conn-1").Should().NotBeNull();
         _facade.GetByConnectionId("unknown").Should().BeNull();
@@ -135,7 +135,7 @@ public sealed class AgentHubFacadeTests
     [Fact]
     public void TransitionStatus_DelegatesToRegistry()
     {
-        var msg = new AgentRegistrationMessage { AgentId = "a1", Hostname = "h1", AgentType = "kiro", Labels = Array.Empty<string>() };
+        var msg = new AgentRegistrationMessage { AgentId = "a1", Hostname = "h1", Labels = Array.Empty<string>() };
         _facade.Register(msg, "conn-1");
         _facade.TransitionStatus("a1", AgentStatus.Busy);
         _facade.GetByAgentId("a1")!.Status.Should().Be(AgentStatus.Busy);
@@ -144,7 +144,7 @@ public sealed class AgentHubFacadeTests
     [Fact]
     public void UpdateHeartbeat_DelegatesToRegistry()
     {
-        var msg = new AgentRegistrationMessage { AgentId = "a1", Hostname = "h1", AgentType = "kiro", Labels = Array.Empty<string>() };
+        var msg = new AgentRegistrationMessage { AgentId = "a1", Hostname = "h1", Labels = Array.Empty<string>() };
         _facade.Register(msg, "conn-1");
         var ts = DateTimeOffset.UtcNow;
         _facade.UpdateHeartbeat("a1", ts);

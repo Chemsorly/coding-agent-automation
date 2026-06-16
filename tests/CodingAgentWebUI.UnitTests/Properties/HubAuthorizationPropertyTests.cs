@@ -39,7 +39,6 @@ public class HubAuthorizationPropertyTests
         {
             AgentId = agentId.Get,
             Hostname = "host1",
-            AgentType = "kiro-dotnet",
             Labels = new[] { "kiro" }
         }, "conn-1");
         entry.ActiveJobId = activeJobId.Get;
@@ -64,7 +63,6 @@ public class HubAuthorizationPropertyTests
         {
             AgentId = agentId.Get,
             Hostname = "host1",
-            AgentType = "kiro-dotnet",
             Labels = new[] { "kiro" }
         }, "conn-1");
         entry.ActiveJobId = jobId.Get;

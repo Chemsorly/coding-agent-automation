@@ -14,8 +14,9 @@ public sealed record AgentRegistrationMessage
     [Key(1)]
     public required string Hostname { get; init; }
 
+    /// <summary>Reserved slot for wire compatibility (formerly AgentType).</summary>
     [Key(2)]
-    public string? AgentType { get; init; }
+    public string? Reserved2 { get; init; }
 
     [Key(3)]
     public required IReadOnlyList<string> Labels { get; init; }

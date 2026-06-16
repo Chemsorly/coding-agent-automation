@@ -20,7 +20,6 @@ public sealed class FakeAgentClient : IAsyncDisposable
 
     public string AgentId { get; }
     public string[] Labels { get; }
-    public string AgentType { get; init; } = "kiro-dotnet10";
 
     // Observability
     public TaskCompletionSource<JobAssignmentMessage> JobAssigned { get; private set; } = new();
@@ -73,7 +72,6 @@ public sealed class FakeAgentClient : IAsyncDisposable
         {
             AgentId = AgentId,
             Hostname = "fake-agent-host",
-            AgentType = AgentType,
             Labels = Labels
         });
     }

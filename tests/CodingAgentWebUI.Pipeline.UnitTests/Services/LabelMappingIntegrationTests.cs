@@ -594,7 +594,6 @@ public class LabelMappingIntegrationTests
             AgentId = agentId,
             ConnectionId = $"conn-{agentId}",
             Hostname = "test-host",
-            AgentType = "kiro-test",
             Labels = labels,
             Status = AgentStatus.Idle,
             RegisteredAt = DateTimeOffset.UtcNow.AddMinutes(-10),
@@ -644,7 +643,6 @@ public class LabelMappingIntegrationTests
             {
                 AgentId = agent.AgentId,
                 Hostname = agent.Hostname,
-                AgentType = agent.AgentType,
                 Labels = agent.Labels
             };
             var entry = registry.Register(registrationMsg, agent.ConnectionId);

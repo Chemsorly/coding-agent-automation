@@ -82,7 +82,6 @@ public sealed class ConsolidationDispatcherTests : IDisposable
         {
             AgentId = agentId,
             Hostname = "host-1",
-            AgentType = "kiro",
             Labels = labels ?? Array.Empty<string>()
         };
         _registry.Register(msg, connectionId);

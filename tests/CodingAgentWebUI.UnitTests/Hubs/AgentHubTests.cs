@@ -24,13 +24,11 @@ public class AgentHubTests
         {
             AgentId = "agent-1",
             Hostname = "host-1",
-            AgentType = "kiro-dotnet",
             Labels = new[] { "dotnet", "linux" }
         };
 
         message.AgentId.Should().Be("agent-1");
         message.Hostname.Should().Be("host-1");
-        message.AgentType.Should().Be("kiro-dotnet");
         message.Labels.Should().HaveCount(2);
     }
 

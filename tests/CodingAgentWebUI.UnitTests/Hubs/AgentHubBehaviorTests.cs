@@ -46,7 +46,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
         AgentId = agentId,
         ConnectionId = connectionId,
         Hostname = "host-1",
-        AgentType = "kiro",
         Labels = new[] { "dotnet" },
         Status = AgentStatus.Busy,
         RegisteredAt = DateTimeOffset.UtcNow

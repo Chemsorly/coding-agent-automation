@@ -53,7 +53,6 @@ public class JobQueueDrainServiceTests
         {
             AgentId = agentId,
             Hostname = "host",
-            AgentType = "kiro",
             Labels = labels ?? new[] { "kiro", "dotnet" }
         }, $"conn-{agentId}");
     }

@@ -27,7 +27,6 @@ public class AgentRegistryServicePropertyTests
         {
             AgentId = agentId,
             Hostname = $"host-{agentId}",
-            AgentType = "kiro-dotnet",
             Labels = labels ?? new[] { "kiro", "dotnet" }
         }, connectionId);
     }

@@ -55,7 +55,7 @@ public class AgentRegistryServiceExtendedTests
     public void Register_NullConnectionId_ThrowsArgumentNull()
     {
         Assert.Throws<ArgumentNullException>(() => _registry.Register(
-            new AgentRegistrationMessage { AgentId = "a", Hostname = "h", AgentType = "t", Labels = new[] { "l" } },
+            new AgentRegistrationMessage { AgentId = "a", Hostname = "h", Labels = new[] { "l" } },
             null!));
     }
 
@@ -306,7 +306,6 @@ public class AgentRegistryServiceExtendedTests
             {
                 AgentId = $"agent-{i}",
                 Hostname = $"host-{i}",
-                AgentType = "test",
                 Labels = new[] { "test" }
             }, $"conn-{i}");
         });
@@ -359,7 +358,6 @@ public class AgentRegistryServiceExtendedTests
         {
             AgentId = agentId,
             Hostname = $"host-{agentId}",
-            AgentType = "kiro-dotnet",
             Labels = new[] { "dotnet", "linux" }
         }, connectionId);
     }

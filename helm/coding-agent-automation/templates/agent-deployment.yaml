@@ -16,7 +16,7 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: {{ .strategy.type }}
+    type: {{ (.strategy).type | default "Recreate" }}
   selector:
     matchLabels:
       {{- include "coding-agent-automation.selectorLabels" $ | nindent 6 }}
@@ -30,7 +30,7 @@ spec:
         app.kubernetes.io/agent-name: {{ .name }}
     spec:
       serviceAccountName: {{ include "coding-agent-automation.serviceAccountName" $ }}
-      terminationGracePeriodSeconds: {{ .terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ .terminationGracePeriodSeconds | default 15 }}
       {{- with .podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -75,8 +75,10 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3
+          {{- with .resources }}
           resources:
-            {{- toYaml .resources | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           env:
             - name: ORCHESTRATOR_URL
               value: "http://{{ include "coding-agent-automation.fullname" $ }}-orchestrator:{{ $.Values.orchestrator.service.port }}"

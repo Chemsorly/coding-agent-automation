@@ -24,14 +24,12 @@ public class MessageSerializationPropertyTests
     public void AgentRegistrationMessage_RoundTrip(
         NonEmptyString agentId,
         NonEmptyString hostname,
-        NonEmptyString agentType,
         NonEmptyString[] labels)
     {
         var original = new AgentRegistrationMessage
         {
             AgentId = agentId.Get,
             Hostname = hostname.Get,
-            AgentType = agentType.Get,
             Labels = labels.Select(l => l.Get).ToList()
         };
 
@@ -40,7 +38,6 @@ public class MessageSerializationPropertyTests
 
         deserialized.AgentId.Should().Be(original.AgentId);
         deserialized.Hostname.Should().Be(original.Hostname);
-        deserialized.AgentType.Should().Be(original.AgentType);
         deserialized.Labels.Should().BeEquivalentTo(original.Labels);
     }
 

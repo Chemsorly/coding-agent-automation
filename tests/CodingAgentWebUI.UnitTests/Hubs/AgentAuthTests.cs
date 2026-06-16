@@ -210,7 +210,7 @@ public class AgentAuthTests
     {
         _registry.Register(new AgentRegistrationMessage
         {
-            AgentId = "agent-1", Hostname = "h", AgentType = "t", Labels = new[] { "l" }
+            AgentId = "agent-1", Hostname = "h", Labels = new[] { "l" }
         }, "conn-1");
 
         var agent = _registry.GetByConnectionId("conn-1");
@@ -223,7 +223,7 @@ public class AgentAuthTests
     {
         var entry = _registry.Register(new AgentRegistrationMessage
         {
-            AgentId = "agent-1", Hostname = "h", AgentType = "t", Labels = new[] { "l" }
+            AgentId = "agent-1", Hostname = "h", Labels = new[] { "l" }
         }, "conn-1");
         entry.ActiveJobId = "job-1";
 
@@ -236,7 +236,7 @@ public class AgentAuthTests
     {
         var entry = _registry.Register(new AgentRegistrationMessage
         {
-            AgentId = "agent-1", Hostname = "h", AgentType = "t", Labels = new[] { "l" }
+            AgentId = "agent-1", Hostname = "h", Labels = new[] { "l" }
         }, "conn-1");
         entry.ActiveJobId = "job-1";
 
@@ -249,7 +249,7 @@ public class AgentAuthTests
     {
         _registry.Register(new AgentRegistrationMessage
         {
-            AgentId = "agent-1", Hostname = "h", AgentType = "t", Labels = new[] { "l" }
+            AgentId = "agent-1", Hostname = "h", Labels = new[] { "l" }
         }, "conn-1");
 
         var agent = _registry.GetByConnectionId("conn-1");
