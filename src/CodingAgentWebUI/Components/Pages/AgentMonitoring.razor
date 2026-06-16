@@ -773,7 +773,7 @@
             Log.Warning(ex, "Failed to load quality gate configs");
         }
 
-        RefreshData();
+        await RefreshDataAsync(includeConsolidation: true);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -801,16 +801,17 @@
         }
     }
 
-    private void RefreshData()
+    private Task RefreshDataAsync(bool includeConsolidation = false)
     {
         _activeRuns = PipelineService.GetAllActiveRuns();
         _agents = Registry.GetAllAgents();
         _queuedJobs = Dispatcher.GetQueuedJobs();
         _runHistory = PipelineService.GetRunHistory();
-        RefreshConsolidationDataAsync();
+
+        return includeConsolidation ? RefreshConsolidationAsync() : Task.CompletedTask;
     }
 
-    private async void RefreshConsolidationDataAsync()
+    private async Task RefreshConsolidationAsync()
     {
         try
         {
@@ -833,10 +834,10 @@
         if (_disposed) return;
         try
         {
-            await InvokeAsync(() =>
+            await InvokeAsync(async () =>
             {
                 if (_disposed) return;
-                RefreshData();
+                await RefreshDataAsync();
                 StateHasChanged();
             });
         }
@@ -848,10 +849,10 @@
         if (_disposed) return;
         try
         {
-            await InvokeAsync(() =>
+            await InvokeAsync(async () =>
             {
                 if (_disposed) return;
-                RefreshData();
+                await RefreshDataAsync(includeConsolidation: true);
                 StateHasChanged();
             });
         }
@@ -933,7 +934,7 @@
             }
             catch (Exception ex) { Log.Warning(ex, "Failed to swap label for cancelled orphan run {RunId}", run.RunId); }
 
-            RefreshData();
+            await RefreshDataAsync();
             StateHasChanged();
             return;
         }
@@ -950,17 +951,17 @@
         await PipelineService.CancelPipelineAsync();
     }
 
-    private void RemoveFromQueue(string issueIdentifier, string issueProviderId)
+    private async Task RemoveFromQueue(string issueIdentifier, string issueProviderId)
     {
         Dispatcher.RemoveFromQueue(issueIdentifier, issueProviderId);
-        RefreshData();
+        await RefreshDataAsync();
         StateHasChanged();
     }
 
     private async Task CancelConsolidationRun(string runId)
     {
         await ConsolidationService.CancelQueuedRunAsync(runId, CancellationToken.None);
-        RefreshData();
+        await RefreshDataAsync(includeConsolidation: true);
         StateHasChanged();
     }
 
