@@ -526,6 +526,7 @@ public sealed partial class PipelineLoopService
         _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures",
             enabledTemplates.Count, maxConsecutiveFailures);
         // TODO: _resumeSignal is read outside the lock here. Field is not volatile — on ARM64, JIT reordering could theoretically cache a stale value. Consider marking volatile or capturing to a local inside the lock.
+        // TODO: ResumeLoop() only resets top-level ConsecutivePollFailures/IsCircuitBroken but not per-template _templateStatuses counters. The circuit breaker will immediately re-trip on the next cycle since all templates still show ConsecutiveFailures >= threshold. Reset per-template counters in ResumeLoop().
         try { await _resumeSignal.Task.WaitAsync(ct); }
         catch (OperationCanceledException) { return true; }
         if (_stopRequested) return true;

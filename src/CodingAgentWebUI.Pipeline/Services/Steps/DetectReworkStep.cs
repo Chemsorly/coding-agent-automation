@@ -22,6 +22,7 @@ internal sealed class DetectReworkStep : IPipelineStep
                 var selectedPr = agentPrs.OrderByDescending(pr => pr.Number).First();
 
                 // Close stale draft PRs to prevent orphaned accumulation
+                // TODO: After closing a draft PR, older non-draft open PRs in agentPrs are ignored. The pipeline proceeds as new-issue flow which may create a duplicate PR alongside existing open non-draft PRs. Consider falling through to check the next PR in the list.
                 if (selectedPr.IsDraft)
                 {
                     await context.RepoProvider.ClosePullRequestAsync(selectedPr.Number, ct);
