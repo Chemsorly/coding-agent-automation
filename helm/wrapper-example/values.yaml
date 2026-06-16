@@ -13,10 +13,14 @@ coding-agent-automation:
   orchestrator:
     image:
       repository: chemsorly/coding-agent
-      tag: coding-agent-webui
+      tag: coding-agent-webui-latest
     replicas: 1
     annotations:
       reloader.stakater.com/auto: "true"
+      keel.sh/policy: force
+      keel.sh/trigger: poll
+      keel.sh/pollSchedule: "0 0 4 * * *"
+      keel.sh/match-tag: "true"
     podSecurityContext:
       runAsUser: 1000
       runAsGroup: 1000
@@ -56,11 +60,15 @@ coding-agent-automation:
       enabled: true
       image:
         repository: chemsorly/coding-agent
-        tag: coding-agent-kiro-dotnet10
+        tag: coding-agent-kiro-dotnet10-latest
       providerType: kiro
       labels: "kiro,dotnet,dotnet10"
       annotations:
         reloader.stakater.com/auto: "true"
+        keel.sh/policy: force
+        keel.sh/trigger: poll
+        keel.sh/pollSchedule: "0 0 4 * * *"
+        keel.sh/match-tag: "true"
       podSecurityContext:
         runAsUser: 1000
         runAsGroup: 1000
@@ -95,11 +103,15 @@ coding-agent-automation:
       enabled: true
       image:
         repository: chemsorly/coding-agent
-        tag: coding-agent-kiro-dotnet10
+        tag: coding-agent-kiro-dotnet10-latest
       providerType: kiro
       labels: "kiro,dotnet,dotnet10"
       annotations:
         reloader.stakater.com/auto: "true"
+        keel.sh/policy: force
+        keel.sh/trigger: poll
+        keel.sh/pollSchedule: "0 0 4 * * *"
+        keel.sh/match-tag: "true"
       podSecurityContext:
         runAsUser: 1000
         runAsGroup: 1000

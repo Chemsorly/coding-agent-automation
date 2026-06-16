@@ -4,5 +4,5 @@ description: Wrapper chart for coding-agent-automation (bare-metal deployment)
 version: 1.0.0
 dependencies:
   - name: coding-agent-automation
-    version: ">=0.0.0-0"
+    version: "0.1.1"
     repository: "https://chemsorly.github.io/helm-charts"

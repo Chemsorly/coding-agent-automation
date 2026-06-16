@@ -22,6 +22,7 @@ public class JsonConfigurationStore : IConfigurationStore
         ArgumentNullException.ThrowIfNull(baseDirectory);
         _baseDirectory = baseDirectory;
         CleanupOrphanedTempFiles();
+        EnsureDefaultProjectExists();
     }
 
     /// <summary>
@@ -52,6 +53,34 @@ public class JsonConfigurationStore : IConfigurationStore
         {
             _logger.Warning("Failed to enumerate temp files in config directory: {Error}", ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Ensures the Default project file exists on disk. Creates it with all-null overrides
+    /// if missing. This guarantees the invariant that the Default project always exists,
+    /// including on fresh deployments where no migration runs.
+    /// </summary>
+    private void EnsureDefaultProjectExists()
+    {
+        var projectsDir = Path.Combine(_baseDirectory, "projects");
+        var defaultProjectPath = Path.Combine(projectsDir, $"{WellKnownIds.DefaultProjectId}.json");
+
+        if (File.Exists(defaultProjectPath))
+            return;
+
+        Directory.CreateDirectory(projectsDir);
+
+        var defaultProject = new PipelineProject
+        {
+            Id = WellKnownIds.DefaultProjectId,
+            Name = "Default",
+            Enabled = true,
+            TemplateIds = []
+        };
+
+        var json = JsonSerializer.Serialize(defaultProject, JsonOptions);
+        File.WriteAllText(defaultProjectPath, json);
+        _logger.Information("Created Default project at {Path}", defaultProjectPath);
     }
 
     public async Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct)
