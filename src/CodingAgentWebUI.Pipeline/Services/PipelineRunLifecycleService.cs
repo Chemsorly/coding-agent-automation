@@ -261,12 +261,14 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
 
     public void Dispose()
     {
+        // TODO: Use Interlocked.Exchange(ref _cancellationTokenSource, null)?.Dispose() to avoid racing with CreateLinkedCancellationToken which could assign a new CTS after this read, leaking it.
         _cancellationTokenSource?.Dispose();
         GC.SuppressFinalize(this);
     }
 
     public ValueTask DisposeAsync()
     {
+        // TODO: Use Interlocked.Exchange(ref _cancellationTokenSource, null)?.Dispose() to avoid racing with CreateLinkedCancellationToken.
         _cancellationTokenSource?.Dispose();
         GC.SuppressFinalize(this);
         return ValueTask.CompletedTask;

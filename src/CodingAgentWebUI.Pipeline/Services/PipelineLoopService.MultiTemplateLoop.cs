@@ -142,7 +142,7 @@ public sealed partial class PipelineLoopService
                 PipelineTelemetry.LoopIssuesFound.Add(totalItemsFound);
 
             // Step 4: Circuit breaker
-            if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.MaxConsecutiveFailures, ct))
+            if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.MaxConsecutiveFailures, snapshot.Config.ClosedLoopCircuitBreakerCooldown, ct))
                 continue;
 
             // Step 5: Fair dispatch
@@ -503,6 +503,7 @@ public sealed partial class PipelineLoopService
     private async Task<bool> CheckCircuitBreakerAsync(
         IReadOnlyList<PipelineJobTemplate> enabledTemplates,
         int maxConsecutiveFailures,
+        TimeSpan cooldown,
         CancellationToken ct)
     {
         var allFailing = enabledTemplates.Count > 0 && enabledTemplates.All(t =>
@@ -514,22 +515,40 @@ public sealed partial class PipelineLoopService
 
         if (!allFailing) return false;
 
-        // TODO: Circuit breaker now waits indefinitely for manual ResumeLoop(). For unattended closed-loop deployments, consider adding a configurable max pause duration to allow self-healing on transient failures.
         lock (_lock)
         {
             IsCircuitBroken = true;
-            StatusMessage = $"⚠️ Loop paused — all {enabledTemplates.Count} templates failing.";
+            StatusMessage = $"⚠️ Loop paused — all {enabledTemplates.Count} templates failing. Auto-resume in {cooldown.TotalMinutes:0.#} min.";
             _resumeSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         }
         PipelineTelemetry.LoopCircuitBreakerTrips.Add(1);
         NotifyChange();
-        _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures",
-            enabledTemplates.Count, maxConsecutiveFailures);
-        // TODO: _resumeSignal is read outside the lock here. Field is not volatile — on ARM64, JIT reordering could theoretically cache a stale value. Consider marking volatile or capturing to a local inside the lock.
-        // TODO: ResumeLoop() only resets top-level ConsecutivePollFailures/IsCircuitBroken but not per-template _templateStatuses counters. The circuit breaker will immediately re-trip on the next cycle since all templates still show ConsecutiveFailures >= threshold. Reset per-template counters in ResumeLoop().
-        try { await _resumeSignal.Task.WaitAsync(ct); }
+        _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures. Auto-resume in {Cooldown}",
+            enabledTemplates.Count, maxConsecutiveFailures, cooldown);
+
+        // TODO: _resumeSignal.Task is read outside the lock. Capture a local inside the lock above for safety against future reassignment.
+        try { await Task.WhenAny(_resumeSignal.Task, Task.Delay(cooldown, ct)); }
         catch (OperationCanceledException) { return true; }
+
         if (_stopRequested) return true;
+
+        lock (_lock)
+        {
+            if (!IsCircuitBroken) return true; // ResumeLoop() already handled reset
+            ConsecutivePollFailures = 0;
+            IsCircuitBroken = false;
+            LastPollError = null;
+            StatusMessage = "🔄 Circuit breaker auto-resumed, retrying poll.";
+        }
+
+        // Reset per-template failure counters
+        foreach (var template in enabledTemplates)
+        {
+            if (_templateStatuses.TryGetValue(template.Id, out var status) && status.ConsecutiveFailures > 0)
+                _templateStatuses[template.Id] = status with { ConsecutiveFailures = 0, LastError = null };
+        }
+
+        NotifyChange();
         return true;
     }
 
