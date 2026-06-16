@@ -99,8 +99,12 @@ public static class CiFailureClassifier
         if (hasInfrastructure)
             return CiFailureCategory.Infrastructure;
 
+        // If no logs are available for any failed job, this is almost certainly a log-availability
+        // race (BlobNotFound from GitHub Actions storage). Treat as infrastructure so we use the
+        // lightweight infra-retry path instead of wasting agent retry budget on a problem the agent
+        // cannot diagnose without logs.
         if (!hasAnyLogs)
-            return CiFailureCategory.Unknown;
+            return CiFailureCategory.Infrastructure;
 
         return CiFailureCategory.Unknown;
     }

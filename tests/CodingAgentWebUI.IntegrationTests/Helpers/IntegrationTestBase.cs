@@ -147,7 +147,12 @@ public class IntegrationTestBase : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(TempRoot))
-            Directory.Delete(TempRoot, recursive: true);
+        try
+        {
+            if (Directory.Exists(TempRoot))
+                Directory.Delete(TempRoot, recursive: true);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 }

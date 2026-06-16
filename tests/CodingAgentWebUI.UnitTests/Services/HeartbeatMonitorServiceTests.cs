@@ -591,6 +591,85 @@ public class HeartbeatMonitorServiceTests : IDisposable
         _runService.GetRun("job-1").Should().NotBeNull();
     }
 
+    /// <summary>
+    /// Regression test: PR #804 introduced progress timeout that killed agents legitimately
+    /// waiting in RunningQualityGates during ExternalCi polling (45+ min Docker builds).
+    /// The fix (heartbeat refreshes LastStepChangeAt when CurrentStep matches) must keep
+    /// such agents alive. This test simulates the exact production scenario:
+    /// agent enters RunningQualityGates, 50 minutes pass (no step transition), then a
+    /// heartbeat arrives with matching CurrentStep — the sweep must NOT kill the run.
+    /// </summary>
+    [Fact]
+    public async Task SweepAsync_BusyAgent_HeartbeatRefreshedProgress_DoesNotTimeout()
+    {
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AgentBusyProgressTimeout = TimeSpan.FromMinutes(60) });
+
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-1";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "ExternalCi wait",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            CurrentStep = PipelineStep.RunningQualityGates,
+            // Simulate: entered step 50 min ago, but heartbeat refreshed it 25s ago
+            LastStepChangeAt = DateTimeOffset.UtcNow.AddSeconds(-25)
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Agent must still be busy — heartbeat kept the clock alive
+        _registry.GetByAgentId("agent-1")!.Status.Should().Be(AgentStatus.Busy);
+        _runService.GetRun("job-1").Should().NotBeNull();
+    }
+
+    /// <summary>
+    /// Regression test counterpart: when the agent considers itself idle (CurrentStep=null,
+    /// meaning ReportJobCompleted failed), heartbeats should NOT refresh LastStepChangeAt.
+    /// The progress timeout must still fire for stuck-in-Busy agents (#788).
+    /// </summary>
+    [Fact]
+    public async Task SweepAsync_BusyAgent_IdleHeartbeat_StillTimesOut()
+    {
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AgentBusyProgressTimeout = TimeSpan.FromMinutes(30) });
+
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-1";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Stuck agent",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            CurrentStep = PipelineStep.RunningQualityGates,
+            // Agent finished locally 45 min ago, ReportJobCompleted failed.
+            // Heartbeats continue with CurrentStep=null — LastStepChangeAt is NOT refreshed.
+            LastStepChangeAt = DateTimeOffset.UtcNow.AddMinutes(-45)
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Agent should be killed — stuck detection still works
+        _registry.GetByAgentId("agent-1")!.Status.Should().Be(AgentStatus.Idle);
+        _runService.GetRun("job-1").Should().BeNull();
+        _mockHistoryService.Verify(h => h.AddRunToHistory(It.Is<PipelineRun>(r =>
+            r.RunId == "job-1" &&
+            r.FailureReason!.Contains("progress timeout"))), Times.Once);
+    }
+
     private AgentEntry RegisterAgent(string agentId, string connectionId)
     {
         return _registry.Register(new AgentRegistrationMessage

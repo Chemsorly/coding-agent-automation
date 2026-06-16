@@ -127,6 +127,7 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
         {
             new { id = 2, body = "Nice work", user = new { login = "reviewer2", id = 2 }, created_at = "2026-01-15T11:00:00Z", updated_at = "2026-01-15T11:00:00Z" }
         });
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/10/reviews"), Array.Empty<object>());
 
         await using var provider = CreateProvider();
         var result = await provider.GetAgentPullRequestsAsync("42", CancellationToken.None);
@@ -152,6 +153,7 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
             BuildDetailedPullRequestJson(5, "feature/auto-99-impl", false, true));
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/5/comments"), Array.Empty<object>());
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/5/comments"), Array.Empty<object>());
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/5/reviews"), Array.Empty<object>());
 
         await using var provider = CreateProvider();
         var result = await provider.GetAgentPullRequestsAsync("99", CancellationToken.None);
@@ -182,6 +184,7 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
             new { id = 3, body = "Contains <!-- agent: marker -->", user = new { login = "bot", id = 1 }, created_at = "2026-01-15T12:00:00Z", updated_at = "2026-01-15T12:00:00Z" },
             new { id = 4, body = "Human conversation comment", user = new { login = "human", id = 2 }, created_at = "2026-01-15T13:00:00Z", updated_at = "2026-01-15T13:00:00Z" }
         });
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/3/reviews"), Array.Empty<object>());
 
         await using var provider = CreateProvider();
         var result = await provider.GetAgentPullRequestsAsync("7", CancellationToken.None);

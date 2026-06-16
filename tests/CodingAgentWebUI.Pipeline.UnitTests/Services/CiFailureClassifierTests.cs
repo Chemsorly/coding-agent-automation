@@ -59,21 +59,24 @@ public class CiFailureClassifierTests
     }
 
     [Fact]
-    public void Classify_NullLogContent_ReturnsUnknown()
+    public void Classify_NullLogContent_ReturnsInfrastructure()
     {
+        // When logs are unavailable (BlobNotFound / null), treat as infrastructure
+        // so we use the lightweight infra-retry path instead of wasting agent budget
         var status = new PipelineRunStatus
         {
             State = PipelineRunState.Failed,
             Jobs = new[] { new PipelineJobResult { Name = "build", State = PipelineRunState.Failed, LogContent = null } }
         };
-        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Unknown);
+        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Infrastructure);
     }
 
     [Fact]
-    public void Classify_EmptyLogContent_ReturnsUnknown()
+    public void Classify_EmptyLogContent_ReturnsInfrastructure()
     {
+        // Empty log content is equivalent to unavailable — likely a storage race
         var status = CreateStatus("");
-        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Unknown);
+        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Infrastructure);
     }
 
     [Fact]
@@ -126,6 +129,39 @@ public class CiFailureClassifierTests
             {
                 new PipelineJobResult { Name = "build", State = PipelineRunState.Failed, LogContent = "Connection timed out" },
                 new PipelineJobResult { Name = "test", State = PipelineRunState.Failed, LogContent = "lost communication with the server" }
+            }
+        };
+        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Infrastructure);
+    }
+
+    [Fact]
+    public void Classify_MultipleJobs_SomeWithoutLogs_NoCodeFailure_ReturnsInfrastructure()
+    {
+        // When some jobs have infra-pattern logs and others have no logs at all (BlobNotFound),
+        // the overall classification should be Infrastructure
+        var status = new PipelineRunStatus
+        {
+            State = PipelineRunState.Failed,
+            Jobs = new[]
+            {
+                new PipelineJobResult { Name = "build", State = PipelineRunState.Failed, LogContent = "Connection timed out" },
+                new PipelineJobResult { Name = "docker", State = PipelineRunState.Failed, LogContent = null }
+            }
+        };
+        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Infrastructure);
+    }
+
+    [Fact]
+    public void Classify_MultipleJobs_AllWithoutLogs_ReturnsInfrastructure()
+    {
+        // All failed jobs have unavailable logs — classic BlobNotFound race
+        var status = new PipelineRunStatus
+        {
+            State = PipelineRunState.Failed,
+            Jobs = new[]
+            {
+                new PipelineJobResult { Name = "build", State = PipelineRunState.Failed, LogContent = null },
+                new PipelineJobResult { Name = "docker", State = PipelineRunState.Failed, LogContent = null }
             }
         };
         CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Infrastructure);

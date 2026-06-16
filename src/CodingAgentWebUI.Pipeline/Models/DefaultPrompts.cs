@@ -31,7 +31,8 @@ public static class DefaultPrompts
 
     public const string Fix =
         "Review the findings above. Fix only items marked [CRITICAL]. " +
-        "For [WARNING] items, add a TODO comment at the relevant location. Ignore [SUGGESTION] items.";
+        "For [WARNING] items, fix them if the fix is straightforward and low-risk; " +
+        "otherwise add a TODO comment at the relevant location. Ignore [SUGGESTION] items.";
 
     public const string CorrectnessReview =
         "Review the changes against the original issue requirements. Use a sub-agent for the review. " +

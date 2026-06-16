@@ -3226,10 +3226,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
         await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         var reworkPrompt = capturedPrompts.First(p => !p.Contains("Pre-Pull Request Cleanup"));
-        reworkPrompt.Should().Contain("reviewer");
-        reworkPrompt.Should().Contain("Fix the null check");
-        reworkPrompt.Should().Contain("src/Service.cs");
         reworkPrompt.Should().Contain("Review Feedback");
+        reworkPrompt.Should().Contain("pr-conversation-context.md");
+        reworkPrompt.Should().Contain("Address all human feedback");
     }
 
     [Fact]
