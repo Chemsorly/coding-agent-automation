@@ -271,11 +271,36 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
     /// <summary>
     /// Updates the agent's heartbeat timestamp in the registry.
+    /// When the agent reports an active pipeline step matching the run's current step,
+    /// also refreshes <see cref="PipelineRun.LastStepChangeAt"/> to prevent the progress
+    /// timeout from killing agents legitimately waiting in long-running steps (e.g., ExternalCi polling).
+    /// Does NOT refresh when <c>CurrentStep</c> is null — preserving stuck-agent detection (#788).
     /// </summary>
     public Task Heartbeat(HeartbeatMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
         _facade.UpdateHeartbeat(message.AgentId, message.Timestamp);
+
+        // If the agent reports an active pipeline step, treat as progress evidence.
+        // When CurrentStep is null the agent considers itself idle (job done locally) —
+        // don't reset the clock so the progress timeout can still detect stuck-in-Busy (#788).
+        if (message.CurrentStep is not null)
+        {
+            var agent = _facade.GetByAgentId(message.AgentId);
+            if (agent?.ActiveJobId is not null)
+            {
+                var run = _facade.GetRun(agent.ActiveJobId);
+                if (run is not null && run.CurrentStep == message.CurrentStep)
+                {
+                    // Clamp to server time to prevent a misbehaving agent from sending far-future timestamps
+                    var clampedTimestamp = message.Timestamp <= DateTimeOffset.UtcNow
+                        ? message.Timestamp
+                        : DateTimeOffset.UtcNow;
+                    run.LastStepChangeAt = clampedTimestamp;
+                }
+            }
+        }
+
         return Task.CompletedTask;
     }
 

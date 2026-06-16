@@ -825,6 +825,141 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     #endregion
 
+    #region Heartbeat — Progress Refresh
+
+    [Fact]
+    public async Task Heartbeat_ActiveStepMatchesRun_RefreshesLastStepChangeAt()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.RunningQualityGates;
+        run.LastStepChangeAt = DateTimeOffset.UtcNow.AddMinutes(-50); // Nearly timed out
+
+        _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var hub = CreateHub();
+        var heartbeat = new HeartbeatMessage
+        {
+            AgentId = "agent-1",
+            Timestamp = DateTimeOffset.UtcNow,
+            CurrentStep = PipelineStep.RunningQualityGates,
+            MemoryUsageMb = 512
+        };
+
+        await hub.Heartbeat(heartbeat);
+
+        // LastStepChangeAt should be refreshed (close to now, not -50min)
+        run.LastStepChangeAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Heartbeat_NullCurrentStep_DoesNotRefreshLastStepChangeAt()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.RunningQualityGates;
+        var originalTimestamp = DateTimeOffset.UtcNow.AddMinutes(-50);
+        run.LastStepChangeAt = originalTimestamp;
+
+        _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var hub = CreateHub();
+        var heartbeat = new HeartbeatMessage
+        {
+            AgentId = "agent-1",
+            Timestamp = DateTimeOffset.UtcNow,
+            CurrentStep = null, // Agent considers itself idle
+            MemoryUsageMb = 512
+        };
+
+        await hub.Heartbeat(heartbeat);
+
+        // LastStepChangeAt should NOT be refreshed — preserves stuck-agent detection
+        run.LastStepChangeAt.Should().Be(originalTimestamp);
+    }
+
+    [Fact]
+    public async Task Heartbeat_StepMismatch_DoesNotRefreshLastStepChangeAt()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.RunningQualityGates;
+        var originalTimestamp = DateTimeOffset.UtcNow.AddMinutes(-50);
+        run.LastStepChangeAt = originalTimestamp;
+
+        _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var hub = CreateHub();
+        var heartbeat = new HeartbeatMessage
+        {
+            AgentId = "agent-1",
+            Timestamp = DateTimeOffset.UtcNow,
+            CurrentStep = PipelineStep.GeneratingCode, // Doesn't match run's current step
+            MemoryUsageMb = 512
+        };
+
+        await hub.Heartbeat(heartbeat);
+
+        // LastStepChangeAt should NOT be refreshed — step mismatch
+        run.LastStepChangeAt.Should().Be(originalTimestamp);
+    }
+
+    [Fact]
+    public async Task Heartbeat_FutureTimestamp_ClampedToServerTime()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.RunningQualityGates;
+        run.LastStepChangeAt = DateTimeOffset.UtcNow.AddMinutes(-50);
+
+        _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var hub = CreateHub();
+        var heartbeat = new HeartbeatMessage
+        {
+            AgentId = "agent-1",
+            Timestamp = DateTimeOffset.UtcNow.AddHours(5), // Far-future timestamp
+            CurrentStep = PipelineStep.RunningQualityGates,
+            MemoryUsageMb = 512
+        };
+
+        await hub.Heartbeat(heartbeat);
+
+        // Should be clamped to approximately now, not the future timestamp
+        run.LastStepChangeAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Heartbeat_NoActiveJob_DoesNotThrow()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = null; // No active job
+
+        _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
+
+        var hub = CreateHub();
+        var heartbeat = new HeartbeatMessage
+        {
+            AgentId = "agent-1",
+            Timestamp = DateTimeOffset.UtcNow,
+            CurrentStep = PipelineStep.RunningQualityGates,
+            MemoryUsageMb = 512
+        };
+
+        // Should not throw
+        await hub.Heartbeat(heartbeat);
+    }
+
+    #endregion
+
     public void Dispose()
     {
         foreach (var orchestration in _orchestrationInstances)
