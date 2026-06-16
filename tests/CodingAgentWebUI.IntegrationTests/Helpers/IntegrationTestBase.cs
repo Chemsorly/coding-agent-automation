@@ -147,7 +147,25 @@ public class IntegrationTestBase : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(TempRoot))
-            Directory.Delete(TempRoot, recursive: true);
+        if (!Directory.Exists(TempRoot))
+            return;
+
+        // Retry with backoff — CI runners may hold file handles briefly after test completion
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                Directory.Delete(TempRoot, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < 2)
+            {
+                Thread.Sleep(100 * (attempt + 1));
+            }
+            catch (UnauthorizedAccessException) when (attempt < 2)
+            {
+                Thread.Sleep(100 * (attempt + 1));
+            }
+        }
     }
 }
