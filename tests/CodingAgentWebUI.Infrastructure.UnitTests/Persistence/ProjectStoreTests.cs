@@ -40,9 +40,9 @@ public class ProjectStoreTests : IDisposable
         await _store.SaveProjectAsync(project, CancellationToken.None);
         var loaded = await _store.LoadProjectsAsync(CancellationToken.None);
 
-        loaded.Should().HaveCount(1);
-        var result = loaded[0];
-        result.Id.Should().Be(project.Id);
+        // +1 for the auto-created Default project
+        loaded.Should().HaveCount(2);
+        var result = loaded.Single(p => p.Id == project.Id);
         result.Name.Should().Be("Test Project");
         result.Description.Should().Be("A test project");
         result.Enabled.Should().BeTrue();
@@ -149,11 +149,13 @@ public class ProjectStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task LoadProjectsAsync_EmptyDirectory_ReturnsEmpty()
+    public async Task LoadProjectsAsync_EmptyDirectory_ReturnsOnlyDefaultProject()
     {
         var loaded = await _store.LoadProjectsAsync(CancellationToken.None);
 
-        loaded.Should().BeEmpty();
+        loaded.Should().HaveCount(1);
+        loaded[0].Id.Should().Be(WellKnownIds.DefaultProjectId);
+        loaded[0].Name.Should().Be("Default");
     }
 
     // ── Invalid JSON handling (skip + warning) ──────────────────────────────
@@ -178,8 +180,10 @@ public class ProjectStoreTests : IDisposable
 
         var loaded = await _store.LoadProjectsAsync(CancellationToken.None);
 
-        loaded.Should().HaveCount(1);
-        loaded[0].Name.Should().Be("Valid Project");
+        // Default project + valid project (bad-project.json skipped)
+        loaded.Should().HaveCount(2);
+        loaded.Should().Contain(p => p.Name == "Valid Project");
+        loaded.Should().Contain(p => p.Id == WellKnownIds.DefaultProjectId);
     }
 
     [Fact]
@@ -207,9 +211,9 @@ public class ProjectStoreTests : IDisposable
 
         await Task.WhenAll(tasks);
 
-        // All projects should be persisted correctly
+        // All projects should be persisted correctly (+1 for auto-created Default project)
         var loaded = await _store.LoadProjectsAsync(CancellationToken.None);
-        loaded.Should().HaveCount(20);
+        loaded.Should().HaveCount(21);
 
         foreach (var id in projectIds)
         {
