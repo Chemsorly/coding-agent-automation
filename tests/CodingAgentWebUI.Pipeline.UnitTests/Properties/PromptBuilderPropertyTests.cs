@@ -60,17 +60,8 @@ public class PromptBuilderPropertyTests
 
         result.Should().NotBeNull();
         result!.Should().Contain("## Review Feedback");
-
-        foreach (var comment in comments)
-        {
-            result.Should().Contain($"@{comment.Author}");
-            result.Should().Contain(comment.Body);
-
-            if (comment.Path != null)
-            {
-                result.Should().Contain(comment.Path);
-            }
-        }
+        result.Should().Contain("pr-conversation-context.md");
+        result.Should().Contain("Address all human feedback");
     }
 
     // --- Custom wrapper types and Arbitraries for FsCheck ---

@@ -64,6 +64,9 @@ public partial class GitHubRepositoryProvider
                     client => client.Issue.Comment.GetAllForIssue(Owner, Repo, item.Number,
                         new ApiOptions { PageSize = PipelineConstants.DefaultPageSize, PageCount = PipelineConstants.MaxPrCommentPages }),
                     "GetAgentPullRequests.ConversationComments", ct);
+                var reviews = await ExecuteWithResilienceAsync(
+                    client => client.PullRequest.Review.GetAll(Owner, Repo, item.Number),
+                    "GetAgentPullRequests.Reviews", ct);
 
                 var allComments = reviewComments
                     .Where(c => !CommentMarkers.IsPipelineGeneratedComment(c.Body))
@@ -83,6 +86,16 @@ public partial class GitHubRepositoryProvider
                             Body = c.Body ?? string.Empty,
                             Author = c.User?.Login ?? string.Empty,
                             CreatedAt = c.CreatedAt.UtcDateTime,
+                            Path = null
+                        }))
+                    .Concat(reviews
+                        .Where(r => !string.IsNullOrWhiteSpace(r.Body) && !CommentMarkers.IsPipelineGeneratedComment(r.Body))
+                        .Select(r => new Pipeline.Models.PullRequestReviewComment
+                        {
+                            Id = r.Id.ToString(),
+                            Body = r.Body,
+                            Author = r.User?.Login ?? string.Empty,
+                            CreatedAt = r.SubmittedAt.UtcDateTime,
                             Path = null
                         }))
                     .OrderBy(c => c.CreatedAt)
@@ -360,6 +373,30 @@ public partial class GitHubRepositoryProvider
                 FilePath = c.Path,
                 Line = c.OriginalPosition,
                 IsResolved = null // GitHub review comments don't have individual resolution status via Octokit
+            });
+        }
+
+        // Fetch PR review bodies (REQUEST_CHANGES / APPROVE / COMMENT reviews with body text).
+        // These are distinct from inline review comments — they are the top-level review summary
+        // submitted via GitHub's review workflow and are not returned by the other two APIs.
+        var reviews = await ExecuteWithResilienceAsync(
+            client => client.PullRequest.Review.GetAll(Owner, Repo, prNumber),
+            "ListPrComments.Reviews", ct);
+
+        foreach (var r in reviews)
+        {
+            if (string.IsNullOrWhiteSpace(r.Body)) continue;
+            var author = r.User?.Login ?? "";
+            results.Add(new Pipeline.Models.PrConversationComment
+            {
+                Author = author,
+                CreatedAt = r.SubmittedAt.UtcDateTime,
+                Body = r.Body,
+                IsBot = r.User?.Type == AccountType.Bot || author.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase),
+                IsAuthor = string.Equals(author, prAuthor, StringComparison.OrdinalIgnoreCase),
+                FilePath = null,
+                Line = null,
+                IsResolved = null
             });
         }
 

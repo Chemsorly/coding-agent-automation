@@ -548,17 +548,10 @@ public static class PromptBuilder
         {
             sb.AppendLine("## Review Feedback");
             sb.AppendLine();
-            sb.AppendLine("The following review comments were left on the pull request. " +
-                "Address each one:");
+            sb.AppendLine($"Review comments have been left on the pull request. " +
+                $"Read `{AgentWorkspacePaths.PrConversationContextFilePath}` for the full conversation context " +
+                $"(including review bodies, inline comments, and discussion). Address all human feedback.");
             sb.AppendLine();
-            foreach (var comment in reviewComments)
-            {
-                var location = comment.Path != null ? $" (file: `{comment.Path}`)" : "";
-                sb.AppendLine($"### @{comment.Author}{location}");
-                sb.AppendLine();
-                sb.AppendLine(comment.Body);
-                sb.AppendLine();
-            }
         }
 
         sb.AppendLine($"Refer to `{AgentWorkspacePaths.IssueContextFilePath}` for the full issue description and comments.");

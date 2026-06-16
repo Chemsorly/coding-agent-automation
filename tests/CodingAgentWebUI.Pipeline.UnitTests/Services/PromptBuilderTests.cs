@@ -394,9 +394,8 @@ public class PromptBuilderTests
 
         result.Should().NotBeNull();
         result.Should().Contain("Review Feedback");
-        result.Should().Contain("@reviewer1");
-        result.Should().Contain("Fix this null check");
-        result.Should().Contain("`src/Service.cs`");
+        result.Should().Contain("pr-conversation-context.md");
+        result.Should().Contain("Address all human feedback");
     }
 
     [Fact]
