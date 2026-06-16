@@ -1761,15 +1761,14 @@ public class PipelineOrchestrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ConfidenceGate_UnexpectedRecommendation_ProceedsAsReady()
+    public async Task ConfidenceGate_UnexpectedRecommendation_TreatedAsNotReady()
     {
         SetupAnalysisAgentWithAssessment("maybe", "Not sure about this");
 
         var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        run.CurrentStep.Should().Be(PipelineStep.Completed);
-        run.AnalysisRecommendation.Should().BeNull();
-        run.PullRequestUrl.Should().NotBeNullOrEmpty();
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.AnalysisRecommendation.Should().Be(AnalysisGateResult.NotReady);
     }
 
     [Fact]
@@ -3309,7 +3308,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartPipeline_InReworkMode_DraftPrWithNoFeedback_EntersCodeGeneration()
+    public async Task StartPipeline_InReworkMode_DraftPrWithNoFeedback_ClosesDraftAndProceedsAsNew()
     {
         SetupReworkMocks();
 
@@ -3329,21 +3328,14 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 }
             });
 
-        var capturedPrompts = new List<string>();
-        _mockAgentProvider.Setup(p => p.ExecuteAsync(
-                It.Is<AgentRequest>(r => !r.Prompt.Contains("Analyze the codebase")),
-                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
-            {
-                capturedPrompts.Add(req.Prompt);
-                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-            });
+        _mockRepoProvider.Setup(p => p.ClosePullRequestAsync(42, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        var reworkPrompt = capturedPrompts.First(p => !p.Contains("Pre-Pull Request Cleanup"));
-        reworkPrompt.Should().Contain("Draft PR");
-        reworkPrompt.Should().Contain("previous failed run");
+        // Draft PR should be closed, not reused
+        _mockRepoProvider.Verify(p => p.ClosePullRequestAsync(42, It.IsAny<CancellationToken>()), Times.Once);
+        run.LinkedPullRequest.Should().BeNull();
     }
 
     [Fact]

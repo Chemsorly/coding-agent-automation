@@ -445,11 +445,11 @@ public sealed class LocalPipelineExecutor
             // Workspace cleanup
             try
             {
-                if (run.CurrentStep == PipelineStep.Completed
+                if (run.CurrentStep is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled
                     && !string.IsNullOrEmpty(run.WorkspacePath) && Directory.Exists(run.WorkspacePath))
                 {
                     Directory.Delete(run.WorkspacePath, recursive: true);
-                    _logger.Information("Cleaned up successful workspace {WorkspacePath}", run.WorkspacePath);
+                    _logger.Information("Cleaned up workspace {WorkspacePath} (step={Step})", run.WorkspacePath, run.CurrentStep);
                 }
             }
             catch (Exception ex)

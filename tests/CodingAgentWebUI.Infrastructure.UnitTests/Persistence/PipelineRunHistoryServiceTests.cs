@@ -222,6 +222,34 @@ public class PipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
+    public void AddRunToHistory_CapsAtMaxHistorySize()
+    {
+        var runsDir = Path.Combine(Path.GetTempPath(), $"runs-cap-{Guid.NewGuid()}");
+        var service = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
+
+        // Add MaxHistorySize + 5 runs
+        for (var i = 0; i < PipelineRunHistoryService.MaxHistorySize + 5; i++)
+        {
+            var run = new PipelineRun
+            {
+                RunId = $"run-{i}",
+                IssueIdentifier = $"{i}",
+                IssueTitle = $"Issue {i}",
+                IssueProviderConfigId = "p",
+                RepoProviderConfigId = "r",
+                CurrentStep = PipelineStep.Completed,
+                StartedAt = DateTime.UtcNow
+            };
+            service.AddRunToHistory(run);
+        }
+
+        var history = service.GetRunHistory();
+        history.Should().HaveCount(PipelineRunHistoryService.MaxHistorySize);
+        // Most recent should be first
+        history[0].RunId.Should().Be($"run-{PipelineRunHistoryService.MaxHistorySize + 4}");
+    }
+
+    [Fact]
     public void CleanupExpiredWorkspaces_ThrowsOnNullConfig()
     {
         var runsDir = Path.Combine(Path.GetTempPath(), $"runs-{Guid.NewGuid()}");

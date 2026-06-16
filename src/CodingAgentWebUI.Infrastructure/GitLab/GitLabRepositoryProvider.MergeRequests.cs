@@ -93,6 +93,19 @@ public partial class GitLabRepositoryProvider
         }
     }
 
+    /// <inheritdoc />
+    public async Task ClosePullRequestAsync(int pullRequestNumber, CancellationToken ct)
+    {
+        await ExecuteWriteWithResilienceAsync(
+            client =>
+            {
+                var mrClient = client.GetMergeRequest(ProjectId);
+                return mrClient.Update(pullRequestNumber, new MergeRequestUpdate { NewState = "close" });
+            },
+            "CloseMergeRequest", ct);
+        Log.Information("Closed MR !{MrIid} in project {ProjectId}", pullRequestNumber, ProjectId);
+    }
+
     // ─── Agent MR Discovery ──────────────────────────────────────────────────────
 
     /// <inheritdoc />
@@ -180,7 +193,7 @@ public partial class GitLabRepositoryProvider
             Url = mr.WebUrl,
             IsDraft = mr.Draft,
             Author = mr.Author?.Username,
-            CreatedAt = mr.CreatedAt
+            CreatedAt = mr.CreatedAt.ToUniversalTime()
         }).ToList();
 
         return new PagedResult<PullRequestSummary>
@@ -287,7 +300,7 @@ public partial class GitLabRepositoryProvider
                 results.Add(new PrConversationComment
                 {
                     Author = author,
-                    CreatedAt = note.CreatedAt,
+                    CreatedAt = note.CreatedAt.ToUniversalTime(),
                     Body = note.Body,
                     IsBot = isBot,
                     IsAuthor = string.Equals(author, prAuthor, StringComparison.OrdinalIgnoreCase),
@@ -607,7 +620,7 @@ public partial class GitLabRepositoryProvider
                     Id = n.Id.ToString(),
                     Body = n.Body ?? string.Empty,
                     Author = n.Author?.Username ?? string.Empty,
-                    CreatedAt = n.CreatedAt,
+                    CreatedAt = n.CreatedAt.ToUniversalTime(),
                     Path = null // GitLab discussion notes don't expose path at the note level easily
                 })
                 .ToList();

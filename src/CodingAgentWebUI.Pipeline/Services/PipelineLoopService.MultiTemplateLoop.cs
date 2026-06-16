@@ -142,7 +142,7 @@ public sealed partial class PipelineLoopService
                 PipelineTelemetry.LoopIssuesFound.Add(totalItemsFound);
 
             // Step 4: Circuit breaker
-            if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.MaxConsecutiveFailures, snapshot.CircuitBreakerCooldown, ct))
+            if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.MaxConsecutiveFailures, snapshot.Config.ClosedLoopCircuitBreakerCooldown, ct))
                 continue;
 
             // Step 5: Fair dispatch
@@ -156,7 +156,7 @@ public sealed partial class PipelineLoopService
             if (_stopRequested || ct.IsCancellationRequested) break;
 
             // Step 6: Wait before next cycle
-            StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} templates every {(int)snapshot.PollInterval.TotalSeconds}s.";
+            lock (_lock) { StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} templates every {(int)snapshot.PollInterval.TotalSeconds}s."; }
             NotifyChange();
             await DelayOrStop(snapshot.PollInterval, ct);
         }
@@ -175,7 +175,6 @@ public sealed partial class PipelineLoopService
         TimeSpan PollInterval,
         int MaxRunsPerCycle,
         int MaxConsecutiveFailures,
-        TimeSpan CircuitBreakerCooldown,
         int MaxPagesToFetch);
 
     /// <summary>
@@ -189,7 +188,6 @@ public sealed partial class PipelineLoopService
         var pollInterval = config.ClosedLoopPollInterval;
         var maxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
         var maxConsecutiveFailures = config.ClosedLoopMaxConsecutivePollFailures;
-        var circuitBreakerCooldown = config.ClosedLoopCircuitBreakerCooldown;
         var maxPagesToFetch = config.ClosedLoopMaxPagesToFetch;
 
         // Load projects and flatten templates using project-based ordering
@@ -245,7 +243,7 @@ public sealed partial class PipelineLoopService
 
         return new CycleSnapshot(
             config, projects, flattenedTemplates, enabledTemplates.AsReadOnly(), pollableTemplates.AsReadOnly(),
-            templateLookup.AsReadOnly(), pollInterval, maxRunsPerCycle, maxConsecutiveFailures, circuitBreakerCooldown, maxPagesToFetch);
+            templateLookup.AsReadOnly(), pollInterval, maxRunsPerCycle, maxConsecutiveFailures, maxPagesToFetch);
     }
 
     /// <summary>
@@ -264,7 +262,7 @@ public sealed partial class PipelineLoopService
 
             var template = pollableTemplates[i];
             CurrentCycleTemplateIndex = i;
-            StatusMessage = $"🔄 Polling template '{template.Name}' ({i + 1} of {pollableTemplates.Count})";
+            lock (_lock) { StatusMessage = $"🔄 Polling template '{template.Name}' ({i + 1} of {pollableTemplates.Count})"; }
 
             // Mark as currently polling
             _templateStatuses[template.Id] = (_templateStatuses.TryGetValue(template.Id, out var prev) ? prev : ConfigStatusSnapshot.Empty)
@@ -500,9 +498,7 @@ public sealed partial class PipelineLoopService
 
     /// <summary>
     /// Step 4: Circuit breaker — trips only when ALL enabled templates are failing.
-    /// Pauses the loop for a configurable cooldown, then auto-resumes. Manual Resume/Stop
-    /// can interrupt the cooldown early. Returns true if the circuit breaker tripped
-    /// (caller should continue to next cycle).
+    /// Returns true if the circuit breaker tripped (caller should continue to next cycle).
     /// </summary>
     private async Task<bool> CheckCircuitBreakerAsync(
         IReadOnlyList<PipelineJobTemplate> enabledTemplates,
@@ -519,42 +515,40 @@ public sealed partial class PipelineLoopService
 
         if (!allFailing) return false;
 
-        IsCircuitBroken = true;
+        lock (_lock)
+        {
+            IsCircuitBroken = true;
+            StatusMessage = $"⚠️ Loop paused — all {enabledTemplates.Count} templates failing. Auto-resume in {cooldown.TotalMinutes:0.#} min.";
+            _resumeSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
         PipelineTelemetry.LoopCircuitBreakerTrips.Add(1);
-        StatusMessage = $"⚠️ Loop paused — all {enabledTemplates.Count} templates failing. Auto-resume in {cooldown.TotalMinutes:0.#} min.";
         NotifyChange();
-        _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures. Auto-resuming in {Cooldown}",
+        _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures. Auto-resume in {Cooldown}",
             enabledTemplates.Count, maxConsecutiveFailures, cooldown);
 
-        _resumeSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        try
-        {
-            // Wait for either: manual resume/stop signal OR cooldown expiry
-            await Task.WhenAny(_resumeSignal.Task, Task.Delay(cooldown, ct)).ConfigureAwait(false);
-        }
+        // TODO: _resumeSignal.Task is read outside the lock. Capture a local inside the lock above for safety against future reassignment.
+        try { await Task.WhenAny(_resumeSignal.Task, Task.Delay(cooldown, ct)); }
         catch (OperationCanceledException) { return true; }
 
         if (_stopRequested) return true;
 
-        // If ResumeLoop() already handled the reset, skip redundant auto-resume logic
-        if (!IsCircuitBroken) return true;
+        lock (_lock)
+        {
+            if (!IsCircuitBroken) return true; // ResumeLoop() already handled reset
+            ConsecutivePollFailures = 0;
+            IsCircuitBroken = false;
+            LastPollError = null;
+            StatusMessage = "🔄 Circuit breaker auto-resumed, retrying poll.";
+        }
 
-        // Auto-resume: reset failure counters so next cycle gets a fresh attempt
-        ConsecutivePollFailures = 0;
-        IsCircuitBroken = false;
-        LastPollError = null;
-
-        // Reset per-template failure counters to allow a clean retry
+        // Reset per-template failure counters
         foreach (var template in enabledTemplates)
         {
             if (_templateStatuses.TryGetValue(template.Id, out var status) && status.ConsecutiveFailures > 0)
                 _templateStatuses[template.Id] = status with { ConsecutiveFailures = 0, LastError = null };
         }
 
-        StatusMessage = "🔄 Circuit breaker auto-resumed, retrying poll.";
         NotifyChange();
-        _logger.Information("Circuit breaker auto-resumed after cooldown ({Cooldown})", cooldown);
-
         return true;
     }
 
@@ -680,7 +674,7 @@ public sealed partial class PipelineLoopService
                     if (issue is null) return DispatchAttemptResult.Skip;
 
                     CurrentIssueIdentifier = issue.Identifier;
-                    StatusMessage = $"🔄 Dispatching #{issue.Identifier} from '{template.Name}'";
+                    lock (_lock) { StatusMessage = $"🔄 Dispatching #{issue.Identifier} from '{template.Name}'"; }
                     NotifyChange();
 
                     var dispatchProject = templateProjectLookup.GetValueOrDefault(template.Id);
@@ -752,7 +746,7 @@ public sealed partial class PipelineLoopService
                     if (pr is null) return DispatchAttemptResult.Skip;
 
                     CurrentIssueIdentifier = pr.Identifier;
-                    StatusMessage = $"🔄 Dispatching PR #{pr.Identifier} review from '{template.Name}'";
+                    lock (_lock) { StatusMessage = $"🔄 Dispatching PR #{pr.Identifier} review from '{template.Name}'"; }
                     NotifyChange();
 
                     var dispatched = await _jobDispatcher!.TryDispatchReviewAsync(
@@ -832,7 +826,7 @@ public sealed partial class PipelineLoopService
                     var phaseLabel = epicItem.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
 
                     CurrentIssueIdentifier = epicItem.Issue.Identifier;
-                    StatusMessage = $"🧩 Dispatching epic #{epicItem.Issue.Identifier} {phaseLabel} from '{template.Name}'";
+                    lock (_lock) { StatusMessage = $"🧩 Dispatching epic #{epicItem.Issue.Identifier} {phaseLabel} from '{template.Name}'"; }
                     NotifyChange();
 
                     var dispatched = await _jobDispatcher!.TryDispatchDecompositionAsync(
@@ -897,7 +891,7 @@ public sealed partial class PipelineLoopService
                         var phaseLabel = candidate.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
 
                         CurrentIssueIdentifier = candidate.Issue.Identifier;
-                        StatusMessage = $"🧩 Dispatching project-level epic #{candidate.Issue.Identifier} {phaseLabel} from '{candidate.Template.Name}'";
+                        lock (_lock) { StatusMessage = $"🧩 Dispatching project-level epic #{candidate.Issue.Identifier} {phaseLabel} from '{candidate.Template.Name}'"; }
                         NotifyChange();
 
                         try

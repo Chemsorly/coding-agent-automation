@@ -386,7 +386,7 @@ internal partial class AgentPhaseExecutor
     private static AnalysisGateResult? ParseRecommendation(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
-            return null;
+            return AnalysisGateResult.NotReady;
 
         if (string.Equals(value, "ready", StringComparison.OrdinalIgnoreCase))
             return AnalysisGateResult.Ready;
@@ -395,6 +395,6 @@ internal partial class AgentPhaseExecutor
         if (string.Equals(value, "wont_do", StringComparison.OrdinalIgnoreCase))
             return AnalysisGateResult.WontDo;
 
-        return null;
+        return AnalysisGateResult.NotReady;
     }
 }

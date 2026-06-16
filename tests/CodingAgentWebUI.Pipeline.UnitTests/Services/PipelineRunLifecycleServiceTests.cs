@@ -136,6 +136,47 @@ public class PipelineRunLifecycleServiceTests
         cts.Dispose();
     }
 
+    // ── CreateLinkedCancellationToken ───────────────────────────────────
+
+    [Fact]
+    public void CreateLinkedCancellationToken_DisposesPreviousCts()
+    {
+        var service = CreateService();
+        var cts1 = new CancellationTokenSource();
+        var cts2 = new CancellationTokenSource();
+
+        service.CreateLinkedCancellationToken(cts1.Token);
+        var firstCts = service.CancellationTokenSource;
+
+        service.CreateLinkedCancellationToken(cts2.Token);
+
+        // Previous CTS should be disposed
+        var act = () => firstCts!.Token;
+        act.Should().Throw<ObjectDisposedException>();
+
+        cts1.Dispose();
+        cts2.Dispose();
+        service.Dispose();
+    }
+
+    [Fact]
+    public void CreateLinkedCancellationToken_NewCtsIsActive()
+    {
+        var service = CreateService();
+        var cts = new CancellationTokenSource();
+
+        var token = service.CreateLinkedCancellationToken(cts.Token);
+
+        token.CanBeCanceled.Should().BeTrue();
+        token.IsCancellationRequested.Should().BeFalse();
+
+        cts.Cancel();
+        token.IsCancellationRequested.Should().BeTrue();
+
+        cts.Dispose();
+        service.Dispose();
+    }
+
     // ── ClearEventSubscribers ───────────────────────────────────────────
 
     [Fact]

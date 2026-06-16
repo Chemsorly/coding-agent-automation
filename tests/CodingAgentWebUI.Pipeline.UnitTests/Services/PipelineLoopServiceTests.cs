@@ -998,7 +998,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
                 ClosedLoopMaxConsecutivePollFailures = 3,
                 ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(100),
-                ClosedLoopCircuitBreakerCooldown = TimeSpan.FromSeconds(1)
+                ClosedLoopCircuitBreakerCooldown = TimeSpan.FromSeconds(1),
             });
 
         var svc = CreateService();
@@ -1013,12 +1013,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             await Task.Delay(50);
         Assert.True(svc.IsCircuitBroken);
 
-        // Wait for auto-resume (cooldown is 300ms)
+        // Wait for auto-resume after cooldown (no manual intervention needed)
         deadline = DateTime.UtcNow.AddSeconds(5);
         while (svc.IsCircuitBroken && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 
-        // Should have auto-resumed without manual intervention
         Assert.False(svc.IsCircuitBroken);
         Assert.Equal(0, svc.ConsecutivePollFailures);
         Assert.True(svc.IsLoopActive);
