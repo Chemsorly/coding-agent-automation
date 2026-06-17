@@ -253,4 +253,105 @@ public class ReviewerConfigurationStoreTests : IDisposable
         Assert.Contains(loaded, c => c.Id == "config-2");
         Assert.Contains(loaded, c => c.Id == "config-3");
     }
+
+    // --- ResetReviewerConfigsToDefaultAsync tests ---
+
+    [Fact]
+    public async Task ResetReviewerConfigsToDefault_RemovesExistingAndWritesDefaults()
+    {
+        // Arrange — save two custom configs
+        var custom1 = new ReviewerConfiguration
+        {
+            Id = "custom-1",
+            DisplayName = "Custom Config 1",
+            MatchLabels = ["java"],
+            Agents = [new ReviewAgent { Name = "JavaLinter", Prompt = "Lint Java" }],
+            ExecutionOrder = 5
+        };
+        var custom2 = new ReviewerConfiguration
+        {
+            Id = "custom-2",
+            DisplayName = "Custom Config 2",
+            Agents = [new ReviewAgent { Name = "GoReviewer", Prompt = "Review Go" }],
+            ExecutionOrder = 10
+        };
+        await _store.SaveReviewerConfigAsync(custom1, CancellationToken.None);
+        await _store.SaveReviewerConfigAsync(custom2, CancellationToken.None);
+
+        // Act
+        await _store.ResetReviewerConfigsToDefaultAsync(CancellationToken.None);
+
+        // Assert — custom configs gone, defaults present
+        var loaded = await _store.LoadReviewerConfigsAsync(CancellationToken.None);
+        Assert.Equal(PipelineConfiguration.DefaultReviewerConfigurations.Count, loaded.Count);
+
+        var defaultConfig = Assert.Single(loaded);
+        Assert.Equal(PipelineConfiguration.DefaultReviewerConfigurationId, defaultConfig.Id);
+        Assert.Equal("Default Reviewers", defaultConfig.DisplayName);
+        Assert.Empty(defaultConfig.MatchLabels);
+        Assert.True(defaultConfig.Enabled);
+        Assert.Equal(PipelineConfiguration.DefaultReviewAgents.Count, defaultConfig.Agents.Count);
+
+        // Old custom files should not exist on disk
+        var reviewersDir = Path.Combine(_tempDir, "reviewers");
+        Assert.False(File.Exists(Path.Combine(reviewersDir, "custom-1.json")));
+        Assert.False(File.Exists(Path.Combine(reviewersDir, "custom-2.json")));
+    }
+
+    [Fact]
+    public async Task ResetReviewerConfigsToDefault_NoExistingDirectory_CreatesAndWritesDefaults()
+    {
+        // Arrange — ensure no reviewers directory exists
+        var reviewersDir = Path.Combine(_tempDir, "reviewers");
+        Assert.False(Directory.Exists(reviewersDir));
+
+        // Act
+        await _store.ResetReviewerConfigsToDefaultAsync(CancellationToken.None);
+
+        // Assert — defaults were written
+        var loaded = await _store.LoadReviewerConfigsAsync(CancellationToken.None);
+        Assert.Equal(PipelineConfiguration.DefaultReviewerConfigurations.Count, loaded.Count);
+        Assert.Equal(PipelineConfiguration.DefaultReviewerConfigurationId, loaded[0].Id);
+    }
+
+    [Fact]
+    public async Task ResetReviewerConfigsToDefault_InvalidatesCache()
+    {
+        // Arrange — prime the cache by loading
+        var custom = new ReviewerConfiguration
+        {
+            Id = "cached-config",
+            DisplayName = "Will Be Cached",
+            Agents = [new ReviewAgent { Name = "Agent", Prompt = "Prompt" }]
+        };
+        await _store.SaveReviewerConfigAsync(custom, CancellationToken.None);
+        var beforeReset = await _store.LoadReviewerConfigsAsync(CancellationToken.None);
+        Assert.Single(beforeReset);
+        Assert.Equal("cached-config", beforeReset[0].Id);
+
+        // Act
+        await _store.ResetReviewerConfigsToDefaultAsync(CancellationToken.None);
+
+        // Assert — subsequent load returns defaults, not cached custom config
+        var afterReset = await _store.LoadReviewerConfigsAsync(CancellationToken.None);
+        Assert.DoesNotContain(afterReset, c => c.Id == "cached-config");
+        Assert.Contains(afterReset, c => c.Id == PipelineConfiguration.DefaultReviewerConfigurationId);
+    }
+
+    [Fact]
+    public async Task ResetReviewerConfigsToDefault_AgentsMirrorDefaultReviewAgents()
+    {
+        // Act
+        await _store.ResetReviewerConfigsToDefaultAsync(CancellationToken.None);
+
+        // Assert — agents in the written config match DefaultReviewAgents exactly
+        var loaded = await _store.LoadReviewerConfigsAsync(CancellationToken.None);
+        var config = Assert.Single(loaded);
+
+        for (var i = 0; i < PipelineConfiguration.DefaultReviewAgents.Count; i++)
+        {
+            Assert.Equal(PipelineConfiguration.DefaultReviewAgents[i].Name, config.Agents[i].Name);
+            Assert.Equal(PipelineConfiguration.DefaultReviewAgents[i].Prompt, config.Agents[i].Prompt);
+        }
+    }
 }

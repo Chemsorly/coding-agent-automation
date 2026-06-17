@@ -1281,6 +1281,35 @@ public class PipelineOrchestrationServiceTests : IDisposable
         agents[1].Name.Should().Be("DotNetSpecialist");
         agents[2].Name.Should().Be("SecurityReviewer");
         agents[3].Name.Should().Be("TestQualityReviewer");
+
+        // Verify all agents have non-empty prompts
+        foreach (var agent in agents)
+        {
+            agent.Prompt.Should().NotBeNullOrWhiteSpace($"agent '{agent.Name}' must have a prompt");
+        }
+    }
+
+    [Fact]
+    public void DefaultReviewerConfigurations_ContainsExpectedStructure()
+    {
+        var configs = PipelineConfiguration.DefaultReviewerConfigurations;
+        configs.Should().HaveCount(1);
+
+        var config = configs[0];
+        config.Id.Should().Be(PipelineConfiguration.DefaultReviewerConfigurationId);
+        config.Id.Should().Be("default-reviewers");
+        config.DisplayName.Should().Be("Default Reviewers");
+        config.MatchLabels.Should().BeEmpty("default config applies globally");
+        config.Enabled.Should().BeTrue();
+        config.ExecutionOrder.Should().Be(0);
+
+        // Agents should mirror DefaultReviewAgents
+        config.Agents.Should().HaveCount(PipelineConfiguration.DefaultReviewAgents.Count);
+        for (var i = 0; i < config.Agents.Count; i++)
+        {
+            config.Agents[i].Name.Should().Be(PipelineConfiguration.DefaultReviewAgents[i].Name);
+            config.Agents[i].Prompt.Should().Be(PipelineConfiguration.DefaultReviewAgents[i].Prompt);
+        }
     }
 
     [Fact]

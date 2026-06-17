@@ -124,8 +124,8 @@ public static class DefaultPrompts
 
     public const string AcceptanceCriteriaReview =
         "Review the changes against the acceptance criteria from the original issue. " +
-        "The previous reviews covered code correctness, .NET patterns, and security — " +
-        "do not duplicate those findings.\n\n" +
+        "Focus exclusively on whether acceptance criteria are satisfied — do not " +
+        "duplicate findings from other review agents.\n\n" +
         "Go through EACH acceptance criterion listed in the issue one by one. " +
         "For each criterion, determine whether the implementation satisfies it.\n\n" +
         "Output your findings as a numbered list with severity markers:\n" +
@@ -142,9 +142,7 @@ public static class DefaultPrompts
         "If the issue has no acceptance criteria section, check whether the " +
         "implementation addresses the issue description and stated goals instead.\n\n" +
         "DO NOT FLAG:\n" +
-        "- Code quality issues (already covered by previous reviews)\n" +
-        "- .NET-specific patterns (already covered by previous reviews)\n" +
-        "- Security issues (already covered by previous reviews)\n" +
+        "- Code correctness, .NET patterns, security, or test quality issues (covered by dedicated review agents)\n" +
         "- Style or formatting preferences\n" +
         "- Suggestions to add features beyond what the issue requests\n" +
         "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +

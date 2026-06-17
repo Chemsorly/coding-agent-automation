@@ -131,7 +131,7 @@
     @if (_showResetConfirm)
     {
         <div class="agent-detail-confirm" style="margin-top: 12px;">
-            <p>Replace <strong>all</strong> reviewer configurations with the factory defaults (@PipelineConfiguration.DefaultReviewerConfigurations.Sum(c => c.Agents.Count) agents)? This removes any custom configurations.</p>
+            <p>Replace <strong>all</strong> reviewer configurations with the factory defaults (1 configuration with @PipelineConfiguration.DefaultReviewerConfigurations.Sum(c => c.Agents.Count) agents)? This removes any custom configurations.</p>
             <div class="confirm-buttons">
                 <button class="btn-delete" @onclick="ResetToDefaults">Reset</button>
                 <button class="btn-cancel" @onclick="() => _showResetConfirm = false">Cancel</button>
