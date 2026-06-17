@@ -20,8 +20,28 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// prevent parallel execution — environment variables are process-wide shared state.
 /// </remarks>
 [Collection("EnvironmentVariables")]
-public class AgentWorkerServiceTests
+public class AgentWorkerServiceTests : IDisposable
 {
+    public void Dispose()
+    {
+        // Clean up directories created by tests that invoke HandleChatPromptAsync
+        // (production code calls Directory.CreateDirectory(AgentDefaults.ChatWorkspacePath))
+        var chatWorkspace = AgentDefaults.ChatWorkspacePath;
+        try
+        {
+            if (Directory.Exists(chatWorkspace))
+                Directory.Delete(chatWorkspace, recursive: true);
+            // Also clean parent dirs if empty (e.g. /app/workspaces, /app)
+            var parent = Path.GetDirectoryName(chatWorkspace);
+            while (parent != null && Directory.Exists(parent) && !Directory.EnumerateFileSystemEntries(parent).Any())
+            {
+                Directory.Delete(parent);
+                parent = Path.GetDirectoryName(parent);
+            }
+        }
+        catch { /* best effort cleanup */ }
+    }
+
     [Fact]
     public void Constructor_ThrowsOnNullHubManager()
     {

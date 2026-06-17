@@ -137,7 +137,7 @@ public class QualityGateExecutorCiPollingTests
         IssueTitle = "CI polling fix",
         IssueProviderConfigId = "ip-1",
         RepoProviderConfigId = "rp-1",
-        WorkspacePath = "/tmp/workspace",
+        WorkspacePath = Path.Combine(Path.GetTempPath(), $"qg-cipoll-test-{Guid.NewGuid():N}"),
         BranchName = "feature/auto-542-ci-poll"
     };
 

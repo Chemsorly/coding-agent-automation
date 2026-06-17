@@ -63,7 +63,7 @@ public class QualityGateExecutorRetryTests
             IssueTitle = "Test Issue",
             IssueProviderConfigId = "ip-1",
             RepoProviderConfigId = "rp-1",
-            WorkspacePath = "/tmp/workspace"
+            WorkspacePath = Path.Combine(Path.GetTempPath(), $"qg-retry-test-{Guid.NewGuid():N}")
         };
 
         _executor = new QualityGateExecutor(

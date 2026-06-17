@@ -97,7 +97,7 @@ public class NullPipelineRunHistoryServiceTests
             IssueTitle = "Test Issue",
             IssueProviderConfigId = "ip-1",
             RepoProviderConfigId = "rp-1",
-            WorkspacePath = "/tmp/workspace"
+            WorkspacePath = Path.Combine(Path.GetTempPath(), "ws-null-history")
         };
 
         var mockCallbacks = new Mock<IPipelineCallbacks>();

@@ -46,7 +46,7 @@ public class QualityGateExecutorFeedbackTests
             IssueTitle = "Test Issue for Feedback",
             IssueProviderConfigId = "ip-1",
             RepoProviderConfigId = "rp-1",
-            WorkspacePath = "/tmp/workspace"
+            WorkspacePath = Path.Combine(Path.GetTempPath(), $"qg-feedback-test-{Guid.NewGuid():N}")
         };
 
         // MaxRetries = 0 so the retry loop is immediately exhausted

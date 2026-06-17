@@ -19,7 +19,7 @@ public class JsonConfigurationStore : IConfigurationStore
 
     // Write-through caches — populated on first read, invalidated on write/delete
     private PipelineConfiguration? _pipelineConfigCache;
-    private IReadOnlyList<ProviderConfig>?[] _providerConfigsCache = new IReadOnlyList<ProviderConfig>?[5]; // indexed by ProviderKind
+    private IReadOnlyList<ProviderConfig>?[] _providerConfigsCache = new IReadOnlyList<ProviderConfig>?[5]; // indexed by (int)ProviderKind — update size if enum grows
     private IReadOnlyList<AgentProfile>? _agentProfilesCache;
     private IReadOnlyList<QualityGateConfiguration>? _qualityGateConfigsCache;
     private IReadOnlyList<ReviewerConfiguration>? _reviewerConfigsCache;
