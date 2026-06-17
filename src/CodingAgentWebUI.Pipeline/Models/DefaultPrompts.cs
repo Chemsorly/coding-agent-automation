@@ -54,9 +54,8 @@ public static class DefaultPrompts
         "Do NOT fix anything. Only report findings.";
 
     public const string DotNetSpecialistReview =
-        "Review the changes for .NET-specific issues. The previous review covered correctness — " +
-        "do not duplicate those findings. Output findings as a numbered list with severity " +
-        "[CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
+        "Review the changes for .NET-specific issues. Output findings as a numbered list " +
+        "with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
         "CHECK FOR:\n" +
         "- IDisposable resources not properly disposed (missing using/await using)\n" +
         "- Async/await deadlock patterns (sync-over-async, .Result, .Wait())\n" +
@@ -66,7 +65,7 @@ public static class DefaultPrompts
         "- Collections exposed as mutable (List<T> instead of IReadOnlyList<T>)\n\n" +
         "DO NOT FLAG:\n" +
         "- Issues in unchanged code outside the diff\n" +
-        "- Business logic correctness (already covered by previous review)\n" +
+        "- Business logic correctness\n" +
         "- Style or formatting preferences\n" +
         "- Missing nullable annotations on internal code\n" +
         "- Test code conventions\n" +
@@ -75,9 +74,8 @@ public static class DefaultPrompts
         "Do NOT fix anything. Only report findings.";
 
     public const string SecurityReview =
-        "Review the changes for security issues. The previous review covered correctness " +
-        "— do not duplicate those findings. Output findings as a numbered list with severity " +
-        "[CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
+        "Review the changes for security issues. Output findings as a numbered list with " +
+        "severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
         "CHECK FOR:\n" +
         "- Hardcoded credentials, API keys, connection strings, or tokens\n" +
         "- SQL injection (string concatenation or interpolation in queries)\n" +
@@ -91,12 +89,36 @@ public static class DefaultPrompts
         "- Secrets or credentials in committed files\n\n" +
         "DO NOT FLAG:\n" +
         "- Issues in unchanged code outside the diff\n" +
-        "- Issues already covered by previous reviews\n" +
+        "- General code correctness or .NET pattern issues\n" +
         "- Theoretical attacks requiring physical access or pre-existing compromise\n" +
         "- Missing HTTPS enforcement (infrastructure concern, not code)\n" +
         "- Test code, sample data, or placeholder values in test fixtures\n" +
         "- Dependency vulnerabilities (covered by external CI)\n" +
         "- General code quality or style issues\n" +
+        "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +
+        "Do NOT fix anything. Only report findings.";
+
+    public const string TestQualityReview =
+        "Review the changes for test quality issues. Focus exclusively on whether tests are " +
+        "meaningful, effective, and actually validate the intended behavior. Output findings " +
+        "as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
+        "CHECK FOR:\n" +
+        "- Tautological tests (assertions that pass regardless of implementation, e.g. Assert.True(true), asserting the mock returns what you told it to return)\n" +
+        "- Tests that don't exercise the changed behavior (test exists but wouldn't fail if the fix were reverted)\n" +
+        "- Assertions that are too weak (checking only non-null or collection non-empty when specific values matter)\n" +
+        "- Missing negative test cases (only happy path tested, no error/edge case coverage)\n" +
+        "- Tests that verify implementation details rather than observable behavior (brittle coupling to internals)\n" +
+        "- Duplicate test logic that should be parameterized (same test body copy-pasted with different inputs)\n" +
+        "- Missing boundary conditions (off-by-one, empty inputs, max values, concurrent access)\n" +
+        "- Test setup that masks bugs (overly permissive mocks that hide real integration failures)\n" +
+        "- Assertions on wrong granularity (testing an entire object equality when only one property changed)\n\n" +
+        "DO NOT FLAG:\n" +
+        "- Test naming conventions or style preferences\n" +
+        "- Production code issues (correctness, .NET patterns, security)\n" +
+        "- Missing tests for unchanged code outside the diff\n" +
+        "- Test infrastructure or framework choice\n" +
+        "- Suggestions to add property-based tests unless the code has clear invariants\n" +
+        "- Minor test organization preferences (file placement, class grouping)\n" +
         "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +
         "Do NOT fix anything. Only report findings.";
 
