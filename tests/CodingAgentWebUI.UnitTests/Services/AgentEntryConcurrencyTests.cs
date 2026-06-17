@@ -66,7 +66,6 @@ public class AgentEntryConcurrencyTests
                             {
                                 AgentId = "agent-concurrent",
                                 Hostname = "host-concurrent",
-                                AgentType = "kiro-dotnet",
                                 Labels = ["dotnet", "linux"]
                             }, $"conn-{threadIndex}-{i}");
                             break;
@@ -185,7 +184,6 @@ public class AgentEntryConcurrencyTests
             {
                 AgentId = agentId,
                 Hostname = "host-race",
-                AgentType = "kiro-dotnet",
                 Labels = ["dotnet", "linux"]
             }, $"conn-race-{i}");
 
@@ -268,7 +266,6 @@ public class AgentEntryConcurrencyTests
             {
                 AgentId = agentId,
                 Hostname = "host",
-                AgentType = "kiro-dotnet",
                 Labels = ["dotnet"]
             }, "conn-1");
 
@@ -314,7 +311,6 @@ public class AgentEntryConcurrencyTests
         {
             AgentId = agentId,
             Hostname = $"host-{agentId}",
-            AgentType = "kiro-dotnet",
             Labels = ["dotnet", "linux"]
         }, connectionId);
     }

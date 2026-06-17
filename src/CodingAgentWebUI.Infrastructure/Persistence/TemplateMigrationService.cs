@@ -44,25 +44,7 @@ public static class TemplateMigrationService
         if (orphans.Count > 0)
         {
             var defaultProject = await store.GetProjectByIdAsync(WellKnownIds.DefaultProjectId, ct);
-            if (defaultProject is null)
-            {
-                defaultProject = new PipelineProject
-                {
-                    Id = WellKnownIds.DefaultProjectId,
-                    Name = "Default",
-                    TemplateIds = []
-                };
-                await store.SaveProjectAsync(defaultProject, ct);
-                Logger.Information("Created Default project for orphan template migration");
-
-                // Re-read to confirm persistence succeeded
-                defaultProject = await store.GetProjectByIdAsync(WellKnownIds.DefaultProjectId, ct);
-                if (defaultProject is null)
-                {
-                    Logger.Warning("Failed to persist Default project — orphan templates will not be migrated");
-                }
-            }
-
+            // Default project is guaranteed to exist by JsonConfigurationStore initialization
             defaultProjectId = defaultProject?.Id;
         }
 

@@ -17,11 +17,21 @@ public class JsonConfigurationStore : IConfigurationStore
 
     private static JsonSerializerOptions JsonOptions => PipelineJsonOptions.Default;
 
+    // Write-through caches — populated on first read, invalidated on write/delete
+    private PipelineConfiguration? _pipelineConfigCache;
+    private IReadOnlyList<ProviderConfig>?[] _providerConfigsCache = new IReadOnlyList<ProviderConfig>?[5]; // indexed by (int)ProviderKind — update size if enum grows
+    private IReadOnlyList<AgentProfile>? _agentProfilesCache;
+    private IReadOnlyList<QualityGateConfiguration>? _qualityGateConfigsCache;
+    private IReadOnlyList<ReviewerConfiguration>? _reviewerConfigsCache;
+    private IReadOnlyList<PipelineProject>? _projectsCache;
+    private IReadOnlyList<PipelineJobTemplate>? _allTemplatesCache;
+
     public JsonConfigurationStore(string baseDirectory = PipelineConstants.ConfigBaseDirectory)
     {
         ArgumentNullException.ThrowIfNull(baseDirectory);
         _baseDirectory = baseDirectory;
         CleanupOrphanedTempFiles();
+        EnsureDefaultProjectExists();
     }
 
     /// <summary>
@@ -54,10 +64,43 @@ public class JsonConfigurationStore : IConfigurationStore
         }
     }
 
+    /// <summary>
+    /// Ensures the Default project file exists on disk. Creates it with all-null overrides
+    /// if missing. This guarantees the invariant that the Default project always exists,
+    /// including on fresh deployments where no migration runs.
+    /// </summary>
+    private void EnsureDefaultProjectExists()
+    {
+        var projectsDir = Path.Combine(_baseDirectory, "projects");
+        var defaultProjectPath = Path.Combine(projectsDir, $"{WellKnownIds.DefaultProjectId}.json");
+
+        if (File.Exists(defaultProjectPath))
+            return;
+
+        Directory.CreateDirectory(projectsDir);
+
+        var defaultProject = new PipelineProject
+        {
+            Id = WellKnownIds.DefaultProjectId,
+            Name = "Default",
+            Enabled = true,
+            TemplateIds = []
+        };
+
+        var json = JsonSerializer.Serialize(defaultProject, JsonOptions);
+        File.WriteAllText(defaultProjectPath, json);
+        _logger.Information("Created Default project at {Path}", defaultProjectPath);
+    }
+
     public async Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct)
     {
+        if (_pipelineConfigCache is not null)
+            return _pipelineConfigCache;
+
         var path = Path.Combine(_baseDirectory, "pipeline-config.json");
-        return await LoadJsonAsync<PipelineConfiguration>(path, ct) ?? new PipelineConfiguration();
+        var result = await LoadJsonAsync<PipelineConfiguration>(path, ct) ?? new PipelineConfiguration();
+        _pipelineConfigCache = result;
+        return result;
     }
 
     public async Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct)
@@ -69,6 +112,7 @@ public class JsonConfigurationStore : IConfigurationStore
         {
             var path = Path.Combine(_baseDirectory, "pipeline-config.json");
             await SaveJsonAsync(path, config, ct);
+            _pipelineConfigCache = null;
         }
         finally
         {
@@ -102,6 +146,7 @@ public class JsonConfigurationStore : IConfigurationStore
 
             var updated = transform(current);
             await SaveJsonAsync(path, updated, ct);
+            _pipelineConfigCache = updated;
         }
         finally
         {
@@ -111,8 +156,15 @@ public class JsonConfigurationStore : IConfigurationStore
 
     public async Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct)
     {
+        var index = (int)kind;
+        var cached = _providerConfigsCache[index];
+        if (cached is not null)
+            return cached;
+
         var directory = GetProviderDirectory(kind);
-        return await LoadAllFromDirectoryAsync<ProviderConfig>(directory, ct);
+        var result = await LoadAllFromDirectoryAsync<ProviderConfig>(directory, ct);
+        _providerConfigsCache[index] = result;
+        return result;
     }
 
     public async Task<ProviderConfig?> GetProviderConfigByIdAsync(string id, ProviderKind kind, CancellationToken ct)
@@ -128,6 +180,7 @@ public class JsonConfigurationStore : IConfigurationStore
         var directory = GetProviderDirectory(config.Kind);
         var path = Path.Combine(directory, $"{config.Id}.json");
         await SaveJsonAsync(path, config, ct);
+        _providerConfigsCache[(int)config.Kind] = null;
     }
 
     public Task DeleteProviderConfigAsync(string id, ProviderKind kind, CancellationToken ct)
@@ -137,46 +190,96 @@ public class JsonConfigurationStore : IConfigurationStore
         if (File.Exists(path))
             File.Delete(path);
 
+        _providerConfigsCache[(int)kind] = null;
         return Task.CompletedTask;
     }
 
     // --- Agent Profiles ---
 
-    public Task<IReadOnlyList<AgentProfile>> LoadAgentProfilesAsync(CancellationToken ct)
-        => LoadEntitiesAsync<AgentProfile>("profiles", ct);
+    public async Task<IReadOnlyList<AgentProfile>> LoadAgentProfilesAsync(CancellationToken ct)
+    {
+        if (_agentProfilesCache is not null)
+            return _agentProfilesCache;
 
-    public Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct)
-        => SaveEntityAsync(profile, "profiles", p => p.Id, ct);
+        var result = await LoadEntitiesAsync<AgentProfile>("profiles", ct);
+        _agentProfilesCache = result;
+        return result;
+    }
+
+    public async Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct)
+    {
+        await SaveEntityAsync(profile, "profiles", p => p.Id, ct);
+        _agentProfilesCache = null;
+    }
 
     public Task DeleteAgentProfileAsync(string id, CancellationToken ct)
-        => DeleteEntityAsync(id, "profiles");
+    {
+        var result = DeleteEntityAsync(id, "profiles");
+        _agentProfilesCache = null;
+        return result;
+    }
 
     // --- Quality Gate Configurations ---
 
-    public Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct)
-        => LoadEntitiesAsync<QualityGateConfiguration>("quality-gates", ct);
+    public async Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct)
+    {
+        if (_qualityGateConfigsCache is not null)
+            return _qualityGateConfigsCache;
 
-    public Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct)
-        => SaveEntityAsync(config, "quality-gates", c => c.Id, ct);
+        var result = await LoadEntitiesAsync<QualityGateConfiguration>("quality-gates", ct);
+        _qualityGateConfigsCache = result;
+        return result;
+    }
+
+    public async Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct)
+    {
+        await SaveEntityAsync(config, "quality-gates", c => c.Id, ct);
+        _qualityGateConfigsCache = null;
+    }
 
     public Task DeleteQualityGateConfigAsync(string id, CancellationToken ct)
-        => DeleteEntityAsync(id, "quality-gates");
+    {
+        var result = DeleteEntityAsync(id, "quality-gates");
+        _qualityGateConfigsCache = null;
+        return result;
+    }
 
     // --- Reviewer Configurations ---
 
-    public Task<IReadOnlyList<ReviewerConfiguration>> LoadReviewerConfigsAsync(CancellationToken ct)
-        => LoadEntitiesAsync<ReviewerConfiguration>("reviewers", ct);
+    public async Task<IReadOnlyList<ReviewerConfiguration>> LoadReviewerConfigsAsync(CancellationToken ct)
+    {
+        if (_reviewerConfigsCache is not null)
+            return _reviewerConfigsCache;
 
-    public Task SaveReviewerConfigAsync(ReviewerConfiguration config, CancellationToken ct)
-        => SaveEntityAsync(config, "reviewers", c => c.Id, ct);
+        var result = await LoadEntitiesAsync<ReviewerConfiguration>("reviewers", ct);
+        _reviewerConfigsCache = result;
+        return result;
+    }
+
+    public async Task SaveReviewerConfigAsync(ReviewerConfiguration config, CancellationToken ct)
+    {
+        await SaveEntityAsync(config, "reviewers", c => c.Id, ct);
+        _reviewerConfigsCache = null;
+    }
 
     public Task DeleteReviewerConfigAsync(string id, CancellationToken ct)
-        => DeleteEntityAsync(id, "reviewers");
+    {
+        var result = DeleteEntityAsync(id, "reviewers");
+        _reviewerConfigsCache = null;
+        return result;
+    }
 
     // --- Projects ---
 
-    public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
-        => LoadEntitiesAsync<PipelineProject>("projects", ct);
+    public async Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
+    {
+        if (_projectsCache is not null)
+            return _projectsCache;
+
+        var result = await LoadEntitiesAsync<PipelineProject>("projects", ct);
+        _projectsCache = result;
+        return result;
+    }
 
     public async Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct)
     {
@@ -198,6 +301,7 @@ public class JsonConfigurationStore : IConfigurationStore
         try
         {
             await SaveEntityAsync(project, "projects", p => p.Id, ct);
+            _projectsCache = null;
         }
         finally
         {
@@ -244,6 +348,8 @@ public class JsonConfigurationStore : IConfigurationStore
             }
 
             await DeleteEntityAsync(id, "projects");
+            _projectsCache = null;
+            _allTemplatesCache = null;
         }
         finally
         {
@@ -285,6 +391,9 @@ public class JsonConfigurationStore : IConfigurationStore
 
     public async Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct)
     {
+        if (_allTemplatesCache is not null)
+            return _allTemplatesCache;
+
         var projectsDir = Path.Combine(_baseDirectory, "projects");
         if (!Directory.Exists(projectsDir))
             return [];
@@ -302,7 +411,10 @@ public class JsonConfigurationStore : IConfigurationStore
                     all.Add(template);
             }
         }
-        return all.AsReadOnly();
+
+        var result = all.AsReadOnly();
+        _allTemplatesCache = result;
+        return result;
     }
 
     public async Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct)
@@ -332,6 +444,9 @@ public class JsonConfigurationStore : IConfigurationStore
                 var updated = project with { TemplateIds = updatedIds };
                 await SaveEntityAsync(updated, "projects", p => p.Id, ct);
             }
+
+            _allTemplatesCache = null;
+            _projectsCache = null;
         }
         finally
         {
@@ -362,6 +477,9 @@ public class JsonConfigurationStore : IConfigurationStore
                 var updated = project with { TemplateIds = updatedIds };
                 await SaveEntityAsync(updated, "projects", p => p.Id, ct);
             }
+
+            _allTemplatesCache = null;
+            _projectsCache = null;
         }
         finally
         {
@@ -412,6 +530,9 @@ public class JsonConfigurationStore : IConfigurationStore
                 var updated = targetProject with { TemplateIds = updatedIds };
                 await SaveEntityAsync(updated, "projects", p => p.Id, ct);
             }
+
+            _allTemplatesCache = null;
+            _projectsCache = null;
         }
         finally
         {

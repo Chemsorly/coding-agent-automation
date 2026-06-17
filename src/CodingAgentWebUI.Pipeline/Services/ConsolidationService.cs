@@ -26,6 +26,11 @@ public sealed class ConsolidationService : IConsolidationService
     /// </summary>
     private readonly ConcurrentDictionary<(ConsolidationRunType, string?), ConsolidationRun> _runningRuns = new();
 
+    /// <summary>
+    /// Write-through cache for run history. Populated on first read, invalidated on any write/delete.
+    /// </summary>
+    private IReadOnlyList<ConsolidationRun>? _runHistoryCache;
+
     /// <inheritdoc />
     public event Action? OnChange;
 
@@ -84,6 +89,8 @@ public sealed class ConsolidationService : IConsolidationService
                 _logger.Warning(ex, "Failed to process consolidation run file {File} during orphan cleanup", file);
             }
         }
+
+        _runHistoryCache = null;
     }
 
     /// <inheritdoc />
@@ -222,6 +229,9 @@ public sealed class ConsolidationService : IConsolidationService
     /// <inheritdoc />
     public async Task<IReadOnlyList<ConsolidationRun>> GetRunHistoryAsync(CancellationToken ct)
     {
+        if (_runHistoryCache is not null)
+            return _runHistoryCache;
+
         var runs = new List<ConsolidationRun>();
 
         if (!Directory.Exists(_consolidationRunsDirectory))
@@ -241,9 +251,12 @@ public sealed class ConsolidationService : IConsolidationService
             }
         }
 
-        return runs
+        var result = runs
             .OrderByDescending(r => r.StartedAtUtc)
             .ToList();
+
+        _runHistoryCache = result;
+        return result;
     }
 
     /// <inheritdoc />
@@ -582,6 +595,7 @@ public sealed class ConsolidationService : IConsolidationService
             var filePath = Path.Combine(_consolidationRunsDirectory, $"{run.RunId}.json");
             var json = JsonSerializer.Serialize(run, PipelineJsonOptions.Default);
             await AtomicFileWriter.WriteAsync(filePath, json, ct);
+            _runHistoryCache = null;
         }
         catch (Exception ex)
         {
@@ -605,6 +619,7 @@ public sealed class ConsolidationService : IConsolidationService
                 await using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Delete,
                     bufferSize: 1, FileOptions.DeleteOnClose | FileOptions.Asynchronous);
             }
+            _runHistoryCache = null;
         }
         catch (Exception ex)
         {
@@ -622,6 +637,7 @@ public sealed class ConsolidationService : IConsolidationService
             var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
             if (File.Exists(filePath))
                 File.Delete(filePath);
+            _runHistoryCache = null;
         }
         catch (Exception ex)
         {

@@ -37,7 +37,6 @@ public class JobDispatcherServiceTests
         AgentId = agentId,
         ConnectionId = $"conn-{agentId}",
         Hostname = "host",
-        AgentType = "kiro-dotnet",
         Labels = labels ?? new[] { "kiro", "dotnet" },
         RegisteredAt = DateTimeOffset.UtcNow,
         LastHeartbeatAt = DateTimeOffset.UtcNow
@@ -222,7 +221,6 @@ public class JobDispatcherServiceTests
         {
             AgentId = "agent-1",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet" }
         }, "conn-1");
 
@@ -240,7 +238,6 @@ public class JobDispatcherServiceTests
         {
             AgentId = "agent-1",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "dotnet", "linux" }
         }, "conn-1");
 
@@ -257,7 +254,6 @@ public class JobDispatcherServiceTests
         {
             AgentId = "agent-1",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = new[] { "python" }
         }, "conn-1");
 

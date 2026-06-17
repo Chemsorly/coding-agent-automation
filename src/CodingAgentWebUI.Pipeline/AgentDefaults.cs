@@ -37,9 +37,6 @@ public static class AgentDefaults
     /// <summary>Unique identifier for this agent instance.</summary>
     public const string EnvAgentId = "AGENT_ID";
 
-    /// <summary>Agent type identifier (e.g., "kiro-dotnet10").</summary>
-    public const string EnvAgentType = "AGENT_TYPE";
-
     /// <summary>Comma-separated labels for agent routing.</summary>
     public const string EnvAgentLabels = "AGENT_LABELS";
 

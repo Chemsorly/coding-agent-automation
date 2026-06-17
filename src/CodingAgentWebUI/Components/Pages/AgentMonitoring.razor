@@ -224,8 +224,6 @@
                                         <div class="detail-value detail-mono">@modalAgent.AgentId</div>
                                         <div class="detail-label">Hostname</div>
                                         <div class="detail-value">@modalAgent.Hostname</div>
-                                        <div class="detail-label">Type</div>
-                                        <div class="detail-value">@modalAgent.AgentType</div>
                                         <div class="detail-label">Labels</div>
                                         <div class="detail-value">
                                             @foreach (var label in modalAgent.Labels)
@@ -338,7 +336,6 @@
                     <thead>
                         <tr>
                             <th>Agent ID</th>
-                            <th>Type</th>
                             <th>Labels</th>
                             <th>Status</th>
                             <th>Active Job</th>
@@ -352,7 +349,6 @@
                             <tr class="monitoring-row-@agent.Status.ToString().ToLowerInvariant() @(agent.Disabled ? "monitoring-row-disabled" : "") monitoring-row-clickable"
                                 @onclick="() => SelectAgent(agent.AgentId)">
                                 <td class="monitoring-mono" title="@agent.AgentId">@agent.AgentId</td>
-                                <td>@agent.AgentType</td>
                                 <td>
                                     @foreach (var label in agent.Labels)
                                     {
@@ -777,7 +773,7 @@
             Log.Warning(ex, "Failed to load quality gate configs");
         }
 
-        RefreshData();
+        await RefreshDataAsync(includeConsolidation: true);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -805,16 +801,17 @@
         }
     }
 
-    private void RefreshData()
+    private Task RefreshDataAsync(bool includeConsolidation = false)
     {
         _activeRuns = PipelineService.GetAllActiveRuns();
         _agents = Registry.GetAllAgents();
         _queuedJobs = Dispatcher.GetQueuedJobs();
         _runHistory = PipelineService.GetRunHistory();
-        RefreshConsolidationDataAsync();
+
+        return includeConsolidation ? RefreshConsolidationAsync() : Task.CompletedTask;
     }
 
-    private async void RefreshConsolidationDataAsync()
+    private async Task RefreshConsolidationAsync()
     {
         try
         {
@@ -837,10 +834,10 @@
         if (_disposed) return;
         try
         {
-            await InvokeAsync(() =>
+            await InvokeAsync(async () =>
             {
                 if (_disposed) return;
-                RefreshData();
+                await RefreshDataAsync();
                 StateHasChanged();
             });
         }
@@ -852,10 +849,10 @@
         if (_disposed) return;
         try
         {
-            await InvokeAsync(() =>
+            await InvokeAsync(async () =>
             {
                 if (_disposed) return;
-                RefreshData();
+                await RefreshDataAsync(includeConsolidation: true);
                 StateHasChanged();
             });
         }
@@ -937,7 +934,7 @@
             }
             catch (Exception ex) { Log.Warning(ex, "Failed to swap label for cancelled orphan run {RunId}", run.RunId); }
 
-            RefreshData();
+            await RefreshDataAsync();
             StateHasChanged();
             return;
         }
@@ -954,17 +951,17 @@
         await PipelineService.CancelPipelineAsync();
     }
 
-    private void RemoveFromQueue(string issueIdentifier, string issueProviderId)
+    private async Task RemoveFromQueue(string issueIdentifier, string issueProviderId)
     {
         Dispatcher.RemoveFromQueue(issueIdentifier, issueProviderId);
-        RefreshData();
+        await RefreshDataAsync();
         StateHasChanged();
     }
 
     private async Task CancelConsolidationRun(string runId)
     {
         await ConsolidationService.CancelQueuedRunAsync(runId, CancellationToken.None);
-        RefreshData();
+        await RefreshDataAsync(includeConsolidation: true);
         StateHasChanged();
     }
 

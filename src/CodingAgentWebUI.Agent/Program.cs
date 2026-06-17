@@ -24,10 +24,6 @@ var agentApiKey = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentApiKe
 var agentId = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentId)
     ?? Environment.MachineName;
 
-// Validate AGENT_TYPE is set (AgentWorkerService reads it, but fail fast here)
-if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentType)))
-    throw new InvalidOperationException("AGENT_TYPE environment variable is required");
-
 // ── Configure Serilog ──
 var logLevel = Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel)?.ToLowerInvariant() switch
 {

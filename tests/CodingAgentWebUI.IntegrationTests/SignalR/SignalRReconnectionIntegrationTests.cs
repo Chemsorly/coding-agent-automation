@@ -166,7 +166,6 @@ public sealed class SignalRReconnectionIntegrationTests : IClassFixture<SignalRT
         {
             AgentId = agentId,
             Hostname = "test-host",
-            AgentType = "kiro-dotnet10",
             Labels = ["dotnet"]
         });
     }

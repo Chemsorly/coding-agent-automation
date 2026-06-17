@@ -47,7 +47,6 @@ public class DispatchResolutionServiceTests
         {
             AgentId = "agent-1",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = ["dotnet"]
         }, "conn-1");
 
@@ -68,7 +67,6 @@ public class DispatchResolutionServiceTests
         {
             AgentId = "agent-1",
             Hostname = "host",
-            AgentType = "kiro",
             Labels = ["dotnet"]
         }, "conn-1");
 

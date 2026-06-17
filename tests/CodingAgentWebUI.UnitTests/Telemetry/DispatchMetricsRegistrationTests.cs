@@ -67,7 +67,7 @@ public class DispatchMetricsRegistrationTests : IDisposable
     {
         _registry.Register(new AgentRegistrationMessage
         {
-            AgentId = "agent-1", Hostname = "host", AgentType = "kiro", Labels = ["dotnet"]
+            AgentId = "agent-1", Hostname = "host", Labels = ["dotnet"]
         }, "conn-1");
         _registry.TransitionStatus("agent-1", AgentStatus.Busy);
 
@@ -82,11 +82,11 @@ public class DispatchMetricsRegistrationTests : IDisposable
     {
         _registry.Register(new AgentRegistrationMessage
         {
-            AgentId = "agent-1", Hostname = "host", AgentType = "kiro", Labels = ["dotnet"]
+            AgentId = "agent-1", Hostname = "host", Labels = ["dotnet"]
         }, "conn-1");
         _registry.Register(new AgentRegistrationMessage
         {
-            AgentId = "agent-2", Hostname = "host", AgentType = "kiro", Labels = ["python"]
+            AgentId = "agent-2", Hostname = "host", Labels = ["python"]
         }, "conn-2");
 
         _listener.RecordObservableInstruments();

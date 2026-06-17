@@ -69,7 +69,7 @@ public class QueueWaitTimeMetricsTests : IDisposable
     {
         _registry.Register(new AgentRegistrationMessage
         {
-            AgentId = "agent-1", Hostname = "host", AgentType = "kiro",
+            AgentId = "agent-1", Hostname = "host",
             Labels = ["dotnet"]
         }, "conn-1");
 
@@ -96,7 +96,7 @@ public class QueueWaitTimeMetricsTests : IDisposable
     {
         _registry.Register(new AgentRegistrationMessage
         {
-            AgentId = "agent-1", Hostname = "host", AgentType = "kiro",
+            AgentId = "agent-1", Hostname = "host",
             Labels = ["dotnet"]
         }, "conn-1");
 

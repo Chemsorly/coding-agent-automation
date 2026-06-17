@@ -219,7 +219,12 @@ public class WriteSteeringStepTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_IOException_ReturnsContinueAndLogsWarning()
     {
-        // Use a non-existent workspace root that can't be created
+        // Use a workspace path where a file blocks directory creation.
+        // On all platforms, CreateDirectory throws IOException when a file exists at the path.
+        var blocker = Path.Combine(_tempDir, "blocker-file");
+        File.WriteAllText(blocker, "I am a file");
+        var badWorkspace = Path.Combine(blocker, "subdir"); // file as parent → IOException
+
         var run = new PipelineRun
         {
             RunId = "test-run",
@@ -227,7 +232,7 @@ public class WriteSteeringStepTests : IDisposable
             IssueTitle = "Test",
             IssueProviderConfigId = "cfg",
             RepoProviderConfigId = "cfg",
-            WorkspacePath = "/nonexistent/path/that/will/fail",
+            WorkspacePath = badWorkspace,
             StartedAt = DateTime.UtcNow
         };
         var context = CreateContextWithRun(run, AgentProviderType.KiroCli);

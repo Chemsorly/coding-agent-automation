@@ -44,7 +44,6 @@ public class ModelFetchServiceTests
         {
             AgentId = "agent-1",
             Hostname = "host1",
-            AgentType = "kiro",
             Labels = ["kiro"]
         }, "conn-1");
 
@@ -76,7 +75,6 @@ public class ModelFetchServiceTests
         {
             AgentId = "agent-1",
             Hostname = "host1",
-            AgentType = "kiro",
             Labels = ["kiro"]
         }, "conn-1");
 
@@ -111,7 +109,6 @@ public class ModelFetchServiceTests
         {
             AgentId = "agent-1",
             Hostname = "host1",
-            AgentType = "kiro",
             Labels = ["kiro"]
         }, "conn-1");
 

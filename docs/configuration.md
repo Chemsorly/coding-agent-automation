@@ -98,7 +98,6 @@ These environment variables are used by the Docker containers:
 |----------|-------------|
 | `ORCHESTRATOR_URL` | URL of the orchestrator's SignalR hub (e.g., `http://orchestrator:8080`) |
 | `AGENT_ID` | Unique identifier for this agent instance |
-| `AGENT_TYPE` | Agent type identifier (e.g., `kiro-dotnet10`) |
 | `AGENT_LABELS` | Comma-separated labels for routing (e.g., `kiro,dotnet,dotnet10`) |
 | `AGENT_API_KEY` | Must match the orchestrator's key |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |

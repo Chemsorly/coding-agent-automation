@@ -39,15 +39,14 @@ public sealed class AgentRegistryService
             _ =>
             {
                 _logger.Information(
-                    "Agent {AgentId} registered (type={AgentType}, labels=[{Labels}], connection={ConnectionId})",
-                    message.AgentId, message.AgentType, string.Join(", ", message.Labels), connectionId);
+                    "Agent {AgentId} registered (labels=[{Labels}], connection={ConnectionId})",
+                    message.AgentId, string.Join(", ", message.Labels), connectionId);
 
                 return new AgentEntry
                 {
                     AgentId = message.AgentId,
                     ConnectionId = connectionId,
                     Hostname = message.Hostname,
-                    AgentType = message.AgentType,
                     Labels = message.Labels,
                     Status = AgentStatus.Idle,
                     RegisteredAt = now,

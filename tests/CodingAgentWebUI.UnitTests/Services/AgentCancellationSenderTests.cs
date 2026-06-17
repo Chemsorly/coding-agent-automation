@@ -43,7 +43,6 @@ public sealed class AgentCancellationSenderTests
         {
             AgentId = "agent-1",
             Hostname = "host-1",
-            AgentType = "kiro",
             Labels = []
         }, "conn-123");
 
@@ -61,7 +60,6 @@ public sealed class AgentCancellationSenderTests
         {
             AgentId = "agent-1",
             Hostname = "host-1",
-            AgentType = "kiro",
             Labels = []
         }, "conn-123");
 

@@ -9,10 +9,14 @@ metadata:
     {{- include "coding-agent-automation.labels" $ | nindent 4 }}
     app.kubernetes.io/component: agent
     app.kubernetes.io/agent-name: {{ .name }}
+  {{- with .annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: 1
   strategy:
-    type: {{ .strategy.type }}
+    type: {{ (.strategy).type | default "Recreate" }}
   selector:
     matchLabels:
       {{- include "coding-agent-automation.selectorLabels" $ | nindent 6 }}
@@ -26,7 +30,11 @@ spec:
         app.kubernetes.io/agent-name: {{ .name }}
     spec:
       serviceAccountName: {{ include "coding-agent-automation.serviceAccountName" $ }}
-      terminationGracePeriodSeconds: {{ .terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ .terminationGracePeriodSeconds | default 15 }}
+      {{- with .podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -39,9 +47,13 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: agent
-          image: "{{ $.Values.image.registry }}/{{ $.Values.image.repository }}:{{ .image.tag }}"
+          image: "{{ .image.repository }}:{{ .image.tag }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           ports:
             - name: http
@@ -63,15 +75,15 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3
+          {{- with .resources }}
           resources:
-            {{- toYaml .resources | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           env:
             - name: ORCHESTRATOR_URL
               value: "http://{{ include "coding-agent-automation.fullname" $ }}-orchestrator:{{ $.Values.orchestrator.service.port }}"
             - name: AGENT_ID
-              value: {{ .agentId | quote }}
-            - name: AGENT_TYPE
-              value: {{ .agentType | quote }}
+              value: {{ .name | quote }}
             - name: AGENT_LABELS
               value: {{ .labels | quote }}
             - name: AGENT_API_KEY
@@ -83,6 +95,8 @@ spec:
               value: {{ .logLevel | default "Information" | quote }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ $.Values.otel.endpoint | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: {{ $.Values.otel.protocol | quote }}
             - name: OTEL_EXPORTER_OTLP_HEADERS
               valueFrom:
                 secretKeyRef:

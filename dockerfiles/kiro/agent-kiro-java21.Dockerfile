@@ -77,7 +77,6 @@ RUN mkdir -p /app/workspaces
 
 ENV ORCHESTRATOR_URL=""
 ENV AGENT_ID=""
-ENV AGENT_TYPE=kiro-java21
 ENV AGENT_API_KEY=""
 ENV AGENT_LABELS=kiro,java,java21
 

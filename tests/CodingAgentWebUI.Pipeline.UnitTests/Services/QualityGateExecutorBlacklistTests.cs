@@ -161,7 +161,7 @@ public class QualityGateExecutorBlacklistTests
         IssueTitle = "Test Issue",
         IssueProviderConfigId = "ip-1",
         RepoProviderConfigId = "rp-1",
-        WorkspacePath = "/tmp/workspace",
+        WorkspacePath = Path.Combine(Path.GetTempPath(), $"qg-blacklist-test-{Guid.NewGuid():N}"),
         BranchName = "feature/auto-42-test"
     };
 

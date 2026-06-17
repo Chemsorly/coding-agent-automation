@@ -54,7 +54,6 @@ public sealed class AgentWorkerService : BackgroundService
     private TimeSpan _extendedRetryDelay = TimeSpan.FromSeconds(5);
 
     private readonly string _agentId;
-    private readonly string _agentType;
     private readonly IReadOnlyList<string> _labels;
 
     private CancellationTokenSource? _jobCts;
@@ -104,8 +103,6 @@ public sealed class AgentWorkerService : BackgroundService
             .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase);
 
         _agentId = agentIdentity.Id;
-        _agentType = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentType)
-            ?? throw new InvalidOperationException("AGENT_TYPE environment variable is required");
 
         var labelsEnv = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentLabels) ?? string.Empty;
         _labels = labelsEnv
@@ -137,8 +134,8 @@ public sealed class AgentWorkerService : BackgroundService
 
             await _signalRPipeline.ExecuteAsync(async token =>
                 await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), stoppingToken);
-            _logger.Information("Agent {AgentId} registered as {AgentType} with labels [{Labels}]",
-                _agentId, _agentType, string.Join(", ", _labels));
+            _logger.Information("Agent {AgentId} registered with labels [{Labels}]",
+                _agentId, string.Join(", ", _labels));
 
             // Heartbeat loop
             using var heartbeatTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
@@ -831,7 +828,6 @@ public sealed class AgentWorkerService : BackgroundService
     {
         AgentId = _agentId,
         Hostname = Environment.MachineName,
-        AgentType = _agentType,
         Labels = _labels,
         ActiveJob = BuildActiveJobState()
     };

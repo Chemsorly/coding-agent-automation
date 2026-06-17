@@ -676,7 +676,6 @@ public class HeartbeatMonitorServiceTests : IDisposable
         {
             AgentId = agentId,
             Hostname = $"host-{agentId}",
-            AgentType = "kiro-dotnet",
             Labels = new[] { "dotnet" }
         }, connectionId);
     }

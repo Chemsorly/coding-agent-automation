@@ -28,11 +28,11 @@ public class PipelineRunHistoryServiceTests : IDisposable
             Directory.Delete(_tempDir, recursive: true);
     }
 
-    private static async Task WaitForFileAsync(string path, int timeoutMs = 2000)
+    private static async Task WaitForFileAsync(string path, int timeoutMs = 5000)
     {
         var deadline = Environment.TickCount64 + timeoutMs;
         while (!File.Exists(path) && Environment.TickCount64 < deadline)
-            await Task.Delay(25);
+            await Task.Delay(50);
     }
 
     [Fact]

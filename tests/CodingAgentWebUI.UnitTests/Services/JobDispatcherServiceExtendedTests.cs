@@ -320,7 +320,6 @@ public class JobDispatcherServiceExtendedTests
         {
             AgentId = agentId,
             Hostname = $"host-{agentId}",
-            AgentType = "kiro-dotnet",
             Labels = labels
         }, connectionId);
     }

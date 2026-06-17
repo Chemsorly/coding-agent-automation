@@ -39,7 +39,7 @@ public class QualityGateCancellationLabelTests
             IssueTitle = "Test Issue",
             IssueProviderConfigId = "ip-1",
             RepoProviderConfigId = "rp-1",
-            WorkspacePath = "/tmp/workspace"
+            WorkspacePath = Path.Combine(Path.GetTempPath(), $"qg-cancel-test-{Guid.NewGuid():N}")
         };
 
         _config = new PipelineConfiguration
