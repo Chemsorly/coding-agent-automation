@@ -184,12 +184,11 @@ public sealed class AgentWorkerService : BackgroundService
         hubManager.OnClosed += HandleTerminalClosedAsync;
     }
 
-    // TODO: HandleTerminalClosedAsync uses CancellationToken.None — reconnection loop won't observe host shutdown.
-    // Consider wiring _hostApplicationLifetime.ApplicationStopping to abort retries during graceful shutdown.
     private async Task HandleTerminalClosedAsync(Exception? error)
     {
         _logger.Warning(error, "SignalR connection entered terminal Closed state, attempting fresh reconnection");
 
+        var ct = _hostApplicationLifetime.ApplicationStopping;
         const int maxAttempts = 10;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
@@ -197,22 +196,27 @@ public sealed class AgentWorkerService : BackgroundService
             _logger.Information("Reconnection attempt {Attempt}/{Max} after {Delay:F1}s",
                 attempt, maxAttempts, delay.TotalSeconds);
 
-            await Task.Delay(delay);
+            // TODO: Task.Delay is outside the try block — if ct fires during delay, OperationCanceledException
+            // propagates unhandled out of this event handler. Consider moving inside try or adding top-level catch.
+            await Task.Delay(delay, ct);
 
+            HubConnectionManager? newManager = null;
             try
             {
                 var oldManager = _hubManager;
-                var newManager = _hubManagerFactory.Create();
+                newManager = _hubManagerFactory.Create();
                 WireEventHandlers(newManager);
-                // TODO: If StartAsync fails, newManager is abandoned without disposal, leaking HubConnection resources.
-                await newManager.StartAsync(CancellationToken.None);
+                await newManager.StartAsync(ct);
 
                 _hubManager = newManager;
+                newManager = null; // Ownership transferred — skip disposal
 
+                // TODO: If ExecuteAsync fails after this point, newManager is null so catch won't dispose the new
+                // manager (now _hubManager), and oldManager is also not disposed — latent pre-existing issue.
                 // Re-register with orchestrator
                 var registration = BuildRegistrationMessage();
                 await _signalRPipeline.ExecuteAsync(async token =>
-                    await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), CancellationToken.None);
+                    await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), ct);
 
                 _logger.Information("Agent {AgentId} reconnected and re-registered after terminal close", _agentId);
 
@@ -220,8 +224,15 @@ public sealed class AgentWorkerService : BackgroundService
                 await oldManager.DisposeAsync();
                 return;
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // TODO: DisposeAsync could throw if HubConnection is faulted — consider wrapping in try-catch.
+                if (newManager is not null) await newManager.DisposeAsync();
+                return;
+            }
             catch (Exception ex)
             {
+                if (newManager is not null) await newManager.DisposeAsync();
                 _logger.Warning(ex, "Reconnection attempt {Attempt} failed", attempt);
             }
         }
