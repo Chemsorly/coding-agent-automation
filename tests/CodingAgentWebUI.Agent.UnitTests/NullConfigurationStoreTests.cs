@@ -212,6 +212,16 @@ public class NullConfigurationStoreTests
         await act.Should().NotThrowAsync();
     }
 
+    [Fact]
+    public async Task ResetReviewerConfigsToDefaultAsync_CompletesWithoutThrowing()
+    {
+        // Act
+        var act = () => _sut.ResetReviewerConfigsToDefaultAsync(CancellationToken.None);
+
+        // Assert
+        await act.Should().NotThrowAsync();
+    }
+
     // ── Property 3: NullConfigurationStore returns empty for all ProviderKinds ──
 
     /// <summary>

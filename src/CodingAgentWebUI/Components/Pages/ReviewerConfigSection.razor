@@ -125,6 +125,18 @@
     else
     {
         <button class="btn-add" style="margin-top: 12px;" @onclick="ShowAddForm">+ Add Reviewer Configuration</button>
+        <button class="btn-revert" style="margin-top: 12px; margin-left: 8px;" @onclick="() => _showResetConfirm = true">Reset collection to defaults</button>
+    }
+
+    @if (_showResetConfirm)
+    {
+        <div class="agent-detail-confirm" style="margin-top: 12px;">
+            <p>Replace <strong>all</strong> reviewer configurations with the factory defaults (@PipelineConfiguration.DefaultReviewerConfigurations.Sum(c => c.Agents.Count) agents)? This removes any custom configurations.</p>
+            <div class="confirm-buttons">
+                <button class="btn-delete" @onclick="ResetToDefaults">Reset</button>
+                <button class="btn-cancel" @onclick="() => _showResetConfirm = false">Cancel</button>
+            </div>
+        </div>
     }
 
     @if (_showDeleteConfirm && _deletingConfig != null)
@@ -150,6 +162,7 @@
     private string? _formError;
     private bool _showDeleteConfirm;
     private ReviewerConfiguration? _deletingConfig;
+    private bool _showResetConfirm;
 
     protected override async Task OnInitializedAsync()
     {
@@ -290,6 +303,21 @@
         catch (Exception ex)
         {
             await OnShowStatus.InvokeAsync(($"Failed to delete: {ex.Message}", true));
+        }
+    }
+
+    private async Task ResetToDefaults()
+    {
+        try
+        {
+            await ConfigStore.ResetReviewerConfigsToDefaultAsync(CancellationToken.None);
+            _showResetConfirm = false;
+            await LoadConfigs();
+            await OnShowStatus.InvokeAsync(("Reviewer configurations reset to defaults.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to reset: {ex.Message}", true));
         }
     }
 

@@ -269,6 +269,29 @@ public class JsonConfigurationStore : IConfigurationStore
         return result;
     }
 
+    public async Task ResetReviewerConfigsToDefaultAsync(CancellationToken ct)
+    {
+        var dir = Path.Combine(_baseDirectory, "reviewers");
+        if (Directory.Exists(dir))
+        {
+            foreach (var file in Directory.GetFiles(dir, "*.json"))
+            {
+                try { File.Delete(file); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _logger.Warning("Failed to delete reviewer config file '{FilePath}': {ErrorMessage}", file, ex.Message);
+                }
+            }
+        }
+
+        foreach (var config in PipelineConfiguration.DefaultReviewerConfigurations)
+        {
+            await SaveEntityAsync(config, "reviewers", c => c.Id, ct);
+        }
+
+        _reviewerConfigsCache = null;
+    }
+
     // --- Projects ---
 
     public async Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)

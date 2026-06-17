@@ -58,6 +58,9 @@ internal sealed class NullConfigurationStore : IConfigurationStore
     public Task DeleteReviewerConfigAsync(string id, CancellationToken ct) =>
         Task.CompletedTask;
 
+    public Task ResetReviewerConfigsToDefaultAsync(CancellationToken ct) =>
+        Task.CompletedTask;
+
     public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<PipelineProject>>([]);
 

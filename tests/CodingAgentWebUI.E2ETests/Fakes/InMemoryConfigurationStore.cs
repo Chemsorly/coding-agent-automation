@@ -175,6 +175,13 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         return Task.CompletedTask;
     }
 
+    public Task ResetReviewerConfigsToDefaultAsync(CancellationToken ct)
+    {
+        _reviewerConfigs.Clear();
+        _reviewerConfigs.AddRange(PipelineConfiguration.DefaultReviewerConfigurations);
+        return Task.CompletedTask;
+    }
+
     // Projects
     public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<PipelineProject>>(_projects.ToList());
