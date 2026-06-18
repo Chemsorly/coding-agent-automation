@@ -524,6 +524,29 @@ public class JobQueueDrainServiceTests
         _consolidationQueue.QueueLength.Should().Be(1);
     }
 
+    [Fact]
+    public async Task DrainAsync_TransitionsExpiredConsolidationJobsToFailed()
+    {
+        RegisterIdleAgent();
+        _consolidationQueue.EnqueueJob(new PendingConsolidationJob
+        {
+            RunId = "crun-expired",
+            Type = ConsolidationRunType.BrainConsolidation,
+            WorkspacePath = "/tmp/ws",
+            RequiredLabels = Array.Empty<string>(),
+            EnqueuedAt = DateTimeOffset.UtcNow - ConsolidationQueueService.MaxQueueAge - TimeSpan.FromMinutes(1)
+        });
+
+        await _service.DrainAsync(CancellationToken.None);
+
+        _mockConsolidationService.Verify(
+            s => s.UpdateRunAsync("crun-expired", ConsolidationRunStatus.Failed,
+                It.Is<string>(msg => msg.Contains("Expired")),
+                It.IsAny<CancellationToken>(), It.IsAny<long>()),
+            Times.Once);
+        _consolidationQueue.QueueLength.Should().Be(0);
+    }
+
     #endregion
 
 }

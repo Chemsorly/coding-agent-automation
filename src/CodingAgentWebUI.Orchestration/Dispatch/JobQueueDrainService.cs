@@ -270,7 +270,19 @@ public sealed class JobQueueDrainService : BackgroundService
             if (ct.IsCancellationRequested || _shutdownSignal.IsShuttingDown)
                 break;
 
-            var job = _consolidationQueue.DequeueForAgent(agent);
+            var expiredJobs = new List<PendingConsolidationJob>();
+            var job = _consolidationQueue.DequeueForAgent(agent, expiredJobs);
+
+            foreach (var expired in expiredJobs)
+            {
+                await _consolidationService.UpdateRunAsync(
+                    expired.RunId,
+                    Pipeline.Models.ConsolidationRunStatus.Failed,
+                    $"Expired after {ConsolidationQueueService.MaxQueueAge.TotalHours}h in queue",
+                    ct);
+                PipelineTelemetry.ConsolidationJobsExpired.Add(1);
+            }
+
             if (job is null)
                 continue;
 

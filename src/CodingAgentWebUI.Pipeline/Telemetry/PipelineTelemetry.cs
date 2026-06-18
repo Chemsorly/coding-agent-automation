@@ -50,6 +50,9 @@ public static class PipelineTelemetry
     public static readonly Histogram<double> QueueWaitTime = Meter.CreateHistogram<double>(
         "dispatch.queue.wait_time", "s", "Time a job spent waiting in the dispatch queue");
 
+    public static readonly Counter<long> ConsolidationJobsExpired = Meter.CreateCounter<long>(
+        "consolidation.jobs.expired", "{job}", "Consolidation jobs expired from queue");
+
     // Token vending metrics
     public static readonly Counter<long> TokenVendingFailures = Meter.CreateCounter<long>(
         "token_vending.failures", "{failure}", "Token vending failures");
