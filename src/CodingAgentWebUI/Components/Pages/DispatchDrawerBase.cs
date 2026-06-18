@@ -1,0 +1,67 @@
+using Microsoft.AspNetCore.Components;
+using CodingAgentWebUI.Pipeline.Models;
+
+namespace CodingAgentWebUI.Components.Pages;
+
+/// <summary>
+/// Base class for dispatch drawer components that share filter, selection, and lifecycle logic.
+/// </summary>
+public abstract class DispatchDrawerBase<TItem> : ComponentBase
+{
+    [Parameter, EditorRequired] public bool IsOpen { get; set; }
+    [Parameter, EditorRequired] public PipelineJobTemplate? Template { get; set; }
+    [Parameter, EditorRequired] public bool IsLoading { get; set; }
+    [Parameter, EditorRequired] public bool IsDispatching { get; set; }
+    // TODO: EditorRequired with a default initializer may generate a compiler warning. Consider removing the default or the attribute.
+    [Parameter, EditorRequired] public Func<string, bool> IsBeingProcessed { get; set; } = _ => false;
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<TItem> OnDispatch { get; set; }
+
+    protected string _filter = "";
+    protected List<TItem> FilteredItems = new();
+    protected TItem? SelectedItem;
+    protected IReadOnlyList<TItem> Items { get; set; } = [];
+
+    // TODO: OnParametersSet allocates a new filtered list on every parent re-render because the
+    // parent passes a mutable List<T> reference. Consider caching or using ShouldRender override.
+    protected override void OnParametersSet()
+    {
+        ApplyFilter();
+        if (!IsOpen) { SelectedItem = default; _filter = ""; }
+    }
+
+    protected void ApplyFilter()
+    {
+        if (string.IsNullOrWhiteSpace(_filter))
+        {
+            FilteredItems = Items.ToList();
+        }
+        else
+        {
+            var f = _filter.Trim();
+            FilteredItems = Items.Where(i => MatchesFilter(i, f)).ToList();
+        }
+    }
+
+    protected abstract bool MatchesFilter(TItem item, string filter);
+
+    protected virtual void SelectItem(TItem item)
+    {
+        if (SelectedItem != null && GetIdentifier(SelectedItem) == GetIdentifier(item))
+            SelectedItem = default;
+        else
+            SelectedItem = item;
+    }
+
+    // TODO: async virtual method may emit CS1998 if derived classes override without awaiting. Consider splitting into non-async guard + async invoke.
+    protected virtual async Task DispatchSelected()
+    {
+        if (SelectedItem != null)
+            await OnDispatch.InvokeAsync(SelectedItem);
+    }
+
+    protected abstract string GetIdentifier(TItem item);
+
+    // TODO: Close() is not virtual — derived classes cannot override close behavior. Consider making virtual if customization is needed.
+    protected async Task Close() => await OnClose.InvokeAsync();
+}

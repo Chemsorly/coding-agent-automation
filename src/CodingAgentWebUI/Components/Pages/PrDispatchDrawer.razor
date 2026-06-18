@@ -1,5 +1,6 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
+@inherits DispatchDrawerBase<PullRequestSummary>
 
 <div class="dispatch-drawer-overlay @(IsOpen ? "open" : "")" @onclick="Close"></div>
 <aside class="dispatch-drawer @(IsOpen ? "open" : "")">
@@ -32,11 +33,11 @@
             else
             {
                 <div class="agent-history-list" style="max-height: calc(100vh - 320px); overflow-y: auto;">
-                    @foreach (var pr in _filteredPrs)
+                    @foreach (var pr in FilteredItems)
                     {
                         var isProcessing = IsBeingProcessed(pr.Identifier);
-                        <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(_selectedPr?.Identifier == pr.Identifier ? "drawer-issue-selected" : "")"
-                             @onclick="() => SelectPr(pr)"
+                        <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(SelectedItem?.Identifier == pr.Identifier ? "drawer-issue-selected" : "")"
+                             @onclick="() => SelectItem(pr)"
                              data-testid="pr-row-@pr.Identifier"
                              style="@(isProcessing ? "opacity: 0.6; pointer-events: none;" : "")">
                             <div class="drawer-issue-header">
@@ -72,35 +73,35 @@
                 }
             }
 
-            @if (_selectedPr != null)
+            @if (SelectedItem != null)
             {
                 <div class="agent-detail-section" style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
-                    <h4>PR #@_selectedPr.Identifier — @_selectedPr.Title</h4>
+                    <h4>PR #@SelectedItem.Identifier — @SelectedItem.Title</h4>
                     <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 4px;">
-                        @_selectedPr.BranchName → @_selectedPr.TargetBranch
+                        @SelectedItem.BranchName → @SelectedItem.TargetBranch
                     </div>
                     <div class="drawer-issue-labels" style="margin-bottom: 8px;">
-                        @foreach (var label in _selectedPr.Labels)
+                        @foreach (var label in SelectedItem.Labels)
                         {
                             <span class="sidebar-label @UiFormatters.GetLabelClass(label)">@label</span>
                         }
                     </div>
-                    @if (_selectedPr.IsDraft)
+                    @if (SelectedItem.IsDraft)
                     {
                         <div class="settings-status status-error" style="margin-bottom: 8px; font-size: 0.78rem;">
                             ⚠️ This PR is a draft. Review will still be dispatched.
                         </div>
                     }
-                    @if (_selectedPr.CreatedAt.HasValue)
+                    @if (SelectedItem.CreatedAt.HasValue)
                     {
                         <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0 0 8px;">
-                            Created: @_selectedPr.CreatedAt.Value.ToLocalTime().ToString("g")
+                            Created: @SelectedItem.CreatedAt.Value.ToLocalTime().ToString("g")
                         </p>
                     }
                     <button class="btn-save" @onclick="DispatchSelected" disabled="@IsDispatching"
                             data-testid="dispatch-pr-btn"
                             style="background: var(--accent-secondary, #6366f1);">
-                        @(IsDispatching ? "Dispatching..." : $"Start Review on PR #{_selectedPr.Identifier}")
+                        @(IsDispatching ? "Dispatching..." : $"Start Review on PR #{SelectedItem.Identifier}")
                     </button>
                 </div>
             }
@@ -109,57 +110,33 @@
 </aside>
 
 @code {
-    [Parameter, EditorRequired] public bool IsOpen { get; set; }
-    [Parameter, EditorRequired] public PipelineJobTemplate? Template { get; set; }
     [Parameter, EditorRequired] public IReadOnlyList<PullRequestSummary> PullRequests { get; set; } = [];
-    [Parameter, EditorRequired] public bool IsLoading { get; set; }
     [Parameter, EditorRequired] public bool HasMore { get; set; }
     [Parameter, EditorRequired] public int Page { get; set; }
-    [Parameter, EditorRequired] public bool IsDispatching { get; set; }
-    [Parameter, EditorRequired] public Func<string, bool> IsBeingProcessed { get; set; } = _ => false;
-    [Parameter] public EventCallback OnClose { get; set; }
     [Parameter] public EventCallback OnNextPage { get; set; }
     [Parameter] public EventCallback OnPrevPage { get; set; }
-    [Parameter] public EventCallback<PullRequestSummary> OnDispatch { get; set; }
 
-    private string _filter = "";
-    private List<PullRequestSummary> _filteredPrs = new();
-    private PullRequestSummary? _selectedPr;
-
-    // TODO: OnParametersSet allocates a new filtered list on every parent re-render because the
-    // parent passes a mutable List<T> reference. Consider caching or using ShouldRender override.
     protected override void OnParametersSet()
     {
-        ApplyFilter();
-        if (!IsOpen) { _selectedPr = null; _filter = ""; }
+        Items = PullRequests;
+        base.OnParametersSet();
     }
 
-    private void ApplyFilter()
+    protected override void SelectItem(PullRequestSummary item) => SelectedItem = item;
+
+    protected override async Task DispatchSelected()
     {
-        if (string.IsNullOrWhiteSpace(_filter))
-        {
-            _filteredPrs = PullRequests.ToList();
-        }
-        else
-        {
-            var f = _filter.Trim();
-            _filteredPrs = PullRequests
-                .Where(pr => pr.Identifier.Contains(f, StringComparison.OrdinalIgnoreCase)
-                          || pr.Title.Contains(f, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-        }
+        if (SelectedItem == null) return;
+        await OnDispatch.InvokeAsync(SelectedItem);
+        SelectedItem = null;
     }
 
-    private void SelectPr(PullRequestSummary pr) => _selectedPr = pr;
+    protected override bool MatchesFilter(PullRequestSummary item, string filter) =>
+        item.Identifier.Contains(filter, StringComparison.OrdinalIgnoreCase)
+        || item.Title.Contains(filter, StringComparison.OrdinalIgnoreCase);
 
-    private async Task Close() => await OnClose.InvokeAsync();
+    protected override string GetIdentifier(PullRequestSummary item) => item.Identifier;
+
     private async Task NextPage() => await OnNextPage.InvokeAsync();
     private async Task PrevPage() => await OnPrevPage.InvokeAsync();
-
-    private async Task DispatchSelected()
-    {
-        if (_selectedPr == null) return;
-        await OnDispatch.InvokeAsync(_selectedPr);
-        _selectedPr = null;
-    }
 }
