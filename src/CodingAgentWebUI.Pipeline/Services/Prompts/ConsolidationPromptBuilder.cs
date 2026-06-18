@@ -118,6 +118,41 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("Keep the index files (README.md) concise and up-to-date with the current structure.");
         sb.AppendLine();
 
+        // Phase 5: Project SKILL.md generation
+        sb.AppendLine("## Phase 5: Generate Project SKILL.md");
+        sb.AppendLine();
+        sb.AppendLine("For each project directory under `.brain/projects/`, regenerate a `SKILL.md` file.");
+        sb.AppendLine("This file is a distilled, single-document summary that agents receive as pre-loaded context");
+        sb.AppendLine("via subagent retrieval — it should be the most useful file in the project folder.");
+        sb.AppendLine();
+        sb.AppendLine("**Regenerate from scratch each time** (do not incrementally edit the existing SKILL.md).");
+        sb.AppendLine("Cap content at ~1500 words. Structure it as:");
+        sb.AppendLine();
+        sb.AppendLine("```markdown");
+        sb.AppendLine("# Project: {project-name}");
+        sb.AppendLine();
+        sb.AppendLine("## Architecture");
+        sb.AppendLine("{Tech stack, key project structure, main components and their roles}");
+        sb.AppendLine();
+        sb.AppendLine("## Conventions");
+        sb.AppendLine("{Coding standards, naming patterns, preferred libraries, serialization choices}");
+        sb.AppendLine();
+        sb.AppendLine("## Known Pitfalls");
+        sb.AppendLine("{Common mistakes from lessons-learned, gotchas that cause build/test failures}");
+        sb.AppendLine();
+        sb.AppendLine("## Testing Patterns");
+        sb.AppendLine("{How tests are structured, commands to run, quarantine rules, CI quirks}");
+        sb.AppendLine();
+        sb.AppendLine("## Key Decisions");
+        sb.AppendLine("{Important architectural decisions and their rationale}");
+        sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine("Source content from the project's brain entries, technology files, general lessons,");
+        sb.AppendLine("and session logs. Only include information that is current and verified.");
+        sb.AppendLine("If a project folder has very little accumulated knowledge, produce a shorter SKILL.md");
+        sb.AppendLine("with just the sections that have content — do not pad with generic advice.");
+        sb.AppendLine();
+
         // Output expectations
         sb.AppendLine("## Output");
         sb.AppendLine();
@@ -126,6 +161,7 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- Number of entries merged");
         sb.AppendLine("- Number of contradictions resolved");
         sb.AppendLine("- Number of entries pruned");
+        sb.AppendLine("- Number of SKILL.md files generated/updated");
 
         return sb.ToString();
     }
