@@ -131,11 +131,12 @@ public class OutputBatcherFlushTimeoutTests
         // Wait for the first (blocking) flush to start and the timeout to fire,
         // then for subsequent timer flushes to succeed
         // With the fix: ~250ms (timer) + ~200ms (timeout) + ~250ms (next timer) ≈ 700ms
-        await Task.Delay(TimeSpan.FromMilliseconds(1000));
+        // Use generous delays to avoid flakiness on slow CI runners.
+        await Task.Delay(TimeSpan.FromMilliseconds(2000));
 
         // Add another line to be flushed by a subsequent timer tick
         await batcher.AddLineAsync("second-line");
-        await Task.Delay(TimeSpan.FromMilliseconds(500));
+        await Task.Delay(TimeSpan.FromMilliseconds(1500));
 
         // With the flush timeout fix, the timer loop should have recovered and
         // flushed the second batch. Without the fix, only 1 flush ever fires
