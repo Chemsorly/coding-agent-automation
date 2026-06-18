@@ -185,8 +185,12 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         var run = ActiveRun;
         _logger.Information("Pipeline {RunId} cancellation requested", run.RunId);
 
-        // TODO: _cancellationTokenSource is read non-atomically here. A concurrent CreateLinkedCancellationToken can Exchange+Dispose the CTS between this read and .Cancel(), causing ObjectDisposedException. Use Interlocked read or capture a local snapshot.
-        _cancellationTokenSource?.Cancel();
+        try
+        {
+            Interlocked.CompareExchange(ref _cancellationTokenSource, null, null)?.Cancel();
+        }
+        // TODO: The catch block is load-bearing — a race window exists between the atomic read and .Cancel(). Consider logging at Debug level here so silent cancellation failures are observable.
+        catch (ObjectDisposedException) { }
         run.CompletedAt = DateTime.UtcNow;
         run.CompletedAtOffset = DateTimeOffset.UtcNow;
         EmitOutputLine("🚫 Pipeline cancelled");
@@ -261,15 +265,13 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
 
     public void Dispose()
     {
-        // TODO: Use Interlocked.Exchange(ref _cancellationTokenSource, null)?.Dispose() to avoid racing with CreateLinkedCancellationToken which could assign a new CTS after this read, leaking it.
-        _cancellationTokenSource?.Dispose();
+        Interlocked.Exchange(ref _cancellationTokenSource, null)?.Dispose();
         GC.SuppressFinalize(this);
     }
 
     public ValueTask DisposeAsync()
     {
-        // TODO: Use Interlocked.Exchange(ref _cancellationTokenSource, null)?.Dispose() to avoid racing with CreateLinkedCancellationToken.
-        _cancellationTokenSource?.Dispose();
+        Interlocked.Exchange(ref _cancellationTokenSource, null)?.Dispose();
         GC.SuppressFinalize(this);
         return ValueTask.CompletedTask;
     }
