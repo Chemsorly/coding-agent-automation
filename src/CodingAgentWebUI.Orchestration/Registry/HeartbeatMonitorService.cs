@@ -51,8 +51,17 @@ public sealed class HeartbeatMonitorService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var config = await _configStore.LoadPipelineConfigAsync(stoppingToken);
-        // TODO: No validation — zero or negative HeartbeatSweepIntervalSeconds will throw ArgumentOutOfRangeException from PeriodicTimer.
-        var sweepInterval = TimeSpan.FromSeconds(config.HeartbeatSweepIntervalSeconds);
+        // TODO: Add tests for clamping logic with HeartbeatSweepIntervalSeconds set to 0, -1, and 4.
+        const int MinSweepIntervalSeconds = 5;
+        var intervalSeconds = config.HeartbeatSweepIntervalSeconds;
+        if (intervalSeconds < MinSweepIntervalSeconds)
+        {
+            _logger.Warning("HeartbeatSweepIntervalSeconds ({Configured}) is below minimum, clamping to {Min}s",
+                intervalSeconds, MinSweepIntervalSeconds);
+            intervalSeconds = MinSweepIntervalSeconds;
+        }
+
+        var sweepInterval = TimeSpan.FromSeconds(intervalSeconds);
         _logger.Information("HeartbeatMonitorService started, sweep interval: {Interval}s", sweepInterval.TotalSeconds);
 
         using var timer = new PeriodicTimer(sweepInterval);
