@@ -17,27 +17,30 @@ internal sealed class DetectReworkStep : IPipelineStep
             var agentPrs = await context.RepoProvider.GetAgentPullRequestsAsync(context.Run.IssueIdentifier, ct);
             if (agentPrs.Count > 0)
             {
-                // TODO: Only the most recent PR is checked; older draft PRs for the same issue remain orphaned. Consider iterating all draft PRs in agentPrs to close them.
-                // TODO: No check that a non-draft PR is still open before entering rework mode. If it was already merged, pushing to it downstream will fail.
-                var selectedPr = agentPrs.OrderByDescending(pr => pr.Number).First();
-
-                // Close stale draft PRs to prevent orphaned accumulation
-                // TODO: After closing a draft PR, older non-draft open PRs in agentPrs are ignored. The pipeline proceeds as new-issue flow which may create a duplicate PR alongside existing open non-draft PRs. Consider falling through to check the next PR in the list.
-                if (selectedPr.IsDraft)
+                // Close all stale draft PRs
+                foreach (var pr in agentPrs.Where(p => p.IsDraft))
                 {
-                    await context.RepoProvider.ClosePullRequestAsync(selectedPr.Number, ct);
-                    context.Callbacks.EmitOutputLine($"🗑️ Closed stale draft PR #{selectedPr.Number}");
+                    await context.RepoProvider.ClosePullRequestAsync(pr.Number, ct);
+                    context.Callbacks.EmitOutputLine($"🗑️ Closed stale draft PR #{pr.Number}");
                     context.Logger.Information(
                         "Pipeline {RunId} closed stale draft PR #{PrNumber} for issue {IssueIdentifier}",
-                        context.Run.RunId, selectedPr.Number, context.Run.IssueIdentifier);
+                        context.Run.RunId, pr.Number, context.Run.IssueIdentifier);
                 }
-                else
+
+                // TODO: This relies on GetAgentPullRequestsAsync filtering by open state at the provider level. If a future provider returns non-open PRs, add an explicit guard here to verify the candidate is still open before entering rework mode.
+                // Select the highest-numbered non-draft open PR for rework
+                var candidate = agentPrs
+                    .Where(p => !p.IsDraft)
+                    .OrderByDescending(p => p.Number)
+                    .FirstOrDefault();
+
+                if (candidate is not null)
                 {
-                    context.Run.LinkedPullRequest = selectedPr;
-                    context.Callbacks.EmitOutputLine($"🔄 Rework mode: updating existing PR #{selectedPr.Number}");
+                    context.Run.LinkedPullRequest = candidate;
+                    context.Callbacks.EmitOutputLine($"🔄 Rework mode: updating existing PR #{candidate.Number}");
                     context.Logger.Information(
                         "Pipeline {RunId} detected existing agent PR #{PrNumber} for issue {IssueIdentifier}, entering rework mode",
-                        context.Run.RunId, selectedPr.Number, context.Run.IssueIdentifier);
+                        context.Run.RunId, candidate.Number, context.Run.IssueIdentifier);
                 }
             }
         }

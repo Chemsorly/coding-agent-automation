@@ -330,6 +330,94 @@ public class PipelineStepTests
         _run.LinkedPullRequest.Should().BeNull();
     }
 
+    [Fact]
+    public async Task DetectReworkStep_MultipleDrafts_ClosesAllAndDoesNotLink()
+    {
+        var drafts = new List<LinkedPullRequest>
+        {
+            new() { Number = 10, BranchName = "feature/auto-42-a", Url = "http://pr/10", IsDraft = true },
+            new() { Number = 12, BranchName = "feature/auto-42-b", Url = "http://pr/12", IsDraft = true }
+        };
+        _repoProvider.Setup(p => p.GetAgentPullRequestsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(drafts);
+        _repoProvider.Setup(p => p.ClosePullRequestAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var step = new DetectReworkStep();
+        var context = BuildContext();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepResult.Continue, result);
+        _run.LinkedPullRequest.Should().BeNull();
+        _repoProvider.Verify(p => p.ClosePullRequestAsync(10, It.IsAny<CancellationToken>()), Times.Once);
+        _repoProvider.Verify(p => p.ClosePullRequestAsync(12, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DetectReworkStep_MixedDraftAndNonDraft_ClosesDraftAndLinksNonDraft()
+    {
+        var prs = new List<LinkedPullRequest>
+        {
+            new() { Number = 8, BranchName = "feature/auto-42-a", Url = "http://pr/8", IsDraft = false },
+            new() { Number = 11, BranchName = "feature/auto-42-b", Url = "http://pr/11", IsDraft = true }
+        };
+        _repoProvider.Setup(p => p.GetAgentPullRequestsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(prs);
+        _repoProvider.Setup(p => p.ClosePullRequestAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var step = new DetectReworkStep();
+        var context = BuildContext();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepResult.Continue, result);
+        _run.LinkedPullRequest.Should().Be(prs[0]);
+        _repoProvider.Verify(p => p.ClosePullRequestAsync(11, It.IsAny<CancellationToken>()), Times.Once);
+        // TODO: Add Times.Never verification for non-draft PR #8 to ensure it is not incorrectly closed
+    }
+
+    [Fact]
+    public async Task DetectReworkStep_MultipleNonDrafts_SelectsHighestNumber()
+    {
+        var prs = new List<LinkedPullRequest>
+        {
+            new() { Number = 3, BranchName = "feature/auto-42-a", Url = "http://pr/3", IsDraft = false },
+            new() { Number = 9, BranchName = "feature/auto-42-b", Url = "http://pr/9", IsDraft = false }
+        };
+        _repoProvider.Setup(p => p.GetAgentPullRequestsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(prs);
+
+        var step = new DetectReworkStep();
+        var context = BuildContext();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepResult.Continue, result);
+        _run.LinkedPullRequest.Should().Be(prs[1]);
+    }
+
+    [Fact]
+    public async Task DetectReworkStep_DraftHigherThanNonDraft_ClosesDraftSelectsNonDraft()
+    {
+        var prs = new List<LinkedPullRequest>
+        {
+            new() { Number = 5, BranchName = "feature/auto-42-a", Url = "http://pr/5", IsDraft = false },
+            new() { Number = 15, BranchName = "feature/auto-42-b", Url = "http://pr/15", IsDraft = true }
+        };
+        _repoProvider.Setup(p => p.GetAgentPullRequestsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(prs);
+        _repoProvider.Setup(p => p.ClosePullRequestAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var step = new DetectReworkStep();
+        var context = BuildContext();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepResult.Continue, result);
+        _run.LinkedPullRequest.Should().Be(prs[0]);
+        _repoProvider.Verify(p => p.ClosePullRequestAsync(15, It.IsAny<CancellationToken>()), Times.Once);
+        _repoProvider.Verify(p => p.ClosePullRequestAsync(5, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // ── CreateBranchStep ──
 
     [Fact]
