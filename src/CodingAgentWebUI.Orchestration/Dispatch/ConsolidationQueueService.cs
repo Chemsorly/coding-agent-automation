@@ -69,8 +69,10 @@ public sealed class ConsolidationQueueService
     /// <summary>
     /// Dequeues the next compatible job for the given agent (label matching).
     /// Non-matching jobs are re-enqueued at the back.
+    /// Expired jobs are removed from the queue and added to <paramref name="expiredCollector"/>
+    /// so the caller can transition them to Failed state outside the lock.
     /// </summary>
-    public PendingConsolidationJob? DequeueForAgent(AgentEntry agent)
+    public PendingConsolidationJob? DequeueForAgent(AgentEntry agent, List<PendingConsolidationJob>? expiredCollector = null)
     {
         ArgumentNullException.ThrowIfNull(agent);
 
@@ -90,11 +92,11 @@ public sealed class ConsolidationQueueService
                     break;
 
                 // Expire jobs that have been queued too long
-                // TODO: Expired jobs are silently discarded — the orchestrator is never notified, so the run remains "queued" in the UI. Emit a metric and transition the run to Failed/Cancelled.
                 if (job.EnqueuedAt + MaxQueueAge < DateTimeOffset.UtcNow)
                 {
                     _queuedRunIds.TryRemove(job.RunId, out _);
                     _logger.Warning("Consolidation job {RunId} expired after {MaxAge}h in queue", job.RunId, MaxQueueAge.TotalHours);
+                    expiredCollector?.Add(job);
                     continue;
                 }
 

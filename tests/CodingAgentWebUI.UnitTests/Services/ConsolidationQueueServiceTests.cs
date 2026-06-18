@@ -114,10 +114,12 @@ public sealed class ConsolidationQueueServiceTests
         _sut.EnqueueJob(job);
         _sut.QueueLength.Should().Be(1);
 
-        var result = _sut.DequeueForAgent(CreateAgent());
+        var expiredCollector = new List<PendingConsolidationJob>();
+        var result = _sut.DequeueForAgent(CreateAgent(), expiredCollector);
 
         result.Should().BeNull();
         _sut.QueueLength.Should().Be(0);
+        expiredCollector.Should().ContainSingle().Which.RunId.Should().Be("expired-run");
     }
 
     [Fact]
