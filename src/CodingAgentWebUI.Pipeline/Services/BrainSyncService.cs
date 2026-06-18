@@ -74,7 +74,7 @@ internal class BrainSyncService : IBrainSyncService
         onOutputLine?.Invoke($"🧠 Brain context loaded: {run.BrainKnowledgeFileCount} knowledge files");
 
         PipelineTelemetry.BrainSyncsCompleted.Add(1);
-        PipelineTelemetry.BrainSyncDuration.Record(brainSw.ElapsedMilliseconds);
+        PipelineTelemetry.BrainSyncDuration.Record(brainSw.Elapsed.TotalSeconds);
     }
 
     /// <summary>

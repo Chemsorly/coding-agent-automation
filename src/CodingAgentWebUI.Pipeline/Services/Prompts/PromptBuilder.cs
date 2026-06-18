@@ -401,6 +401,7 @@ public static class PromptBuilder
         sb.AppendLine();
         sb.AppendLine("1. Invoke a subagent with a prompt like:");
         sb.AppendLine("   \"Read `.brain/AGENTS.md` for the structure. Then find entries in `.brain/` relevant to: {your issue summary}.");
+        sb.AppendLine("   Check for a `SKILL.md` in the relevant project folder first — it contains a distilled summary.");
 
         if (!string.IsNullOrWhiteSpace(projectName))
             sb.AppendLine($"   Check `.brain/projects/{projectName}/` for project-specific knowledge.");

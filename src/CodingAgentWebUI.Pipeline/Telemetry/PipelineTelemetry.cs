@@ -63,7 +63,7 @@ public static class PipelineTelemetry
     public static readonly Counter<long> BrainFilesWritten = Meter.CreateCounter<long>(
         "brain.files.written", "{file}", "Total brain files committed across all runs");
     public static readonly Histogram<double> BrainSyncDuration = Meter.CreateHistogram<double>(
-        "brain.sync.duration", "ms", "Duration of brain sync operations");
+        "brain.sync.duration", "s", "Duration of brain sync operations");
 
     // Token vending metrics
     public static readonly Counter<long> TokenVendingFailures = Meter.CreateCounter<long>(

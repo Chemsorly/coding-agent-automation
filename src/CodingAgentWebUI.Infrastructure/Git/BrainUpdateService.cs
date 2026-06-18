@@ -80,8 +80,11 @@ public partial class BrainUpdateService : IBrainUpdateService
         // Check whether new entries in knowledge files contain ### YYYY-MM-DD header format
         var entryFormatValid = true;
         var knowledgeFiles = changedFiles
-            .Where(f => !f.Replace('\\', '/').StartsWith("sessions/", StringComparison.OrdinalIgnoreCase))
-            .Where(f => !f.Replace('\\', '/').Equals("log.md", StringComparison.OrdinalIgnoreCase))
+            .Select(f => f.Replace('\\', '/'))
+            .Where(f => !f.StartsWith("sessions/", StringComparison.OrdinalIgnoreCase))
+            .Where(f => !f.Equals("log.md", StringComparison.OrdinalIgnoreCase))
+            .Where(f => !f.EndsWith("/SKILL.md", StringComparison.OrdinalIgnoreCase)
+                     && !f.Equals("SKILL.md", StringComparison.OrdinalIgnoreCase))
             .Where(f => f.EndsWith(".md", StringComparison.OrdinalIgnoreCase));
 
         foreach (var file in knowledgeFiles)
