@@ -141,8 +141,10 @@ internal partial class AgentPhaseExecutor
                           && context.AgentProvider.SupportsParallelExecution;
 
         // Launch acceptance criteria compliance check in parallel with code reviewers.
-        // This runs as a separate task that is awaited AFTER the review loop completes.
+        // On the first iteration this runs concurrently; results are awaited inside the loop
+        // and non-compliant criteria are injected as CRITICAL findings into the fix prompt.
         Task<AgentResult?> acceptanceCriteriaTask = Task.FromResult<AgentResult?>(null);
+        var acceptanceCriteriaConsumed = false;
         if (config.AcceptanceCriteriaEnabled)
         {
             acceptanceCriteriaTask = ExecuteAcceptanceCriteriaSafeAsync(context, ct);
@@ -205,6 +207,49 @@ internal partial class AgentPhaseExecutor
                     run.CodeReviewAgentsRun = agentsRun;
                     var iterationFindingsText = iterationFindings.ToString();
                     run.CodeReviewIterationsCompleted++;
+
+                    // Await acceptance criteria results (first iteration only — AC doesn't need re-running after fixes)
+                    if (!acceptanceCriteriaConsumed && config.AcceptanceCriteriaEnabled)
+                    {
+                        var acResult = await acceptanceCriteriaTask;
+                        acceptanceCriteriaConsumed = true;
+
+                        if (acResult is not null)
+                        {
+                            run.AccumulateTokenUsage(acResult);
+                            run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
+                                run.WorkspacePath!, _logger, ct);
+
+                            // Inject non-compliant criteria as CRITICAL findings so the fix agent addresses them
+                            if (run.AcceptanceCriteriaReport is { Criteria.Count: > 0 })
+                            {
+                                var nonCompliant = run.AcceptanceCriteriaReport.Criteria
+                                    .Where(c => c.Status == CriterionStatus.NonCompliant)
+                                    .ToList();
+
+                                if (nonCompliant.Count > 0)
+                                {
+                                    _logger.Information(
+                                        "Pipeline {RunId} injecting {Count} non-compliant acceptance criteria as CRITICAL findings",
+                                        run.RunId, nonCompliant.Count);
+                                    context.Callbacks.EmitOutputLine($"📋 Acceptance criteria: {nonCompliant.Count} non-compliant → injected as CRITICAL");
+
+                                    if (iterationFindings.Length > 0)
+                                        iterationFindings.AppendLine("--- Agent: AcceptanceCriteria ---");
+
+                                    foreach (var criterion in nonCompliant)
+                                    {
+                                        var reasoning = criterion.Reasoning ?? "No reasoning provided";
+                                        iterationFindings.AppendLine($"[CRITICAL] — Acceptance criterion not met: \"{criterion.Criterion}\". {reasoning}");
+                                        iterationCriticalCount++;
+                                    }
+
+                                    run.AddCodeReviewCounts(nonCompliant.Count, 0, 0);
+                                    iterationFindingsText = iterationFindings.ToString();
+                                }
+                            }
+                        }
+                    }
 
                     // NOTE: [UX-16] CodeReview*Count fields are cumulative across iterations — per-iteration counters deferred to separate issue
                     context.Callbacks.EmitOutputLine($"📝 Code review: {run.CodeReviewCriticalCount} critical, {run.CodeReviewWarningCount} warning, {run.CodeReviewSuggestionCount} suggestion");
@@ -297,8 +342,12 @@ internal partial class AgentPhaseExecutor
 
             run.CodeReviewIterationInProgress = 0;
 
-            // Await acceptance criteria task and parse results
-            acAgentResult = await acceptanceCriteriaTask;
+            // Await acceptance criteria task if it wasn't consumed inside the loop
+            // (e.g., loop exited on first iteration with no findings before AC completed)
+            if (!acceptanceCriteriaConsumed && config.AcceptanceCriteriaEnabled)
+            {
+                acAgentResult = await acceptanceCriteriaTask;
+            }
         }
         finally
         {
@@ -308,7 +357,7 @@ internal partial class AgentPhaseExecutor
             catch (OperationCanceledException) { }
         }
 
-        if (acAgentResult is not null)
+        if (!acceptanceCriteriaConsumed && acAgentResult is not null)
         {
             run.AccumulateTokenUsage(acAgentResult);
             run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
