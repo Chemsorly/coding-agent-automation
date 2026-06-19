@@ -3,6 +3,7 @@ using System.Text.Json;
 using CodingAgentWebUI.Pipeline;
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
