@@ -193,12 +193,15 @@ public sealed partial class PipelineLoopService
         // Load projects and flatten templates using project-based ordering
         var projects = await _projectStore.LoadProjectsAsync(ct) ?? (IReadOnlyList<PipelineProject>)[];
         var allTemplates = await _projectStore.LoadAllTemplatesAsync(ct);
-        var flattenedTemplates = FlattenTemplates(projects, allTemplates);
+        var deduplicatedTemplates = allTemplates.DistinctBy(t => t.Id).ToList();
+        if (deduplicatedTemplates.Count != allTemplates.Count)
+            _logger.Warning("Duplicate template IDs detected in store ({Total} loaded, {Unique} unique) — using first occurrence",
+                allTemplates.Count, deduplicatedTemplates.Count);
+        var flattenedTemplates = FlattenTemplates(projects, deduplicatedTemplates);
         var enabledTemplates = flattenedTemplates.Select(ft => ft.Template).ToList();
 
-        // Pre-built lookup shared by FlattenTemplates logic and SelectDecompositionTemplate
-        // TODO: ToDictionary will throw on duplicate template IDs from a corrupted store; consider using DistinctBy or GroupBy for resilience
-        var templateLookup = allTemplates.ToDictionary(t => t.Id);
+        // Pre-built lookup shared by SelectDecompositionTemplate and dispatch logic
+        var templateLookup = deduplicatedTemplates.ToDictionary(t => t.Id);
 
         // Filter out rate-limited templates
         var now = DateTimeOffset.UtcNow;
@@ -515,19 +518,20 @@ public sealed partial class PipelineLoopService
 
         if (!allFailing) return false;
 
+        Task resumeTask;
         lock (_lock)
         {
             IsCircuitBroken = true;
             StatusMessage = $"⚠️ Loop paused — all {enabledTemplates.Count} templates failing. Auto-resume in {cooldown.TotalMinutes:0.#} min.";
             _resumeSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            resumeTask = _resumeSignal.Task;
         }
         PipelineTelemetry.LoopCircuitBreakerTrips.Add(1);
         NotifyChange();
         _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures. Auto-resume in {Cooldown}",
             enabledTemplates.Count, maxConsecutiveFailures, cooldown);
 
-        // TODO: _resumeSignal.Task is read outside the lock. Capture a local inside the lock above for safety against future reassignment.
-        try { await Task.WhenAny(_resumeSignal.Task, Task.Delay(cooldown, ct)); }
+        try { await Task.WhenAny(resumeTask, Task.Delay(cooldown, ct)); }
         catch (OperationCanceledException) { return true; }
 
         if (_stopRequested) return true;

@@ -1228,6 +1228,39 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.False(svc.IsCircuitBroken);
     }
 
+    [Fact]
+    public async Task StartLoop_WithDuplicateTemplateIds_DoesNotCrash()
+    {
+        var duplicateTemplates = new List<PipelineJobTemplate>
+        {
+            new() { Id = "tmpl-1", Name = "First", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true },
+            new() { Id = "tmpl-1", Name = "Duplicate", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true }
+        };
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.Default() with { PipelineJobTemplates = duplicateTemplates });
+        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(duplicateTemplates);
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        await svc.StartLoopAsync();
+
+        // Wait for the loop to complete at least one iteration (reaches the ToDictionary call)
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase) && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        Assert.True(svc.IsLoopActive);
+        Assert.Contains("Cycle complete", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
+        // TODO: Assert that the duplicate-detection warning log was emitted via _mockLogger
+
+        svc.StopLoop();
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_loopService is not null)
