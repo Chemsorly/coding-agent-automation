@@ -10,6 +10,7 @@ using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Telemetry;
 
+[Collection("Metrics")]
 public class StepMetricsTests : IDisposable
 {
     private readonly MeterListener _listener = new();

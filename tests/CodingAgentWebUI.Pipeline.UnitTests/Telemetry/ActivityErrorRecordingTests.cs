@@ -296,4 +296,25 @@ public class ActivityErrorRecordingTests : IDisposable
 
         act.Should().NotThrow();
     }
+
+    [Fact]
+    public void RecordMaskedError_NullException_ThrowsArgumentNullException()
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("Test");
+
+        var act = () => activity.RecordMaskedError(null!, TestSecrets);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("ex");
+    }
+
+    [Fact]
+    public void RecordMaskedError_NullSecrets_ThrowsArgumentNullException()
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("Test");
+        var ex = new InvalidOperationException("error");
+
+        var act = () => activity.RecordMaskedError(ex, null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("secrets");
+    }
 }

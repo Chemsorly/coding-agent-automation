@@ -9,6 +9,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Telemetry;
 /// Unit tests verifying pipeline loop metric instruments emit correct names and tags.
 /// Uses <see cref="MeterListener"/> to capture emissions from the static <see cref="PipelineTelemetry.Meter"/>.
 /// </summary>
+[Collection("Metrics")]
 public class PipelineLoopMetricsTests : IDisposable
 {
     private readonly MeterListener _listener = new();
