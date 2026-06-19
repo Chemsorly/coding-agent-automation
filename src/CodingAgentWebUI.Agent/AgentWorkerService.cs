@@ -56,7 +56,7 @@ public sealed class AgentWorkerService : BackgroundService
     private readonly string _agentId;
     private readonly IReadOnlyList<string> _labels;
 
-    private CancellationTokenSource? _jobCts;
+    private volatile CancellationTokenSource? _jobCts;
     private Task? _activeJobTask;
     private string? _activeJobId;
     private JobAssignmentMessage? _activeJobAssignment;
@@ -65,7 +65,7 @@ public sealed class AgentWorkerService : BackgroundService
     private PipelineStep? _currentStep;
     private readonly object _busyLock = new();
 
-    private CancellationTokenSource? _chatCts;
+    private volatile CancellationTokenSource? _chatCts;
     private Task? _activeChatTask;
     private string? _activeChatSessionId;
 
@@ -291,7 +291,9 @@ public sealed class AgentWorkerService : BackgroundService
             {
                 _activeJobId = null;
             }
+#pragma warning disable 0420 // volatile field passed by reference to Interlocked — safe by design
             var oldCts = Interlocked.Exchange(ref _jobCts, null);
+#pragma warning restore 0420
             oldCts?.Dispose();
             return;
         }
@@ -377,7 +379,6 @@ public sealed class AgentWorkerService : BackgroundService
         }
 
         _logger.Information("Cancelling job {JobId}", jobId);
-        // TODO: Use Interlocked.CompareExchange(ref _jobCts, null, null) or declare field volatile for correct memory ordering on ARM64
         var cts = _jobCts;
         try { cts?.Cancel(); }
         catch (ObjectDisposedException) { }
@@ -476,7 +477,9 @@ public sealed class AgentWorkerService : BackgroundService
                 _activeChatSessionId = null;
             }
 
+#pragma warning disable 0420 // volatile field passed by reference to Interlocked — safe by design
             var oldCts = Interlocked.Exchange(ref _chatCts, null);
+#pragma warning restore 0420
             oldCts?.Dispose();
 
             // Do NOT send AgentReady — the chat session is still active.
@@ -563,7 +566,6 @@ public sealed class AgentWorkerService : BackgroundService
         }
 
         _logger.Information("Cancelling chat session {SessionId}", sessionId);
-        // TODO: Use Interlocked.CompareExchange(ref _chatCts, null, null) or declare field volatile for correct memory ordering on ARM64
         var cts = _chatCts;
         try { cts?.Cancel(); }
         catch (ObjectDisposedException) { }
@@ -800,7 +802,9 @@ public sealed class AgentWorkerService : BackgroundService
             _currentStep = null;
         }
 
+#pragma warning disable 0420 // volatile field passed by reference to Interlocked — safe by design
         var oldCts = Interlocked.Exchange(ref _jobCts, null);
+#pragma warning restore 0420
         oldCts?.Dispose();
 
         await SignalAgentReadyAsync();
