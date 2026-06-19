@@ -53,6 +53,18 @@ public static class PipelineTelemetry
     public static readonly Counter<long> ConsolidationJobsExpired = Meter.CreateCounter<long>(
         "consolidation.jobs.expired", "{job}", "Consolidation jobs expired from queue");
 
+    // Brain metrics
+    public static readonly Counter<long> BrainSyncsCompleted = Meter.CreateCounter<long>(
+        "brain.syncs.completed", "{sync}", "Successful brain pre-run sync operations");
+    public static readonly Counter<long> BrainUpdatesCommitted = Meter.CreateCounter<long>(
+        "brain.updates.committed", "{commit}", "Brain post-run commits pushed");
+    public static readonly Counter<long> BrainUpdatesEmpty = Meter.CreateCounter<long>(
+        "brain.updates.empty", "{sync}", "Runs where agent produced no brain changes");
+    public static readonly Counter<long> BrainFilesWritten = Meter.CreateCounter<long>(
+        "brain.files.written", "{file}", "Total brain files committed across all runs");
+    public static readonly Histogram<double> BrainSyncDuration = Meter.CreateHistogram<double>(
+        "brain.sync.duration", "s", "Duration of brain sync operations");
+
     // Token vending metrics
     public static readonly Counter<long> TokenVendingFailures = Meter.CreateCounter<long>(
         "token_vending.failures", "{failure}", "Token vending failures");

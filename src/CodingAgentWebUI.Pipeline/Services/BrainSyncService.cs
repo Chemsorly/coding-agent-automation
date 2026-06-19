@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -71,6 +72,9 @@ internal class BrainSyncService : IBrainSyncService
             "Pipeline {RunId} brain sync complete: {BrainFileCount} knowledge files in {Duration}ms",
             run.RunId, run.BrainKnowledgeFileCount, brainSw.ElapsedMilliseconds);
         onOutputLine?.Invoke($"🧠 Brain context loaded: {run.BrainKnowledgeFileCount} knowledge files");
+
+        PipelineTelemetry.BrainSyncsCompleted.Add(1);
+        PipelineTelemetry.BrainSyncDuration.Record(brainSw.Elapsed.TotalSeconds);
     }
 
     /// <summary>
@@ -119,12 +123,20 @@ internal class BrainSyncService : IBrainSyncService
                 "Pipeline {RunId} brain post-run sync: {Success}, {FileCount} files in {Duration}ms",
                 run.RunId, syncResult.Success, syncResult.FilesCommitted, brainSw.ElapsedMilliseconds);
             onOutputLine?.Invoke($"🧠 Brain updates pushed: {syncResult.FilesCommitted} files committed");
+
+            if (syncResult.Success)
+            {
+                PipelineTelemetry.BrainUpdatesCommitted.Add(1);
+                PipelineTelemetry.BrainFilesWritten.Add(syncResult.FilesCommitted);
+            }
         }
         else
         {
             run.BrainUpdatesPushed = false;
             _logger.Information("Pipeline {RunId} no brain changes detected, skipping commit", run.RunId);
             onOutputLine?.Invoke("🧠 No brain changes detected");
+
+            PipelineTelemetry.BrainUpdatesEmpty.Add(1);
         }
     }
 }

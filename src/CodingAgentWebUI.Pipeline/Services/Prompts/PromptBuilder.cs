@@ -394,14 +394,26 @@ public static class PromptBuilder
         sb.AppendLine("from previous pipeline runs. It is a SEPARATE Git repository — do NOT reference `.brain/` files");
         sb.AppendLine("in code repository commits, commit messages, or pull request descriptions.");
         sb.AppendLine();
-        sb.AppendLine("Read `.brain/AGENTS.md` for the brain repo structure and instructions on reading relevant knowledge.");
+        sb.AppendLine("### How to Retrieve Brain Knowledge");
+        sb.AppendLine();
+        sb.AppendLine("Delegate brain exploration to a subagent. Do NOT read brain files inline in your main session.");
+        sb.AppendLine("Use a subagent to search the brain and return only relevant entries:");
+        sb.AppendLine();
+        sb.AppendLine("1. Invoke a subagent with a prompt like:");
+        sb.AppendLine("   \"Read `.brain/AGENTS.md` for the structure. Then find entries in `.brain/` relevant to: {your issue summary}.");
+        sb.AppendLine("   Check for a `SKILL.md` in the relevant project folder first — it contains a distilled summary.");
 
         if (!string.IsNullOrWhiteSpace(projectName))
-            sb.AppendLine($"Look for project-specific knowledge in `.brain/projects/{projectName}/`.");
+            sb.AppendLine($"   Check `.brain/projects/{projectName}/` for project-specific knowledge.");
 
         if (!string.IsNullOrWhiteSpace(techStack))
-            sb.AppendLine($"Look for technology-specific knowledge in `.brain/technology/` for: {techStack}.");
+            sb.AppendLine($"   Check `.brain/technology/` for knowledge about: {techStack}.");
 
+        sb.AppendLine("   Return the full text of the 5-8 most relevant entries. Only read, do not modify any files.\"");
+        sb.AppendLine("2. Use the subagent's returned knowledge to inform your work.");
+        sb.AppendLine("3. If the subagent finds nothing relevant, proceed without brain context.");
+        sb.AppendLine();
+        sb.AppendLine("This keeps your main context clean and avoids spending tool calls on navigation.");
         sb.AppendLine();
         sb.AppendLine("Do NOT run git commands (commit, push, pull) inside the `.brain/` directory.");
         sb.AppendLine("The orchestrator handles all git operations on the brain repository.");
