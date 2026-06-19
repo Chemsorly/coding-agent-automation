@@ -1524,6 +1524,52 @@ public class LocalPipelineExecutorTests : IDisposable
         executionOrder.Should().BeInAscendingOrder();
     }
 
+    [Fact]
+    public async Task SerializedSendAsync_WhenCancelled_DoesNotThrow()
+    {
+        using var signalrLock = new SemaphoreSlim(1, 1);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Should complete without throwing — cancellation is swallowed
+        var task = LocalPipelineExecutor.SerializedSendAsync(
+            signalrLock,
+            () => Task.CompletedTask,
+            cts.Token);
+
+        await task; // Must not throw
+    }
+
+    [Fact]
+    public async Task SerializedSendAsync_WhenSemaphoreDisposed_DoesNotThrow()
+    {
+        // Dispose the semaphore BEFORE calling SerializedSendAsync — this is the real scenario
+        // where a fire-and-forget task calls WaitAsync after the semaphore is already disposed.
+        var signalrLock = new SemaphoreSlim(1, 1);
+        signalrLock.Dispose();
+
+        await LocalPipelineExecutor.SerializedSendAsync(
+            signalrLock,
+            () => Task.CompletedTask,
+            CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task SerializedSendAsync_WhenSemaphoreDisposed_SendIsNotExecuted()
+    {
+        var signalrLock = new SemaphoreSlim(1, 1);
+        var sendExecuted = false;
+
+        signalrLock.Dispose();
+
+        await LocalPipelineExecutor.SerializedSendAsync(
+            signalrLock,
+            () => { sendExecuted = true; return Task.CompletedTask; },
+            CancellationToken.None);
+
+        sendExecuted.Should().BeFalse();
+    }
+
     // ── PullRequestCreationContext ──────────────────────────────────────
 
     [Fact]

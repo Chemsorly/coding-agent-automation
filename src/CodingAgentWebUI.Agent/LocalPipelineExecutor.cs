@@ -458,9 +458,8 @@ public sealed class LocalPipelineExecutor
             }
 
             // Drain in-flight serialized sends before disposing the semaphore.
-            // TODO: This drain only waits for the currently-held lock. If a fire-and-forget
-            // SerializedSendAsync task is queued but hasn't yet called WaitAsync, Dispose() may
-            // cause ObjectDisposedException when that task eventually tries to acquire the semaphore.
+            // SerializedSendAsync catches ObjectDisposedException, so tasks arriving after
+            // disposal are handled gracefully without unobserved exceptions.
             try { await signalrLock.WaitAsync(CancellationToken.None); signalrLock.Release(); }
             catch { /* best-effort drain */ }
             signalrLock.Dispose();
@@ -544,13 +543,21 @@ public sealed class LocalPipelineExecutor
 
     /// <summary>
     /// Serializes a fire-and-forget SignalR send behind a semaphore to guarantee ordering.
+    /// Catches <see cref="OperationCanceledException"/> and <see cref="ObjectDisposedException"/>
+    /// from the semaphore wait since callers discard the task — these are expected during shutdown.
     /// </summary>
-    // TODO: SerializedSendAsync does not catch OperationCanceledException from WaitAsync(ct).
-    // Since callers discard the task, cancellation exceptions become unobserved. Consider catching
-    // and logging, or using CancellationToken.None for the wait since inner send already uses ct.
-    private static async Task SerializedSendAsync(SemaphoreSlim signalrLock, Func<Task> send, CancellationToken ct)
+    internal static async Task SerializedSendAsync(SemaphoreSlim signalrLock, Func<Task> send, CancellationToken ct)
     {
-        await signalrLock.WaitAsync(ct);
+        try
+        {
+            await signalrLock.WaitAsync(ct);
+        }
+        catch (ObjectDisposedException) { return; }
+        catch (OperationCanceledException) { return; }
+
+        // TODO: Release() is not guarded against ObjectDisposedException. If the semaphore is
+        // disposed after WaitAsync succeeds but while send() is executing, Release() will throw
+        // as an unobserved exception since callers discard this task.
         try { await send(); }
         finally { signalrLock.Release(); }
     }
