@@ -28,6 +28,7 @@ Projects can override most general settings on a per-project basis using a nulla
 | `brainPushMaxRetries` | 3 | Max retries for pushing brain repo changes (handles concurrent push conflicts) |
 | `outputBufferCapacity` | 10000 | Max lines of agent output kept in memory for the UI |
 | `agentDisconnectGracePeriod` | 00:05:00 | How long to wait for a disconnected agent to reconnect before failing the run |
+| `agentBusyProgressTimeout` | 01:00:00 | How long a busy agent can go without reporting progress before being marked stuck |
 | `maxInfrastructureRetries` | 5 | Max retries for transient infrastructure failures (range: 0–10). These retries don't consume the agent's quality gate retry budget. |
 
 ### Decomposition
@@ -63,6 +64,7 @@ See also: [Issue Workflows — Closed-Loop Mode](github-issue-workflows.md#close
 | `closedLoopMaxRunsPerCycle` | 0 | Max issues per cycle (0 = unlimited) |
 | `closedLoopMaxConsecutivePollFailures` | 5 | Failures before backing off |
 | `closedLoopMaxBackoffInterval` | 00:15:00 | Max backoff between poll attempts |
+| `closedLoopCircuitBreakerCooldown` | 00:05:00 | Cooldown before circuit breaker auto-resumes polling after all templates fail |
 | `closedLoopMaxPagesToFetch` | 10 | Max pages of issues to fetch when polling |
 
 ## Pipeline Job Templates
@@ -100,6 +102,8 @@ These environment variables are used by the Docker containers:
 | `AGENT_ID` | Unique identifier for this agent instance |
 | `AGENT_LABELS` | Comma-separated labels for routing (e.g., `kiro,dotnet,dotnet10`) |
 | `AGENT_API_KEY` | Must match the orchestrator's key |
+| `AGENT_PROVIDER_TYPE` | Agent backend type: `KiroCli` (default) or `OpenCode` |
+| `OPENCODE_CONFIG_CONTENT` | JSON configuration for OpenCode agents (injected as environment variable, not needed for Kiro agents) |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
 
 ## Environment Setup Steps

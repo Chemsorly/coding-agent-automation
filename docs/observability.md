@@ -34,6 +34,16 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `quality_gate.evaluations` | Counter | — | `gate_name`, `result` | Individual gate evaluation events |
 | `quality_gate.external_ci.duration` | Histogram | seconds | — | Time waiting for external CI |
 | `dispatch.queue.wait_time` | Histogram | seconds | — | Time a job spent waiting in the dispatch queue |
+| `dispatch.queue.depth` | ObservableGauge | — | — | Jobs waiting for available agent |
+| `agent.jobs.active` | ObservableGauge | — | — | Currently executing agent jobs |
+| `agent.connections.total` | ObservableGauge | — | — | Total registered agents |
+| `consolidation.jobs.expired` | Counter | — | — | Consolidation jobs expired from queue |
+| `brain.syncs.completed` | Counter | — | — | Successful brain pre-run sync operations |
+| `brain.updates.committed` | Counter | — | — | Brain post-run commits pushed |
+| `brain.updates.empty` | Counter | — | — | Runs where agent produced no brain changes |
+| `brain.files.written` | Counter | — | — | Total brain files committed across all runs |
+| `brain.sync.duration` | Histogram | seconds | — | Duration of brain sync operations |
+| `agent.signalr.failures` | Counter | — | — | Failed or dropped SignalR messages from agent |
 | `pipeline.decomposition.sub_issues.created` | Counter | — | — | Sub-issues created by decomposition |
 | `pipeline.decomposition.sub_issues.failed` | Counter | — | — | Sub-issue creation failures |
 | `pipeline.decomposition.duration` | Histogram | seconds | — | Duration of decomposition phases |

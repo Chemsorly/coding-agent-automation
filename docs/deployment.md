@@ -110,3 +110,69 @@ Each agent derives its own auth key via `HMAC(master_key, agent_id)`, enabling p
 ### Token Vending
 
 The orchestrator generates short-lived GitHub installation tokens for agents on demand. Private keys never leave the orchestrator container — agents receive time-limited tokens for API calls.
+
+---
+
+## Helm Chart (Kubernetes)
+
+For Kubernetes deployments, a Helm chart is provided at `helm/coding-agent-automation/`.
+
+### Install
+
+```bash
+helm install coding-agent ./helm/coding-agent-automation \
+  --set secrets.agentApiKey="$(openssl rand -hex 32)" \
+  --set orchestrator.image.tag=coding-agent-webui \
+  --set otel.endpoint=http://otel-collector:4317
+```
+
+### Architecture
+
+The chart deploys:
+- **1 Orchestrator Deployment** — Blazor Server app with pipeline orchestration
+- **N Agent Deployments** — One Deployment per agent entry in `values.yaml` (each gets its own PVC for CLI auth data)
+
+### Key values.yaml Settings
+
+| Path | Description |
+|------|-------------|
+| `orchestrator.image.repository/tag` | Orchestrator container image |
+| `orchestrator.persistence.type` | Storage backend: `pvc` (default), `hostPath`, or `emptyDir` |
+| `agents[]` | List of agent definitions (name, image, labels, providerType) |
+| `agents[].providerType` | `kiro` or `opencode` — determines volume mount profile |
+| `agents[].labels` | Comma-separated routing labels (e.g., `kiro,dotnet,dotnet10`) |
+| `secrets.agentApiKey` | HMAC master key for agent auth |
+| `secrets.otelHeaders` | OTLP auth headers |
+| `secrets.opencodeConfigContent` | OpenCode config JSON (mounted as file for opencode agents) |
+| `existingSecret` | Use a pre-existing K8s Secret instead of chart-managed one |
+| `otel.endpoint` | OTLP collector endpoint |
+| `orchestrator.ingress.enabled` | Enable Ingress for external access |
+
+### Scaling Agents
+
+Add entries to the `agents[]` list. Each entry produces a separate Deployment with dedicated storage:
+
+```yaml
+agents:
+  - name: agent-kiro-dotnet-1
+    enabled: true
+    image:
+      repository: chemsorly/coding-agent
+      tag: coding-agent-kiro-dotnet10
+    providerType: kiro
+    labels: "kiro,dotnet,dotnet10"
+  - name: agent-kiro-dotnet-2
+    enabled: true
+    image:
+      repository: chemsorly/coding-agent
+      tag: coding-agent-kiro-dotnet10
+    providerType: kiro
+    labels: "kiro,dotnet,dotnet10"
+```
+
+### Graceful Shutdown
+
+The chart supports zero-downtime rolling updates:
+- Orchestrator uses `readinessDrainDelaySeconds` (default: 15s) to stop accepting traffic before terminating
+- `pipelineLoopStartupDelaySeconds` (default: 30s) prevents dispatching to agents that are mid-termination
+- Agent `terminationGracePeriodSeconds` defaults to 15s (must be shorter than orchestrator drain delay)

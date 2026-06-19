@@ -26,7 +26,7 @@ Detailed documentation lives in the [`docs/`](docs/) folder:
 7. [Pipeline Projects](docs/projects.md) — Multi-repository grouping, project-level configuration
 8. [Feedback & Consolidation](docs/feedback-and-consolidation.md) — Agent feedback loops, brain consolidation
 9. [Observability](docs/observability.md) — Metrics, traces, OTLP configuration
-10. [Deployment](docs/deployment.md) — Docker setup, volume mounts, scaling agents, architecture
+10. [Deployment](docs/deployment.md) — Docker setup, Helm chart, volume mounts, scaling agents, architecture
 
 ## Agent Execution Flow
 

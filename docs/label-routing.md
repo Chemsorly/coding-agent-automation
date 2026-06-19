@@ -72,9 +72,9 @@ Reviewer Configurations define per-stack code review agents. Configured in Setti
 
 | Reviewer Config | Match Labels | Agents |
 |----------------|-------------|--------|
-| Default Reviewers (dotnet) | `dotnet` | Correctness, DotNetSpecialist, SecurityReviewer, AcceptanceCriteria |
+| Default Reviewers | *(empty — global fallback)* | Correctness, DotNetSpecialist, SecurityReviewer, TestQualityReviewer |
 
-Resolution: all Reviewer Configurations whose labels intersect with the job's labels are applied sequentially (ANY match). Each configuration contains one or more review agents that run in order. A configuration with empty MatchLabels acts as a global fallback (applies to all jobs). When no reviewer config matches, the default agents (Correctness, DotNetSpecialist, SecurityReviewer) are used as a fallback.
+Resolution: all Reviewer Configurations whose labels intersect with the job's labels are applied sequentially (ANY match). Each configuration contains one or more review agents that run in order. A configuration with empty MatchLabels acts as a global fallback (applies to all jobs). When no reviewer config matches, the default agents (Correctness, DotNetSpecialist, SecurityReviewer, TestQualityReviewer) are used as a fallback.
 
 ## Setting Up a New Stack
 
