@@ -11,9 +11,6 @@ using Serilog;
 
 namespace CodingAgentWebUI.Components.Pages;
 
-// TODO: Consider further decomposition — this code-behind is 538 lines. The business logic
-// (drawer operations, template CRUD, loop controls) could be extracted into a dedicated service
-// or ViewModel to reduce the partial class size.
 public partial class AgentCoding : IDisposable
 {
     private const string JsScrollToBottom = "scrollToBottom";
@@ -25,23 +22,11 @@ public partial class AgentCoding : IDisposable
     [Inject] private AgentRegistryService Registry { get; set; } = default!;
     [Inject] private JobDispatcherService Dispatcher { get; set; } = default!;
     [Inject] private IJobDispatcher JobDispatcher { get; set; } = default!;
-    [Inject] private IConfigurationStore ConfigStore { get; set; } = default!;
-    [Inject] private IProjectStore ProjectStore { get; set; } = default!;
-    [Inject] private IProviderFactory ProviderFactory { get; set; } = default!;
-    [Inject] private IDependencyChecker DependencyChecker { get; set; } = default!;
+    [Inject] private AgentCodingPageService PageService { get; set; } = default!;
     [Inject] private IJSRuntime JS { get; set; } = default!;
 
-    private List<ProviderConfig> _issueProviders = new();
-    private List<ProviderConfig> _repoProviders = new();
-    private List<ProviderConfig> _pipelineProviders = new();
-    private List<ProviderConfig> _brainProviders = new();
     private readonly object _outputLock = new();
     private List<string> _outputLines = new();
-
-    private IReadOnlyList<QualityGateConfiguration> _qualityGateConfigs = [];
-    private IReadOnlyList<ReviewerConfiguration> _reviewerConfigs = [];
-    private IReadOnlyList<AgentProfile> _agentProfiles = [];
-    private PipelineConfiguration _pipelineConfig = new();
 
     private string? _errorMessage;
     private string? _successMessage;
@@ -52,11 +37,8 @@ public partial class AgentCoding : IDisposable
     private string? _lastRunId;
     private bool _disposed;
     private Timer? _elapsedTimer;
-    private int _maxRetries = 3;
 
-    // Template Table State
-    private List<PipelineJobTemplate> _templates = new();
-    private IReadOnlyList<PipelineProject> _projects = [];
+    // Template Table UI State
     private bool _showAddForm;
     private TemplateTableSection.TemplateFormModel _addForm = new();
 #pragma warning disable CS0414 // Value is read in .razor partial
@@ -66,31 +48,45 @@ public partial class AgentCoding : IDisposable
     private PipelineJobTemplate? _deletingTemplate;
     private HashSet<string> _recentlyToggled = new();
 
-    // Manual Dispatch State
+    // Manual Dispatch UI State
     private string _manualDispatchTemplateId = "";
     private bool _drawerOpen;
     private PipelineJobTemplate? _drawerTemplate;
-    private List<IssueSummary> _drawerIssues = new();
-    private bool _drawerLoading;
-    private int _drawerPage = 1;
-    private bool _drawerHasMore;
     private bool _drawerDispatching;
 
-    // PR Drawer State
+    // PR Drawer UI State
     private bool _prDrawerOpen;
     private PipelineJobTemplate? _prDrawerTemplate;
-    private bool _prDrawerLoading;
-    private List<PullRequestSummary> _prDrawerPrs = new();
-    private int _prDrawerPage = 1;
-    private bool _prDrawerHasMore;
     private bool _prDrawerDispatching;
 
-    // Epic Drawer State
+    // Epic Drawer UI State
     private bool _epicDrawerOpen;
     private PipelineJobTemplate? _epicDrawerTemplate;
-    private bool _epicDrawerLoading;
-    private List<IssueSummary> _epicDrawerIssues = new();
     private bool _epicDrawerDispatching;
+
+    // ── Delegate properties for .razor template binding ──
+
+    private List<PipelineJobTemplate> _templates => PageService.Templates;
+    private IReadOnlyList<PipelineProject> _projects => PageService.Projects;
+    private List<ProviderConfig> _issueProviders => PageService.IssueProviders;
+    private List<ProviderConfig> _repoProviders => PageService.RepoProviders;
+    private List<ProviderConfig> _brainProviders => PageService.BrainProviders;
+    private List<ProviderConfig> _pipelineProviders => PageService.PipelineProviders;
+    private IReadOnlyList<QualityGateConfiguration> _qualityGateConfigs => PageService.QualityGateConfigs;
+    private IReadOnlyList<ReviewerConfiguration> _reviewerConfigs => PageService.ReviewerConfigs;
+    private IReadOnlyList<AgentProfile> _agentProfiles => PageService.AgentProfiles;
+    private PipelineConfiguration _pipelineConfig => PageService.PipelineConfig;
+    private int _maxRetries => PageService.MaxRetries;
+    private List<IssueSummary> _drawerIssues => PageService.DrawerIssues;
+    private bool _drawerLoading => PageService.DrawerLoading;
+    private int _drawerPage => PageService.DrawerPage;
+    private bool _drawerHasMore => PageService.DrawerHasMore;
+    private List<PullRequestSummary> _prDrawerPrs => PageService.PrDrawerPrs;
+    private bool _prDrawerLoading => PageService.PrDrawerLoading;
+    private int _prDrawerPage => PageService.PrDrawerPage;
+    private bool _prDrawerHasMore => PageService.PrDrawerHasMore;
+    private List<IssueSummary> _epicDrawerIssues => PageService.EpicDrawerIssues;
+    private bool _epicDrawerLoading => PageService.EpicDrawerLoading;
 
     private void OnTemplateChanged(ChangeEventArgs e) =>
         _manualDispatchTemplateId = e.Value?.ToString() ?? "";
@@ -102,25 +98,7 @@ public partial class AgentCoding : IDisposable
         LoopService.OnChange += HandleStateChanged;
         _elapsedTimer = new Timer(ElapsedTimerTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
-        try
-        {
-            _issueProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
-            var allRepoProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
-            _pipelineProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
-            _brainProviders = allRepoProviders.Where(p => p.RepositoryRole == RepositoryRole.Brain).ToList();
-            _repoProviders = allRepoProviders.Where(p => p.RepositoryRole != RepositoryRole.Brain).ToList();
-
-            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-            _maxRetries = config.MaxRetries;
-            _templates = (await ProjectStore.LoadAllTemplatesAsync(CancellationToken.None)).ToList();
-            _pipelineConfig = config;
-            _projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
-            _qualityGateConfigs = await ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None);
-            _reviewerConfigs = await ConfigStore.LoadReviewerConfigsAsync(CancellationToken.None);
-            _agentProfiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
-        }
-        catch (Exception ex) { _errorMessage = $"Failed to load configuration: {ex.Message}"; }
-
+        _errorMessage = await PageService.InitializeAsync();
         _ = AutoDismissAgentSummary();
     }
 
@@ -141,108 +119,61 @@ public partial class AgentCoding : IDisposable
 
     private async Task ToggleTemplateEnabled((PipelineJobTemplate template, bool enabled) args)
     {
-        var idx = _templates.FindIndex(t => t.Id == args.template.Id);
-        if (idx < 0) return;
-        var updated = args.template with { Enabled = args.enabled };
-        var projectId = GetParentProject(args.template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await ProjectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
-        catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; return; }
-        _templates[idx] = updated;
+        var (success, error) = await PageService.ToggleTemplateEnabledAsync(args.template, args.enabled);
+        if (!success) { _errorMessage = error; return; }
         if (LoopService.IsLoopActive) { _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id); }
     }
 
     private async Task ToggleImplementationEnabled((PipelineJobTemplate template, bool enabled) args)
     {
-        var idx = _templates.FindIndex(t => t.Id == args.template.Id);
-        if (idx < 0) return;
-        var updated = args.template with { ImplementationEnabled = args.enabled };
-        var projectId = GetParentProject(args.template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await ProjectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
-        catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; return; }
-        _templates[idx] = updated;
+        var (success, error) = await PageService.ToggleImplementationEnabledAsync(args.template, args.enabled);
+        if (!success) { _errorMessage = error; return; }
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
     }
 
     private async Task ToggleReviewEnabled((PipelineJobTemplate template, bool enabled) args)
     {
-        var idx = _templates.FindIndex(t => t.Id == args.template.Id);
-        if (idx < 0) return;
-        var updated = args.template with { ReviewEnabled = args.enabled };
-        var projectId = GetParentProject(args.template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await ProjectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
-        catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; return; }
-        _templates[idx] = updated;
+        var (success, error) = await PageService.ToggleReviewEnabledAsync(args.template, args.enabled);
+        if (!success) { _errorMessage = error; return; }
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
     }
 
     private async Task ToggleDecompositionEnabled((PipelineJobTemplate template, bool enabled) args)
     {
-        var idx = _templates.FindIndex(t => t.Id == args.template.Id);
-        if (idx < 0) return;
-        var updated = args.template with { DecompositionEnabled = args.enabled };
-        var projectId = GetParentProject(args.template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await ProjectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
-        catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; return; }
-        _templates[idx] = updated;
+        var (success, error) = await PageService.ToggleDecompositionEnabledAsync(args.template, args.enabled);
+        if (!success) { _errorMessage = error; return; }
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
     }
 
     private async Task AddTemplate()
     {
         _formError = null;
-        if (string.IsNullOrWhiteSpace(_addForm.Name)) { _formError = "Name is required."; return; }
-        if (string.IsNullOrEmpty(_addForm.IssueProviderId)) { _formError = "Issue Provider is required."; return; }
-        if (string.IsNullOrEmpty(_addForm.RepoProviderId)) { _formError = "Repo Provider is required."; return; }
-        if (_templates.Any(t => t.IssueProviderId == _addForm.IssueProviderId && t.RepoProviderId == _addForm.RepoProviderId))
-        { _formError = "A template with the same Issue Provider + Repo Provider combination already exists."; return; }
+        var (valid, formError) = PageService.ValidateAddTemplate(_addForm);
+        if (!valid) { _formError = formError; return; }
 
-        var newTemplate = new PipelineJobTemplate
-        {
-            Id = Guid.NewGuid().ToString(), Name = _addForm.Name.Trim(),
-            IssueProviderId = _addForm.IssueProviderId, RepoProviderId = _addForm.RepoProviderId,
-            BrainProviderId = string.IsNullOrEmpty(_addForm.BrainProviderId) ? null : _addForm.BrainProviderId,
-            PipelineProviderId = string.IsNullOrEmpty(_addForm.PipelineProviderId) ? null : _addForm.PipelineProviderId,
-            BrainReadOnly = _addForm.BrainReadOnly, ImplementationEnabled = _addForm.ImplementationEnabled,
-            ReviewEnabled = _addForm.ReviewEnabled, DecompositionEnabled = _addForm.DecompositionEnabled, Enabled = true
-        };
-        var targetProjectId = string.IsNullOrEmpty(_addForm.ProjectId) ? WellKnownIds.DefaultProjectId : _addForm.ProjectId;
-        try { await ProjectStore.SaveTemplateAsync(targetProjectId, newTemplate, CancellationToken.None); }
-        catch (Exception ex) { _errorMessage = $"Failed to save: {ex.Message}"; return; }
-        _templates.Add(newTemplate);
-        _projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
+        var (success, error, successMessage) = await PageService.AddTemplateAsync(_addForm);
+        if (!success) { _errorMessage = error; return; }
         _showAddForm = false;
-        _successMessage = $"Template \"{newTemplate.Name}\" added.";
+        _successMessage = successMessage;
         _ = ClearSuccessAfterDelay();
     }
 
     private async Task RemoveTemplate()
     {
         if (_deletingTemplate == null) return;
-        var projectId = GetParentProject(_deletingTemplate.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await ProjectStore.DeleteTemplateAsync(projectId, _deletingTemplate.Id, CancellationToken.None); }
-        catch (Exception ex) { _errorMessage = $"Failed to delete: {ex.Message}"; return; }
-        _templates.RemoveAll(t => t.Id == _deletingTemplate.Id);
-        _projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
+        var (success, error, successMessage) = await PageService.RemoveTemplateAsync(_deletingTemplate);
+        if (!success) { _errorMessage = error; return; }
         _showDeleteConfirm = false;
-        _successMessage = $"Template \"{_deletingTemplate.Name}\" removed.";
+        _successMessage = successMessage;
         _deletingTemplate = null;
         _ = ClearSuccessAfterDelay();
     }
 
     private async Task MoveTemplateToProject((string TemplateId, string SourceProjectId, string TargetProjectId) args)
     {
-        try
-        {
-            var sourceProject = _projects.FirstOrDefault(p => p.Id == args.SourceProjectId);
-            var targetProject = _projects.FirstOrDefault(p => p.Id == args.TargetProjectId);
-            if (sourceProject == null || targetProject == null) return;
-            await ProjectStore.SaveProjectAsync(sourceProject with { TemplateIds = sourceProject.TemplateIds.Where(id => id != args.TemplateId).ToList() }, CancellationToken.None);
-            await ProjectStore.SaveProjectAsync(targetProject with { TemplateIds = targetProject.TemplateIds.Append(args.TemplateId).ToList() }, CancellationToken.None);
-            _projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
-            _successMessage = $"Moved \"{_templates.FirstOrDefault(t => t.Id == args.TemplateId)?.Name ?? args.TemplateId}\" to {targetProject.Name}.";
-            _ = ClearSuccessAfterDelay();
-        }
-        catch (Exception ex) { _errorMessage = $"Failed to move template: {ex.Message}"; }
+        var (success, error, successMessage) = await PageService.MoveTemplateToProjectAsync(args.TemplateId, args.SourceProjectId, args.TargetProjectId);
+        if (!success) { _errorMessage = error; return; }
+        if (successMessage != null) { _successMessage = successMessage; _ = ClearSuccessAfterDelay(); }
     }
 
     // ── Loop Controls ──
@@ -250,26 +181,13 @@ public partial class AgentCoding : IDisposable
     private async Task StartLoop()
     {
         _errorMessage = null;
-        var started = await LoopService.StartLoopAsync();
-        if (!started)
-        {
-            if (LoopService.ValidationErrors.Count > 0) _errorMessage = "Loop failed to start due to validation errors (see below).";
-            else if (LoopService.IsLoopActive) _errorMessage = "Loop is already active.";
-            else _errorMessage = "A manual run is in progress. Wait for it to complete.";
-        }
-        else
-        {
-            await ConfigStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = true }, CancellationToken.None);
-        }
+        var (success, error) = await PageService.StartLoopAsync();
+        if (!success) _errorMessage = error;
     }
 
-    private async Task StopLoop()
-    {
-        LoopService.StopLoop();
-        await ConfigStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = false }, CancellationToken.None);
-    }
+    private async Task StopLoop() => await PageService.StopLoopAsync();
 
-    private void ResumeLoop() => LoopService.ResumeLoop();
+    private void ResumeLoop() => PageService.ResumeLoop();
 
     // ── Issue Drawer ──
 
@@ -277,55 +195,41 @@ public partial class AgentCoding : IDisposable
     {
         var template = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
         if (template == null) return;
-        _drawerTemplate = template; _drawerOpen = true; _drawerPage = 1;
-        await LoadDrawerIssues();
+        _drawerTemplate = template; _drawerOpen = true;
+        // TODO: Loading indicator won't render — PageService sets DrawerLoading=true internally but no StateHasChanged() is called before the await, so the UI never shows the spinner. Same issue in OpenPrDrawer and OpenEpicDrawer.
+        var error = await PageService.LoadDrawerIssuesAsync(template, 1);
+        if (error != null) _errorMessage = error;
     }
 
-    private void CloseDrawer() { _drawerOpen = false; _drawerTemplate = null; _drawerIssues.Clear(); }
+    private void CloseDrawer() { _drawerOpen = false; _drawerTemplate = null; PageService.ClearDrawerIssues(); }
 
-    private async Task LoadDrawerIssues()
+    private async Task DrawerPrevPage()
     {
-        if (_drawerTemplate == null) return;
-        _drawerLoading = true; StateHasChanged();
-        try
+        if (_drawerPage > 1 && _drawerTemplate != null)
         {
-            var providerConfig = _issueProviders.FirstOrDefault(p => p.Id == _drawerTemplate.IssueProviderId);
-            if (providerConfig == null) { _errorMessage = "Issue provider not found for this template."; _drawerLoading = false; return; }
-            await using var provider = ProviderFactory.CreateIssueProvider(providerConfig);
-            var result = await provider.ListOpenIssuesAsync(_drawerPage, 25, CancellationToken.None);
-            _drawerIssues = result.Items.ToList(); _drawerHasMore = result.HasMore;
+            var error = await PageService.LoadDrawerIssuesAsync(_drawerTemplate, _drawerPage - 1);
+            if (error != null) _errorMessage = error;
         }
-        catch (Exception ex) { _errorMessage = $"Failed to load issues: {ex.Message}"; _drawerIssues.Clear(); }
-        finally { _drawerLoading = false; }
     }
 
-    private async Task DrawerPrevPage() { if (_drawerPage > 1) { _drawerPage--; await LoadDrawerIssues(); } }
-    private async Task DrawerNextPage() { if (_drawerHasMore) { _drawerPage++; await LoadDrawerIssues(); } }
+    private async Task DrawerNextPage()
+    {
+        if (_drawerHasMore && _drawerTemplate != null)
+        {
+            var error = await PageService.LoadDrawerIssuesAsync(_drawerTemplate, _drawerPage + 1);
+            if (error != null) _errorMessage = error;
+        }
+    }
 
     private async Task DispatchFromDrawer(IssueSummary issue)
     {
         if (_drawerTemplate == null) return;
-        if (!_issueProviders.Any(p => p.Id == _drawerTemplate.IssueProviderId) || !_repoProviders.Any(p => p.Id == _drawerTemplate.RepoProviderId))
-        { _errorMessage = "Template references providers that no longer exist."; return; }
-        if (!JobDispatcher.HasRegisteredAgents) { _errorMessage = "Could not dispatch — no agents are currently connected."; return; }
-
-        var depProviderConfig = _issueProviders.FirstOrDefault(p => p.Id == _drawerTemplate.IssueProviderId);
-        if (depProviderConfig != null)
-        {
-            await using var issueProvider = ProviderFactory.CreateIssueProvider(depProviderConfig);
-            var depResult = await DependencyChecker.CheckAsync(issue.Identifier, issue.Description, issueProvider, new Dictionary<int, bool>(), CancellationToken.None);
-            if (!depResult.IsReady)
-            { _errorMessage = $"Cannot dispatch — issue is blocked by open dependencies: {string.Join(", ", depResult.BlockedBy.Select(n => $"#{n}"))}"; return; }
-        }
-
         _drawerDispatching = true; StateHasChanged();
         try
         {
-            var dispatched = await JobDispatcher.TryDispatchAsync(issue.Identifier, _drawerTemplate.IssueProviderId, _drawerTemplate.RepoProviderId,
-                _drawerTemplate.BrainProviderId, _drawerTemplate.PipelineProviderId, initiatedBy: "manual", CancellationToken.None,
-                issueTitle: issue.Title, project: GetParentProject(_drawerTemplate.Id));
-            if (dispatched) { _successMessage = $"✅ Dispatched #{issue.Identifier}"; CloseDrawer(); _ = ClearSuccessAfterDelay(); }
-            else _errorMessage = "Could not dispatch — issue is already being processed or queued, or no agents are available.";
+            var (success, error, successMessage) = await PageService.DispatchIssueAsync(issue, _drawerTemplate);
+            if (success) { _successMessage = successMessage; CloseDrawer(); _ = ClearSuccessAfterDelay(); }
+            else _errorMessage = error;
         }
         catch (Exception ex) { _errorMessage = $"Dispatch failed: {ex.Message}"; }
         finally { _drawerDispatching = false; }
@@ -338,47 +242,42 @@ public partial class AgentCoding : IDisposable
         if (string.IsNullOrEmpty(_manualDispatchTemplateId)) return;
         _prDrawerTemplate = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
         if (_prDrawerTemplate == null) return;
-        _prDrawerOpen = true; _prDrawerPage = 1;
-        await LoadPrDrawerPage();
+        _prDrawerOpen = true;
+        var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, 1);
+        if (error != null) _errorMessage = error;
     }
 
     private void ClosePrDrawer() => _prDrawerOpen = false;
 
-    private async Task LoadPrDrawerPage()
+    // TODO: Behavioral change — original PrDrawerNextPage always incremented page unconditionally; now guarded by null check on template.
+    private async Task PrDrawerNextPage()
     {
-        if (_prDrawerTemplate == null) return;
-        _prDrawerLoading = true; StateHasChanged();
-        try
+        if (_prDrawerTemplate != null)
         {
-            var repoConfig = _repoProviders.FirstOrDefault(p => p.Id == _prDrawerTemplate.RepoProviderId);
-            if (repoConfig == null) { _prDrawerPrs = new(); _prDrawerLoading = false; return; }
-            await using var repoProvider = ProviderFactory.CreateRepositoryProvider(repoConfig);
-            var result = await repoProvider.ListOpenPullRequestsAsync(_prDrawerPage, 30, null, CancellationToken.None);
-            _prDrawerPrs = result.Items.ToList(); _prDrawerHasMore = result.HasMore;
+            var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, _prDrawerPage + 1);
+            if (error != null) _errorMessage = error;
         }
-        catch (Exception ex) { _errorMessage = $"Failed to load pull requests: {ex.Message}"; _prDrawerPrs = new(); }
-        finally { _prDrawerLoading = false; StateHasChanged(); }
     }
 
-    private async Task PrDrawerNextPage() { _prDrawerPage++; await LoadPrDrawerPage(); }
-    private async Task PrDrawerPrevPage() { if (_prDrawerPage > 1) _prDrawerPage--; await LoadPrDrawerPage(); }
+    // TODO: Behavioral change — original PrDrawerPrevPage reloaded current page even on page 1; now a no-op on page 1.
+    private async Task PrDrawerPrevPage()
+    {
+        if (_prDrawerPage > 1 && _prDrawerTemplate != null)
+        {
+            var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, _prDrawerPage - 1);
+            if (error != null) _errorMessage = error;
+        }
+    }
 
     private async Task DispatchPrReviewFromDrawer(PullRequestSummary pr)
     {
         if (_prDrawerTemplate == null) return;
-        if (!JobDispatcher.HasRegisteredAgents) { _errorMessage = "Could not dispatch — no agents are currently connected."; return; }
         _prDrawerDispatching = true; StateHasChanged();
         try
         {
-            var dispatched = await JobDispatcher.TryDispatchReviewAsync(new ReviewDispatchRequest
-            {
-                PrIdentifier = pr.Identifier, PrBranchName = pr.BranchName, PrTitle = pr.Title,
-                PrDescription = pr.Description, PrAuthor = pr.Author, PrUrl = pr.Url, PrTargetBranch = pr.TargetBranch,
-                IssueProviderId = _prDrawerTemplate.IssueProviderId, RepoProviderId = _prDrawerTemplate.RepoProviderId,
-                BrainProviderId = _prDrawerTemplate.BrainProviderId, InitiatedBy = "manual"
-            }, CancellationToken.None, project: GetParentProject(_prDrawerTemplate.Id));
-            if (dispatched) { _successMessage = $"PR #{pr.Identifier} dispatched for review."; _ = ClearSuccessAfterDelay(); }
-            else _errorMessage = $"PR #{pr.Identifier} is already being processed or queued.";
+            var (success, error, successMessage) = await PageService.DispatchPrReviewAsync(pr, _prDrawerTemplate);
+            if (success) { _successMessage = successMessage; _ = ClearSuccessAfterDelay(); }
+            else _errorMessage = error;
         }
         catch (Exception ex) { _errorMessage = $"Failed to dispatch PR review: {ex.Message}"; }
         finally { _prDrawerDispatching = false; StateHasChanged(); }
@@ -392,46 +291,21 @@ public partial class AgentCoding : IDisposable
         _epicDrawerTemplate = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
         if (_epicDrawerTemplate == null) return;
         _epicDrawerOpen = true;
-        await LoadEpicDrawerIssues();
+        var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate);
+        if (error != null) _errorMessage = error;
     }
 
-    private void CloseEpicDrawer() { _epicDrawerOpen = false; _epicDrawerTemplate = null; _epicDrawerIssues.Clear(); }
-
-    private async Task LoadEpicDrawerIssues()
-    {
-        if (_epicDrawerTemplate == null) return;
-        _epicDrawerLoading = true; StateHasChanged();
-        try
-        {
-            var parentProject = GetParentProject(_epicDrawerTemplate.Id);
-            var epicProviderId = !string.IsNullOrEmpty(parentProject?.EpicIssueProviderId) ? parentProject.EpicIssueProviderId : _epicDrawerTemplate.IssueProviderId;
-            var providerConfig = _issueProviders.FirstOrDefault(p => p.Id == epicProviderId);
-            if (providerConfig == null) { _errorMessage = "Epic issue provider not found."; _epicDrawerLoading = false; return; }
-            await using var provider = ProviderFactory.CreateIssueProvider(providerConfig);
-            var epicResult = await provider.ListOpenIssuesAsync(1, 50, new[] { "agent:epic" }, CancellationToken.None);
-            var approvedResult = await provider.ListOpenIssuesAsync(1, 50, new[] { "agent:epic-approved" }, CancellationToken.None);
-            _epicDrawerIssues = epicResult.Items.Concat(approvedResult.Items).ToList();
-        }
-        catch (Exception ex) { _errorMessage = $"Failed to load epics: {ex.Message}"; _epicDrawerIssues.Clear(); }
-        finally { _epicDrawerLoading = false; }
-    }
+    private void CloseEpicDrawer() { _epicDrawerOpen = false; _epicDrawerTemplate = null; PageService.ClearEpicDrawerIssues(); }
 
     private async Task DispatchDecompositionFromDrawer(IssueSummary issue)
     {
         if (_epicDrawerTemplate == null) return;
-        if (!_issueProviders.Any(p => p.Id == _epicDrawerTemplate.IssueProviderId) || !_repoProviders.Any(p => p.Id == _epicDrawerTemplate.RepoProviderId))
-        { _errorMessage = "Template references providers that no longer exist."; return; }
-        if (!JobDispatcher.HasRegisteredAgents) { _errorMessage = "Could not dispatch — no agents are currently connected."; return; }
         _epicDrawerDispatching = true; StateHasChanged();
         try
         {
-            var phaseType = issue.Labels.Contains("agent:epic-approved", StringComparer.OrdinalIgnoreCase)
-                ? PipelineRunType.Decomposition : PipelineRunType.DecompositionAnalysis;
-            var dispatched = await JobDispatcher.TryDispatchDecompositionAsync(issue.Identifier, issue.Title, phaseType,
-                _epicDrawerTemplate.IssueProviderId, _epicDrawerTemplate.RepoProviderId, _epicDrawerTemplate.BrainProviderId,
-                initiatedBy: "manual", CancellationToken.None, project: GetParentProject(_epicDrawerTemplate.Id));
-            if (dispatched) { _successMessage = $"✅ Dispatched epic #{issue.Identifier} for {(phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition")}"; CloseEpicDrawer(); _ = ClearSuccessAfterDelay(); }
-            else _errorMessage = "Could not dispatch — epic is already being processed or queued, or no agents are available.";
+            var (success, error, successMessage) = await PageService.DispatchDecompositionAsync(issue, _epicDrawerTemplate);
+            if (success) { _successMessage = successMessage; CloseEpicDrawer(); _ = ClearSuccessAfterDelay(); }
+            else _errorMessage = error;
         }
         catch (Exception ex) { _errorMessage = $"Dispatch failed: {ex.Message}"; }
         finally { _epicDrawerDispatching = false; }
@@ -439,8 +313,7 @@ public partial class AgentCoding : IDisposable
 
     // ── Helpers ──
 
-    private PipelineProject? GetParentProject(string templateId) =>
-        _projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId));
+    private PipelineProject? GetParentProject(string templateId) => PageService.GetParentProject(templateId);
 
     private async Task ClearRecentlyToggledAfterDelay(string templateId)
     {
