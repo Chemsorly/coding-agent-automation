@@ -190,6 +190,75 @@ public class ConsolidationExecutorBaseTests
         result.ErrorMessage.Should().Be("boom");
     }
 
+    [Fact]
+    public async Task RunWithTracingAsync_Success_ReturnsValue()
+    {
+        var executor = CreateExecutor();
+
+        var result = await executor.InvokeRunWithTracingAsync("Test.Step", "job-1", async _ =>
+        {
+            await Task.CompletedTask;
+            return 42;
+        });
+
+        result.Should().Be(42);
+    }
+
+    [Fact]
+    public async Task RunWithTracingAsync_NonOceException_RethrowsException()
+    {
+        var executor = CreateExecutor();
+
+        var act = () => executor.InvokeRunWithTracingAsync<int>("Test.Step", "job-1", _ =>
+        {
+            throw new InvalidOperationException("test error");
+        });
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("test error");
+    }
+
+    [Fact]
+    public async Task RunWithTracingAsync_OperationCanceledException_PropagatesWithoutErrorStatus()
+    {
+        var executor = CreateExecutor();
+
+        var act = () => executor.InvokeRunWithTracingAsync<int>("Test.Step", "job-1", _ =>
+        {
+            throw new OperationCanceledException();
+        });
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task RunWithTracingAsync_VoidOverload_CompletesSuccessfully()
+    {
+        var executor = CreateExecutor();
+        var executed = false;
+
+        await executor.InvokeRunWithTracingAsync("Test.Step", "job-1", async _ =>
+        {
+            await Task.CompletedTask;
+            executed = true;
+        });
+
+        executed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RunWithTracingAsync_VoidOverload_NonOceException_Rethrows()
+    {
+        var executor = CreateExecutor();
+
+        var act = () => executor.InvokeRunWithTracingAsync("Test.Step", "job-1", async _ =>
+        {
+            await Task.CompletedTask;
+            throw new InvalidOperationException("void error");
+        });
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("void error");
+    }
+
     /// <summary>
     /// Concrete test subclass to expose protected members for testing.
     /// </summary>
@@ -212,5 +281,11 @@ public class ConsolidationExecutorBaseTests
         public Task<ConsolidationJobResult> InvokeWrapWithCancellationHandlingAsync(
             string jobId, Func<Task<ConsolidationJobResult>> action, CancellationToken ct)
             => WrapWithCancellationHandlingAsync(jobId, action, ct);
+
+        public Task<T> InvokeRunWithTracingAsync<T>(string activityName, string jobId, Func<System.Diagnostics.Activity?, Task<T>> action)
+            => RunWithTracingAsync(activityName, jobId, action);
+
+        public Task InvokeRunWithTracingAsync(string activityName, string jobId, Func<System.Diagnostics.Activity?, Task> action)
+            => RunWithTracingAsync(activityName, jobId, action);
     }
 }

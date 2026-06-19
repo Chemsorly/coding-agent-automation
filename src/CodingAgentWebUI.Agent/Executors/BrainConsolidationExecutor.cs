@@ -56,20 +56,10 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             Logger.Information("Cloning brain repo for consolidation run {RunId} into {Workspace}",
                 job.JobId, workspacePath);
 
-            using (var cloneActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.Clone"))
+            await RunWithTracingAsync("BrainConsolidation.Clone", job.JobId, async _ =>
             {
-                cloneActivity?.SetTag("pipeline.run_id", job.JobId);
-                try
-                {
-                    await brainProvider.CloneAsync(workspacePath, ct);
-                }
-                catch (Exception ex)
-                {
-                    cloneActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-                    cloneActivity?.AddException(ex);
-                    throw;
-                }
-            }
+                await brainProvider.CloneAsync(workspacePath, ct);
+            });
 
             // 2. Build prompt
             var prompt = ConsolidationPromptBuilder.BuildBrainConsolidationPrompt(job.LastSuccessfulRunUtc);
@@ -78,29 +68,19 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             Logger.Information("Executing brain consolidation agent for run {RunId}", job.JobId);
             AgentResult agentResult;
             ConsolidationJobResult? failure;
-            using (var agentActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.AgentExecution"))
+            (agentResult, failure) = await RunWithTracingAsync("BrainConsolidation.AgentExecution", job.JobId, async _ =>
             {
-                agentActivity?.SetTag("pipeline.run_id", job.JobId);
-                try
-                {
-                    (agentResult, failure) = await ExecuteAgentAndCheckAsync(
-                        agentProvider,
-                        new AgentRequest
-                        {
-                            Prompt = prompt,
-                            WorkspacePath = workspacePath,
-                            Timeout = job.PipelineConfiguration.AgentTimeout
-                        },
-                        job.JobId,
-                        ct);
-                }
-                catch (Exception ex)
-                {
-                    agentActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-                    agentActivity?.AddException(ex);
-                    throw;
-                }
-            }
+                return await ExecuteAgentAndCheckAsync(
+                    agentProvider,
+                    new AgentRequest
+                    {
+                        Prompt = prompt,
+                        WorkspacePath = workspacePath,
+                        Timeout = job.PipelineConfiguration.AgentTimeout
+                    },
+                    job.JobId,
+                    ct);
+            });
 
             if (failure is not null) return failure;
 
@@ -166,11 +146,9 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             // 4b. Review step (only if diff summary succeeded)
             if (!skipReview)
             {
-                using var reviewActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.AdversarialReview");
-                reviewActivity?.SetTag("pipeline.run_id", job.JobId);
-                try
+                reviewResult = await RunWithTracingAsync("BrainConsolidation.AdversarialReview", job.JobId, async _ =>
                 {
-                    reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
+                    return await AdversarialReviewHelper.ExecuteReviewAsync(
                         agentProvider,
                         workspacePath,
                         ConsolidationPromptBuilder.BuildBrainConsolidationReviewPrompt(),
@@ -184,13 +162,7 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                         onOutputLine,
                         Logger,
                         ct);
-                }
-                catch (Exception ex)
-                {
-                    reviewActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-                    reviewActivity?.AddException(ex);
-                    throw;
-                }
+                });
             }
 
             // 5. Capture token usage (preserved regardless of subsequent step outcomes)

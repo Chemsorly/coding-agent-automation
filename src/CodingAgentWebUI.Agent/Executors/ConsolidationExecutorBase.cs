@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Agent.Executors;
 
@@ -95,4 +97,46 @@ public abstract class ConsolidationExecutorBase
 
     protected static ConsolidationJobResult CreateCancelledResult(string jobId)
         => new() { JobId = jobId, Success = false, ErrorMessage = "Consolidation run was cancelled" };
+
+    /// <summary>
+    /// Wraps an async action with activity tracing. Creates an activity with the given name,
+    /// sets the pipeline.run_id tag, and records error status on non-cancellation exceptions.
+    /// </summary>
+    protected async Task<T> RunWithTracingAsync<T>(string activityName, string jobId, Func<Activity?, Task<T>> action)
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity(activityName);
+        activity?.SetTag("pipeline.run_id", jobId);
+        try
+        {
+            return await action(activity);
+        }
+        // TODO: This filter excludes OperationCanceledException from error recording, which changes
+        // telemetry behavior for BrainConsolidationExecutor and RefactoringExecutor (they previously
+        // recorded OCE as activity errors). Verify this is acceptable for dashboards/alerts.
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Wraps an async action with activity tracing (void-returning variant).
+    /// </summary>
+    protected async Task RunWithTracingAsync(string activityName, string jobId, Func<Activity?, Task> action)
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity(activityName);
+        activity?.SetTag("pipeline.run_id", jobId);
+        try
+        {
+            await action(activity);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            throw;
+        }
+    }
 }

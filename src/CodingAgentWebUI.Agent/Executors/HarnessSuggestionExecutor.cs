@@ -81,29 +81,19 @@ public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
                 job.JobId, feedbackCount, successRate);
             AgentResult agentResult;
             ConsolidationJobResult? failure;
-            using (var agentActivity = PipelineTelemetry.ActivitySource.StartActivity("HarnessSuggestion.AgentExecution"))
+            (agentResult, failure) = await RunWithTracingAsync("HarnessSuggestion.AgentExecution", job.JobId, async _ =>
             {
-                agentActivity?.SetTag("pipeline.run_id", job.JobId);
-                try
-                {
-                    (agentResult, failure) = await ExecuteAgentAndCheckAsync(
-                        agentProvider,
-                        new AgentRequest
-                        {
-                            Prompt = prompt,
-                            WorkspacePath = workspacePath,
-                            Timeout = job.PipelineConfiguration.AgentTimeout
-                        },
-                        job.JobId,
-                        ct);
-                }
-                catch (Exception ex)
-                {
-                    agentActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-                    agentActivity?.AddException(ex);
-                    throw;
-                }
-            }
+                return await ExecuteAgentAndCheckAsync(
+                    agentProvider,
+                    new AgentRequest
+                    {
+                        Prompt = prompt,
+                        WorkspacePath = workspacePath,
+                        Timeout = job.PipelineConfiguration.AgentTimeout
+                    },
+                    job.JobId,
+                    ct);
+            });
 
             if (failure is not null) return failure;
 
@@ -165,9 +155,7 @@ public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
             HarnessSuggestions? suggestions = null;
             if (!skipReview)
             {
-                using var reviewActivity = PipelineTelemetry.ActivitySource.StartActivity("HarnessSuggestion.AdversarialReview");
-                reviewActivity?.SetTag("pipeline.run_id", job.JobId);
-                try
+                await RunWithTracingAsync("HarnessSuggestion.AdversarialReview", job.JobId, async _ =>
                 {
                     var reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
                         agentProvider,
@@ -232,17 +220,7 @@ public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
                             Logger.Warning(ex, "Failed to read suggestions output file for run {RunId}, falling back to response text parsing", job.JobId);
                         }
                     }
-                }
-                catch (Exception ex) when (ex is OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    reviewActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-                    reviewActivity?.AddException(ex);
-                    throw;
-                }
+                });
             }
 
             // 8. Fall back to response text parsing if no suggestions parsed from file
