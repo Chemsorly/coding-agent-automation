@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
@@ -8,10 +9,11 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// <summary>
 /// Unit tests verifying quality gate metric instruments emit correct tags.
 /// </summary>
+[Collection("Metrics")]
 public class PipelineTelemetryQualityGateTests : IDisposable
 {
     private readonly MeterListener _listener = new();
-    private readonly List<(string InstrumentName, List<KeyValuePair<string, object?>> Tags)> _measurements = [];
+    private readonly ConcurrentBag<(string InstrumentName, KeyValuePair<string, object?>[] Tags)> _measurements = [];
 
     public PipelineTelemetryQualityGateTests()
     {
@@ -23,18 +25,12 @@ public class PipelineTelemetryQualityGateTests : IDisposable
 
         _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, state) =>
         {
-            var tagList = new List<KeyValuePair<string, object?>>();
-            foreach (var tag in tags)
-                tagList.Add(tag);
-            _measurements.Add((instrument.Name, tagList));
+            _measurements.Add((instrument.Name, tags.ToArray()));
         });
 
         _listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, state) =>
         {
-            var tagList = new List<KeyValuePair<string, object?>>();
-            foreach (var tag in tags)
-                tagList.Add(tag);
-            _measurements.Add((instrument.Name, tagList));
+            _measurements.Add((instrument.Name, tags.ToArray()));
         });
 
         _listener.Start();
@@ -45,8 +41,6 @@ public class PipelineTelemetryQualityGateTests : IDisposable
     [Fact]
     public void QualityGateRetries_Add_IncludesRunTypeTag()
     {
-        _measurements.Clear();
-
         PipelineTelemetry.QualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(PipelineRunType.Implementation));
 
         var entries = _measurements.Where(m => m.InstrumentName == "quality_gate.retries").ToList();
@@ -60,8 +54,6 @@ public class PipelineTelemetryQualityGateTests : IDisposable
     [InlineData(false, "fail")]
     public void QualityGateEvaluations_Add_IncludesGateNameAndResult(bool passed, string expectedResult)
     {
-        _measurements.Clear();
-
         PipelineTelemetry.QualityGateEvaluations.Add(1,
             new("gate_name", PipelineTelemetry.QualityGateNames.Compilation),
             new("result", passed ? "pass" : "fail"));
@@ -76,8 +68,6 @@ public class PipelineTelemetryQualityGateTests : IDisposable
     [Fact]
     public void QualityGateDuration_Record_AcceptsValue()
     {
-        _measurements.Clear();
-
         PipelineTelemetry.QualityGateDuration.Record(42.5,
             PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "TestProj"));
 
@@ -87,8 +77,6 @@ public class PipelineTelemetryQualityGateTests : IDisposable
     [Fact]
     public void ExternalCiDuration_Record_AcceptsValue()
     {
-        _measurements.Clear();
-
         PipelineTelemetry.ExternalCiDuration.Record(120.0,
             PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "TestProj"));
 

@@ -7,6 +7,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// <summary>
 /// Unit tests verifying agent worker metric instruments emit correct tags.
 /// </summary>
+[Collection("Metrics")]
 public class PipelineTelemetryAgentMetricsTests : IDisposable
 {
     private readonly MeterListener _listener = new();
