@@ -1570,6 +1570,17 @@ public class LocalPipelineExecutorTests : IDisposable
         sendExecuted.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task SerializedSendAsync_WhenSemaphoreDisposedDuringSend_DoesNotThrow()
+    {
+        var signalrLock = new SemaphoreSlim(1, 1);
+
+        await LocalPipelineExecutor.SerializedSendAsync(
+            signalrLock,
+            () => { signalrLock.Dispose(); return Task.CompletedTask; },
+            CancellationToken.None);
+    }
+
     // ── PullRequestCreationContext ──────────────────────────────────────
 
     [Fact]

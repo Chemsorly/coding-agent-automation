@@ -555,11 +555,12 @@ public sealed class LocalPipelineExecutor
         catch (ObjectDisposedException) { return; }
         catch (OperationCanceledException) { return; }
 
-        // TODO: Release() is not guarded against ObjectDisposedException. If the semaphore is
-        // disposed after WaitAsync succeeds but while send() is executing, Release() will throw
-        // as an unobserved exception since callers discard this task.
         try { await send(); }
-        finally { signalrLock.Release(); }
+        finally
+        {
+            try { signalrLock.Release(); }
+            catch (ObjectDisposedException) { }
+        }
     }
 
     /// <summary>
