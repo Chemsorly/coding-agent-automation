@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using CodingAgentWebUI.Agent.OpenCode;
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;

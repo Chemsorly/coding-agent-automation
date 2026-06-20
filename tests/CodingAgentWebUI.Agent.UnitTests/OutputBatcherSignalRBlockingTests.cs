@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Infrastructure;
 
 namespace CodingAgentWebUI.Agent.UnitTests;
 
