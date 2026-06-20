@@ -196,13 +196,11 @@ public sealed class AgentWorkerService : BackgroundService
             _logger.Information("Reconnection attempt {Attempt}/{Max} after {Delay:F1}s",
                 attempt, maxAttempts, delay.TotalSeconds);
 
-            // TODO: Task.Delay is outside the try block — if ct fires during delay, OperationCanceledException
-            // propagates unhandled out of this event handler. Consider moving inside try or adding top-level catch.
-            await Task.Delay(delay, ct);
-
             HubConnectionManager? newManager = null;
             try
             {
+                await Task.Delay(delay, ct);
+
                 var oldManager = _hubManager;
                 newManager = _hubManagerFactory.Create();
                 WireEventHandlers(newManager);
@@ -211,34 +209,47 @@ public sealed class AgentWorkerService : BackgroundService
                 _hubManager = newManager;
                 newManager = null; // Ownership transferred — skip disposal
 
-                // TODO: If ExecuteAsync fails after this point, newManager is null so catch won't dispose the new
-                // manager (now _hubManager), and oldManager is also not disposed — latent pre-existing issue.
+                // Dispose old manager immediately after swap.
+                // Safe: DisposeAsync does not fire the Closed event (no re-entrant call).
+                await SafeDisposeAsync(oldManager);
+
+                // TODO: If registration fails below, newManager is null (ownership transferred) so the catch
+                // block won't dispose _hubManager — it stays connected but unregistered until the next iteration.
                 // Re-register with orchestrator
                 var registration = BuildRegistrationMessage();
                 await _signalRPipeline.ExecuteAsync(async token =>
                     await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), ct);
 
                 _logger.Information("Agent {AgentId} reconnected and re-registered after terminal close", _agentId);
-
-                // Dispose old manager after successful swap
-                await oldManager.DisposeAsync();
                 return;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                // TODO: DisposeAsync could throw if HubConnection is faulted — consider wrapping in try-catch.
-                if (newManager is not null) await newManager.DisposeAsync();
+                await SafeDisposeAsync(newManager);
                 return;
             }
             catch (Exception ex)
             {
-                if (newManager is not null) await newManager.DisposeAsync();
+                await SafeDisposeAsync(newManager);
                 _logger.Warning(ex, "Reconnection attempt {Attempt} failed", attempt);
             }
         }
 
         _logger.Error("All {MaxAttempts} reconnection attempts exhausted, shutting down agent", maxAttempts);
         _hostApplicationLifetime.StopApplication();
+    }
+
+    private async ValueTask SafeDisposeAsync(HubConnectionManager? manager)
+    {
+        if (manager is null) return;
+        try
+        {
+            await manager.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Exception during HubConnectionManager disposal (suppressed)");
+        }
     }
 
     private async Task HandleAssignJobAsync(JobAssignmentMessage message)
