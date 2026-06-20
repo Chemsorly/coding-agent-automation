@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <!-- E2E tests require Playwright; excluded from solution-level 'dotnet test'.
-         Run explicitly: dotnet test tests/CodingAgentWebUI.E2ETests/ -->
+         Run via CI workflow or target the built DLL directly. -->
     <IsTestProject>false</IsTestProject>
   </PropertyGroup>
 
