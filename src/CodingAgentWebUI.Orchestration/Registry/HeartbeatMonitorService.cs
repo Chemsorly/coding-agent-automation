@@ -148,8 +148,12 @@ public sealed class HeartbeatMonitorService : BackgroundService
                         }
 
                         // Return agent to Idle so it can accept new jobs
-                        agent.ActiveJobId = null;
-                        agent.OrphanRestoredAt = null;
+                        lock (agent.SyncRoot)
+                        {
+                            agent.ActiveJobId = null;
+                            agent.OrphanRestoredAt = null;
+                        }
+
                         _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
                     }
                 }
@@ -186,8 +190,12 @@ public sealed class HeartbeatMonitorService : BackgroundService
 
                             await TrySwapLabelToErrorAsync(run, ct);
 
-                            agent.ActiveJobId = null;
-                            agent.OrphanRestoredAt = null;
+                            lock (agent.SyncRoot)
+                            {
+                                agent.ActiveJobId = null;
+                                agent.OrphanRestoredAt = null;
+                            }
+
                             _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
                         }
                     }
@@ -196,8 +204,12 @@ public sealed class HeartbeatMonitorService : BackgroundService
                         _logger.Warning(
                             "Agent {AgentId} is Busy with ActiveJobId {JobId} but run not found — resetting to Idle",
                             agent.AgentId, agent.ActiveJobId);
-                        agent.ActiveJobId = null;
-                        agent.OrphanRestoredAt = null;
+                        lock (agent.SyncRoot)
+                        {
+                            agent.ActiveJobId = null;
+                            agent.OrphanRestoredAt = null;
+                        }
+
                         _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
                     }
                 }
@@ -241,7 +253,10 @@ public sealed class HeartbeatMonitorService : BackgroundService
                 }
 
                 // Clear the active job and deregister
-                agent.ActiveJobId = null;
+                lock (agent.SyncRoot)
+                {
+                    agent.ActiveJobId = null;
+                }
             }
             else
             {
