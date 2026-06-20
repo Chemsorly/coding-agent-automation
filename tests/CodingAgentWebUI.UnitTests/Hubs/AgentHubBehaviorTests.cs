@@ -735,6 +735,22 @@ public sealed class AgentHubBehaviorTests : IDisposable
         run.CodeReviewSuggestionCount.Should().Be(30); // Preserved
     }
 
+    // TODO: Add a complementary test supplying a past timestamp and asserting LastStepChangeAt equals that exact value,
+    // to validate the pass-through path and catch accidental unconditional UtcNow assignment.
+    [Fact]
+    public async Task ReportStepTransition_FarFutureTimestamp_IsClampedToUtcNow()
+    {
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.Created;
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow.AddHours(24));
+
+        run.LastStepChangeAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
     #endregion
 
     #region ReportChatResponse / ReportChatCompleted — Session Ownership
