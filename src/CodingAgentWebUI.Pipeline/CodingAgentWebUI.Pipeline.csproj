@@ -4,11 +4,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <!-- MsgPack003: Suppress for existing types (IssueDetail, ParsedIssue, etc.) referenced by
-         [MessagePackObject] DTOs — these are serialized via ContractlessStandardResolver at runtime.
-         MsgPack017: Init properties with default initializers are intentional — defaults are overridden
-         during deserialization when values are present in the payload. -->
-    <NoWarn>$(NoWarn);MsgPack003;MsgPack017</NoWarn>
+    <!-- MsgPack017: Init properties with default initializers are intentional — defaults are overridden
+         during deserialization when values are present in the payload.
+         CS0436: GeneratedMessagePackResolver conflict between Pipeline and CodeReview source generators
+         is harmless — Pipeline's resolver supersedes and covers types from both assemblies. -->
+    <NoWarn>$(NoWarn);MsgPack017;CS0436</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
