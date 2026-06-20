@@ -43,6 +43,9 @@ builder.Services.AddPipelineCoreServices();
 builder.Services.AddOrchestrationServices(pipelineConfig);
 builder.Services.AddConsolidationServices(pipelineConfig);
 
+// Page-level services (scoped — one instance per Blazor circuit)
+builder.Services.AddScoped<CodingAgentWebUI.Services.AgentCodingPageService>();
+
 // SignalR — hub services with MessagePack protocol
 builder.Services.AddSignalR()
     .AddMessagePackProtocol();
