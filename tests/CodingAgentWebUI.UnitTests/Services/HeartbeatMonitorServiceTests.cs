@@ -174,6 +174,18 @@ public class HeartbeatMonitorServiceTests : IDisposable
         entry.ActiveJobId = "job-1";
         _registry.TransitionStatus("agent-1", AgentStatus.Busy);
 
+        // Add a run so the agent is legitimately busy
+        _runService.AddRun(new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            LastStepChangeAt = DateTimeOffset.UtcNow,
+            RunType = PipelineRunType.Implementation
+        });
+
         await _monitor.SweepAsync(CancellationToken.None);
 
         var agent = _registry.GetByAgentId("agent-1");
@@ -519,18 +531,43 @@ public class HeartbeatMonitorServiceTests : IDisposable
             r.CurrentStep == PipelineStep.Failed)), Times.Once);
     }
 
+    // TODO: This test and SweepAsync_BusyAgent_RunRemovedByConcurrentPath_ResetsToIdle are functionally
+    // identical (both set up a Busy agent with a missing run and OrphanRestoredAt=null). Consider merging
+    // into a single test with complete assertions.
+    // TODO: Add _mockLogger.Verify() to assert that a Warning was logged containing agent ID and job ID
+    // (acceptance criteria: "Warning logged with agent ID and stale job ID for operator visibility").
     [Fact]
-    public async Task SweepAsync_BusyAgent_ProgressTimeout_NoRun_NoException()
+    public async Task SweepAsync_BusyAgent_ProgressTimeout_NoRun_ResetsToIdle()
     {
         var entry = RegisterAgent("agent-1", "conn-1");
         entry.ActiveJobId = "job-missing";
         _registry.TransitionStatus("agent-1", AgentStatus.Busy);
 
-        // No run added for this job — simulates race condition
+        // No run added for this job — simulates race condition where run was removed concurrently
         await _monitor.SweepAsync(CancellationToken.None);
 
-        // Agent stays busy (no crash, no action)
-        _registry.GetByAgentId("agent-1")!.Status.Should().Be(AgentStatus.Busy);
+        // Agent is reset to Idle since its run no longer exists
+        var agent = _registry.GetByAgentId("agent-1")!;
+        agent.Status.Should().Be(AgentStatus.Idle);
+        agent.ActiveJobId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_RunRemovedByConcurrentPath_ResetsToIdle()
+    {
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-vanished";
+        entry.OrphanRestoredAt = null;
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        // No run exists for this job ID — simulates ReportJobCompleted removing the run
+        // but failing to transition agent to Idle (e.g., SignalR exception)
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        var agent = _registry.GetByAgentId("agent-1")!;
+        agent.Status.Should().Be(AgentStatus.Idle);
+        agent.ActiveJobId.Should().BeNull();
+        agent.OrphanRestoredAt.Should().BeNull();
     }
 
     [Fact]
