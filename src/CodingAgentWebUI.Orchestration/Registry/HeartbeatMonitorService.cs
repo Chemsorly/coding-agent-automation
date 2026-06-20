@@ -191,6 +191,15 @@ public sealed class HeartbeatMonitorService : BackgroundService
                             _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
                         }
                     }
+                    else if (run is null)
+                    {
+                        _logger.Warning(
+                            "Agent {AgentId} is Busy with ActiveJobId {JobId} but run not found — resetting to Idle",
+                            agent.AgentId, agent.ActiveJobId);
+                        agent.ActiveJobId = null;
+                        agent.OrphanRestoredAt = null;
+                        _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+                    }
                 }
 
                 continue;
