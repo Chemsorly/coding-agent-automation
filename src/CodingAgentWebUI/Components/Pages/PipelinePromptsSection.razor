@@ -15,23 +15,15 @@
             <textarea @bind="_implementationPrompt" rows="6"></textarea>
             <button type="button" class="btn-revert" disabled="@(_implementationPrompt == PipelineConfiguration.DefaultImplementationPrompt)" @onclick="() => _implementationPrompt = PipelineConfiguration.DefaultImplementationPrompt">Reset to default</button>
         </div>
-        <div class="config-sub-fields" style="margin-top: 1rem;">
-            <h3 style="margin-bottom: 0.5rem;">Acceptance Criteria</h3>
-            <div class="form-group form-checkbox">
-                <label>
-                    <input type="checkbox" @bind="_acceptanceCriteriaEnabled" />
-                    Enable Acceptance Criteria Check
-                </label>
-            </div>
-            <div class="form-group">
-                <label>Acceptance Criteria Prompt</label>
-                <textarea @bind="_acceptanceCriteriaPrompt" rows="6" disabled="@(!_acceptanceCriteriaEnabled)"></textarea>
-                <button type="button" class="btn-revert" disabled="@(!_acceptanceCriteriaEnabled || _acceptanceCriteriaPrompt == DefaultPrompts.AcceptanceCriteriaCompliance)" @onclick="() => _acceptanceCriteriaPrompt = DefaultPrompts.AcceptanceCriteriaCompliance">Reset to default</button>
-            </div>
+        <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
+            <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")">▶</span>
+            <span>Advanced settings</span>
         </div>
+        @if (_showAdvanced)
+        {
         <div class="config-sub-fields" style="margin-top: 1rem;">
-            <h3 style="margin-bottom: 0.5rem;">Analysis Review (Adversarial)</h3>
-            <div class="form-hint" style="margin-bottom: 0.75rem;">
+            <h3>Analysis Review (Adversarial)</h3>
+            <div class="form-hint">
                 ℹ️ When enabled, a second agent reviews the analysis in an isolated session and feeds findings back for refinement before implementation begins.
             </div>
             <div class="form-group form-checkbox">
@@ -51,6 +43,21 @@
                 <button type="button" class="btn-revert" disabled="@(!_analysisReviewEnabled || _analysisRefinementPrompt == PipelineConfiguration.DefaultAnalysisRefinementPrompt)" @onclick="() => _analysisRefinementPrompt = PipelineConfiguration.DefaultAnalysisRefinementPrompt">Reset to default</button>
             </div>
         </div>
+        <div class="config-sub-fields" style="margin-top: 1rem;">
+            <h3>Acceptance Criteria</h3>
+            <div class="form-group form-checkbox">
+                <label>
+                    <input type="checkbox" @bind="_acceptanceCriteriaEnabled" />
+                    Enable Acceptance Criteria Check
+                </label>
+            </div>
+            <div class="form-group">
+                <label>Acceptance Criteria Prompt</label>
+                <textarea @bind="_acceptanceCriteriaPrompt" rows="6" disabled="@(!_acceptanceCriteriaEnabled)"></textarea>
+                <button type="button" class="btn-revert" disabled="@(!_acceptanceCriteriaEnabled || _acceptanceCriteriaPrompt == DefaultPrompts.AcceptanceCriteriaCompliance)" @onclick="() => _acceptanceCriteriaPrompt = DefaultPrompts.AcceptanceCriteriaCompliance">Reset to default</button>
+            </div>
+        </div>
+        }
         <div class="pipeline-form-actions">
             <button class="btn-save" @onclick="SaveAsync">Save Prompt Settings</button>
         </div>
@@ -68,6 +75,7 @@
     private bool _analysisReviewEnabled = true;
     private string _analysisReviewPrompt = PipelineConfiguration.DefaultAnalysisReviewPrompt;
     private string _analysisRefinementPrompt = PipelineConfiguration.DefaultAnalysisRefinementPrompt;
+    private bool _showAdvanced;
 
     protected override async Task OnInitializedAsync()
     {

@@ -14,17 +14,23 @@
         </div>
         <div class="form-group">
             <div class="label-with-hint">
-                <label>Max Concurrent Decompositions</label>
-                <span class="form-hint-icon" aria-hidden="true" title="Maximum number of decomposition runs (across both phases) that can execute simultaneously. Default: 2">?</span>
-            </div>
-            <input type="number" @bind="_maxConcurrentDecompositions" min="1" max="10" />
-        </div>
-        <div class="form-group">
-            <div class="label-with-hint">
                 <label>Decomposition Timeout (minutes)</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Timeout for each decomposition phase. Accounts for codebase exploration time. Default: 15 minutes">?</span>
             </div>
             <input type="number" @bind="_decompositionTimeoutMinutes" min="5" max="60" />
+        </div>
+        <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
+            <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")">▶</span>
+            <span>Advanced settings</span>
+        </div>
+        @if (_showAdvanced)
+        {
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Max Concurrent Decompositions</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum number of decomposition runs (across both phases) that can execute simultaneously. Default: 2">?</span>
+            </div>
+            <input type="number" @bind="_maxConcurrentDecompositions" min="1" max="10" />
         </div>
         <div class="form-group">
             <div class="label-with-hint">
@@ -33,6 +39,7 @@
             </div>
             <input type="number" @bind="_maxOpenIssuesForContext" min="1" max="200" />
         </div>
+        }
 
         <div class="pipeline-form-actions">
             <button class="btn-save" @onclick="SaveAsync">Save Decomposition Settings</button>
@@ -48,6 +55,7 @@
     private int _maxConcurrentDecompositions = 2;
     private int _decompositionTimeoutMinutes = 15;
     private int _maxOpenIssuesForContext = 50;
+    private bool _showAdvanced;
 
     protected override async Task OnInitializedAsync()
     {

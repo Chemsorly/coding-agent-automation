@@ -40,8 +40,7 @@ public class PipelineReviewSectionComponentTests : BunitContext
         Assert.Contains("Enable Inline Review Comments", cut.Markup);
         Assert.Contains("Minimum Severity", cut.Markup);
         Assert.Contains("Maximum Inline Comments", cut.Markup);
-        Assert.Contains("Prioritize by Severity", cut.Markup);
-        Assert.Contains("Format Correction Retries", cut.Markup);
+        Assert.Contains("Advanced settings", cut.Markup);
     }
 
     [Fact]
@@ -68,7 +67,6 @@ public class PipelineReviewSectionComponentTests : BunitContext
 
         var inputs = cut.FindAll("input[type='number']");
         Assert.Contains(inputs, i => i.GetAttribute("value") == "25");
-        Assert.Contains(inputs, i => i.GetAttribute("value") == "3");
     }
 
     [Fact]

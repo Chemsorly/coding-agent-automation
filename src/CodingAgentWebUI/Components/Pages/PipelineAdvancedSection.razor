@@ -6,7 +6,7 @@
     <p class="section-description">Low-level agent orchestration settings — buffer capacities, heartbeat monitoring, brain repository, and agent routing. Changes may require restart.</p>
     <div class="provider-form">
         <div class="config-sub-fields">
-            <h3 style="margin-bottom: 0.5rem;">Agent Routing</h3>
+            <h3>Agent Routing</h3>
             <div class="form-group">
                 <div class="label-with-hint">
                     <label>Default Required Agent Labels</label>
@@ -18,14 +18,7 @@
         </div>
 
         <div class="config-sub-fields" style="margin-top: 1rem;">
-            <h3 style="margin-bottom: 0.5rem;">Brain Repository</h3>
-            <div class="form-group form-checkbox">
-                <label>
-                    <input type="checkbox" @bind="_brainReadOnly" />
-                    Brain Read-Only Mode
-                </label>
-                <span class="form-hint">When enabled, brain sync and context injection proceed but all write operations are skipped.</span>
-            </div>
+            <h3>Brain Repository</h3>
             <div class="form-group">
                 <div class="label-with-hint">
                     <label>Brain Push Max Retries</label>
@@ -36,7 +29,7 @@
         </div>
 
         <div class="config-sub-fields" style="margin-top: 1rem;">
-            <h3 style="margin-bottom: 0.5rem;">Agent Health Monitoring</h3>
+            <h3>Agent Health Monitoring</h3>
             <div class="form-group">
                 <div class="label-with-hint">
                     <label>Agent Disconnect Grace Period (minutes)</label>
@@ -68,8 +61,8 @@
         </div>
 
         <div class="config-sub-fields" style="margin-top: 1rem;">
-            <h3 style="margin-bottom: 0.5rem;">Buffer Capacities</h3>
-            <div class="form-hint" style="margin-bottom: 0.75rem;">
+            <h3>Buffer Capacities</h3>
+            <div class="form-hint">
                 ℹ️ Ring buffer sizes for in-memory run data. Larger values consume more memory. Changes apply to new runs only.
             </div>
             <div class="form-group">
@@ -120,7 +113,6 @@
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private string _defaultRequiredAgentLabels = "";
-    private bool _brainReadOnly;
     private int _brainPushMaxRetries = 3;
     private int _agentDisconnectGracePeriodMinutes = 5;
     private int _agentBusyProgressTimeoutMinutes = 60;
@@ -136,7 +128,6 @@
     {
         var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         _defaultRequiredAgentLabels = config.DefaultRequiredAgentLabels ?? "";
-        _brainReadOnly = config.BrainReadOnly;
         _brainPushMaxRetries = config.BrainPushMaxRetries;
         _agentDisconnectGracePeriodMinutes = (int)config.AgentDisconnectGracePeriod.TotalMinutes;
         _agentBusyProgressTimeoutMinutes = (int)config.AgentBusyProgressTimeout.TotalMinutes;
@@ -161,7 +152,6 @@
                 current => current with
                 {
                     DefaultRequiredAgentLabels = labels,
-                    BrainReadOnly = _brainReadOnly,
                     BrainPushMaxRetries = _brainPushMaxRetries,
                     AgentDisconnectGracePeriod = TimeSpan.FromMinutes(_agentDisconnectGracePeriodMinutes),
                     AgentBusyProgressTimeout = TimeSpan.FromMinutes(_agentBusyProgressTimeoutMinutes),

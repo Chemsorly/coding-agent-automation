@@ -37,11 +37,10 @@ public class PipelineConsolidationSectionComponentTests : BunitContext
         var cut = Render<PipelineConsolidationSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
         Assert.Contains("Max Refactoring Proposals", cut.Markup);
-        Assert.Contains("Hotspot Analysis Lookback", cut.Markup);
-        Assert.Contains("Refactoring Outcome Lookback", cut.Markup);
         Assert.Contains("Refactoring Review", cut.Markup);
         Assert.Contains("Brain Consolidation Review", cut.Markup);
         Assert.Contains("Harness Suggestions Review", cut.Markup);
+        Assert.Contains("Advanced settings", cut.Markup);
     }
 
     [Fact]
@@ -63,8 +62,6 @@ public class PipelineConsolidationSectionComponentTests : BunitContext
 
         var inputs = cut.FindAll("input[type='number']");
         Assert.Contains(inputs, i => i.GetAttribute("value") == "5");
-        Assert.Contains(inputs, i => i.GetAttribute("value") == "60");
-        Assert.Contains(inputs, i => i.GetAttribute("value") == "45");
     }
 
     [Fact]

@@ -48,7 +48,6 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
         var cut = Render<PipelineAdvancedSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
         Assert.Contains("Default Required Agent Labels", cut.Markup);
-        Assert.Contains("Brain Read-Only Mode", cut.Markup);
         Assert.Contains("Brain Push Max Retries", cut.Markup);
         Assert.Contains("Agent Disconnect Grace Period", cut.Markup);
         Assert.Contains("Agent Busy Progress Timeout", cut.Markup);
@@ -68,7 +67,6 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
             .ReturnsAsync(new PipelineConfiguration
             {
                 DefaultRequiredAgentLabels = "kiro,dotnet",
-                BrainReadOnly = true,
                 BrainPushMaxRetries = 5,
                 AgentDisconnectGracePeriod = TimeSpan.FromMinutes(10),
                 AgentBusyProgressTimeout = TimeSpan.FromMinutes(90),
@@ -157,7 +155,6 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
 
         Assert.NotNull(saved);
         Assert.Null(saved!.DefaultRequiredAgentLabels);
-        Assert.False(saved.BrainReadOnly);
         Assert.Equal(3, saved.BrainPushMaxRetries);
         Assert.Equal(TimeSpan.FromMinutes(5), saved.AgentDisconnectGracePeriod);
         Assert.Equal(TimeSpan.FromMinutes(60), saved.AgentBusyProgressTimeout);

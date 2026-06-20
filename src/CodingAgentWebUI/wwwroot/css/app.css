@@ -308,6 +308,12 @@ select option { background: var(--surface); color: var(--text); }
     border-bottom: 1px solid var(--border);
 }
 .config-sub-fields { margin-left: 24px; padding-left: 12px; border-left: 2px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+.config-sub-fields h3 { font-size: 0.82rem; font-weight: 600; color: var(--text-muted); margin: 0 0 4px 0; }
+.form-hint { font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; }
+.advanced-toggle { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding-top: 10px; border-top: 1px dashed var(--border); cursor: pointer; user-select: none; font-size: 0.78rem; color: var(--text-muted); }
+.advanced-toggle:hover { color: var(--accent-light); }
+.advanced-toggle .toggle-chevron { font-size: 0.65rem; transition: transform 0.15s; }
+.advanced-toggle .toggle-chevron.expanded { transform: rotate(90deg); }
 .provider-form textarea {
     width: 100%; resize: vertical; padding: 8px 12px; border: 1px solid var(--border);
     border-radius: var(--radius); background: var(--surface); color: var(--text);
@@ -319,7 +325,7 @@ select option { background: var(--surface); color: var(--text); }
 
 /* ===== Modal ===== */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-.modal-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; width: 480px; max-width: 90vw; display: flex; flex-direction: column; gap: 12px; }
+.modal-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; width: 480px; max-width: 90vw; max-height: 85vh; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
 .modal-card h3 { font-size: 1rem; font-weight: 600; color: var(--text); margin: 0; }
 .modal-description { font-size: 0.85rem; color: var(--text-muted); line-height: 1.4; }
 .modal-hint { font-size: 0.8rem; color: var(--text-muted); padding: 8px; background: var(--bg); border-radius: var(--radius); border-left: 3px solid var(--warning); }
@@ -329,7 +335,7 @@ select option { background: var(--surface); color: var(--text); }
 .modal-card-wide { width: 960px; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column; }
 .modal-two-column { display: flex; gap: 16px; min-height: 0; flex: 1; overflow: hidden; }
 .modal-column-left { flex: 3; min-width: 0; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
-.modal-column-right { flex: 2; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.modal-column-right { flex: 2; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; }
 .modal-provider-list { font-size: 0.82rem; display: flex; flex-direction: column; gap: 4px; }
 .modal-provider-list strong { color: var(--text-muted); }
 .modal-card-wide .pipeline-sidebar {

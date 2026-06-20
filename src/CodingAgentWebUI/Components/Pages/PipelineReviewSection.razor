@@ -14,7 +14,10 @@
         </div>
         <div class="config-sub-fields">
             <div class="form-group">
-                <label>Minimum Severity for Inline Posting</label>
+                <div class="label-with-hint">
+                    <label>Minimum Severity for Inline Posting</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Only findings at or above this severity are posted as inline PR comments. Default: Warning">?</span>
+                </div>
                 <select @bind="_inlineSeverityThreshold" disabled="@(!_inlineCommentsEnabled)">
                     <option value="@FindingSeverity.Critical">Critical</option>
                     <option value="@FindingSeverity.Warning">Warning</option>
@@ -22,9 +25,18 @@
                 </select>
             </div>
             <div class="form-group">
-                <label>Maximum Inline Comments per Review</label>
+                <div class="label-with-hint">
+                    <label>Maximum Inline Comments per Review</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Cap on inline comments posted per review cycle. Prevents flooding PRs with noise. Default: 15">?</span>
+                </div>
                 <input type="number" @bind="_inlineMaxComments" min="1" max="50" disabled="@(!_inlineCommentsEnabled)" />
             </div>
+            <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
+                <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")">▶</span>
+                <span>Advanced settings</span>
+            </div>
+            @if (_showAdvanced)
+            {
             <div class="form-group form-checkbox">
                 <label>
                     <input type="checkbox" @bind="_inlineOrderBySeverity" disabled="@(!_inlineCommentsEnabled)" />
@@ -32,10 +44,13 @@
                 </label>
             </div>
             <div class="form-group">
-                <label>Format Correction Retries</label>
+                <div class="label-with-hint">
+                    <label>Format Correction Retries</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Number of times to re-ask the AI agent if it doesn't include file/line references in its output. Each retry adds an additional API call. Default: 1">?</span>
+                </div>
                 <input type="number" @bind="_inlineMaxRetries" min="0" max="5" disabled="@(!_inlineCommentsEnabled)" />
-                <span class="form-hint">Number of times to re-ask the AI agent if it doesn't include file/line references in its output. Each retry adds an additional API call.</span>
             </div>
+            }
         </div>
         <div class="pipeline-form-actions">
             <button class="btn-save" @onclick="SaveAsync">Save Review Settings</button>
@@ -52,6 +67,7 @@
     private int _inlineMaxComments = 15;
     private bool _inlineOrderBySeverity = true;
     private int _inlineMaxRetries = 1;
+    private bool _showAdvanced;
 
     protected override async Task OnInitializedAsync()
     {

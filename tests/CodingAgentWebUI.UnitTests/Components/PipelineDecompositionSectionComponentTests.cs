@@ -37,9 +37,8 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
         var cut = Render<PipelineDecompositionSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
         Assert.Contains("Max Sub-Issues Per Epic", cut.Markup);
-        Assert.Contains("Max Concurrent Decompositions", cut.Markup);
         Assert.Contains("Decomposition Timeout", cut.Markup);
-        Assert.Contains("Max Open Issues for Context", cut.Markup);
+        Assert.Contains("Advanced settings", cut.Markup);
     }
 
     [Fact]
@@ -48,7 +47,7 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
         var cut = Render<PipelineDecompositionSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
         var hints = cut.FindAll(".form-hint-icon");
-        Assert.Equal(4, hints.Count);
+        Assert.Equal(2, hints.Count); // advanced fields hidden by default
     }
 
     [Fact]
@@ -68,9 +67,7 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
 
         var inputs = cut.FindAll("input[type='number']");
         Assert.Contains(inputs, i => i.GetAttribute("value") == "8");
-        Assert.Contains(inputs, i => i.GetAttribute("value") == "4");
         Assert.Contains(inputs, i => i.GetAttribute("value") == "30");
-        Assert.Contains(inputs, i => i.GetAttribute("value") == "100");
     }
 
     [Fact]

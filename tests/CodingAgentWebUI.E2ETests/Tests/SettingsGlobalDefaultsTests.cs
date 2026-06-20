@@ -127,10 +127,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         var markup = await Page.ContentAsync();
         Assert.Contains("Agent Code Review Enabled", markup);
         Assert.Contains("Max Review Iterations", markup);
-        Assert.Contains("Review Isolation", markup);
         Assert.Contains("Fix Prompt", markup);
-        Assert.Contains("CI Timeout", markup);
-        Assert.Contains("CI Poll Interval", markup);
 
         var saveBtn = Page.Locator("button:has-text('Save Implementation')");
         await saveBtn.ClickAsync();
@@ -199,7 +196,6 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         Assert.Contains("Agent Routing", markup);
         Assert.Contains("Default Required Agent Labels", markup);
         Assert.Contains("Brain Repository", markup);
-        Assert.Contains("Brain Read-Only Mode", markup);
         Assert.Contains("Brain Push Max Retries", markup);
         Assert.Contains("Agent Health Monitoring", markup);
         Assert.Contains("Agent Disconnect Grace Period", markup);

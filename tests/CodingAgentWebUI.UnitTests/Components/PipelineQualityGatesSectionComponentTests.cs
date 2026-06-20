@@ -54,10 +54,8 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
         var cut = Render<PipelineQualityGatesSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
 
-        Assert.Contains("External CI Settings", cut.Markup);
-        Assert.Contains("Pipeline Provider is configured", cut.Markup);
-        Assert.Contains("CI Timeout", cut.Markup);
-        Assert.Contains("CI Poll Interval", cut.Markup);
+        // CI settings are behind the advanced toggle
+        Assert.Contains("Advanced settings", cut.Markup);
     }
 
     [Fact]

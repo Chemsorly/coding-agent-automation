@@ -6,18 +6,17 @@
     <p class="section-description">Global pipeline settings — retry limits, timeouts, and workspace configuration that apply to all runs.</p>
     <div class="provider-form">
         <div class="form-group">
-            <label>Max Retries</label>
+            <div class="label-with-hint">
+                <label>Max Retries</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum number of full pipeline retry attempts per run (analysis + implementation). Does not include infrastructure retries. Default: 3">?</span>
+            </div>
             <input type="number" @bind="_maxRetries" min="0" max="10" />
         </div>
         <div class="form-group">
             <div class="label-with-hint">
-                <label>Max Analysis Retries</label>
-                <span class="form-hint-icon" aria-hidden="true" title="Retry cap for the analysis phase specifically. 0 = no retry (fail on first failure). Default: 2">?</span>
+                <label>Agent Timeout (minutes)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum time an agent can run before the pipeline forcibly terminates it. Default: 30 min">?</span>
             </div>
-            <input type="number" @bind="_maxAnalysisRetries" min="0" max="5" />
-        </div>
-        <div class="form-group">
-            <label>Agent Timeout (minutes)</label>
             <input type="number" @bind="_agentTimeoutMinutes" min="1" />
         </div>
         <div class="form-group">
@@ -26,6 +25,26 @@
                 <span class="form-hint-icon" aria-hidden="true" title="Maximum retries for infrastructure CI failures (e.g. flaky runners, network issues). Does not consume the agent retry budget.">?</span>
             </div>
             <input type="number" @bind="_maxInfrastructureRetries" min="0" max="10" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Failed Run Workspace Retention (days)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Days to keep workspaces for failed/cancelled runs. 0 = delete immediately, -1 = keep forever">?</span>
+            </div>
+            <input type="number" @bind="_failedWorkspaceRetentionDays" min="-1" />
+        </div>
+        <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
+            <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")">▶</span>
+            <span>Advanced settings</span>
+        </div>
+        @if (_showAdvanced)
+        {
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Max Analysis Retries</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Retry cap for the analysis phase specifically. 0 = no retry (fail on first failure). Default: 2">?</span>
+            </div>
+            <input type="number" @bind="_maxAnalysisRetries" min="0" max="5" />
         </div>
         <div class="form-group">
             <div class="label-with-hint">
@@ -57,13 +76,6 @@
         </div>
         <div class="form-group">
             <div class="label-with-hint">
-                <label>Failed Run Workspace Retention (days)</label>
-                <span class="form-hint-icon" aria-hidden="true" title="Days to keep workspaces for failed/cancelled runs. 0 = delete immediately, -1 = keep forever">?</span>
-            </div>
-            <input type="number" @bind="_failedWorkspaceRetentionDays" min="-1" />
-        </div>
-        <div class="form-group">
-            <div class="label-with-hint">
                 <label>Issue Page Size</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Number of issues fetched per page when polling. Default: 25">?</span>
             </div>
@@ -77,6 +89,7 @@
             <input type="text" @bind="_blacklistedPathsText" />
             <span class="form-hint">Comma-separated (e.g. .kiro,.github,.brain)</span>
         </div>
+        }
         <div class="pipeline-form-actions">
             <button class="btn-save" @onclick="SaveAsync">Save General Settings</button>
         </div>
@@ -98,6 +111,7 @@
     private string _workspaceBaseDirectory = "./workspaces";
     private int _issuePageSize = 25;
     private string _blacklistedPathsText = ".kiro,.github,.brain";
+    private bool _showAdvanced;
 
     protected override async Task OnInitializedAsync()
     {
