@@ -565,20 +565,44 @@ public sealed class LocalPipelineExecutor
     }
 
     /// <summary>
+    /// Builds the common step prefix shared by all pipelines:
+    /// Clone → EnsureGitignore → [CloneProjectRepositories] → WriteMcpConfig → WriteSteering.
+    /// </summary>
+    private static List<IPipelineStep> BuildCommonPrefix(JobAssignmentMessage job, bool includeProjectClone = false)
+    {
+        var steps = new List<IPipelineStep>
+        {
+            new CloneRepositoryStep(),
+            new EnsureAgentGitignoreStep(),
+        };
+        if (includeProjectClone)
+            steps.Add(new CloneProjectRepositoriesStep());
+        steps.Add(new WriteMcpConfigStep(job));
+        steps.Add(new WriteSteeringStep(job));
+        return steps;
+    }
+
+    /// <summary>
+    /// Builds the full step prefix (common prefix + RunEnvironmentSetup + SyncBrainPreRun).
+    /// Used by agent and decomposition pipelines.
+    /// </summary>
+    private static List<IPipelineStep> BuildFullPrefix(JobAssignmentMessage job, bool includeProjectClone = false)
+    {
+        var steps = BuildCommonPrefix(job, includeProjectClone);
+        steps.Add(new RunEnvironmentSetupStep(job));
+        steps.Add(new SyncBrainPreRunStep());
+        return steps;
+    }
+
+    /// <summary>
     /// Builds the ordered step pipeline for agent-side execution.
     /// Skips FetchIssueStep (issue data comes from job assignment) and adds MCP config step.
     /// </summary>
     internal static IReadOnlyList<IPipelineStep> BuildAgentStepPipeline(
         JobAssignmentMessage job, HubConnection connection)
     {
-        var steps = new List<IPipelineStep>
-        {
-            new CloneRepositoryStep(),
-            new EnsureAgentGitignoreStep(),
-            new WriteMcpConfigStep(job),
-            new WriteSteeringStep(job),
-            new RunEnvironmentSetupStep(job),
-            new SyncBrainPreRunStep(),
+        var steps = BuildFullPrefix(job);
+        steps.AddRange([
             new DetectReworkStep(),
             new WritePrConversationContextStep(),
             new CreateBranchStep(),
@@ -588,59 +612,50 @@ public sealed class LocalPipelineExecutor
             new BrainPullBeforeWriteStep(),
             new ReviewCodeStep(),
             new RunQualityGatesStep()
-        };
+        ]);
         return steps;
     }
 
     /// <summary>
     /// Builds the ordered step pipeline for PR review runs.
-    /// Shorter sequence: Clone → EnvironmentSetup → CreateBranch → SyncBrain → ExtractLinkedIssues → ReviewCode → PostFindings.
+    /// Shorter sequence: Clone → WriteMcpConfig → WriteSteering → CreateBranch → SyncBrain → ExtractLinkedIssues → ReviewCode → PostFindings.
     /// Skips analysis, code generation, quality gates, and rework detection.
     /// </summary>
     internal static IReadOnlyList<IPipelineStep> BuildReviewStepPipeline(JobAssignmentMessage job)
     {
-        return new IPipelineStep[]
-        {
-            new CloneRepositoryStep(),
-            new EnsureAgentGitignoreStep(),
-            new WriteMcpConfigStep(job),
-            new WriteSteeringStep(job),
+        var steps = BuildCommonPrefix(job);
+        steps.AddRange([
             new CreateBranchStep(),
             new SyncBrainPreRunStep(),
             new ExtractLinkedIssuesStep(new IssueDescriptionParser()),
             new ReviewCodeStep(),
             new PostReviewFindingsStep()
-        };
+        ]);
+        return steps;
     }
 
     /// <summary>
     /// Builds the step pipeline for DecompositionAnalysis (Phase 1).
-    /// Sequence: Clone → SyncBrain → WriteOpenIssueContext → DecompositionAnalysis → PostDecompositionPlan.
+    /// Sequence: Clone → CloneProjectRepos → WriteMcpConfig → WriteSteering → RunEnvironmentSetup → SyncBrain → WriteProjectContext → WriteOpenIssueContext → DecompositionAnalysis → PostDecompositionPlan.
     /// IOpenIssueContextWriter is injected into the WriteOpenIssueContextStep via constructor.
     /// </summary>
     internal static IReadOnlyList<IPipelineStep> BuildDecompositionAnalysisStepPipeline(
         JobAssignmentMessage job,
         IOpenIssueContextWriter openIssueContextWriter)
     {
-        return new IPipelineStep[]
-        {
-            new CloneRepositoryStep(),
-            new EnsureAgentGitignoreStep(),
-            new CloneProjectRepositoriesStep(),
-            new WriteMcpConfigStep(job),
-            new WriteSteeringStep(job),
-            new RunEnvironmentSetupStep(job),
-            new SyncBrainPreRunStep(),
+        var steps = BuildFullPrefix(job, includeProjectClone: true);
+        steps.AddRange([
             new WriteProjectContextStep(),
             new WriteOpenIssueContextStep(openIssueContextWriter),
             new DecompositionAnalysisStep(),
             new PostDecompositionPlanStep()
-        };
+        ]);
+        return steps;
     }
 
     /// <summary>
     /// Builds the step pipeline for Decomposition (Phase 2).
-    /// Sequence: Clone → SyncBrain → WriteProjectContext → WriteOpenIssueContext → Decomposition → CreateSubIssues → PostDecompositionSummary.
+    /// Sequence: Clone → CloneProjectRepos → WriteMcpConfig → WriteSteering → RunEnvironmentSetup → SyncBrain → WriteProjectContext → WriteOpenIssueContext → Decomposition → CreateSubIssues → PostDecompositionSummary.
     /// WriteProjectContextStep is included so the agent has cross-repo routing context
     /// when generating sub-issue JSON files with targetRepository values.
     /// WriteOpenIssueContextStep provides deduplication context for the agent.
@@ -649,21 +664,15 @@ public sealed class LocalPipelineExecutor
         JobAssignmentMessage job,
         IOpenIssueContextWriter openIssueContextWriter)
     {
-        return new IPipelineStep[]
-        {
-            new CloneRepositoryStep(),
-            new EnsureAgentGitignoreStep(),
-            new CloneProjectRepositoriesStep(),
-            new WriteMcpConfigStep(job),
-            new WriteSteeringStep(job),
-            new RunEnvironmentSetupStep(job),
-            new SyncBrainPreRunStep(),
+        var steps = BuildFullPrefix(job, includeProjectClone: true);
+        steps.AddRange([
             new WriteProjectContextStep(),
             new WriteOpenIssueContextStep(openIssueContextWriter),
             new DecompositionStep(),
             new CreateSubIssuesStep(),
             new PostDecompositionSummaryStep()
-        };
+        ]);
+        return steps;
     }
 
     private PipelineStepContext CreateStepContext(
