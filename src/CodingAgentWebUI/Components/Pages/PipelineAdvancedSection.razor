@@ -1,0 +1,184 @@
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+
+<section class="settings-section">
+    <h2>Advanced</h2>
+    <p class="section-description">Low-level agent orchestration settings — buffer capacities, heartbeat monitoring, brain repository, and agent routing. Changes may require restart.</p>
+    <div class="provider-form">
+        <div class="config-sub-fields">
+            <h3 style="margin-bottom: 0.5rem;">Agent Routing</h3>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Default Required Agent Labels</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Global fallback for agent label routing when a repo's provider config doesn't specify labels. Comma-separated (e.g. 'kiro,dotnet'). Leave empty for any idle agent.">?</span>
+                </div>
+                <input type="text" @bind="_defaultRequiredAgentLabels" placeholder="(any agent)" />
+                <span class="form-hint">Comma-separated. Empty = any idle agent can be selected.</span>
+            </div>
+        </div>
+
+        <div class="config-sub-fields" style="margin-top: 1rem;">
+            <h3 style="margin-bottom: 0.5rem;">Brain Repository</h3>
+            <div class="form-group form-checkbox">
+                <label>
+                    <input type="checkbox" @bind="_brainReadOnly" />
+                    Brain Read-Only Mode
+                </label>
+                <span class="form-hint">When enabled, brain sync and context injection proceed but all write operations are skipped.</span>
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Brain Push Max Retries</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Retry attempts when brain repo push fails with non-fast-forward (concurrent conflict). Each retry fetches, rebases, resolves conflicts. Default: 3">?</span>
+                </div>
+                <input type="number" @bind="_brainPushMaxRetries" min="0" max="10" />
+            </div>
+        </div>
+
+        <div class="config-sub-fields" style="margin-top: 1rem;">
+            <h3 style="margin-bottom: 0.5rem;">Agent Health Monitoring</h3>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Agent Disconnect Grace Period (minutes)</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="How long to wait after an agent disconnects before marking its run as Failed. Default: 5 min">?</span>
+                </div>
+                <input type="number" @bind="_agentDisconnectGracePeriodMinutes" min="1" max="30" />
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Agent Busy Progress Timeout (minutes)</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="How long a busy agent can go without pipeline step progress before being marked stuck. Default: 60 min">?</span>
+                </div>
+                <input type="number" @bind="_agentBusyProgressTimeoutMinutes" min="5" max="180" />
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Heartbeat Sweep Interval (seconds)</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Interval between heartbeat monitor sweeps. Requires restart. Default: 60s">?</span>
+                </div>
+                <input type="number" @bind="_heartbeatSweepIntervalSeconds" min="10" max="300" />
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Heartbeat Timeout (seconds)</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Seconds without a heartbeat before an agent is considered stale. Default: 90s">?</span>
+                </div>
+                <input type="number" @bind="_heartbeatTimeoutSeconds" min="30" max="600" />
+            </div>
+        </div>
+
+        <div class="config-sub-fields" style="margin-top: 1rem;">
+            <h3 style="margin-bottom: 0.5rem;">Buffer Capacities</h3>
+            <div class="form-hint" style="margin-bottom: 0.75rem;">
+                ℹ️ Ring buffer sizes for in-memory run data. Larger values consume more memory. Changes apply to new runs only.
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Output Buffer Capacity</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Max output lines retained per active run (ring buffer). Default: 10,000">?</span>
+                </div>
+                <input type="number" @bind="_outputBufferCapacity" min="1000" max="100000" />
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Output Lines Capacity</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Max lines in PipelineRun.OutputLines bounded queue. Default: 5,000">?</span>
+                </div>
+                <input type="number" @bind="_outputLinesCapacity" min="500" max="50000" />
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Chat History Capacity</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Max chat entries in PipelineRun.ChatHistory bounded queue. Default: 200">?</span>
+                </div>
+                <input type="number" @bind="_chatHistoryCapacity" min="50" max="1000" />
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Quality Gate History Capacity</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Max quality gate reports in bounded queue. Default: 50">?</span>
+                </div>
+                <input type="number" @bind="_qualityGateHistoryCapacity" min="10" max="500" />
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Retry Errors Capacity</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Max retry error messages in bounded queue. Default: 100">?</span>
+                </div>
+                <input type="number" @bind="_retryErrorsCapacity" min="10" max="1000" />
+            </div>
+        </div>
+
+        <div class="pipeline-form-actions">
+            <button class="btn-save" @onclick="SaveAsync">Save Advanced Settings</button>
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private string _defaultRequiredAgentLabels = "";
+    private bool _brainReadOnly;
+    private int _brainPushMaxRetries = 3;
+    private int _agentDisconnectGracePeriodMinutes = 5;
+    private int _agentBusyProgressTimeoutMinutes = 60;
+    private int _heartbeatSweepIntervalSeconds = 60;
+    private int _heartbeatTimeoutSeconds = 90;
+    private int _outputBufferCapacity = 10000;
+    private int _outputLinesCapacity = 5000;
+    private int _chatHistoryCapacity = 200;
+    private int _qualityGateHistoryCapacity = 50;
+    private int _retryErrorsCapacity = 100;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        _defaultRequiredAgentLabels = config.DefaultRequiredAgentLabels ?? "";
+        _brainReadOnly = config.BrainReadOnly;
+        _brainPushMaxRetries = config.BrainPushMaxRetries;
+        _agentDisconnectGracePeriodMinutes = (int)config.AgentDisconnectGracePeriod.TotalMinutes;
+        _agentBusyProgressTimeoutMinutes = (int)config.AgentBusyProgressTimeout.TotalMinutes;
+        _heartbeatSweepIntervalSeconds = config.HeartbeatSweepIntervalSeconds;
+        _heartbeatTimeoutSeconds = config.HeartbeatTimeoutSeconds;
+        _outputBufferCapacity = config.OutputBufferCapacity;
+        _outputLinesCapacity = config.OutputLinesCapacity;
+        _chatHistoryCapacity = config.ChatHistoryCapacity;
+        _qualityGateHistoryCapacity = config.QualityGateHistoryCapacity;
+        _retryErrorsCapacity = config.RetryErrorsCapacity;
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            var labels = string.IsNullOrWhiteSpace(_defaultRequiredAgentLabels)
+                ? null
+                : _defaultRequiredAgentLabels.Trim();
+
+            await ConfigStore.UpdatePipelineConfigAsync(
+                current => current with
+                {
+                    DefaultRequiredAgentLabels = labels,
+                    BrainReadOnly = _brainReadOnly,
+                    BrainPushMaxRetries = _brainPushMaxRetries,
+                    AgentDisconnectGracePeriod = TimeSpan.FromMinutes(_agentDisconnectGracePeriodMinutes),
+                    AgentBusyProgressTimeout = TimeSpan.FromMinutes(_agentBusyProgressTimeoutMinutes),
+                    HeartbeatSweepIntervalSeconds = _heartbeatSweepIntervalSeconds,
+                    HeartbeatTimeoutSeconds = _heartbeatTimeoutSeconds,
+                    OutputBufferCapacity = _outputBufferCapacity,
+                    OutputLinesCapacity = _outputLinesCapacity,
+                    ChatHistoryCapacity = _chatHistoryCapacity,
+                    QualityGateHistoryCapacity = _qualityGateHistoryCapacity,
+                    RetryErrorsCapacity = _retryErrorsCapacity
+                },
+                CancellationToken.None);
+            await OnShowStatus.InvokeAsync(("Advanced settings saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+}

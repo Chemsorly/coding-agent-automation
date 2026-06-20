@@ -22,6 +22,14 @@
                     <input type="number" @bind="_codeReviewMaxIterations" min="1" max="5" />
                 </div>
                 <div class="form-group">
+                    <label>Review Isolation</label>
+                    <select @bind="_reviewIsolation">
+                        <option value="@ReviewIsolation.Isolated">Isolated (fresh sessions, no shared context)</option>
+                        <option value="@ReviewIsolation.Shared">Shared (review agents share the codegen session)</option>
+                    </select>
+                    <span class="form-hint">Isolated eliminates self-attribution bias. Shared gives reviewers full implementation context.</span>
+                </div>
+                <div class="form-group">
                     <label>Fix Prompt <span class="form-hint">(leave empty for single-pass review)</span></label>
                     <textarea @bind="_codeReviewFixPrompt" rows="3"></textarea>
                     <button type="button" class="btn-revert" disabled="@(_codeReviewFixPrompt == PipelineConfiguration.DefaultFixPrompt)" @onclick="() => _codeReviewFixPrompt = PipelineConfiguration.DefaultFixPrompt">Reset to default</button>
@@ -55,6 +63,7 @@
     private bool _codeReviewEnabled = true;
     private int _codeReviewMaxIterations = 1;
     private string? _codeReviewFixPrompt;
+    private ReviewIsolation _reviewIsolation = ReviewIsolation.Isolated;
     private int _externalCiTimeoutMinutes = 15;
     private int _externalCiPollIntervalSeconds = 30;
 
@@ -64,6 +73,7 @@
         _codeReviewEnabled = config.CodeReview.MaxIterations > 0;
         _codeReviewMaxIterations = config.CodeReview.MaxIterations;
         _codeReviewFixPrompt = config.CodeReview.FixPrompt;
+        _reviewIsolation = config.CodeReview.ReviewIsolation;
         _externalCiTimeoutMinutes = (int)config.ExternalCiTimeout.TotalMinutes;
         _externalCiPollIntervalSeconds = (int)config.ExternalCiPollInterval.TotalSeconds;
     }
@@ -79,7 +89,7 @@
                     {
                         MaxIterations = _codeReviewEnabled ? Math.Max(1, _codeReviewMaxIterations) : 0,
                         FixPrompt = _codeReviewFixPrompt,
-                        ReviewIsolation = current.CodeReview.ReviewIsolation,
+                        ReviewIsolation = _reviewIsolation,
                         InlineComments = current.CodeReview.InlineComments,
                     },
                     ExternalCiTimeout = TimeSpan.FromMinutes(_externalCiTimeoutMinutes),

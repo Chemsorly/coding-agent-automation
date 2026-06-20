@@ -9,6 +9,20 @@
             <label>Max Refactoring Proposals</label>
             <input type="number" @bind="_maxRefactoringProposals" min="1" max="10" />
         </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Hotspot Analysis Lookback (days)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Time window for git hotspot analysis. Only commits within this window are counted for refactoring detection. Default: 90 days">?</span>
+            </div>
+            <input type="number" @bind="_hotspotAnalysisLookbackDays" min="7" max="365" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Refactoring Outcome Lookback (days)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Time window for querying past refactoring proposal outcomes for feedback context. Default: 90 days">?</span>
+            </div>
+            <input type="number" @bind="_refactoringOutcomeLookbackDays" min="7" max="365" />
+        </div>
         <div class="config-sub-fields" style="margin-top: 1rem;">
             <h3 style="margin-bottom: 0.5rem;">Adversarial Review</h3>
             <div class="form-hint" style="margin-bottom: 0.75rem;">
@@ -44,6 +58,8 @@
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private int _maxRefactoringProposals = 3;
+    private int _hotspotAnalysisLookbackDays = 90;
+    private int _refactoringOutcomeLookbackDays = 90;
     private bool _refactoringReviewEnabled = true;
     private bool _brainConsolidationReviewEnabled = true;
     private bool _harnessSuggestionsReviewEnabled = true;
@@ -52,6 +68,8 @@
     {
         var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         _maxRefactoringProposals = config.MaxRefactoringProposals;
+        _hotspotAnalysisLookbackDays = (int)config.HotspotAnalysisLookback.TotalDays;
+        _refactoringOutcomeLookbackDays = (int)config.RefactoringOutcomeLookback.TotalDays;
         _refactoringReviewEnabled = config.RefactoringReviewEnabled;
         _brainConsolidationReviewEnabled = config.BrainConsolidationReviewEnabled;
         _harnessSuggestionsReviewEnabled = config.HarnessSuggestionsReviewEnabled;
@@ -65,6 +83,8 @@
                 current => current with
                 {
                     MaxRefactoringProposals = _maxRefactoringProposals,
+                    HotspotAnalysisLookback = TimeSpan.FromDays(_hotspotAnalysisLookbackDays),
+                    RefactoringOutcomeLookback = TimeSpan.FromDays(_refactoringOutcomeLookbackDays),
                     RefactoringReviewEnabled = _refactoringReviewEnabled,
                     BrainConsolidationReviewEnabled = _brainConsolidationReviewEnabled,
                     HarnessSuggestionsReviewEnabled = _harnessSuggestionsReviewEnabled

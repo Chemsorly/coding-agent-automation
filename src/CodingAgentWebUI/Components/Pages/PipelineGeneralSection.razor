@@ -10,6 +10,13 @@
             <input type="number" @bind="_maxRetries" min="0" max="10" />
         </div>
         <div class="form-group">
+            <div class="label-with-hint">
+                <label>Max Analysis Retries</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Retry cap for the analysis phase specifically. 0 = no retry (fail on first failure). Default: 2">?</span>
+            </div>
+            <input type="number" @bind="_maxAnalysisRetries" min="0" max="5" />
+        </div>
+        <div class="form-group">
             <label>Agent Timeout (minutes)</label>
             <input type="number" @bind="_agentTimeoutMinutes" min="1" />
         </div>
@@ -22,10 +29,53 @@
         </div>
         <div class="form-group">
             <div class="label-with-hint">
+                <label>Stall Warning Interval (seconds)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="How long the agent can be silent before the stall monitor logs a warning. Resets after each occurrence. Default: 120s">?</span>
+            </div>
+            <input type="number" @bind="_stallWarningIntervalSeconds" min="30" max="600" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Stall Poll Interval (seconds)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="How often the stall monitor polls agent health status. Default: 30s">?</span>
+            </div>
+            <input type="number" @bind="_stallPollIntervalSeconds" min="5" max="120" />
+        </div>
+        <div class="form-group form-checkbox">
+            <label>
+                <input type="checkbox" @bind="_baselineHealthCheckEnabled" />
+                Baseline Health Check
+            </label>
+            <span class="form-hint">Run baseline build/environment check after branch creation and before analysis.</span>
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Workspace Base Directory</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Base path where agent workspaces are created. Default: ./workspaces">?</span>
+            </div>
+            <input type="text" @bind="_workspaceBaseDirectory" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
                 <label>Failed Run Workspace Retention (days)</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Days to keep workspaces for failed/cancelled runs. 0 = delete immediately, -1 = keep forever">?</span>
             </div>
             <input type="number" @bind="_failedWorkspaceRetentionDays" min="-1" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Issue Page Size</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Number of issues fetched per page when polling. Default: 25">?</span>
+            </div>
+            <input type="number" @bind="_issuePageSize" min="1" max="100" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Blacklisted Paths</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Comma-separated paths that are always unstaged before commit. Prevents agent from committing config/metadata files.">?</span>
+            </div>
+            <input type="text" @bind="_blacklistedPathsText" />
+            <span class="form-hint">Comma-separated (e.g. .kiro,.github,.brain)</span>
         </div>
         <div class="pipeline-form-actions">
             <button class="btn-save" @onclick="SaveAsync">Save General Settings</button>
@@ -38,30 +88,55 @@
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private int _maxRetries = 3;
+    private int _maxAnalysisRetries = 2;
     private int _agentTimeoutMinutes = 30;
     private int _maxInfrastructureRetries = 5;
     private int _failedWorkspaceRetentionDays = 7;
+    private int _stallWarningIntervalSeconds = 120;
+    private int _stallPollIntervalSeconds = 30;
+    private bool _baselineHealthCheckEnabled = true;
+    private string _workspaceBaseDirectory = "./workspaces";
+    private int _issuePageSize = 25;
+    private string _blacklistedPathsText = ".kiro,.github,.brain";
 
     protected override async Task OnInitializedAsync()
     {
         var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         _maxRetries = config.MaxRetries;
+        _maxAnalysisRetries = config.MaxAnalysisRetries;
         _agentTimeoutMinutes = (int)config.AgentTimeout.TotalMinutes;
         _maxInfrastructureRetries = config.MaxInfrastructureRetries;
         _failedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays;
+        _stallWarningIntervalSeconds = (int)config.StallWarningInterval.TotalSeconds;
+        _stallPollIntervalSeconds = (int)config.StallPollInterval.TotalSeconds;
+        _baselineHealthCheckEnabled = config.BaselineHealthCheckEnabled;
+        _workspaceBaseDirectory = config.WorkspaceBaseDirectory;
+        _issuePageSize = config.IssuePageSize;
+        _blacklistedPathsText = string.Join(",", config.BlacklistedPaths);
     }
 
     private async Task SaveAsync()
     {
         try
         {
+            var blacklistedPaths = _blacklistedPathsText
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList();
+
             await ConfigStore.UpdatePipelineConfigAsync(
                 current => current with
                 {
                     MaxRetries = _maxRetries,
+                    MaxAnalysisRetries = _maxAnalysisRetries,
                     AgentTimeout = TimeSpan.FromMinutes(_agentTimeoutMinutes),
                     MaxInfrastructureRetries = _maxInfrastructureRetries,
-                    FailedWorkspaceRetentionDays = _failedWorkspaceRetentionDays
+                    FailedWorkspaceRetentionDays = _failedWorkspaceRetentionDays,
+                    StallWarningInterval = TimeSpan.FromSeconds(_stallWarningIntervalSeconds),
+                    StallPollInterval = TimeSpan.FromSeconds(_stallPollIntervalSeconds),
+                    BaselineHealthCheckEnabled = _baselineHealthCheckEnabled,
+                    WorkspaceBaseDirectory = _workspaceBaseDirectory,
+                    IssuePageSize = _issuePageSize,
+                    BlacklistedPaths = blacklistedPaths
                 },
                 CancellationToken.None);
             await OnShowStatus.InvokeAsync(("General settings saved.", false));

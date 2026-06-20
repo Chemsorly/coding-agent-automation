@@ -122,6 +122,11 @@
                         ConfigStore="ConfigStore"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
+                case SettingsNodes.PipelineAdvanced:
+                    <PipelineAdvancedSection
+                        ConfigStore="ConfigStore"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
                 case SettingsNodes.AgentProfiles:
                     <AgentProfileSection
                         ConfigStore="ConfigStore"

@@ -96,6 +96,10 @@
                      @onclick="() => SelectNode(SettingsNodes.PipelineConsolidation)">
                     Consolidation
                 </div>
+                <div class="tree-node @(SelectedNode == SettingsNodes.PipelineAdvanced ? "active" : "")"
+                     @onclick="() => SelectNode(SettingsNodes.PipelineAdvanced)">
+                    Advanced
+                </div>
             </div>
         }
     </div>
