@@ -5,6 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- E2E tests require Playwright; excluded from solution-level 'dotnet test'.
+         Run explicitly: dotnet test tests/CodingAgentWebUI.E2ETests/ -->
+    <IsTestProject>false</IsTestProject>
   </PropertyGroup>
 
   <ItemGroup>
