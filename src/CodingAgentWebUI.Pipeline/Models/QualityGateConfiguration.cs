@@ -59,12 +59,7 @@ public sealed record QualityGateConfiguration
     [Key(12)]
     public IReadOnlyList<string>? CoverageReportPaths { get; init; }
 
-    /// <summary>
-    /// Quarantine configuration for known-flaky tests.
-    /// When enabled, quarantined test failures are suppressed from the pass/fail decision.
-    /// </summary>
-    [Key(13)]
-    public TestQuarantineConfiguration? TestQuarantine { get; init; }
+    // Key(13) is retired (was TestQuarantine). Do not reuse to avoid deserialization issues with existing data.
 
     /// <summary>
     /// Maximum execution time in seconds for quality gate processes (compilation, tests).

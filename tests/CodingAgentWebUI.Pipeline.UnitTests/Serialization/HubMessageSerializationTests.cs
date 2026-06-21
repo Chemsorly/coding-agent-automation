@@ -181,20 +181,16 @@ public class HubMessageSerializationTests
                 TestsPassed = null,
                 TestsFailed = null,
                 TestsSkipped = null,
-                TestsQuarantined = null,
-                QuarantinedTestNames = null,
                 CoveragePercent = null
             },
             Tests = new GateResult
             {
                 GateName = "Tests",
                 Passed = true,
-                Details = "142 tests passed, 2 quarantined",
+                Details = "142 tests passed",
                 TestsPassed = 142,
                 TestsFailed = 0,
                 TestsSkipped = 3,
-                TestsQuarantined = 2,
-                QuarantinedTestNames = new[] { "FlakyNetworkTest", "TimingDependentTest" },
                 CoveragePercent = 87.5
             },
             Coverage = new GateResult
@@ -230,8 +226,7 @@ public class HubMessageSerializationTests
                         Details = "All passed",
                         TestsPassed = 100,
                         TestsFailed = 0,
-                        TestsSkipped = 1,
-                        TestsQuarantined = 0
+                        TestsSkipped = 1
                     },
                     Coverage = new GateResult { GateName = "Coverage", Passed = true, CoveragePercent = 92.0 }
                 },
@@ -258,12 +253,10 @@ public class HubMessageSerializationTests
         // Tests
         deserialized.Tests.GateName.Should().Be("Tests");
         deserialized.Tests.Passed.Should().BeTrue();
-        deserialized.Tests.Details.Should().Be("142 tests passed, 2 quarantined");
+        deserialized.Tests.Details.Should().Be("142 tests passed");
         deserialized.Tests.TestsPassed.Should().Be(142);
         deserialized.Tests.TestsFailed.Should().Be(0);
         deserialized.Tests.TestsSkipped.Should().Be(3);
-        deserialized.Tests.TestsQuarantined.Should().Be(2);
-        deserialized.Tests.QuarantinedTestNames.Should().BeEquivalentTo(new[] { "FlakyNetworkTest", "TimingDependentTest" });
         deserialized.Tests.CoveragePercent.Should().Be(87.5);
 
         // Coverage (optional, populated)
@@ -447,23 +440,7 @@ public class HubMessageSerializationTests
                     Enabled = true,
                     ExecutionOrder = 1,
                     CoverageReportFormat = "cobertura",
-                    CoverageReportPaths = new[] { "TestResults/**/coverage.cobertura.xml" },
-                    TestQuarantine = new TestQuarantineConfiguration
-                    {
-                        Enabled = true,
-                        QuarantinedTests = new[]
-                        {
-                            new QuarantinedTest
-                            {
-                                TestName = "FlakyIntegrationTest",
-                                Reason = "Intermittent network timeout",
-                                QuarantinedAt = new DateTime(2025, 5, 1, 0, 0, 0, DateTimeKind.Utc),
-                                ExpiresAt = new DateTime(2025, 8, 1, 0, 0, 0, DateTimeKind.Utc),
-                                AssociatedSourceFiles = new[] { "src/Integration/HttpClient.cs" }
-                            }
-                        },
-                        MaxQuarantinedFailuresPerRun = 3
-                    }
+                    CoverageReportPaths = new[] { "TestResults/**/coverage.cobertura.xml" }
                 }
             },
             McpServers = new List<McpServerConfig>
@@ -634,13 +611,6 @@ public class HubMessageSerializationTests
         qg.ExecutionOrder.Should().Be(1);
         qg.CoverageReportFormat.Should().Be("cobertura");
         qg.CoverageReportPaths.Should().BeEquivalentTo(new[] { "TestResults/**/coverage.cobertura.xml" });
-        qg.TestQuarantine.Should().NotBeNull();
-        qg.TestQuarantine!.Enabled.Should().BeTrue();
-        qg.TestQuarantine.MaxQuarantinedFailuresPerRun.Should().Be(3);
-        qg.TestQuarantine.QuarantinedTests.Should().HaveCount(1);
-        qg.TestQuarantine.QuarantinedTests[0].TestName.Should().Be("FlakyIntegrationTest");
-        qg.TestQuarantine.QuarantinedTests[0].ExpiresAt.Should().NotBeNull();
-        qg.TestQuarantine.QuarantinedTests[0].AssociatedSourceFiles.Should().BeEquivalentTo(new[] { "src/Integration/HttpClient.cs" });
 
         // McpServers
         deserialized.McpServers.Should().HaveCount(1);

@@ -28,15 +28,6 @@ public class QualityGateValidator : IQualityGateValidator
     public virtual async Task<QualityGateReport> ValidateAsync(
         string workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, CancellationToken ct, string? baseBranch = null)
     {
-        return await ValidateAsync(workspacePath, qualityGateConfigs, null, ct, baseBranch);
-    }
-
-    /// <summary>
-    /// Validates quality gates with optional branch-awareness for quarantine filtering.
-    /// </summary>
-    public virtual async Task<QualityGateReport> ValidateAsync(
-        string workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, IReadOnlyList<string>? branchModifiedFiles, CancellationToken ct, string? baseBranch = null)
-    {
         ArgumentNullException.ThrowIfNull(workspacePath);
         ArgumentNullException.ThrowIfNull(qualityGateConfigs);
 
@@ -67,13 +58,6 @@ public class QualityGateValidator : IQualityGateValidator
             _logger.Warning(ex, "Failed to clean up quality gates output at {QualityGatesDir}", qualityGatesDir);
         }
 
-        // Compute branch modified files for quarantine branch-awareness if not provided
-        var hasQuarantine = qualityGateConfigs.Any(q => q.TestQuarantine is { Enabled: true });
-        if (branchModifiedFiles == null && hasQuarantine)
-        {
-            branchModifiedFiles = await ComputeBranchModifiedFilesAsync(workspacePath, baseBranch, ct);
-        }
-
         var qgcResults = new List<QgcExecutionResult>();
 
         foreach (var qgc in qualityGateConfigs)
@@ -96,7 +80,7 @@ public class QualityGateValidator : IQualityGateValidator
                 break; // Stop on first failure
             }
 
-            testsResult = await RunQgcTestsAsync(workspacePath, qgc, branchModifiedFiles, ct);
+            testsResult = await RunQgcTestsAsync(workspacePath, qgc, ct);
 
             if (testsResult is { Passed: false })
             {
@@ -160,17 +144,10 @@ public class QualityGateValidator : IQualityGateValidator
         var totalTestsPassed = qgcResults.Sum(r => r.Tests?.TestsPassed ?? 0);
         var totalTestsFailed = qgcResults.Sum(r => r.Tests?.TestsFailed ?? 0);
         var totalTestsSkipped = qgcResults.Sum(r => r.Tests?.TestsSkipped ?? 0);
-        var totalTestsQuarantined = qgcResults.Sum(r => r.Tests?.TestsQuarantined ?? 0);
-        var allQuarantinedNames = qgcResults
-            .Where(r => r.Tests?.QuarantinedTestNames != null)
-            .SelectMany(r => r.Tests!.QuarantinedTestNames!)
-            .ToList();
 
         var testsDetails = allTestsPassed
             ? $"All QGC tests passed: {totalTestsPassed} passed, {totalTestsFailed} failed, {totalTestsSkipped} skipped"
             : $"Tests failed in QGC '{firstFailingQgc?.DisplayName}'";
-        if (totalTestsQuarantined > 0)
-            testsDetails += $" ({totalTestsQuarantined} quarantined)";
 
         var aggregateTests = new GateResult
         {
@@ -179,9 +156,7 @@ public class QualityGateValidator : IQualityGateValidator
             Details = testsDetails,
             TestsPassed = totalTestsPassed,
             TestsFailed = totalTestsFailed,
-            TestsSkipped = totalTestsSkipped,
-            TestsQuarantined = totalTestsQuarantined > 0 ? totalTestsQuarantined : null,
-            QuarantinedTestNames = allQuarantinedNames.Count > 0 ? allQuarantinedNames : null
+            TestsSkipped = totalTestsSkipped
         };
 
         // Aggregate coverage: take the first non-null coverage result
@@ -266,7 +241,7 @@ public class QualityGateValidator : IQualityGateValidator
     /// are used as-is and test counts are parsed from stdout.
     /// </summary>
     private async Task<GateResult?> RunQgcTestsAsync(
-        string workspacePath, QualityGateConfiguration qgc, IReadOnlyList<string>? branchModifiedFiles, CancellationToken ct)
+        string workspacePath, QualityGateConfiguration qgc, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(qgc.TestCommand))
             return null;
@@ -321,15 +296,13 @@ public class QualityGateValidator : IQualityGateValidator
 
         // Parse test counts
         int passed, failed, skipped;
-        IReadOnlyList<string> failedTestNames = [];
         if (isDotnet && resultsDir != null)
         {
-            // Parse TRX files for accurate test counts and individual failed test names
+            // Parse TRX files for accurate test counts
             var trxResult = TrxTestResultParser.ParseTestResults(resultsDir);
             passed = trxResult.Passed;
             failed = trxResult.Failed;
             skipped = trxResult.Skipped;
-            failedTestNames = trxResult.FailedTestNames;
 
             // If TRX parsing found nothing, fall back to stdout parsing
             if (passed == 0 && failed == 0 && skipped == 0)
@@ -337,7 +310,6 @@ public class QualityGateValidator : IQualityGateValidator
                 _logger.Warning("No TRX results found in {ResultsDir} for QGC {QgcName}, falling back to stdout parsing",
                     resultsDir, qgc.DisplayName);
                 (passed, failed, skipped) = ParseTestCountsFromStdout(stdout);
-                failedTestNames = [];
             }
         }
         else
@@ -349,33 +321,7 @@ public class QualityGateValidator : IQualityGateValidator
         _logger.Information("QGC {QgcName} test results: {Passed} passed, {Failed} failed, {Skipped} skipped",
             qgc.DisplayName, passed, failed, skipped);
 
-        // Apply quarantine filtering (only when TRX provides individual test names)
-        var quarantinedNames = new List<string>();
         var gatePassed = exitCode == ExitCodes.Success;
-
-        if (!gatePassed && failedTestNames.Count > 0 && qgc.TestQuarantine is { Enabled: true })
-        {
-            var filterResult = ApplyQuarantineFilter(failedTestNames, qgc.TestQuarantine, branchModifiedFiles, DateTime.UtcNow);
-
-            if (!filterResult.SafetyValveTriggered)
-            {
-                quarantinedNames.AddRange(filterResult.QuarantinedTestNames);
-                var nonQuarantinedFailures = failedTestNames.Count - quarantinedNames.Count;
-                gatePassed = nonQuarantinedFailures == 0;
-                failed = nonQuarantinedFailures;
-
-                if (quarantinedNames.Count > 0)
-                {
-                    _logger.Information("QGC {QgcName} quarantined {Count} flaky test(s): {Tests}",
-                        qgc.DisplayName, quarantinedNames.Count, string.Join(", ", quarantinedNames));
-                }
-            }
-            else
-            {
-                _logger.Warning("QGC {QgcName} exceeded MaxQuarantinedFailuresPerRun ({Max}), treating all {Count} quarantined failures as real",
-                    qgc.DisplayName, qgc.TestQuarantine.MaxQuarantinedFailuresPerRun, filterResult.QuarantinedTestNames.Count);
-            }
-        }
 
         // Clean up results directory (non-fatal) — skip if coverage was collected,
         // because ParseCoverageFromReports needs the Cobertura XML files afterward.
@@ -395,8 +341,6 @@ public class QualityGateValidator : IQualityGateValidator
         var details = gatePassed
             ? $"Tests passed: {passed} passed, {failed} failed, {skipped} skipped"
             : $"Tests failed: {passed} passed, {failed} failed, {skipped} skipped.";
-        if (quarantinedNames.Count > 0)
-            details += $" ({quarantinedNames.Count} quarantined)";
 
         return new GateResult
         {
@@ -405,73 +349,9 @@ public class QualityGateValidator : IQualityGateValidator
             Details = details,
             TestsPassed = passed,
             TestsFailed = failed,
-            TestsSkipped = skipped,
-            TestsQuarantined = quarantinedNames.Count > 0 ? quarantinedNames.Count : null,
-            QuarantinedTestNames = quarantinedNames.Count > 0 ? quarantinedNames : null
+            TestsSkipped = skipped
         };
     }
-
-    /// <summary>
-    /// Applies quarantine filtering to a set of failed test names.
-    /// Returns which tests are quarantined and whether the safety valve was triggered.
-    /// </summary>
-    internal static QuarantineFilterResult ApplyQuarantineFilter(
-        IReadOnlyList<string> failedTestNames,
-        TestQuarantineConfiguration quarantine,
-        IReadOnlyList<string>? branchModifiedFiles,
-        DateTime utcNow)
-    {
-        var quarantinedNames = new List<string>();
-
-        foreach (var failedTest in failedTestNames)
-        {
-            var entry = quarantine.QuarantinedTests.FirstOrDefault(q =>
-                string.Equals(q.TestName, failedTest, StringComparison.Ordinal));
-
-            if (entry == null) continue;
-
-            // Check expiry
-            if (entry.ExpiresAt.HasValue && entry.ExpiresAt.Value < utcNow) continue;
-
-            // Check branch-awareness: if associated source files were modified, lift quarantine
-            if (branchModifiedFiles != null && entry.AssociatedSourceFiles is { Count: > 0 })
-            {
-                var sourceModified = entry.AssociatedSourceFiles.Any(src =>
-                    branchModifiedFiles.Any(mod => IsPathSuffixMatch(mod, src) || IsPathSuffixMatch(src, mod)));
-                if (sourceModified) continue;
-            }
-
-            quarantinedNames.Add(failedTest);
-        }
-
-        var safetyValveTriggered = quarantinedNames.Count > quarantine.MaxQuarantinedFailuresPerRun;
-        return new QuarantineFilterResult(quarantinedNames, safetyValveTriggered);
-    }
-
-    /// <summary>
-    /// Checks whether <paramref name="suffix"/> matches as a path suffix of <paramref name="fullPath"/>,
-    /// ensuring the match starts at a path separator boundary to avoid false positives
-    /// (e.g., "Service.cs" should not match "MyService.cs").
-    /// </summary>
-    internal static bool IsPathSuffixMatch(string fullPath, string suffix)
-    {
-        if (string.Equals(fullPath, suffix, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        var normalizedFull = fullPath.Replace('\\', '/');
-        var normalizedSuffix = suffix.Replace('\\', '/');
-
-        if (!normalizedFull.EndsWith(normalizedSuffix, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        // Ensure the match starts at a path separator boundary
-        var prefixLength = normalizedFull.Length - normalizedSuffix.Length;
-        return prefixLength == 0 || normalizedFull[prefixLength - 1] == '/';
-    }
-
-    internal sealed record QuarantineFilterResult(
-        IReadOnlyList<string> QuarantinedTestNames,
-        bool SafetyValveTriggered);
 
     /// <summary>
     /// Formats a short CI failure summary for GateResult.Details.
@@ -651,32 +531,6 @@ public class QualityGateValidator : IQualityGateValidator
     /// </summary>
     internal static (int Errors, int Warnings) ParseBuildErrorCounts(string output)
         => BuildOutputParser.ParseBuildErrorCounts(output);
-
-    /// <summary>
-    /// Computes the list of files modified by the current branch relative to the base branch.
-    /// Uses git diff --name-only. Returns null if git is not available or the command fails.
-    /// </summary>
-    private async Task<IReadOnlyList<string>?> ComputeBranchModifiedFilesAsync(string workspacePath, string? baseBranch, CancellationToken ct)
-    {
-        try
-        {
-            var (exitCode, stdout, _) = await RunProcessAsync(
-                "git", $"diff --name-only origin/{baseBranch ?? "main"}...HEAD", workspacePath, ct, TimeSpan.FromSeconds(30));
-
-            if (exitCode != 0)
-            {
-                _logger.Debug("git diff failed with exit code {ExitCode}, quarantine branch-awareness disabled", exitCode);
-                return null;
-            }
-
-            return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        }
-        catch (Exception ex)
-        {
-            _logger.Debug(ex, "Failed to compute branch modified files, quarantine branch-awareness disabled");
-            return null;
-        }
-    }
 
     private protected virtual async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
         string fileName, string arguments, string workingDirectory, CancellationToken ct, TimeSpan timeout)
