@@ -600,28 +600,12 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         else
             await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Done, ct);
 
-        // ── PR description generation: runs on non-draft PRs regardless of brain config ──
-        if (!isDraft && !string.IsNullOrEmpty(run.PullRequestNumber))
-        {
-            _lifecycle.TransitionTo(run, PipelineStep.GeneratingPrDescription);
-            await _finalization.GeneratePrDescriptionAsync(
-                run, _providerManager.ActiveAgentProvider!, _providerManager.ActiveRepoProvider!,
-                _activeConfig!, line => _lifecycle.EmitOutputLine(line), ct);
-        }
-
-        if (!isDraft && _providerManager.ActiveBrainProvider != null && !_activeConfig!.BrainReadOnly)
-        {
-            _lifecycle.TransitionTo(run, PipelineStep.ReflectingOnRun);
-            await _finalization.RunReflectionAsync(run, _providerManager.ActiveAgentProvider!, _activeConfig, line => _lifecycle.EmitOutputLine(line), ct);
-
-            _lifecycle.TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
-            await _finalization.SyncBrainPostRunAsync(run, _brainSync, _providerManager.ActiveBrainProvider, _activeConfig, line => _lifecycle.EmitOutputLine(line), ct);
-        }
-
-        if (!isDraft)
-        {
-            await _finalization.CollectFeedbackAsync(run, _providerManager.ActiveAgentProvider!, _feedbackService, _historyService, line => _lifecycle.EmitOutputLine(line), ct);
-        }
+        await _finalization.RunPostPrSequenceAsync(
+            run, isDraft, _providerManager.ActiveAgentProvider!, _providerManager.ActiveRepoProvider!,
+            _activeConfig!, _brainSync, _providerManager.ActiveBrainProvider, _feedbackService,
+            _historyService, line => _lifecycle.EmitOutputLine(line),
+            step => { _lifecycle.TransitionTo(run, step); return Task.CompletedTask; },
+            ct);
 
         _lifecycle.TransitionTo(run, finalStep);
         _lifecycle.AddRunToHistory(run);
