@@ -369,8 +369,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
             {
                 _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
-                run.CompletedAt = DateTime.UtcNow;
-                run.CompletedAtOffset = DateTimeOffset.UtcNow;
+                run.MarkCompleted();
                 await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
                 _lifecycle.EmitOutputLine("🚫 Pipeline cancelled");
                 _lifecycle.TransitionTo(run, PipelineStep.Cancelled);
@@ -711,8 +710,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     private async Task FailRunAsync(PipelineRun run, string reason, CancellationToken ct = default)
     {
         run.FailureReason = reason;
-        run.CompletedAt = DateTime.UtcNow;
-        run.CompletedAtOffset = DateTimeOffset.UtcNow;
+        run.MarkCompleted();
         _logger.Information(
             "Pipeline {RunId} PipelineOrchestrationService.FailRunAsync swapping label to agent:error for issue {IssueIdentifier} (reason={Reason}, step={CurrentStep})",
             run.RunId, run.IssueIdentifier, reason, run.CurrentStep);
