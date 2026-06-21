@@ -122,8 +122,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     public Task FailRunAsync(PipelineRun run, string reason, CancellationToken ct = default)
     {
         run.FailureReason = reason;
-        run.CompletedAt = DateTime.UtcNow;
-        run.CompletedAtOffset = DateTimeOffset.UtcNow;
+        run.MarkCompleted();
         EmitOutputLine($"❌ Pipeline failed: {reason}");
         TransitionTo(run, PipelineStep.Failed);
         AddRunToHistory(run);
@@ -191,8 +190,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         }
         // TODO: The catch block is load-bearing — a race window exists between the atomic read and .Cancel(). Consider logging at Debug level here so silent cancellation failures are observable.
         catch (ObjectDisposedException) { }
-        run.CompletedAt = DateTime.UtcNow;
-        run.CompletedAtOffset = DateTimeOffset.UtcNow;
+        run.MarkCompleted();
         EmitOutputLine("🚫 Pipeline cancelled");
         TransitionTo(run, PipelineStep.Cancelled);
         AddRunToHistory(run);
@@ -215,8 +213,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         var cancelledIssues = new List<(string IssueIdentifier, string IssueProviderConfigId)>();
         foreach (var run in activeRuns)
         {
-            run.CompletedAt = DateTime.UtcNow;
-            run.CompletedAtOffset = DateTimeOffset.UtcNow;
+            run.MarkCompleted();
             run.CurrentStep = PipelineStep.Cancelled;
             AddRunToHistory(run);
             _runService.RemoveRun(run.RunId);

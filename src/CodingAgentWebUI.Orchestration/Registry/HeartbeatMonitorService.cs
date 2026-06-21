@@ -135,8 +135,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
                             if (run is not null)
                             {
                                 run.FailureReason = "Agent did not resume orphaned job within grace period";
-                                run.CompletedAt = DateTime.UtcNow;
-                                run.CompletedAtOffset = DateTimeOffset.UtcNow;
+                                run.MarkCompleted();
                                 run.CurrentStep = PipelineStep.Failed;
 
                                 _historyService.AddRunToHistory(run);
@@ -180,8 +179,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
                                 agent.AgentId, agent.ActiveJobId, elapsed.TotalSeconds, progressTimeout);
 
                             run.FailureReason = $"Agent busy without progress for {elapsed.TotalMinutes:F0} minutes (progress timeout)";
-                            run.CompletedAt = DateTime.UtcNow;
-                            run.CompletedAtOffset = DateTimeOffset.UtcNow;
+                            run.MarkCompleted();
                             run.CurrentStep = PipelineStep.Failed;
 
                             _historyService.AddRunToHistory(run);
@@ -233,8 +231,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
                 if (run is not null)
                 {
                     run.FailureReason = "Agent disconnected";
-                    run.CompletedAt = DateTime.UtcNow;
-                    run.CompletedAtOffset = DateTimeOffset.UtcNow;
+                    run.MarkCompleted();
                     run.CurrentStep = PipelineStep.Failed;
 
                     // Persist to history and remove from active runs
@@ -280,8 +277,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
 
             // Agent gone from registry entirely — orphaned run
             run.FailureReason = "Agent deregistered (orphaned run)";
-            run.CompletedAt = DateTime.UtcNow;
-            run.CompletedAtOffset = DateTimeOffset.UtcNow;
+            run.MarkCompleted();
             run.CurrentStep = PipelineStep.Failed;
 
             _historyService.AddRunToHistory(run);

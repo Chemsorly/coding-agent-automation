@@ -127,8 +127,7 @@ internal partial class QualityGateExecutor
             if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
             {
                 _logger.Information("Pipeline {RunId} was cancelled during quality gates", run.RunId);
-                run.CompletedAt = DateTime.UtcNow;
-                run.CompletedAtOffset = DateTimeOffset.UtcNow;
+                run.MarkCompleted();
                 await callbacks.SwapAgentLabel(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
                 callbacks.EmitOutputLine("🚫 Pipeline cancelled");
                 callbacks.TransitionTo(PipelineStep.Cancelled);

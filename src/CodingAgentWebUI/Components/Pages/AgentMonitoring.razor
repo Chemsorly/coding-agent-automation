@@ -910,8 +910,7 @@
         {
             Log.Information("Cancel short-circuit: run {RunId} is orphan-restored, failing immediately on orchestrator", run.RunId);
             run.FailureReason = "Cancelled — agent lost job state (container restart)";
-            run.CompletedAt = DateTime.UtcNow;
-            run.CompletedAtOffset = DateTimeOffset.UtcNow;
+            run.MarkCompleted();
             run.CurrentStep = PipelineStep.Cancelled;
 
             HistoryService.AddRunToHistory(run);
@@ -999,7 +998,8 @@
                 {
                     activeRun.FailureReason = "Force disconnected by operator";
                     activeRun.CurrentStep = PipelineStep.Failed;
-                    activeRun.CompletedAt = DateTime.UtcNow;
+                    // TODO: Original code only set CompletedAt (not CompletedAtOffset). MarkCompleted() now sets both — verify no downstream logic relies on CompletedAtOffset==null for force-disconnected runs.
+                    activeRun.MarkCompleted();
                 }
             }
 

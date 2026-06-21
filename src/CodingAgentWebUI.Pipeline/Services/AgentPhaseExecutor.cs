@@ -146,8 +146,7 @@ internal partial class AgentPhaseExecutor : IAgentPhaseExecutor
     {
         run.FailureReason = failureReason;
         run.FinalLabel = label;
-        run.CompletedAt = DateTime.UtcNow;
-        run.CompletedAtOffset = DateTimeOffset.UtcNow;
+        run.MarkCompleted();
         await issueOps.SwapLabelAsync(run.IssueIdentifier, label, ct);
         callbacks.TransitionTo(step);
         callbacks.AddRunToHistory(run);
