@@ -118,15 +118,6 @@ public sealed class LocalPipelineExecutor
         // the override block if AgentProviderFactory ever needs blacklist settings.
         var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
 
-        // Resolve provider configs from the job assignment
-        var repoConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.RepoProviderConfigId)
-            ?? throw new InvalidOperationException($"Repository provider config '{job.RepoProviderConfigId}' not found in job assignment");
-        var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.AgentProviderConfigId)
-            ?? throw new InvalidOperationException($"Agent provider config '{job.AgentProviderConfigId}' not found in job assignment");
-
-        // Override blacklist settings from repo provider config (per-repo takes precedence)
-        config = PipelineConfiguration.ApplyBlacklistOverride(config, repoConfig);
-
         IRepositoryProvider? repoProvider = null;
         IAgentProvider? agentProvider = null;
         IRepositoryProvider? brainProvider = null;
@@ -136,9 +127,95 @@ public sealed class LocalPipelineExecutor
 
         try
         {
-            repoProvider = providerFactory.CreateRepositoryProvider(repoConfig);
-            agentProvider = providerFactory.CreateAgentProvider(agentConfig);
+            var resolved = await ResolveProvidersAsync(job, config, providerFactory, ct);
+            repoProvider = resolved.RepoProvider;
+            agentProvider = resolved.AgentProvider;
+            brainProvider = resolved.BrainProvider;
+            pipelineProvider = resolved.PipelineProvider;
+            additionalRepoProviders = resolved.AdditionalRepoProviders;
+            config = resolved.Config;
 
+            result = await ExecutePipelineStepsAsync(
+                job, config, repoProvider, agentProvider, brainProvider, pipelineProvider,
+                issueOps, connection, outputBatcher, onStepChanged, ct, additionalRepoProviders);
+
+            activity?.SetTag("pipeline.final_step", result.FinalStep.ToString());
+            // TODO: Distinguish Cancelled from Failed — graceful cancellation should set pipeline.cancelled=true tag
+            // and leave status as Unset instead of setting Error status (per amended OTel conventions).
+            if (result.FinalStep != PipelineStep.Completed)
+                activity?.SetStatus(ActivityStatusCode.Error, result.FinalStep.ToString());
+            return result;
+        }
+        catch (Exception ex)
+        {
+            activity?.RecordError(ex, ct);
+            throw;
+        }
+        finally
+        {
+            sw.Stop();
+            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            if (job.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+            {
+                var phase = job.RunType == PipelineRunType.DecompositionAnalysis ? "analysis" : "creation";
+                PipelineTelemetry.DecompositionDuration.Record(sw.Elapsed.TotalSeconds,
+                    PipelineTelemetry.ProjectIdTag(job.ProjectId),
+                    PipelineTelemetry.ProjectNameTag(job.ProjectName),
+                    new KeyValuePair<string, object?>("phase", phase));
+            }
+            if (result is null || result.FinalStep != PipelineStep.Completed)
+                PipelineTelemetry.JobsFailed.Add(1, tags);
+            else
+                PipelineTelemetry.JobsCompleted.Add(1, tags);
+
+            if (repoProvider is IAsyncDisposable rd) await rd.DisposeAsync();
+            if (agentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
+            if (brainProvider is IAsyncDisposable brd) await brd.DisposeAsync();
+            if (pipelineProvider is IAsyncDisposable pd) await pd.DisposeAsync();
+
+            // Dispose additional repo providers used for cross-repo decomposition cloning
+            if (additionalRepoProviders is not null)
+            {
+                foreach (var (_, provider) in additionalRepoProviders)
+                {
+                    if (provider is IAsyncDisposable ard) await ard.DisposeAsync();
+                }
+            }
+        }
+    }
+
+    private sealed record ResolvedProviders(
+        IRepositoryProvider RepoProvider,
+        IAgentProvider AgentProvider,
+        IRepositoryProvider? BrainProvider,
+        IPipelineProvider? PipelineProvider,
+        List<(string TemplateName, IRepositoryProvider Provider)>? AdditionalRepoProviders,
+        PipelineConfiguration Config);
+
+    private async Task<ResolvedProviders> ResolveProvidersAsync(
+        JobAssignmentMessage job,
+        PipelineConfiguration config,
+        AgentProviderFactory providerFactory,
+        CancellationToken ct)
+    {
+        // Resolve provider configs from the job assignment
+        var repoConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.RepoProviderConfigId)
+            ?? throw new InvalidOperationException($"Repository provider config '{job.RepoProviderConfigId}' not found in job assignment");
+        var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.AgentProviderConfigId)
+            ?? throw new InvalidOperationException($"Agent provider config '{job.AgentProviderConfigId}' not found in job assignment");
+
+        // Override blacklist settings from repo provider config (per-repo takes precedence)
+        config = PipelineConfiguration.ApplyBlacklistOverride(config, repoConfig);
+
+        // TODO: Move these creation calls inside the try block below to avoid resource leak if CreateAgentProvider throws (repoProvider would not be disposed)
+        var repoProvider = providerFactory.CreateRepositoryProvider(repoConfig);
+        var agentProvider = providerFactory.CreateAgentProvider(agentConfig);
+        IRepositoryProvider? brainProvider = null;
+        IPipelineProvider? pipelineProvider = null;
+        List<(string TemplateName, IRepositoryProvider Provider)>? additionalRepoProviders = null;
+
+        try
+        {
             if (!string.IsNullOrEmpty(job.BrainProviderConfigId))
             {
                 var brainConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.BrainProviderConfigId);
@@ -207,45 +284,14 @@ public sealed class LocalPipelineExecutor
             config = PipelineConfiguration.ApplyProviderBlacklist(config, agentProvider.PipelineInjectedPaths);
             config = config with { PipelineInjectedPaths = agentProvider.PipelineInjectedPaths };
 
-            result = await ExecutePipelineStepsAsync(
-                job, config, repoProvider, agentProvider, brainProvider, pipelineProvider,
-                issueOps, connection, outputBatcher, onStepChanged, ct, additionalRepoProviders);
-
-            activity?.SetTag("pipeline.final_step", result.FinalStep.ToString());
-            // TODO: Distinguish Cancelled from Failed — graceful cancellation should set pipeline.cancelled=true tag
-            // and leave status as Unset instead of setting Error status (per amended OTel conventions).
-            if (result.FinalStep != PipelineStep.Completed)
-                activity?.SetStatus(ActivityStatusCode.Error, result.FinalStep.ToString());
-            return result;
+            return new ResolvedProviders(repoProvider, agentProvider, brainProvider, pipelineProvider, additionalRepoProviders, config);
         }
-        catch (Exception ex)
+        catch
         {
-            activity?.RecordError(ex, ct);
-            throw;
-        }
-        finally
-        {
-            sw.Stop();
-            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, tags);
-            if (job.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
-            {
-                var phase = job.RunType == PipelineRunType.DecompositionAnalysis ? "analysis" : "creation";
-                PipelineTelemetry.DecompositionDuration.Record(sw.Elapsed.TotalSeconds,
-                    PipelineTelemetry.ProjectIdTag(job.ProjectId),
-                    PipelineTelemetry.ProjectNameTag(job.ProjectName),
-                    new KeyValuePair<string, object?>("phase", phase));
-            }
-            if (result is null || result.FinalStep != PipelineStep.Completed)
-                PipelineTelemetry.JobsFailed.Add(1, tags);
-            else
-                PipelineTelemetry.JobsCompleted.Add(1, tags);
-
             if (repoProvider is IAsyncDisposable rd) await rd.DisposeAsync();
             if (agentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
             if (brainProvider is IAsyncDisposable brd) await brd.DisposeAsync();
             if (pipelineProvider is IAsyncDisposable pd) await pd.DisposeAsync();
-
-            // Dispose additional repo providers used for cross-repo decomposition cloning
             if (additionalRepoProviders is not null)
             {
                 foreach (var (_, provider) in additionalRepoProviders)
@@ -253,6 +299,7 @@ public sealed class LocalPipelineExecutor
                     if (provider is IAsyncDisposable ard) await ard.DisposeAsync();
                 }
             }
+            throw;
         }
     }
 
