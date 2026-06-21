@@ -37,10 +37,15 @@ public class PipelineConsolidationSectionComponentTests : BunitContext
         var cut = Render<PipelineConsolidationSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
         Assert.Contains("Max Refactoring Proposals", cut.Markup);
+        Assert.Contains("Advanced settings", cut.Markup);
+
+        // Expand advanced toggle to reveal review checkboxes
+        var advancedToggle = cut.Find(".advanced-toggle");
+        advancedToggle.Click();
+
         Assert.Contains("Refactoring Review", cut.Markup);
         Assert.Contains("Brain Consolidation Review", cut.Markup);
         Assert.Contains("Harness Suggestions Review", cut.Markup);
-        Assert.Contains("Advanced settings", cut.Markup);
     }
 
     [Fact]

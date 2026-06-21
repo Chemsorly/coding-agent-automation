@@ -32,10 +32,15 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
     }
 
     [Fact]
-    public void RendersReviewFields_Always()
+    public void RendersReviewFields_WhenAdvancedExpanded()
     {
         var cut = Render<PipelineQualityGatesSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
+
+        // Expand advanced toggle to reveal review fields
+        var advancedToggle = cut.Find(".advanced-toggle");
+        advancedToggle.Click();
+
         Assert.Contains("Max Review Iterations", cut.Markup);
         Assert.Contains("Fix Prompt", cut.Markup);
     }
@@ -64,6 +69,10 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
         var cut = Render<PipelineQualityGatesSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
 
+        // Expand advanced toggle to reveal code review section with reset buttons
+        var advancedToggle = cut.Find(".advanced-toggle");
+        advancedToggle.Click();
+
         var resetButtons = cut.FindAll(".btn-revert");
         Assert.True(resetButtons.Count >= 1);
     }
@@ -73,6 +82,10 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
     {
         var cut = Render<PipelineQualityGatesSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
+
+        // Expand advanced toggle to reveal reviewer config hint
+        var advancedToggle = cut.Find(".advanced-toggle");
+        advancedToggle.Click();
 
         Assert.Contains("Reviewer Configs", cut.Markup);
     }
