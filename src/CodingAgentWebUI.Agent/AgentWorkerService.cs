@@ -207,19 +207,19 @@ public sealed class AgentWorkerService : BackgroundService
                 WireEventHandlers(newManager);
                 await newManager.StartAsync(ct);
 
+                // Register BEFORE transferring ownership — if registration fails,
+                // newManager is still non-null and the catch block disposes it correctly.
+                // TODO: Add test for HandleTerminalClosedAsync where RegisterAgent throws after StartAsync succeeds, verifying newManager is disposed.
+                var registration = BuildRegistrationMessage();
+                await _signalRPipeline.ExecuteAsync(async token =>
+                    await newManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), ct);
+
                 _hubManager = newManager;
                 newManager = null; // Ownership transferred — skip disposal
 
-                // Dispose old manager immediately after swap.
+                // Dispose old manager after successful swap.
                 // Safe: DisposeAsync does not fire the Closed event (no re-entrant call).
                 await SafeDisposeAsync(oldManager);
-
-                // TODO: If registration fails below, newManager is null (ownership transferred) so the catch
-                // block won't dispose _hubManager — it stays connected but unregistered until the next iteration.
-                // Re-register with orchestrator
-                var registration = BuildRegistrationMessage();
-                await _signalRPipeline.ExecuteAsync(async token =>
-                    await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), ct);
 
                 _logger.Information("Agent {AgentId} reconnected and re-registered after terminal close", _agentId);
                 return;
