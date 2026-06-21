@@ -1513,7 +1513,8 @@ public class PipelineOrchestrationServiceTests : IDisposable
         Mock<IAgentProvider> MockAgentProvider,
         Mock<IQualityGateValidator> MockValidator,
         Mock<IBrainUpdateService> MockBrainUpdateService,
-        Mock<IPipelineRunHistoryService> MockHistoryService);
+        Mock<IPipelineRunHistoryService> MockHistoryService,
+        Mock<IConfigurationStore> MockConfigStore);
 
     /// <summary>
     /// Creates a fully-configured service instance for brain tests.
@@ -1659,7 +1660,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             historyService: mockHistoryService.Object);
 
         return new BrainTestContext(service, mockIssueProvider, mockRepoProvider, mockBrainProvider,
-            mockAgentProvider, mockValidator, mockBrainUpdateService, mockHistoryService);
+            mockAgentProvider, mockValidator, mockBrainUpdateService, mockHistoryService, mockConfigStore);
     }
 
     [Fact]
@@ -2541,6 +2542,23 @@ public class PipelineOrchestrationServiceTests : IDisposable
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.BrainUpdatesPushed.Should().BeFalse();
         ctx.MockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // TODO: Add LoadAllTemplatesAsync default mock (returning empty list) to SetupDefaultMocks so other tests don't rely on null fallback via ?.
+    [Fact]
+    public async Task StartPipeline_WhenTemplateBrainReadOnly_SkipsBrainWriteBack()
+    {
+        var ctx = CreateBrainTestService();
+        ctx.MockConfigStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "t-1", Name = "Test", IssueProviderId = "issue-1", RepoProviderId = "repo-1", BrainProviderId = "brain-1", BrainReadOnly = true }
+            });
+
+        var run = await ctx.Service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        ctx.MockBrainUpdateService.Verify(b => b.CommitAndPushAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

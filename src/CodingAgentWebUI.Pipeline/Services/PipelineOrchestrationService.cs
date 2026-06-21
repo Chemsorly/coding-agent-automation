@@ -191,9 +191,13 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, linkedCt);
             var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId, ProviderKind.Agent, linkedCt);
 
-            // TODO: Override BrainReadOnly from the matching PipelineJobTemplate here (same as AgentJobDispatcher does).
-            // Currently the per-template BrainReadOnly setting is only applied in the dispatched-job path,
-            // not in this local execution path. See review finding #2.
+            // Override BrainReadOnly from the matching PipelineJobTemplate (same as AgentJobDispatcher does)
+            // TODO: Remove null-conditional (?.) once SetupDefaultMocks in tests mocks LoadAllTemplatesAsync with an empty list (interface contract is non-nullable)
+            var templates = await _configStore.LoadAllTemplatesAsync(linkedCt);
+            var matchingTemplate = templates?.FirstOrDefault(t =>
+                t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
+            if (matchingTemplate is { BrainReadOnly: true })
+                _activeConfig = _activeConfig with { BrainReadOnly = true };
 
             // Override blacklist settings from repo provider config (per-repo takes precedence)
             _activeConfig = PipelineConfiguration.ApplyBlacklistOverride(_activeConfig, repoProviderConfig);
