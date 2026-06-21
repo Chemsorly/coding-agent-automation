@@ -212,9 +212,10 @@ public sealed class LocalPipelineExecutor
                 issueOps, connection, outputBatcher, onStepChanged, ct, additionalRepoProviders);
 
             activity?.SetTag("pipeline.final_step", result.FinalStep.ToString());
-            // TODO: Distinguish Cancelled from Failed — graceful cancellation should set pipeline.cancelled=true tag
-            // and leave status as Unset instead of setting Error status (per amended OTel conventions).
-            if (result.FinalStep != PipelineStep.Completed)
+            // TODO: Add test that verifies cancelled runs set pipeline.cancelled tag with Unset status (no Error)
+            if (result.FinalStep == PipelineStep.Cancelled)
+                activity?.SetTag("pipeline.cancelled", true);
+            else if (result.FinalStep != PipelineStep.Completed)
                 activity?.SetStatus(ActivityStatusCode.Error, result.FinalStep.ToString());
             return result;
         }
