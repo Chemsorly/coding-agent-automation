@@ -36,16 +36,16 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
 
     // ── Run State Properties ────────────────────────────────────────────
 
-    /// <summary>The currently active local pipeline run, or null if idle.</summary>
+    /// <summary>The currently active pipeline run (set by test infrastructure), or null if idle.</summary>
     public PipelineRun? ActiveRun { get; set; }
 
-    /// <summary>Whether a local pipeline run is currently in progress.</summary>
+    /// <summary>Whether a pipeline run is currently in progress (test infrastructure only in production).</summary>
     public bool IsRunning => ActiveRun != null
         && ActiveRun.CurrentStep != PipelineStep.Completed
         && ActiveRun.CurrentStep != PipelineStep.Failed
         && ActiveRun.CurrentStep != PipelineStep.Cancelled;
 
-    /// <summary>Whether any pipeline run is active (local or agent).</summary>
+    /// <summary>Whether any pipeline run is active (in-process or agent-dispatched).</summary>
     public bool HasAnyActiveRuns => IsRunning || (_runService?.HasActiveRuns == true);
 
     // ── Events ──────────────────────────────────────────────────────────
@@ -65,7 +65,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     // ── State Query Methods ─────────────────────────────────────────────
 
     /// <summary>
-    /// Returns all active runs — both the local run (if any) and all agent-dispatched runs.
+    /// Returns all active runs — both the in-process run (if any) and all agent-dispatched runs.
     /// </summary>
     public IReadOnlyList<PipelineRun> GetAllActiveRuns()
     {
@@ -81,14 +81,14 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     }
 
     /// <summary>
-    /// Checks whether the given issue is being processed by any active run (local or agent).
+    /// Checks whether the given issue is being processed by any active run (in-process or agent-dispatched).
     /// </summary>
     public bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(issueProviderConfigId);
 
-        // Check local run
+        // Check in-process run
         if (ActiveRun != null && ActiveRun.IssueIdentifier == issueIdentifier
             && ActiveRun.IssueProviderConfigId == issueProviderConfigId && IsRunning)
             return true;

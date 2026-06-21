@@ -219,10 +219,10 @@ public sealed class PipelineRun
     /// <summary>Pre-fetched linked issue details for review runs.</summary>
     public IReadOnlyList<LinkedIssueContext>? LinkedIssueContexts { get; init; }
 
-    /// <summary>Which agent is executing this run, or null for legacy/local runs.</summary>
+    /// <summary>Which agent is executing this run, or null for test runs.</summary>
     public string? AgentId { get; init; }
 
-    /// <summary>Agent provider config ID used for this run, or null for legacy/local runs.</summary>
+    /// <summary>Agent provider config ID used for this run, or null for test runs.</summary>
     public string? AgentProviderConfigId { get; init; }
 
     /// <summary>Project ID that owned the dispatching template at dispatch time.</summary>

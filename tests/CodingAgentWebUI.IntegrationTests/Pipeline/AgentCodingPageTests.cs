@@ -12,7 +12,7 @@ namespace CodingAgentWebUI.IntegrationTests.Pipeline;
 
 /// <summary>
 /// Unit tests for AgentCoding page logic.
-/// Tests view switching, concurrent start rejection, and button disabled states
+/// Tests view switching and button disabled states
 /// via the same operations the AgentCoding page performs against PipelineOrchestrationService and mocked providers.
 /// </summary>
 public class AgentCodingPageTests
@@ -226,65 +226,6 @@ public class AgentCodingPageTests
         run.LatestQualityReport!.AllPassed.Should().BeFalse();
         run.RetryCount.Should().Be(3);
         run.RetryErrors.Should().HaveCount(4); // initial + 3 retries
-    }
-
-    // --- Concurrent start rejection ---
-
-    [Fact]
-    public async Task StartPipeline_WhileAlreadyRunning_RejectsWithMessage()
-    {
-        // Use a blocking agent to keep the pipeline running
-        var agentTcs = new TaskCompletionSource<AgentResult>();
-        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .Returns(agentTcs.Task);
-
-        var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        _service.IsRunning.Should().BeTrue();
-
-        // The service throws if called while already running
-        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "99", "agent-1", CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*already in progress*");
-
-        // Cleanup
-        agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new QualityGateReport
-            {
-                Compilation = new GateResult { GateName = "Compilation", Passed = true },
-                Tests = new GateResult { GateName = "Tests", Passed = true }
-            });
-        await startTask;
-    }
-
-    [Fact]
-    public async Task StartPipeline_PageGuard_ChecksIsRunningBeforeCalling()
-    {
-        // Use a blocking agent to keep the pipeline running
-        var agentTcs = new TaskCompletionSource<AgentResult>();
-        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .Returns(agentTcs.Task);
-
-        var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-
-        // Replicate the page's guard logic
-        string? errorMessage = null;
-        if (_service.IsRunning)
-        {
-            errorMessage = "A pipeline run is already in progress.";
-        }
-
-        errorMessage.Should().Be("A pipeline run is already in progress.");
-
-        // Cleanup
-        agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new QualityGateReport
-            {
-                Compilation = new GateResult { GateName = "Compilation", Passed = true },
-                Tests = new GateResult { GateName = "Tests", Passed = true }
-            });
-        await startTask;
     }
 
     // --- Pipeline transitions through GeneratingCode ---

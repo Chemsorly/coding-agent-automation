@@ -5,7 +5,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// <summary>
 /// Static helper for resolving required agent labels from repository and pipeline configuration.
 /// Extracted from JobDispatcherService to allow usage from both the WebUI project (dispatch path)
-/// and the Pipeline project (local execution path) without circular dependencies.
+/// and the Pipeline project without circular dependencies.
 /// </summary>
 public static class LabelResolver
 {

@@ -49,7 +49,7 @@ public sealed class PipelineRunSummary
     /// <summary>Whether brain updates were pushed successfully.</summary>
     public bool BrainUpdatesPushed { get; init; }
 
-    /// <summary>Which agent executed this run, or null for local runs.</summary>
+    /// <summary>Which agent executed this run, or null for test-infrastructure runs.</summary>
     public string? AgentId { get; init; }
 
     /// <summary>How this run was initiated: "manual" or "loop".</summary>

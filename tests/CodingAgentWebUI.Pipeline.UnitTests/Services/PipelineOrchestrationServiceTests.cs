@@ -200,24 +200,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartPipeline_WhenAlreadyRunning_ThrowsInvalidOperationException()
-    {
-        var (pipelineTask, agentTcs) = StartBlockingPipeline();
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_service.ActiveRun?.CurrentStep != PipelineStep.GeneratingCode && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
-
-        _service.IsRunning.Should().BeTrue();
-
-        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "99", "agent-1", CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*already in progress*");
-
-        agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        await pipelineTask;
-    }
-
-    [Fact]
     public async Task StartPipeline_RecordsModelFromAgentProviderConfig()
     {
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
