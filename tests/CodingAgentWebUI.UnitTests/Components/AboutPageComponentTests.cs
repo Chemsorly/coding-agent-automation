@@ -87,14 +87,18 @@ public class AboutPageComponentTests : BunitContext
     public void Renders_PipelineStats_WithHistory()
     {
         var now = DateTime.UtcNow;
+        var nowOffset = DateTimeOffset.UtcNow;
         var summaries = new List<PipelineRunSummary>
         {
             new() { RunId = "1", IssueIdentifier = "1", IssueTitle = "A",
-                FinalStep = PipelineStep.Completed, StartedAt = now.AddMinutes(-30), CompletedAt = now.AddMinutes(-20) },
+                FinalStep = PipelineStep.Completed, StartedAt = now.AddMinutes(-30), CompletedAt = now.AddMinutes(-20),
+                StartedAtOffset = nowOffset.AddMinutes(-30), CompletedAtOffset = nowOffset.AddMinutes(-20) },
             new() { RunId = "2", IssueIdentifier = "2", IssueTitle = "B",
-                FinalStep = PipelineStep.Failed, StartedAt = now.AddMinutes(-50), CompletedAt = now.AddMinutes(-45) },
+                FinalStep = PipelineStep.Failed, StartedAt = now.AddMinutes(-50), CompletedAt = now.AddMinutes(-45),
+                StartedAtOffset = nowOffset.AddMinutes(-50), CompletedAtOffset = nowOffset.AddMinutes(-45) },
             new() { RunId = "3", IssueIdentifier = "3", IssueTitle = "C",
-                FinalStep = PipelineStep.Cancelled, StartedAt = now.AddMinutes(-60), CompletedAt = now.AddMinutes(-58) }
+                FinalStep = PipelineStep.Cancelled, StartedAt = now.AddMinutes(-60), CompletedAt = now.AddMinutes(-58),
+                StartedAtOffset = nowOffset.AddMinutes(-60), CompletedAtOffset = nowOffset.AddMinutes(-58) }
         };
 
         RegisterDefaults(summaries);

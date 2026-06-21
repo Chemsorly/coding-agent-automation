@@ -956,7 +956,7 @@
 
     private string GetElapsedTime()
     {
-        var elapsed = (Run.CompletedAt ?? DateTime.UtcNow) - Run.StartedAt;
+        var elapsed = (Run.CompletedAtOffset ?? DateTimeOffset.UtcNow) - Run.StartedAtOffset;
         return elapsed.ToString(@"hh\:mm\:ss");
     }
 }

@@ -500,7 +500,7 @@ public sealed class ConsolidationService : IConsolidationService
 
             var allRuns = _runHistoryService.GetRunHistory();
             var feedbackEntries = allRuns
-                .Where(r => r.Feedback is not null && r.StartedAt > sinceUtc)
+                .Where(r => r.Feedback is not null && r.StartedAtOffset > new DateTimeOffset(sinceUtc, TimeSpan.Zero))
                 .Select(r => r.Feedback!)
                 .ToList();
 

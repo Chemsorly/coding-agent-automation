@@ -106,7 +106,10 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
                 }
             }
 
-            _runHistory.AddRange(summaries.OrderByDescending(s => s.StartedAt));
+            #pragma warning disable CS0618 // Fallback to legacy StartedAt for older persisted summaries without StartedAtOffset
+            _runHistory.AddRange(summaries.OrderByDescending(s =>
+                s.StartedAtOffset != default ? s.StartedAtOffset : new DateTimeOffset(s.StartedAt, TimeSpan.Zero)));
+            #pragma warning restore CS0618
             _logger.Information("Loaded {Count} pipeline run(s) from history", _runHistory.Count);
         }
         catch (Exception ex)
