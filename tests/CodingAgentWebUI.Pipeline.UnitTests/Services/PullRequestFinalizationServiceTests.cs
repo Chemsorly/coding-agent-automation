@@ -147,4 +147,115 @@ public class PullRequestFinalizationServiceTests
 
         run.Feedback.Should().NotBeNull();
     }
+
+    // ── RunPostPrSequenceAsync ──
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_WhenNotDraft_ExecutesAllSteps()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var agentProvider = new Mock<IAgentProvider>();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var brainSync = new Mock<IBrainSyncService>();
+        var brainProvider = new Mock<IRepositoryProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var historyService = new Mock<IPipelineRunHistoryService>();
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+        var transitions = new List<PipelineStep>();
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
+        historyService.Setup(h => h.GetRunHistory()).Returns([]);
+
+        await _sut.RunPostPrSequenceAsync(
+            run, isDraft: false, agentProvider.Object, repoProvider.Object, config,
+            brainSync.Object, brainProvider.Object, feedbackService, historyService.Object,
+            _ => { }, step => { transitions.Add(step); return Task.CompletedTask; }, CancellationToken.None);
+
+        transitions.Should().ContainInOrder(
+            PipelineStep.GeneratingPrDescription,
+            PipelineStep.ReflectingOnRun,
+            PipelineStep.SyncingBrainRepoPostRun);
+        // TODO: Verify which specific AgentRequest was made for each step (PR description vs reflection vs feedback) rather than just counting calls.
+        // TODO: Assert observable side-effects (e.g., run.Feedback populated, repoProvider.UpdatePullRequestAsync invoked) to validate each step executed correctly.
+        agentProvider.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()), Times.Exactly(3));
+        brainSync.Verify(b => b.SyncPostRunAsync(run, brainProvider.Object, It.IsAny<CancellationToken>(), It.IsAny<Action<string>>(), It.IsAny<int>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_WhenDraft_SkipsAllSteps()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var agentProvider = new Mock<IAgentProvider>();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var brainSync = new Mock<IBrainSyncService>();
+        var brainProvider = new Mock<IRepositoryProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var transitions = new List<PipelineStep>();
+
+        await _sut.RunPostPrSequenceAsync(
+            run, isDraft: true, agentProvider.Object, repoProvider.Object,
+            new PipelineConfiguration(), brainSync.Object, brainProvider.Object,
+            feedbackService, null, _ => { },
+            step => { transitions.Add(step); return Task.CompletedTask; }, CancellationToken.None);
+
+        transitions.Should().BeEmpty();
+        agentProvider.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_WhenNoBrainProvider_SkipsReflectionAndBrainSync()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var agentProvider = new Mock<IAgentProvider>();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var historyService = new Mock<IPipelineRunHistoryService>();
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+        var transitions = new List<PipelineStep>();
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
+        historyService.Setup(h => h.GetRunHistory()).Returns([]);
+
+        await _sut.RunPostPrSequenceAsync(
+            run, isDraft: false, agentProvider.Object, repoProvider.Object, config,
+            brainSync: null, brainProvider: null, feedbackService, historyService.Object,
+            _ => { }, step => { transitions.Add(step); return Task.CompletedTask; }, CancellationToken.None);
+
+        transitions.Should().ContainInOrder(PipelineStep.GeneratingPrDescription);
+        transitions.Should().NotContain(PipelineStep.ReflectingOnRun);
+        transitions.Should().NotContain(PipelineStep.SyncingBrainRepoPostRun);
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_WhenBrainReadOnly_SkipsReflectionAndBrainSync()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var agentProvider = new Mock<IAgentProvider>();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var brainSync = new Mock<IBrainSyncService>();
+        var brainProvider = new Mock<IRepositoryProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var historyService = new Mock<IPipelineRunHistoryService>();
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5), BrainReadOnly = true };
+        var transitions = new List<PipelineStep>();
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
+        historyService.Setup(h => h.GetRunHistory()).Returns([]);
+
+        await _sut.RunPostPrSequenceAsync(
+            run, isDraft: false, agentProvider.Object, repoProvider.Object, config,
+            brainSync.Object, brainProvider.Object, feedbackService, historyService.Object,
+            _ => { }, step => { transitions.Add(step); return Task.CompletedTask; }, CancellationToken.None);
+
+        transitions.Should().ContainInOrder(PipelineStep.GeneratingPrDescription);
+        transitions.Should().NotContain(PipelineStep.ReflectingOnRun);
+        brainSync.Verify(b => b.SyncPostRunAsync(It.IsAny<PipelineRun>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>(), It.IsAny<int>()), Times.Never);
+    }
 }

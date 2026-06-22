@@ -212,9 +212,10 @@ public sealed class LocalPipelineExecutor
                 issueOps, connection, outputBatcher, onStepChanged, ct, additionalRepoProviders);
 
             activity?.SetTag("pipeline.final_step", result.FinalStep.ToString());
-            // TODO: Distinguish Cancelled from Failed — graceful cancellation should set pipeline.cancelled=true tag
-            // and leave status as Unset instead of setting Error status (per amended OTel conventions).
-            if (result.FinalStep != PipelineStep.Completed)
+            // TODO: Add test that verifies cancelled runs set pipeline.cancelled tag with Unset status (no Error)
+            if (result.FinalStep == PipelineStep.Cancelled)
+                activity?.SetTag("pipeline.cancelled", true);
+            else if (result.FinalStep != PipelineStep.Completed)
                 activity?.SetStatus(ActivityStatusCode.Error, result.FinalStep.ToString());
             return result;
         }
@@ -397,8 +398,7 @@ public sealed class LocalPipelineExecutor
             if (run.RunType is PipelineRunType.Review or PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition
                 && run.CurrentStep is not PipelineStep.Failed and not PipelineStep.Cancelled)
             {
-                run.CompletedAt = DateTime.UtcNow;
-                run.CompletedAtOffset = DateTimeOffset.UtcNow;
+                run.MarkCompleted();
                 run.CurrentStep = PipelineStep.Completed;
                 run.FinalLabel ??= AgentLabels.Done;
             }
@@ -407,8 +407,7 @@ public sealed class LocalPipelineExecutor
         }
         catch (OperationCanceledException)
         {
-            run.CompletedAt = DateTime.UtcNow;
-            run.CompletedAtOffset = DateTimeOffset.UtcNow;
+            run.MarkCompleted();
 
             // Await directly with CancellationToken.None — ct is already cancelled so the
             // fire-and-forget wrapper would fail to acquire the semaphore.
@@ -565,20 +564,44 @@ public sealed class LocalPipelineExecutor
     }
 
     /// <summary>
+    /// Builds the common step prefix shared by all pipelines:
+    /// Clone → EnsureGitignore → [CloneProjectRepositories] → WriteMcpConfig → WriteSteering.
+    /// </summary>
+    private static List<IPipelineStep> BuildCommonPrefix(JobAssignmentMessage job, bool includeProjectClone = false)
+    {
+        var steps = new List<IPipelineStep>
+        {
+            new CloneRepositoryStep(),
+            new EnsureAgentGitignoreStep(),
+        };
+        if (includeProjectClone)
+            steps.Add(new CloneProjectRepositoriesStep());
+        steps.Add(new WriteMcpConfigStep(job));
+        steps.Add(new WriteSteeringStep(job));
+        return steps;
+    }
+
+    /// <summary>
+    /// Builds the full step prefix (common prefix + RunEnvironmentSetup + SyncBrainPreRun).
+    /// Used by agent and decomposition pipelines.
+    /// </summary>
+    private static List<IPipelineStep> BuildFullPrefix(JobAssignmentMessage job, bool includeProjectClone = false)
+    {
+        var steps = BuildCommonPrefix(job, includeProjectClone);
+        steps.Add(new RunEnvironmentSetupStep(job));
+        steps.Add(new SyncBrainPreRunStep());
+        return steps;
+    }
+
+    /// <summary>
     /// Builds the ordered step pipeline for agent-side execution.
     /// Skips FetchIssueStep (issue data comes from job assignment) and adds MCP config step.
     /// </summary>
     internal static IReadOnlyList<IPipelineStep> BuildAgentStepPipeline(
         JobAssignmentMessage job, HubConnection connection)
     {
-        var steps = new List<IPipelineStep>
-        {
-            new CloneRepositoryStep(),
-            new EnsureAgentGitignoreStep(),
-            new WriteMcpConfigStep(job),
-            new WriteSteeringStep(job),
-            new RunEnvironmentSetupStep(job),
-            new SyncBrainPreRunStep(),
+        var steps = BuildFullPrefix(job);
+        steps.AddRange([
             new DetectReworkStep(),
             new WritePrConversationContextStep(),
             new CreateBranchStep(),
@@ -588,59 +611,50 @@ public sealed class LocalPipelineExecutor
             new BrainPullBeforeWriteStep(),
             new ReviewCodeStep(),
             new RunQualityGatesStep()
-        };
+        ]);
         return steps;
     }
 
     /// <summary>
     /// Builds the ordered step pipeline for PR review runs.
-    /// Shorter sequence: Clone → EnvironmentSetup → CreateBranch → SyncBrain → ExtractLinkedIssues → ReviewCode → PostFindings.
+    /// Shorter sequence: Clone → WriteMcpConfig → WriteSteering → CreateBranch → SyncBrain → ExtractLinkedIssues → ReviewCode → PostFindings.
     /// Skips analysis, code generation, quality gates, and rework detection.
     /// </summary>
     internal static IReadOnlyList<IPipelineStep> BuildReviewStepPipeline(JobAssignmentMessage job)
     {
-        return new IPipelineStep[]
-        {
-            new CloneRepositoryStep(),
-            new EnsureAgentGitignoreStep(),
-            new WriteMcpConfigStep(job),
-            new WriteSteeringStep(job),
+        var steps = BuildCommonPrefix(job);
+        steps.AddRange([
             new CreateBranchStep(),
             new SyncBrainPreRunStep(),
             new ExtractLinkedIssuesStep(new IssueDescriptionParser()),
             new ReviewCodeStep(),
             new PostReviewFindingsStep()
-        };
+        ]);
+        return steps;
     }
 
     /// <summary>
     /// Builds the step pipeline for DecompositionAnalysis (Phase 1).
-    /// Sequence: Clone → SyncBrain → WriteOpenIssueContext → DecompositionAnalysis → PostDecompositionPlan.
+    /// Sequence: Clone → CloneProjectRepos → WriteMcpConfig → WriteSteering → RunEnvironmentSetup → SyncBrain → WriteProjectContext → WriteOpenIssueContext → DecompositionAnalysis → PostDecompositionPlan.
     /// IOpenIssueContextWriter is injected into the WriteOpenIssueContextStep via constructor.
     /// </summary>
     internal static IReadOnlyList<IPipelineStep> BuildDecompositionAnalysisStepPipeline(
         JobAssignmentMessage job,
         IOpenIssueContextWriter openIssueContextWriter)
     {
-        return new IPipelineStep[]
-        {
-            new CloneRepositoryStep(),
-            new EnsureAgentGitignoreStep(),
-            new CloneProjectRepositoriesStep(),
-            new WriteMcpConfigStep(job),
-            new WriteSteeringStep(job),
-            new RunEnvironmentSetupStep(job),
-            new SyncBrainPreRunStep(),
+        var steps = BuildFullPrefix(job, includeProjectClone: true);
+        steps.AddRange([
             new WriteProjectContextStep(),
             new WriteOpenIssueContextStep(openIssueContextWriter),
             new DecompositionAnalysisStep(),
             new PostDecompositionPlanStep()
-        };
+        ]);
+        return steps;
     }
 
     /// <summary>
     /// Builds the step pipeline for Decomposition (Phase 2).
-    /// Sequence: Clone → SyncBrain → WriteProjectContext → WriteOpenIssueContext → Decomposition → CreateSubIssues → PostDecompositionSummary.
+    /// Sequence: Clone → CloneProjectRepos → WriteMcpConfig → WriteSteering → RunEnvironmentSetup → SyncBrain → WriteProjectContext → WriteOpenIssueContext → Decomposition → CreateSubIssues → PostDecompositionSummary.
     /// WriteProjectContextStep is included so the agent has cross-repo routing context
     /// when generating sub-issue JSON files with targetRepository values.
     /// WriteOpenIssueContextStep provides deduplication context for the agent.
@@ -649,21 +663,15 @@ public sealed class LocalPipelineExecutor
         JobAssignmentMessage job,
         IOpenIssueContextWriter openIssueContextWriter)
     {
-        return new IPipelineStep[]
-        {
-            new CloneRepositoryStep(),
-            new EnsureAgentGitignoreStep(),
-            new CloneProjectRepositoriesStep(),
-            new WriteMcpConfigStep(job),
-            new WriteSteeringStep(job),
-            new RunEnvironmentSetupStep(job),
-            new SyncBrainPreRunStep(),
+        var steps = BuildFullPrefix(job, includeProjectClone: true);
+        steps.AddRange([
             new WriteProjectContextStep(),
             new WriteOpenIssueContextStep(openIssueContextWriter),
             new DecompositionStep(),
             new CreateSubIssuesStep(),
             new PostDecompositionSummaryStep()
-        };
+        ]);
+        return steps;
     }
 
     private PipelineStepContext CreateStepContext(
@@ -743,8 +751,7 @@ public sealed class LocalPipelineExecutor
             if (prUrl is null)
             {
                 run.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";
-                run.CompletedAt = DateTime.UtcNow;
-                run.CompletedAtOffset = DateTimeOffset.UtcNow;
+                run.MarkCompleted();
                 run.CurrentStep = PipelineStep.Failed;
                 return;
             }
@@ -756,34 +763,14 @@ public sealed class LocalPipelineExecutor
             }
             // Label swap (agent:done / agent:error) is handled by the orchestrator in ReportJobCompleted.
 
-            // ── PR description generation: runs on non-draft PRs regardless of brain config ──
-            if (!isDraft && !string.IsNullOrEmpty(run.PullRequestNumber))
-            {
-                await ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, PipelineStep.GeneratingPrDescription, ct);
-                await _finalization.GeneratePrDescriptionAsync(
-                    run, context.AgentProvider, context.RepoProvider, context.Config, context.EmitOutputLine, ct);
-            }
+            await _finalization.RunPostPrSequenceAsync(
+                run, isDraft, context.AgentProvider, context.RepoProvider, context.Config,
+                context.BrainSync, context.BrainProvider, _feedbackService, _historyService,
+                context.EmitOutputLine,
+                step => ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, step, ct),
+                ct);
 
-            // ── Reflection + brain post-run sync ──
-            if (!isDraft && context.BrainProvider is not null && context.BrainSync is not null && !context.Config.BrainReadOnly)
-            {
-                await ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, PipelineStep.ReflectingOnRun, ct);
-
-                await _finalization.RunReflectionAsync(run, context.AgentProvider, context.Config, context.EmitOutputLine, ct);
-
-                await ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, PipelineStep.SyncingBrainRepoPostRun, ct);
-
-                await _finalization.SyncBrainPostRunAsync(run, context.BrainSync, context.BrainProvider, context.Config, context.EmitOutputLine, ct);
-            }
-
-            // ── Feedback collection: separate agent call, runs regardless of brain provider ──
-            if (!isDraft)
-            {
-                await _finalization.CollectFeedbackAsync(run, context.AgentProvider, _feedbackService, _historyService, context.EmitOutputLine, ct);
-            }
-
-            run.CompletedAt = DateTime.UtcNow;
-            run.CompletedAtOffset = DateTimeOffset.UtcNow;
+            run.MarkCompleted();
             run.CurrentStep = finalStep;
             run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
         }

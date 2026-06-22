@@ -1,8 +1,10 @@
 using System.Text.Json.Serialization;
+using MessagePack;
 using Serilog;
 
 namespace CodingAgentWebUI.Pipeline.Models;
 
+[MessagePackObject]
 public sealed record PipelineConfiguration
 {
     public const string DefaultFixPrompt = DefaultPrompts.Fix;
@@ -53,30 +55,37 @@ public sealed record PipelineConfiguration
 
     /// <summary>Retry and timeout settings.</summary>
     [JsonIgnore]
+    [IgnoreMember]
     public RetryConfiguration Retry { get; init; } = new();
 
     /// <summary>Workspace directory and retention settings.</summary>
     [JsonIgnore]
+    [IgnoreMember]
     public WorkspaceConfiguration Workspace { get; init; } = new();
 
     /// <summary>External CI integration settings.</summary>
     [JsonIgnore]
+    [IgnoreMember]
     public ExternalCiConfiguration ExternalCi { get; init; } = new();
 
     /// <summary>Closed-loop polling settings.</summary>
     [JsonIgnore]
+    [IgnoreMember]
     public ClosedLoopConfiguration ClosedLoop { get; init; } = new();
 
     /// <summary>Multi-agent orchestration settings.</summary>
     [JsonIgnore]
+    [IgnoreMember]
     public AgentConfiguration Agent { get; init; } = new();
 
     /// <summary>Commit blacklist and enforcement settings.</summary>
     [JsonIgnore]
+    [IgnoreMember]
     public CommitConfiguration Commit { get; init; } = new();
 
     // ── Flat properties (JSON serialization surface, delegate to sub-configs) ──
 
+    [Key(41)]
     public int MaxRetries
     {
         get => Retry.MaxRetries;
@@ -88,28 +97,37 @@ public sealed record PipelineConfiguration
     /// Default 1 = 2 total attempts (initial + 1 retry).
     /// Set to 0 to disable retry (fail on first failure).
     /// </summary>
+    [Key(35)]
     public int MaxAnalysisRetries
     {
         get => Retry.MaxAnalysisRetries;
         init => Retry = Retry with { MaxAnalysisRetries = value };
     }
 
+    [Key(33)]
     public int IssuePageSize { get; init; } = 25;
 
+    [Key(4)]
     public TimeSpan AgentTimeout
     {
         get => Retry.AgentTimeout;
         init => Retry = Retry with { AgentTimeout = value };
     }
 
+    [Key(52)]
     public string WorkspaceBaseDirectory
     {
         get => Workspace.WorkspaceBaseDirectory;
         init => Workspace = Workspace with { WorkspaceBaseDirectory = value };
     }
 
+    [Key(22)]
     public CodeReviewConfiguration CodeReview { get; init; } = new();
+
+    [Key(5)]
     public string AnalysisPrompt { get; init; } = DefaultAnalysisPrompt;
+
+    [Key(32)]
     public string ImplementationPrompt { get; init; } = DefaultImplementationPrompt;
 
     /// <summary>
@@ -118,6 +136,7 @@ public sealed record PipelineConfiguration
     /// loop improves analysis quality by catching missed components, incorrect assumptions,
     /// and feasibility issues before implementation begins. Default: true.
     /// </summary>
+    [Key(7)]
     public bool AnalysisReviewEnabled { get; init; } = true;
 
     /// <summary>
@@ -125,62 +144,73 @@ public sealed record PipelineConfiguration
     /// The agent reads .agent/analysis.md, .agent/analysis-assessment.json, and .agent/issue-context.md,
     /// then writes findings to .agent/analysis-review.md.
     /// </summary>
+    [Key(8)]
     public string AnalysisReviewPrompt { get; init; } = DefaultAnalysisReviewPrompt;
 
     /// <summary>
     /// Prompt sent back to the original analysis session instructing it to refine
     /// the analysis based on the review feedback at .agent/analysis-review.md.
     /// </summary>
+    [Key(6)]
     public string AnalysisRefinementPrompt { get; init; } = DefaultAnalysisRefinementPrompt;
 
     /// <summary>
     /// When true, a dedicated acceptance criteria compliance check runs in parallel with
     /// code reviewers, producing a structured JSON report. Default: true.
     /// </summary>
+    [Key(0)]
     public bool AcceptanceCriteriaEnabled { get; init; } = true;
 
     /// <summary>
     /// Prompt sent to the acceptance criteria agent that evaluates implementation compliance.
     /// The agent writes structured JSON to .agent/acceptance-criteria.json.
     /// </summary>
+    [Key(1)]
     public string AcceptanceCriteriaPrompt { get; init; } = DefaultPrompts.AcceptanceCriteriaCompliance;
 
     /// <summary>
     /// When true, refactoring proposals are reviewed by an isolated discriminator agent
     /// before issues are created. Default: true.
     /// </summary>
+    [Key(48)]
     public bool RefactoringReviewEnabled { get; init; } = true;
 
     /// <summary>
     /// When true, brain consolidation changes are reviewed by an isolated discriminator
     /// agent before being committed. Default: true.
     /// </summary>
+    [Key(11)]
     public bool BrainConsolidationReviewEnabled { get; init; } = true;
 
     /// <summary>
     /// When true, harness suggestions are reviewed by an isolated discriminator agent
     /// before being persisted. Default: true.
     /// </summary>
+    [Key(28)]
     public bool HarnessSuggestionsReviewEnabled { get; init; } = true;
 
     /// <summary>
     /// When true, the pipeline runs a baseline health check (agent environment + workspace build)
     /// after branch creation and before code analysis. Default: true.
     /// </summary>
+    [Key(9)]
     public bool BaselineHealthCheckEnabled { get; init; } = true;
 
+    [Key(26)]
     public TimeSpan ExternalCiTimeout
     {
         get => ExternalCi.ExternalCiTimeout;
         init => ExternalCi = ExternalCi with { ExternalCiTimeout = value };
     }
 
+    [Key(25)]
     public TimeSpan ExternalCiPollInterval
     {
         get => ExternalCi.ExternalCiPollInterval;
         init => ExternalCi = ExternalCi with { ExternalCiPollInterval = value };
     }
 
+    [Key(38)]
     public int MaxInfrastructureRetries
     {
         get => ExternalCi.MaxInfrastructureRetries;
@@ -191,6 +221,7 @@ public sealed record PipelineConfiguration
     /// How long the agent can be silent (no output) before the stall monitor logs a warning.
     /// The warning resets after each occurrence so it fires again after another interval of silence.
     /// </summary>
+    [Key(51)]
     public TimeSpan StallWarningInterval
     {
         get => Retry.StallWarningInterval;
@@ -201,12 +232,14 @@ public sealed record PipelineConfiguration
     /// How often the stall monitor polls <see cref="IAgentProvider.GetHealthStatus"/>.
     /// Default is 30 seconds. Tests can set a shorter interval for faster execution.
     /// </summary>
+    [Key(50)]
     public TimeSpan StallPollInterval
     {
         get => Retry.StallPollInterval;
         init => Retry = Retry with { StallPollInterval = value };
     }
 
+    [Key(10)]
     public IReadOnlyList<string> BlacklistedPaths
     {
         get => Commit.BlacklistedPaths;
@@ -218,6 +251,7 @@ public sealed record PipelineConfiguration
     /// <see cref="BlacklistedPaths"/> configuration. Populated from
     /// <see cref="IAgentProvider.PipelineInjectedPaths"/> at pipeline startup.
     /// </summary>
+    [Key(44)]
     public IReadOnlyList<string> PipelineInjectedPaths { get; init; } = Array.Empty<string>();
 
 
@@ -326,6 +360,7 @@ public sealed record PipelineConfiguration
     /// Number of days to retain workspace folders for failed or cancelled runs.
     /// Set to 0 to delete immediately. Set to -1 to retain indefinitely.
     /// </summary>
+    [Key(27)]
     public int FailedWorkspaceRetentionDays
     {
         get => Workspace.FailedWorkspaceRetentionDays;
@@ -338,6 +373,7 @@ public sealed record PipelineConfiguration
     /// Values: provider config IDs.
     /// Pre-populates dropdowns on subsequent pipeline runs.
     /// </summary>
+    [Key(34)]
     public IReadOnlyDictionary<string, string> LastUsedProviderIds { get; init; } = new Dictionary<string, string>();
 
     /// <summary>
@@ -347,6 +383,7 @@ public sealed record PipelineConfiguration
     /// skipped, and the SyncingBrainRepoPostRun step (commit and push) is skipped
     /// entirely. Defaults to false.
     /// </summary>
+    [Key(13)]
     public bool BrainReadOnly
     {
         get => Agent.BrainReadOnly;
@@ -357,6 +394,7 @@ public sealed record PipelineConfiguration
     /// When true, the pipeline loop starts automatically on application startup.
     /// Set to true when user starts the loop, false when user stops it.
     /// </summary>
+    [Key(15)]
     public bool ClosedLoopAutoStart
     {
         get => ClosedLoop.AutoStart;
@@ -367,6 +405,7 @@ public sealed record PipelineConfiguration
     /// Poll interval for the closed pipeline loop when checking for new agent:next issues.
     /// Default: 60 seconds.
     /// </summary>
+    [Key(21)]
     public TimeSpan ClosedLoopPollInterval
     {
         get => ClosedLoop.ClosedLoopPollInterval;
@@ -377,6 +416,7 @@ public sealed record PipelineConfiguration
     /// Maximum number of issues to process per poll cycle in the closed loop.
     /// 0 means unlimited (process entire backlog). Counter resets each poll cycle.
     /// </summary>
+    [Key(20)]
     public int ClosedLoopMaxRunsPerCycle
     {
         get => ClosedLoop.ClosedLoopMaxRunsPerCycle;
@@ -387,6 +427,7 @@ public sealed record PipelineConfiguration
     /// Number of consecutive poll failures before the circuit breaker pauses the loop.
     /// Default: 5.
     /// </summary>
+    [Key(18)]
     public int ClosedLoopMaxConsecutivePollFailures
     {
         get => ClosedLoop.ClosedLoopMaxConsecutivePollFailures;
@@ -397,6 +438,7 @@ public sealed record PipelineConfiguration
     /// Maximum backoff interval between poll retries after consecutive failures.
     /// Backoff uses exponential formula capped at this value. Default: 15 minutes.
     /// </summary>
+    [Key(17)]
     public TimeSpan ClosedLoopMaxBackoffInterval
     {
         get => ClosedLoop.ClosedLoopMaxBackoffInterval;
@@ -407,6 +449,7 @@ public sealed record PipelineConfiguration
     /// Maximum number of pages to fetch when polling for agent:next issues.
     /// Each page contains up to 100 issues. Default: 10 (1000 issues max).
     /// </summary>
+    [Key(19)]
     public int ClosedLoopMaxPagesToFetch
     {
         get => ClosedLoop.ClosedLoopMaxPagesToFetch;
@@ -417,6 +460,7 @@ public sealed record PipelineConfiguration
     /// Cooldown duration before the circuit breaker auto-resumes polling.
     /// After this period the loop resets failure counters and retries. Default: 5 minutes.
     /// </summary>
+    [Key(16)]
     public TimeSpan ClosedLoopCircuitBreakerCooldown
     {
         get => ClosedLoop.ClosedLoopCircuitBreakerCooldown;
@@ -430,6 +474,7 @@ public sealed record PipelineConfiguration
     /// does not specify <c>requiredAgentLabels</c>. Comma-separated string (e.g., "kiro,dotnet").
     /// Null means any idle agent can be selected.
     /// </summary>
+    [Key(24)]
     public string? DefaultRequiredAgentLabels
     {
         get => Agent.DefaultRequiredAgentLabels;
@@ -441,6 +486,7 @@ public sealed record PipelineConfiguration
     /// (concurrent push conflict). Each retry fetches, rebases, resolves conflicts, and retries push.
     /// Default: 3.
     /// </summary>
+    [Key(12)]
     public int BrainPushMaxRetries
     {
         get => Agent.BrainPushMaxRetries;
@@ -451,6 +497,7 @@ public sealed record PipelineConfiguration
     /// How long to wait after an agent disconnects before marking its active run as Failed.
     /// Default: 5 minutes.
     /// </summary>
+    [Key(3)]
     public TimeSpan AgentDisconnectGracePeriod
     {
         get => Agent.AgentDisconnectGracePeriod;
@@ -461,6 +508,7 @@ public sealed record PipelineConfiguration
     /// How long a busy agent can go without pipeline step progress before being marked as stuck.
     /// Default: 60 minutes.
     /// </summary>
+    [Key(2)]
     public TimeSpan AgentBusyProgressTimeout
     {
         get => Agent.AgentBusyProgressTimeout;
@@ -471,6 +519,7 @@ public sealed record PipelineConfiguration
     /// Maximum number of output lines to retain per active pipeline run (ring buffer capacity).
     /// Default: 10,000.
     /// </summary>
+    [Key(42)]
     public int OutputBufferCapacity
     {
         get => Agent.OutputBufferCapacity;
@@ -481,6 +530,7 @@ public sealed record PipelineConfiguration
     /// Maximum number of output lines in PipelineRun.OutputLines bounded queue.
     /// Default: 5,000.
     /// </summary>
+    [Key(43)]
     public int OutputLinesCapacity
     {
         get => Agent.OutputLinesCapacity;
@@ -491,6 +541,7 @@ public sealed record PipelineConfiguration
     /// Maximum number of chat entries in PipelineRun.ChatHistory bounded queue.
     /// Default: 200.
     /// </summary>
+    [Key(14)]
     public int ChatHistoryCapacity
     {
         get => Agent.ChatHistoryCapacity;
@@ -501,6 +552,7 @@ public sealed record PipelineConfiguration
     /// Maximum number of quality gate reports in PipelineRun.QualityGateHistory bounded queue.
     /// Default: 50.
     /// </summary>
+    [Key(46)]
     public int QualityGateHistoryCapacity
     {
         get => Agent.QualityGateHistoryCapacity;
@@ -511,6 +563,7 @@ public sealed record PipelineConfiguration
     /// Maximum number of retry error messages in PipelineRun.RetryErrors bounded queue.
     /// Default: 100.
     /// </summary>
+    [Key(49)]
     public int RetryErrorsCapacity
     {
         get => Agent.RetryErrorsCapacity;
@@ -521,6 +574,7 @@ public sealed record PipelineConfiguration
     /// Interval in seconds between heartbeat monitor sweeps. Requires restart to take effect.
     /// Default: 60.
     /// </summary>
+    [Key(29)]
     public int HeartbeatSweepIntervalSeconds
     {
         get => Agent.HeartbeatSweepIntervalSeconds;
@@ -531,6 +585,7 @@ public sealed record PipelineConfiguration
     /// Seconds without a heartbeat before an agent is considered stale.
     /// Default: 90.
     /// </summary>
+    [Key(30)]
     public int HeartbeatTimeoutSeconds
     {
         get => Agent.HeartbeatTimeoutSeconds;
@@ -545,6 +600,7 @@ public sealed record PipelineConfiguration
     /// When non-empty, the pipeline loop iterates through enabled templates each cycle.
     /// </summary>
     [Obsolete("Use IProjectStore template methods (LoadTemplatesForProjectAsync, SaveTemplateAsync) instead. This property is retained for migration and rollback compatibility.")]
+    [Key(45)]
     public IReadOnlyList<PipelineJobTemplate> PipelineJobTemplates { get; init; } = Array.Empty<PipelineJobTemplate>();
 
     /// <summary>
@@ -553,17 +609,20 @@ public sealed record PipelineConfiguration
     /// ("Produce at most N proposals") and the issue creation cap in RefactoringExecutor.
     /// Default: 3.
     /// </summary>
+    [Key(40)]
     public int MaxRefactoringProposals { get; init; } = 3;
 
     /// <summary>
     /// Time window for git hotspot analysis in refactoring detection.
     /// Only commits within this window are counted. Default: 90 days.
     /// </summary>
+    [Key(31)]
     public TimeSpan HotspotAnalysisLookback { get; init; } = TimeSpan.FromDays(90);
 
     /// <summary>
     /// Maximum number of sub-issues per epic decomposition (range: 1–20). Default: 10.
     /// </summary>
+    [Key(37)]
     public int MaxDecompositionSubIssues
     {
         get => field;
@@ -578,16 +637,19 @@ public sealed record PipelineConfiguration
     /// <summary>
     /// Maximum simultaneous decomposition runs. Default: 2.
     /// </summary>
+    [Key(36)]
     public int MaxConcurrentDecompositions { get; init; } = 2;
 
     /// <summary>
     /// Timeout for each decomposition phase. Default: 15 minutes.
     /// </summary>
+    [Key(23)]
     public TimeSpan DecompositionTimeout { get; init; } = TimeSpan.FromMinutes(15);
 
     /// <summary>
     /// Maximum open issues downloaded for deduplication context. Default: 50.
     /// </summary>
+    [Key(39)]
     public int MaxOpenIssuesForContext { get; init; } = 50;
 
     /// <summary>
@@ -595,6 +657,7 @@ public sealed record PipelineConfiguration
     /// Only closed issues within this window are included in the feedback context.
     /// Default: 90 days.
     /// </summary>
+    [Key(47)]
     public TimeSpan RefactoringOutcomeLookback { get; init; } = TimeSpan.FromDays(90);
 
 }

@@ -152,8 +152,7 @@ internal sealed class PipelineStepContext
     public async Task FailRunAsync(string reason, CancellationToken ct = default)
     {
         Run.FailureReason = reason;
-        Run.CompletedAt = DateTime.UtcNow;
-        Run.CompletedAtOffset = DateTimeOffset.UtcNow;
+        Run.MarkCompleted();
         Run.FinalLabel = AgentLabels.Error;
         Logger.Information(
             "Pipeline {RunId} FailRunAsync swapping label to agent:error for issue {IssueIdentifier} (reason={Reason}, step={CurrentStep})",

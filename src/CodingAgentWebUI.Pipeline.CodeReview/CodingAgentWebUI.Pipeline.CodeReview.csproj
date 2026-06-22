@@ -3,10 +3,16 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- MsgPack017: Init properties with default initializers are intentional. -->
+    <NoWarn>$(NoWarn);MsgPack017</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline.UnitTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MessagePack" />
   </ItemGroup>
 </Project>

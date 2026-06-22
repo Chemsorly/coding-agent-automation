@@ -19,8 +19,7 @@ internal static class JobCompletionMapper
         ArgumentNullException.ThrowIfNull(payload);
 
         run.CurrentStep = payload.FinalStep;
-        run.CompletedAt = payload.CompletedAt.UtcDateTime;
-        run.CompletedAtOffset = payload.CompletedAt;
+        run.MarkCompleted(payload.CompletedAt);
         run.FailureReason = payload.FailureReason;
         run.PullRequestUrl = payload.PullRequestUrl;
         run.PullRequestNumber = payload.PullRequestNumber;

@@ -23,6 +23,44 @@ public sealed class PullRequestFinalizationService
     }
 
     /// <summary>
+    /// Runs the full post-PR finalization sequence: PR description → reflection → brain sync → feedback.
+    /// Conditionally skips steps based on isDraft, brain provider availability, and config.
+    /// Does not set CompletedAt or CurrentStep — those remain the caller's responsibility.
+    /// </summary>
+    // TODO: Validate non-nullable parameters (run, agentProvider, repoProvider, config, feedbackService, emitOutputLine, transitionCallback) with ArgumentNullException.ThrowIfNull for fail-fast consistency.
+    public async Task RunPostPrSequenceAsync(
+        PipelineRun run, bool isDraft,
+        IAgentProvider agentProvider, IRepositoryProvider repoProvider,
+        PipelineConfiguration config,
+        IBrainSyncService? brainSync, IRepositoryProvider? brainProvider,
+        FeedbackService feedbackService, IPipelineRunHistoryService? historyService,
+        Action<string> emitOutputLine,
+        Func<PipelineStep, Task> transitionCallback,
+        CancellationToken ct)
+    {
+        if (!isDraft && !string.IsNullOrEmpty(run.PullRequestNumber))
+        {
+            await transitionCallback(PipelineStep.GeneratingPrDescription);
+            await GeneratePrDescriptionAsync(run, agentProvider, repoProvider, config, emitOutputLine, ct);
+        }
+
+        if (!isDraft && brainProvider is not null && brainSync is not null && !config.BrainReadOnly)
+        {
+            await transitionCallback(PipelineStep.ReflectingOnRun);
+            await RunReflectionAsync(run, agentProvider, config, emitOutputLine, ct);
+
+            await transitionCallback(PipelineStep.SyncingBrainRepoPostRun);
+            await SyncBrainPostRunAsync(run, brainSync, brainProvider, config, emitOutputLine, ct);
+        }
+
+        // No step transition for feedback — intentionally matches existing behavior
+        if (!isDraft)
+        {
+            await CollectFeedbackAsync(run, agentProvider, feedbackService, historyService, emitOutputLine, ct);
+        }
+    }
+
+    /// <summary>
     /// Generates an agent-written PR description and updates the PR body.
     /// Does not throw on failure — logs a warning and returns.
     /// </summary>

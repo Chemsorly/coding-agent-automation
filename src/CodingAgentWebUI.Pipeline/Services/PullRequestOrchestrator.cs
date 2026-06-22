@@ -94,8 +94,7 @@ public class PullRequestOrchestrator
             // run.PullRequestUrl and run.PullRequestNumber are already set
             // (from LinkedPullRequest in rework, or from CreateDraftPrIfNotExistsAsync).
             run.IsDraftPr = isDraft;
-            run.CompletedAt = DateTime.UtcNow;
-            run.CompletedAtOffset = DateTimeOffset.UtcNow;
+            run.MarkCompleted();
 
             try
             {
@@ -129,8 +128,7 @@ public class PullRequestOrchestrator
             run.PullRequestUrl = prUrl;
             run.IsDraftPr = isDraft;
             run.PullRequestNumber = ExtractPrNumber(prUrl);
-            run.CompletedAt = DateTime.UtcNow;
-            run.CompletedAtOffset = DateTimeOffset.UtcNow;
+            run.MarkCompleted();
 
             var prLabel = isDraft ? "Draft pull request" : "Pull request";
             onOutputLine?.Invoke($"🔗 {prLabel} #{run.PullRequestNumber} created");
@@ -344,8 +342,7 @@ public class PullRequestOrchestrator
 
         // Update PR body and mark ready (or leave as draft)
         run.IsDraftPr = isDraft;
-        run.CompletedAt = DateTime.UtcNow;
-        run.CompletedAtOffset = DateTimeOffset.UtcNow;
+        run.MarkCompleted();
 
         try
         {

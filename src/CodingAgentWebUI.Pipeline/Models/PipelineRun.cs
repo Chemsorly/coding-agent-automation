@@ -29,6 +29,25 @@ public sealed class PipelineRun
     /// <summary>Timezone-safe shadow of <see cref="CompletedAt"/>. Set alongside the original property.</summary>
     public DateTimeOffset? CompletedAtOffset { get; set; }
 
+    /// <summary>Atomically sets both <see cref="CompletedAt"/> and <see cref="CompletedAtOffset"/> to the current UTC time.</summary>
+    public void MarkCompleted()
+    {
+        var now = DateTimeOffset.UtcNow;
+#pragma warning disable CS0618
+        CompletedAt = now.UtcDateTime;
+#pragma warning restore CS0618
+        CompletedAtOffset = now;
+    }
+
+    /// <summary>Atomically sets both <see cref="CompletedAt"/> and <see cref="CompletedAtOffset"/> from the provided timestamp.</summary>
+    public void MarkCompleted(DateTimeOffset timestamp)
+    {
+#pragma warning disable CS0618
+        CompletedAt = timestamp.UtcDateTime;
+#pragma warning restore CS0618
+        CompletedAtOffset = timestamp;
+    }
+
     /// <summary>Last time the pipeline step changed (set via ReportStepTransition). Used by HeartbeatMonitorService to detect stuck-in-Busy agents.</summary>
     public DateTimeOffset LastStepChangeAt { get; set; }
 
