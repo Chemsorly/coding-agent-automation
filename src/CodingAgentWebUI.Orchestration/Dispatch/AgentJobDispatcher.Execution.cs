@@ -180,40 +180,36 @@ public sealed partial class AgentJobDispatcher
             // Replace the initial run with a fully-populated review run atomically.
             // Using ReplaceRun instead of RemoveRun+AddRun eliminates the race window where
             // IsIssueBeingProcessed(prIdentifier) would return false during the gap.
-            run = new PipelineRun
+            var previousRepositoryName = run.RepositoryName;
+            var previousModelName = run.ModelName;
+            run = PipelineRun.Create(
+                runId: run.RunId,
+                issueIdentifier: request.PrIdentifier,
+                issueTitle: request.PrTitle,
+                issueProviderConfigId: request.IssueProviderId,
+                repoProviderConfigId: request.RepoProviderId,
+                runType: PipelineRunType.Review,
+                startedAt: run.StartedAtOffset,
+                initiatedBy: request.InitiatedBy,
+                agentId: agent.AgentId,
+                agentProviderConfigId: agentProviderId,
+                brainProviderConfigId: request.BrainProviderId,
+                reviewPrBranchName: request.PrBranchName,
+                reviewPrTargetBranch: request.PrTargetBranch,
+                reviewPrUrl: request.PrUrl,
+                reviewPrDescription: request.PrDescription,
+                reviewPrAuthor: request.PrAuthor,
+                linkedIssueContexts: linkedIssueContexts.Count > 0 ? linkedIssueContexts : null);
+            run.RepositoryName = previousRepositoryName;
+            run.ModelName = previousModelName;
+            run.ProjectId = project.Id;
+            run.ProjectName = project.Name;
+            run.LinkedPullRequest = new LinkedPullRequest
             {
-                RunId = run.RunId,
-                IssueIdentifier = request.PrIdentifier,
-                IssueTitle = request.PrTitle,
-                IssueProviderConfigId = request.IssueProviderId,
-                RepoProviderConfigId = request.RepoProviderId,
-                StartedAt = run.StartedAt,
-                StartedAtOffset = run.StartedAtOffset,
-                LastStepChangeAt = DateTimeOffset.UtcNow,
-                CurrentStep = PipelineStep.Created,
-                RepositoryName = run.RepositoryName,
-                ModelName = run.ModelName,
-                BrainProviderConfigId = request.BrainProviderId,
-                PipelineProviderConfigId = null,
-                InitiatedBy = request.InitiatedBy,
-                AgentId = agent.AgentId,
-                AgentProviderConfigId = agentProviderId,
-                RunType = PipelineRunType.Review,
-                ReviewPrBranchName = request.PrBranchName,
-                ReviewPrTargetBranch = request.PrTargetBranch,
-                ReviewPrUrl = request.PrUrl,
-                ReviewPrDescription = request.PrDescription,
-                ReviewPrAuthor = request.PrAuthor,
-                ProjectId = project.Id,
-                ProjectName = project.Name,
-                LinkedPullRequest = new LinkedPullRequest
-                {
-                    Number = int.TryParse(request.PrIdentifier, out var prNum) ? prNum : 0,
-                    BranchName = request.PrBranchName,
-                    Url = request.PrUrl,
-                    IsDraft = false
-                },
-                LinkedIssueContexts = linkedIssueContexts.Count > 0 ? linkedIssueContexts : null
+                Number = int.TryParse(request.PrIdentifier, out var prNum) ? prNum : 0,
+                BranchName = request.PrBranchName,
+                Url = request.PrUrl,
+                IsDraft = false
             };
 
             _runService.ReplaceRun(run);
@@ -347,30 +343,26 @@ public sealed partial class AgentJobDispatcher
             var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, "decomposition", runId);
 
             // Replace the initial run with a fully-populated decomposition run atomically.
-            run = new PipelineRun
-            {
-                RunId = runId,
-                IssueIdentifier = epicIdentifier,
-                IssueTitle = epicTitle,
-                IssueProviderConfigId = issueProviderId,
-                RepoProviderConfigId = repoProviderId,
-                StartedAt = run.StartedAt,
-                StartedAtOffset = run.StartedAtOffset,
-                LastStepChangeAt = DateTimeOffset.UtcNow,
-                CurrentStep = PipelineStep.Created,
-                RepositoryName = run.RepositoryName,
-                ModelName = run.ModelName,
-                BrainProviderConfigId = brainProviderId,
-                PipelineProviderConfigId = null,
-                InitiatedBy = initiatedBy,
-                AgentId = agent.AgentId,
-                AgentProviderConfigId = agentProviderId,
-                RunType = phaseType,
-                WorkspacePath = workspacePath,
-                DecompositionSource = decompositionSource,
-                ProjectId = project.Id,
-                ProjectName = project.Name
-            };
+            var previousRepositoryName = run.RepositoryName;
+            var previousModelName = run.ModelName;
+            run = PipelineRun.Create(
+                runId: runId,
+                issueIdentifier: epicIdentifier,
+                issueTitle: epicTitle,
+                issueProviderConfigId: issueProviderId,
+                repoProviderConfigId: repoProviderId,
+                runType: phaseType,
+                startedAt: run.StartedAtOffset,
+                initiatedBy: initiatedBy,
+                agentId: agent.AgentId,
+                agentProviderConfigId: agentProviderId,
+                brainProviderConfigId: brainProviderId,
+                decompositionSource: decompositionSource);
+            run.RepositoryName = previousRepositoryName;
+            run.ModelName = previousModelName;
+            run.WorkspacePath = workspacePath;
+            run.ProjectId = project.Id;
+            run.ProjectName = project.Name;
 
             _runService.ReplaceRun(run);
 

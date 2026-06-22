@@ -308,33 +308,27 @@ public sealed class LocalPipelineExecutor
         CancellationToken ct,
         List<(string TemplateName, IRepositoryProvider Provider)>? additionalRepoProviders = null)
     {
-        var run = new PipelineRun
-        {
-            RunId = job.JobId,
-            IssueIdentifier = job.IssueIdentifier,
-            IssueTitle = job.IssueDetail.Title,
-            IssueProviderConfigId = string.Empty, // Agent doesn't have issue provider
-            RepoProviderConfigId = job.RepoProviderConfigId,
-            StartedAt = DateTime.UtcNow,
-            StartedAtOffset = DateTimeOffset.UtcNow,
-            LastStepChangeAt = DateTimeOffset.UtcNow,
-            CurrentStep = PipelineStep.Created,
-            RepositoryName = repoProvider.RepositoryFullName,
-            ModelName = agentProvider is KiroCliAgentProvider kp ? kp.Model : null,
-            BrainProviderConfigId = brainProvider is not null ? job.BrainProviderConfigId : null,
-            PipelineProviderConfigId = job.PipelineProviderConfigId,
-            InitiatedBy = job.InitiatedBy,
-            LinkedPullRequest = job.LinkedPullRequest,
-            AgentId = _agentIdentity.Id,
-            RunType = job.RunType,
-            ReviewPrBranchName = job.LinkedPullRequest?.BranchName,
-            ReviewPrTargetBranch = job.ReviewPrTargetBranch,
-            ReviewPrDescription = job.ReviewPrDescription,
-            ReviewPrAuthor = job.ReviewPrAuthor,
-            LinkedIssueContexts = job.LinkedIssueContexts,
-            ProjectId = job.ProjectId,
-            ProjectName = job.ProjectName
-        };
+        var run = PipelineRun.Create(
+            runId: job.JobId,
+            issueIdentifier: job.IssueIdentifier,
+            issueTitle: job.IssueDetail.Title,
+            issueProviderConfigId: string.Empty, // Agent doesn't have issue provider
+            repoProviderConfigId: job.RepoProviderConfigId,
+            runType: job.RunType,
+            initiatedBy: job.InitiatedBy,
+            agentId: _agentIdentity.Id,
+            brainProviderConfigId: brainProvider is not null ? job.BrainProviderConfigId : null,
+            reviewPrBranchName: job.LinkedPullRequest?.BranchName,
+            reviewPrTargetBranch: job.ReviewPrTargetBranch,
+            reviewPrDescription: job.ReviewPrDescription,
+            reviewPrAuthor: job.ReviewPrAuthor,
+            linkedIssueContexts: job.LinkedIssueContexts);
+        run.RepositoryName = repoProvider.RepositoryFullName;
+        run.ModelName = agentProvider is KiroCliAgentProvider kp ? kp.Model : null;
+        run.PipelineProviderConfigId = job.PipelineProviderConfigId;
+        run.LinkedPullRequest = job.LinkedPullRequest;
+        run.ProjectId = job.ProjectId;
+        run.ProjectName = job.ProjectName;
 
         run.IssueLabels = job.IssueDetail.Labels;
 

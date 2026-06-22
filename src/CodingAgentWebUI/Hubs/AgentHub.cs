@@ -129,31 +129,25 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
                 if (!inHistory)
                 {
-                    #pragma warning disable CS0618 // StartedAt is obsolete but required for PipelineRun construction
-                    var restoredRun = new PipelineRun
-                    {
-                        RunId = message.ActiveJob.RunId,
-                        IssueIdentifier = message.ActiveJob.IssueIdentifier,
-                        IssueTitle = message.ActiveJob.IssueTitle,
-                        IssueProviderConfigId = message.ActiveJob.IssueProviderConfigId,
-                        RepoProviderConfigId = message.ActiveJob.RepoProviderConfigId,
-                        AgentProviderConfigId = message.ActiveJob.AgentProviderConfigId,
-                        BrainProviderConfigId = message.ActiveJob.BrainProviderConfigId,
-                        PipelineProviderConfigId = message.ActiveJob.PipelineProviderConfigId,
-                        StartedAt = message.ActiveJob.StartedAt.UtcDateTime,
-                        StartedAtOffset = message.ActiveJob.StartedAt,
-                        LastStepChangeAt = DateTimeOffset.UtcNow,
-                        CurrentStep = message.ActiveJob.CurrentStep,
-                        AgentId = message.AgentId,
-                        InitiatedBy = message.ActiveJob.InitiatedBy,
-                        ResolvedProfileId = message.ActiveJob.ResolvedProfileId,
-                        ProjectId = message.ActiveJob.ProjectId,
-                        ProjectName = message.ActiveJob.ProjectName,
-                        RunType = message.ActiveJob.RunType,
-                        RepositoryName = message.ActiveJob.RepositoryName,
-                        ModelName = message.ActiveJob.ModelName
-                    };
-                    #pragma warning restore CS0618
+                    var restoredRun = PipelineRun.Create(
+                        runId: message.ActiveJob.RunId,
+                        issueIdentifier: message.ActiveJob.IssueIdentifier,
+                        issueTitle: message.ActiveJob.IssueTitle,
+                        issueProviderConfigId: message.ActiveJob.IssueProviderConfigId,
+                        repoProviderConfigId: message.ActiveJob.RepoProviderConfigId,
+                        runType: message.ActiveJob.RunType,
+                        startedAt: message.ActiveJob.StartedAt,
+                        initiatedBy: message.ActiveJob.InitiatedBy,
+                        agentId: message.AgentId,
+                        agentProviderConfigId: message.ActiveJob.AgentProviderConfigId,
+                        brainProviderConfigId: message.ActiveJob.BrainProviderConfigId);
+                    restoredRun.CurrentStep = message.ActiveJob.CurrentStep;
+                    restoredRun.PipelineProviderConfigId = message.ActiveJob.PipelineProviderConfigId;
+                    restoredRun.ResolvedProfileId = message.ActiveJob.ResolvedProfileId;
+                    restoredRun.ProjectId = message.ActiveJob.ProjectId;
+                    restoredRun.ProjectName = message.ActiveJob.ProjectName;
+                    restoredRun.RepositoryName = message.ActiveJob.RepositoryName;
+                    restoredRun.ModelName = message.ActiveJob.ModelName;
 
                     _facade.AddRun(restoredRun);
 
