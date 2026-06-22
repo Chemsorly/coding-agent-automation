@@ -47,6 +47,10 @@ public class PipelineTelemetryAgentMetricsTests : IDisposable
     [Fact]
     public void AgentJobsRejected_Add_IncludesReasonTag()
     {
+        // Warm up: force the listener to observe this instrument (workaround for
+        // InstrumentPublished not reliably firing for pre-existing static instruments)
+        PipelineTelemetry.AgentJobsRejected.Add(1,
+            new KeyValuePair<string, object?>("reason", "warmup"));
         _measurements.Clear();
 
         PipelineTelemetry.AgentJobsRejected.Add(1,
