@@ -196,9 +196,10 @@ public sealed class PullRequestFinalizationService
         emitOutputLine("📋 Collecting run feedback...");
         try
         {
-            var elapsed = DateTime.UtcNow - run.StartedAt;
+            var elapsed = DateTimeOffset.UtcNow - run.StartedAtOffset;
             var recentSummaries = (historyService?.GetRunHistory() ?? [])
-                .OrderByDescending(s => s.StartedAt)
+                // TODO: Add fallback for legacy summaries where StartedAtOffset == default (consistent with PipelineRunHistoryService)
+                .OrderByDescending(s => s.StartedAtOffset)
                 .Take(FeedbackConstraints.MaxRecentRunsForCategories)
                 .ToList();
 

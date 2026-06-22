@@ -890,7 +890,7 @@ public sealed class LocalPipelineExecutor
         PullRequestUrl = run.PullRequestUrl,
         PullRequestNumber = run.PullRequestNumber,
         IsDraftPr = run.IsDraftPr,
-        CompletedAt = run.CompletedAt.HasValue ? new DateTimeOffset(run.CompletedAt.Value, TimeSpan.Zero) : DateTimeOffset.UtcNow,
+        CompletedAt = run.CompletedAtOffset ?? DateTimeOffset.UtcNow,
         BrainUpdatesPushed = run.BrainUpdatesPushed,
         AnalysisRecommendation = run.AnalysisRecommendation
     };

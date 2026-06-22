@@ -66,7 +66,7 @@
                     <tbody>
                         @foreach (var run in _activeRuns)
                         {
-                            var elapsed = DateTime.UtcNow - run.StartedAt;
+                            var elapsed = DateTimeOffset.UtcNow - run.StartedAtOffset;
                             <tr class="monitoring-row-clickable"
                                 @onclick="() => OpenRunDetail(run.RunId)">
                                 <td class="monitoring-mono" title="@run.RunId">@run.RunId</td>
@@ -104,7 +104,7 @@
                                         @run.CurrentStep.ToDisplayName()
                                     </span>
                                 </td>
-                                <td>@run.StartedAt.ToLocalTime().ToString("HH:mm:ss")</td>
+                                <td>@run.StartedAtOffset.ToLocalTime().ToString("HH:mm:ss")</td>
                                 <td>@elapsed.ToString(@"hh\:mm\:ss")</td>
                                 <td>
                                     @if (run.AgentId != null)

@@ -506,7 +506,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         _lifecycle.TransitionTo(run, finalStep);
         _lifecycle.AddRunToHistory(run);
 
-        var duration = run.CompletedAt!.Value - run.StartedAt;
+        var duration = run.CompletedAtOffset!.Value - run.StartedAtOffset;
         if (finalStep == PipelineStep.Completed)
             _lifecycle.EmitOutputLine($"✅ Pipeline completed in {(int)duration.TotalMinutes}m {duration.Seconds}s");
         else
@@ -515,7 +515,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         if (finalStep == PipelineStep.Completed)
             _historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig!.WorkspaceBaseDirectory);
         _logger.Information("Pipeline {RunId} {Outcome} in {Duration}. Retries: {RetryCount}. PR: {PullRequestUrl}",
-            run.RunId, finalStep, run.CompletedAt!.Value - run.StartedAt, run.RetryCount, run.PullRequestUrl);
+            run.RunId, finalStep, run.CompletedAtOffset!.Value - run.StartedAtOffset, run.RetryCount, run.PullRequestUrl);
     }
 
     private async Task PersistLastUsedProviderIdsAsync(

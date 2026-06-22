@@ -53,7 +53,7 @@ internal partial class AgentPhaseExecutor
             run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = outputSummary });
 
             _logger.Information("Pipeline {RunId} initial code generation completed with exit code {ExitCode} after {Elapsed}",
-                run.RunId, agentResult.ExitCode, DateTime.UtcNow - run.StartedAt);
+                run.RunId, agentResult.ExitCode, DateTimeOffset.UtcNow - run.StartedAtOffset);
 
             // Capture the codegen session ID for use by fix prompts (--resume-id)
             try
@@ -76,7 +76,7 @@ internal partial class AgentPhaseExecutor
                 run.ChatHistory.Enqueue(new ChatEntry
                 {
                     Role = ChatRole.System,
-                    Content = $"Agent process exited with code {agentResult.ExitCode} after {(DateTime.UtcNow - run.StartedAt):hh\\:mm\\:ss}. " +
+                    Content = $"Agent process exited with code {agentResult.ExitCode} after {(DateTimeOffset.UtcNow - run.StartedAtOffset):hh\\:mm\\:ss}. " +
                               $"Output lines captured: {agentResult.OutputLines.Count}. " +
                               $"The process may have stopped unexpectedly."
                 });
