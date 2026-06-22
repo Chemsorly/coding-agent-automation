@@ -70,6 +70,7 @@
     private bool? _analysisReviewEnabled;
     private string? _analysisReviewPrompt;
     private string? _analysisRefinementPrompt;
+    private bool? _acceptanceCriteriaEnabled;
     private bool? _baselineHealthCheckEnabled;
     private int? _externalCiTimeoutMinutes;
     private int? _externalCiPollIntervalSeconds;
@@ -84,6 +85,9 @@
     private bool? _brainConsolidationReviewEnabled;
     private bool? _harnessSuggestionsReviewEnabled;
     private bool? _brainReadOnly;
+
+    // Blacklisted paths (null = inherit global)
+    private string? _blacklistedPathsText;
 
     // Template management
     private string? _selectedTemplateToAdd;
@@ -139,6 +143,7 @@
         _analysisReviewEnabled = _project.AnalysisReviewEnabled;
         _analysisReviewPrompt = _project.AnalysisReviewPrompt;
         _analysisRefinementPrompt = _project.AnalysisRefinementPrompt;
+        _acceptanceCriteriaEnabled = _project.AcceptanceCriteriaEnabled;
         _baselineHealthCheckEnabled = _project.BaselineHealthCheckEnabled;
         _externalCiTimeoutMinutes = _project.ExternalCiTimeout.HasValue ? (int?)_project.ExternalCiTimeout.Value.TotalMinutes : null;
         _externalCiPollIntervalSeconds = _project.ExternalCiPollInterval.HasValue ? (int?)_project.ExternalCiPollInterval.Value.TotalSeconds : null;
@@ -153,6 +158,7 @@
         _brainConsolidationReviewEnabled = _project.BrainConsolidationReviewEnabled;
         _harnessSuggestionsReviewEnabled = _project.HarnessSuggestionsReviewEnabled;
         _brainReadOnly = _project.BrainReadOnly;
+        _blacklistedPathsText = _project.BlacklistedPaths != null ? string.Join(",", _project.BlacklistedPaths) : null;
         _steeringContent = _project.SteeringContent;
     }
 
@@ -297,6 +303,7 @@
 
             <h3>Feature Toggles</h3>
             @RenderBoolOverride("Analysis Review Enabled", () => _analysisReviewEnabled, v => _analysisReviewEnabled = v, _globalConfig.AnalysisReviewEnabled)
+            @RenderBoolOverride("Acceptance Criteria Enabled", () => _acceptanceCriteriaEnabled, v => _acceptanceCriteriaEnabled = v, _globalConfig.AcceptanceCriteriaEnabled)
             @RenderBoolOverride("Baseline Health Check Enabled", () => _baselineHealthCheckEnabled, v => _baselineHealthCheckEnabled = v, _globalConfig.BaselineHealthCheckEnabled)
             @RenderBoolOverride("Refactoring Review Enabled", () => _refactoringReviewEnabled, v => _refactoringReviewEnabled = v, _globalConfig.RefactoringReviewEnabled)
             @RenderBoolOverride("Brain Consolidation Review Enabled", () => _brainConsolidationReviewEnabled, v => _brainConsolidationReviewEnabled = v, _globalConfig.BrainConsolidationReviewEnabled)
@@ -314,6 +321,30 @@
                 <label>Steering Instructions</label>
                 <p class="form-hint">These instructions are provided to every agent working on issues in this project. Use them for cross-cutting rules like code style, build commands, tool preferences, or quality expectations.</p>
                 <textarea @bind="_steeringContent" rows="15" placeholder="## Code Style&#10;- Use descriptive variable names&#10;- Prefer composition over inheritance&#10;&#10;## Build &amp; Test&#10;- Always run the build after changes&#10;- Run tests before considering work complete&#10;&#10;## Tool Preferences&#10;- Use context7 to look up library documentation before using unfamiliar APIs&#10;- Use sequential-thinking for complex multi-step reasoning"></textarea>
+            </div>
+
+            <h3>Commit Blacklist</h3>
+            <div class="form-group override-group">
+                <div class="override-header">
+                    <label>Blacklisted Paths</label>
+                    @if (_blacklistedPathsText is not null)
+                    {
+                        <button class="btn-revert" @onclick="() => _blacklistedPathsText = null">Reset to global</button>
+                    }
+                    else
+                    {
+                        <button class="btn-override" @onclick="OverrideBlacklistedPaths">Override</button>
+                    }
+                </div>
+                @if (_blacklistedPathsText is not null)
+                {
+                    <input type="text" @bind="_blacklistedPathsText" />
+                    <span class="form-hint">Comma-separated paths excluded from commits. Overrides global blacklist for this project.</span>
+                }
+                else
+                {
+                    <span class="global-default-hint">Using global default: @string.Join(", ", _globalConfig.BlacklistedPaths)</span>
+                }
             </div>
 
             <div class="pipeline-form-actions">
@@ -509,6 +540,7 @@
                 AnalysisReviewEnabled = _analysisReviewEnabled,
                 AnalysisReviewPrompt = _analysisReviewPrompt,
                 AnalysisRefinementPrompt = _analysisRefinementPrompt,
+                AcceptanceCriteriaEnabled = _acceptanceCriteriaEnabled,
                 BaselineHealthCheckEnabled = _baselineHealthCheckEnabled,
                 ExternalCiTimeout = _externalCiTimeoutMinutes.HasValue ? TimeSpan.FromMinutes(_externalCiTimeoutMinutes.Value) : null,
                 ExternalCiPollInterval = _externalCiPollIntervalSeconds.HasValue ? TimeSpan.FromSeconds(_externalCiPollIntervalSeconds.Value) : null,
@@ -523,6 +555,7 @@
                 BrainConsolidationReviewEnabled = _brainConsolidationReviewEnabled,
                 HarnessSuggestionsReviewEnabled = _harnessSuggestionsReviewEnabled,
                 BrainReadOnly = _brainReadOnly,
+                BlacklistedPaths = ParseBlacklistedPaths(_blacklistedPathsText),
                 SteeringContent = string.IsNullOrWhiteSpace(_steeringContent) ? null : _steeringContent.Trim()
             };
 
@@ -640,6 +673,20 @@
                 dict[secret.Key] = secret.Value;
         }
         return dict.Count > 0 ? dict : null;
+    }
+
+    private static IReadOnlyList<string>? ParseBlacklistedPaths(string? input)
+    {
+        if (input is null) return null;
+        var paths = input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .ToList();
+        return paths.Count > 0 ? paths : null;
+    }
+
+    private void OverrideBlacklistedPaths()
+    {
+        _blacklistedPathsText = string.Join(",", _globalConfig.BlacklistedPaths);
     }
 
     private class SecretEntry

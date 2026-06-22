@@ -4,8 +4,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
 /// Abstraction for dispatching pipeline jobs to remote agents.
-/// When configured, <see cref="Services.PipelineLoopService"/> dispatches issues
-/// to agents instead of executing them locally via <c>StartPipelineAsync</c>.
+/// <see cref="Services.PipelineLoopService"/> dispatches issues to agents via this interface.
 /// </summary>
 public interface IJobDispatcher
 {
@@ -76,7 +75,6 @@ public interface IJobDispatcher
 
     /// <summary>
     /// Whether any agents are registered and available for dispatch.
-    /// When <c>false</c>, the loop should fall back to local execution.
     /// </summary>
     bool HasRegisteredAgents { get; }
 

@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// <summary>
 /// Background service that polls for agent:next issues and dispatches them to agents
 /// via the <see cref="IJobDispatcher"/>. Issues are always dispatched to agents or enqueued;
-/// local execution is not supported. If no dispatcher is available, issues are skipped.
+/// if no dispatcher is available, issues are skipped.
 /// Starts dormant and is activated via <see cref="StartLoop"/>. Survives page navigation.
 /// </summary>
 public sealed partial class PipelineLoopService : BackgroundService
@@ -168,8 +168,6 @@ public sealed partial class PipelineLoopService : BackgroundService
         lock (_lock)
         {
             if (IsLoopActive)
-                return false;
-            if (_orchestration.IsRunning)
                 return false;
 
             var enabledTemplates = templates.Where(t => t.Enabled).ToList();

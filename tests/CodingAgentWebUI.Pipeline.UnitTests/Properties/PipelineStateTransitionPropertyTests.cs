@@ -34,7 +34,7 @@ public class PipelineStateTransitionPropertyTests
         };
 
         // Start the pipeline — runs end-to-end
-        var run = service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None)
+        var run = service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None)
             .GetAwaiter().GetResult();
 
         // Verify the expected transitions occurred in order
@@ -90,7 +90,7 @@ public class PipelineStateTransitionPropertyTests
         };
 
         // Run the pipeline end-to-end
-        var run = service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None)
+        var run = service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None)
             .GetAwaiter().GetResult();
 
         // Core property: HighWaterMark values never decrease
@@ -205,7 +205,7 @@ public class PipelineStateTransitionPropertyTests
     /// Each element in gateResults determines whether that attempt passes (true) or fails (false).
     /// MaxRetries is set to gateResults.Length - 1 (first call is the initial attempt, rest are retries).
     /// </summary>
-    private static PipelineOrchestrationService CreateServiceWithRandomGateResults(bool[] gateResults)
+    private static TestPipelineRunner CreateServiceWithRandomGateResults(bool[] gateResults)
     {
         var maxRetries = gateResults.Length - 1; // first call is initial, rest are retries
         var (mockConfigStore, mockFactory, _, _, _, mockLogger) = CreateBaseMocks();
@@ -231,7 +231,7 @@ public class PipelineStateTransitionPropertyTests
                 };
             });
 
-        return new PipelineOrchestrationService(
+        return new TestPipelineRunner(
             mockConfigStore.Object,
             mockFactory.Object,
             new IssueDescriptionParser(),
@@ -242,7 +242,7 @@ public class PipelineStateTransitionPropertyTests
             historyService: new Mock<IPipelineRunHistoryService>().Object);
     }
 
-    private static PipelineOrchestrationService CreateServiceWithMocks(bool allGatesPass)
+    private static TestPipelineRunner CreateServiceWithMocks(bool allGatesPass)
     {
         var (mockConfigStore, mockFactory, _, _, _, mockLogger) = CreateBaseMocks();
 
@@ -257,7 +257,7 @@ public class PipelineStateTransitionPropertyTests
                 Tests = new GateResult { GateName = "Tests", Passed = allGatesPass, Details = allGatesPass ? "OK" : "Failed" }
             });
 
-        return new PipelineOrchestrationService(
+        return new TestPipelineRunner(
             mockConfigStore.Object,
             mockFactory.Object,
             new IssueDescriptionParser(),

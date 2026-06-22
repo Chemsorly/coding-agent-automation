@@ -128,8 +128,7 @@ public class PipelineSectionComponentTests : BunitContext
         var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
         Assert.Contains("Poll Interval", cut.Markup);
         Assert.Contains("Max Runs Per Cycle", cut.Markup);
-        Assert.Contains("Max Consecutive Poll Failures", cut.Markup);
-        Assert.Contains("Max Backoff Interval", cut.Markup);
+        Assert.Contains("Advanced settings", cut.Markup);
     }
 
     [Fact]
@@ -149,8 +148,6 @@ public class PipelineSectionComponentTests : BunitContext
         var inputs = cut.FindAll("input[type='number']");
         Assert.Contains(inputs, i => i.GetAttribute("value") == "120");
         Assert.Contains(inputs, i => i.GetAttribute("value") == "5");
-        Assert.Contains(inputs, i => i.GetAttribute("value") == "10");
-        Assert.Contains(inputs, i => i.GetAttribute("value") == "1800");
     }
 
     [Fact]
@@ -169,7 +166,7 @@ public class PipelineSectionComponentTests : BunitContext
     {
         var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
         var hints = cut.FindAll(".form-hint-icon");
-        Assert.Equal(4, hints.Count);
+        Assert.Equal(2, hints.Count); // advanced fields hidden by default
     }
 
     // ═══ PipelinePromptsSection ═══
@@ -187,9 +184,8 @@ public class PipelineSectionComponentTests : BunitContext
         var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
         Assert.Contains("Analysis Prompt", cut.Markup);
         Assert.Contains("Implementation Prompt", cut.Markup);
-        Assert.Contains("Acceptance Criteria Prompt", cut.Markup);
         var textareas = cut.FindAll("textarea");
-        Assert.Equal(3, textareas.Count);
+        Assert.Equal(2, textareas.Count); // advanced fields hidden by default
     }
 
     [Fact]
@@ -197,7 +193,7 @@ public class PipelineSectionComponentTests : BunitContext
     {
         var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
         var resetButtons = cut.FindAll(".btn-revert");
-        Assert.Equal(3, resetButtons.Count);
+        Assert.Equal(2, resetButtons.Count); // advanced fields hidden by default
     }
 
     [Fact]
@@ -205,6 +201,7 @@ public class PipelineSectionComponentTests : BunitContext
     {
         var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
         var resetButtons = cut.FindAll(".btn-revert");
+        Assert.Equal(2, resetButtons.Count);
         Assert.All(resetButtons, btn => Assert.True(btn.HasAttribute("disabled")));
     }
 

@@ -10,7 +10,7 @@ using CodingAgentWebUI.Pipeline; // TODO: Redundant — namespace is implicitly 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
 /// <summary>
-/// Unit tests for PipelineOrchestrationService.
+/// Unit tests for pipeline step execution logic.
 /// </summary>
 public class PipelineOrchestrationServiceTests : IDisposable
 {
@@ -21,7 +21,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     private readonly Mock<IAgentProvider> _mockAgentProvider;
     private readonly Mock<IQualityGateValidator> _mockValidator;
     private readonly Mock<Serilog.ILogger> _mockLogger;
-    private readonly PipelineOrchestrationService _service;
+    private readonly TestPipelineRunner _service;
 
     public PipelineOrchestrationServiceTests()
     {
@@ -47,7 +47,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                     Directory.Delete(path, true);
             });
 
-        _service = new PipelineOrchestrationService(
+        _service = new TestPipelineRunner(
             _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
@@ -166,7 +166,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return agentTcs.Task; // code generation blocks
             });
 
-        var task = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var task = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         return (task, agentTcs);
     }
 
@@ -200,24 +200,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartPipeline_WhenAlreadyRunning_ThrowsInvalidOperationException()
-    {
-        var (pipelineTask, agentTcs) = StartBlockingPipeline();
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_service.ActiveRun?.CurrentStep != PipelineStep.GeneratingCode && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
-
-        _service.IsRunning.Should().BeTrue();
-
-        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "99", "agent-1", CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*already in progress*");
-
-        agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        await pipelineTask;
-    }
-
-    [Fact]
     public async Task StartPipeline_RecordsModelFromAgentProviderConfig()
     {
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
@@ -230,7 +212,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.ModelName.Should().Be("claude-sonnet-4.6");
     }
 
@@ -247,7 +229,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.ModelName.Should().Be("auto");
     }
 
@@ -278,7 +260,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "", Description = "Some description", Labels = Array.Empty<string>() });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Be("insufficient issue information");
     }
@@ -289,7 +271,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Valid Title", Description = "", Labels = Array.Empty<string>() });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Be("insufficient issue information");
     }
@@ -297,7 +279,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task StartPipeline_CompletesFullFlow()
     {
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.PullRequestUrl.Should().NotBeNullOrEmpty();
@@ -320,7 +302,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         _service.GetRunHistory().Should().HaveCount(1);
         _service.GetRunHistory()[0].ModelName.Should().Be("claude-opus-4.6");
     }
@@ -331,7 +313,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Connection refused"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("Failed to fetch issue");
         run.FailureReason.Should().Contain("Connection refused");
@@ -340,7 +322,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task StartPipeline_PostsAnalysisCommentOnIssue()
     {
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         _mockIssueProvider.Verify(
@@ -354,14 +336,14 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("API error"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.Completed);
     }
 
     [Fact]
     public async Task StartPipeline_AnalyzesCodeBeforePostingComment()
     {
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         _mockAgentProvider.Verify(
             p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
@@ -382,7 +364,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 new() { Id = "1", Body = "## 🤖 Agent Analysis\n\nPrevious analysis content here.", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-1) }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.AnalysisContent.Should().Contain("Previous analysis content here.");
         _mockAgentProvider.Verify(
@@ -399,7 +381,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("API error"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         _mockAgentProvider.Verify(
             p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
@@ -416,7 +398,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 transitions.Add(_service.ActiveRun.CurrentStep);
         };
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         transitions.Should().ContainInOrder(
             PipelineStep.CloningRepository,
@@ -444,7 +426,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 Tests = new GateResult { GateName = "Tests", Passed = false, Details = "2 tests failed" }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.PullRequestUrl.Should().NotBeNullOrEmpty();
@@ -470,7 +452,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 new() { DisplayName = "Default", Agents = new[] { new ReviewAgent { Name = "Correctness", Prompt = "Review the changes as a sub-agent." } } }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.CodeReviewIterationsCompleted.Should().Be(1);
@@ -483,7 +465,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>());
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.CodeReviewIterationsCompleted.Should().Be(0);
@@ -505,7 +487,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 new() { DisplayName = "Default", Agents = new[] { new ReviewAgent { Name = "Correctness", Prompt = "Review the changes." } } }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.CodeReviewIterationsCompleted.Should().Be(3);
@@ -538,7 +520,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.CodeReviewIterationsCompleted.Should().Be(1);
@@ -561,7 +543,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 new() { DisplayName = "Custom", Agents = new[] { new ReviewAgent { Name = "CustomReviewer", Prompt = customPrompt } } }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         _mockAgentProvider.Verify(
             p => p.ExecuteAsync(
@@ -605,7 +587,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         SetupReviewAgentWithFindings("Review the changes", "[CRITICAL] Missing null check\n[WARNING] Consider renaming");
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CodeReviewCriticalCount.Should().Be(1);
         run.CodeReviewWarningCount.Should().Be(1);
@@ -634,7 +616,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         // Production code only skips fix prompt when findings text is empty.
         SetupReviewAgentWithFindings("Review the changes", "");
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CodeReviewCriticalCount.Should().Be(0);
         _mockAgentProvider.Verify(
@@ -660,7 +642,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         SetupReviewAgentWithFindings("Review the changes", "[CRITICAL] Missing null check");
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CodeReviewCriticalCount.Should().Be(1);
         _mockAgentProvider.Verify(
@@ -687,7 +669,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         SetupReviewAgentWithFindings("Review the changes",
             "[CRITICAL] Bug A\n[CRITICAL] Bug B\n[WARNING] Style issue\n[SUGGESTION] Rename X\n[SUGGESTION] Rename Y\n[SUGGESTION] Rename Z");
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CodeReviewCriticalCount.Should().Be(2);
         run.CodeReviewWarningCount.Should().Be(1);
@@ -704,7 +686,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(blacklisted as IReadOnlyList<string>);
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.BlacklistedFilesDetected.Should().Contain(".agent/steering/rule.md");
@@ -721,7 +703,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(blacklisted as IReadOnlyList<string>);
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.BlacklistedFilesDetected.Should().Contain(".github/workflows/ci.yml");
@@ -733,7 +715,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ThrowsAsync(new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace."));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().BeOneOf(PipelineStep.Completed, PipelineStep.Failed);
     }
@@ -759,7 +741,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase });
 
-            var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+            var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
             run.CurrentStep.Should().Be(PipelineStep.Completed);
             if (run.WorkspacePath != null)
                 Directory.Exists(run.WorkspacePath).Should().BeFalse();
@@ -784,7 +766,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                     Tests = new GateResult { GateName = "Tests", Passed = false, Details = "Tests failed" }
                 });
 
-            var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+            var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
             run.CurrentStep.Should().Be(PipelineStep.Failed);
             run.IsDraftPr.Should().BeTrue();
             if (run.WorkspacePath != null)
@@ -826,7 +808,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return agentTcs.Task;
             });
 
-        var pipelineTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var pipelineTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         var deadline = DateTime.UtcNow.AddSeconds(5);
         while (_service.ActiveRun?.ChatHistory.Count == 0 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
@@ -870,7 +852,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return agentTcs.Task;
             });
 
-        var pipelineTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var pipelineTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         var deadline = DateTime.UtcNow.AddSeconds(5);
         while (_service.ActiveRun?.ChatHistory.Count == 0 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
@@ -914,7 +896,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return agentTcs.Task;
             });
 
-        var pipelineTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var pipelineTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         var deadline = DateTime.UtcNow.AddSeconds(5);
         while ((_service.ActiveRun?.ChatHistory.Where(c => c.Role == ChatRole.System && c.Content.Contains("no output for")).Count() ?? 0) < 2 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
@@ -938,7 +920,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockAgentProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Callback(() => callOrder.Add("AgentProvider.ValidateAsync")).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Callback(() => callOrder.Add("RepoProvider.CloneAsync")).Returns(Task.CompletedTask);
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         var lastValidateIndex = Math.Max(Math.Max(callOrder.IndexOf("IssueProvider.InitializeAsync"), callOrder.IndexOf("RepoProvider.ValidateAsync")), callOrder.IndexOf("AgentProvider.ValidateAsync"));
         callOrder.IndexOf("RepoProvider.CloneAsync").Should().BeGreaterThan(lastValidateIndex);
@@ -961,7 +943,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             case "Agent": _mockAgentProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new HttpRequestException(failureMessage)); break;
         }
 
-        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var act = () => _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         var ex = await act.Should().ThrowAsync<InvalidOperationException>();
         ex.Which.Message.Should().Contain(failureMessage);
         _service.ActiveRun!.CurrentStep.Should().Be(PipelineStep.Failed);
@@ -979,7 +961,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var mockPipelineProvider = new Mock<IPipelineProvider>();
         _mockFactory.Setup(f => f.CreatePipelineProviderAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>())).ReturnsAsync(mockPipelineProvider.Object);
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         _mockFactory.Verify(f => f.CreatePipelineProviderAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()), Times.Never);
         run.CurrentStep.Should().NotBe(PipelineStep.Failed);
     }
@@ -998,7 +980,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = Array.Empty<PipelineJobResult>() });
         _mockFactory.Setup(f => f.CreatePipelineProviderAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>())).ReturnsAsync(mockPipelineProvider.Object);
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         mockPipelineProvider.Verify(p => p.ValidateAsync(It.IsAny<CancellationToken>()), Times.Once);
         run.CurrentStep.Should().NotBe(PipelineStep.Failed);
     }
@@ -1015,7 +997,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         mockPipelineProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new HttpRequestException("GitHub API returned 401"));
         _mockFactory.Setup(f => f.CreatePipelineProviderAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>())).ReturnsAsync(mockPipelineProvider.Object);
 
-        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var act = () => _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         var ex = await act.Should().ThrowAsync<InvalidOperationException>();
         ex.Which.Message.Should().Contain("Pipeline provider");
         ex.Which.Message.Should().Contain("validation failed");
@@ -1051,7 +1033,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>())).Returns(firstAgentProvider.Object);
 
         // Run first pipeline to completion
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         var callOrder = new List<string>();
         firstIssueProvider.Setup(p => p.DisposeAsync()).Callback(() => callOrder.Add("Dispose:Issue")).Returns(ValueTask.CompletedTask);
@@ -1062,7 +1044,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>())).Callback(() => callOrder.Add("Create:Repository")).Returns(_mockRepoProvider.Object);
         _mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>())).Callback(() => callOrder.Add("Create:Agent")).Returns(_mockAgentProvider.Object);
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "99", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "99", "agent-1", CancellationToken.None);
 
         var lastDisposeIndex = new[] { "Dispose:Issue", "Dispose:Repository", "Dispose:Agent" }.Select(d => callOrder.IndexOf(d)).Max();
         var firstCreateIndex = new[] { "Create:Issue", "Create:Repository", "Create:Agent" }.Select(c => callOrder.IndexOf(c)).Min();
@@ -1088,7 +1070,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Correctness", Prompt = "Check correctness." }, new ReviewAgent { Name = "DotNetSpecialist", Prompt = "Check .NET issues." } } }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CodeReviewIterationsCompleted.Should().Be(1);
         _mockAgentProvider.Verify(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Check correctness.") && !r.UseResume), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
         _mockAgentProvider.Verify(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Check .NET issues.") && !r.UseResume), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
@@ -1121,7 +1103,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CodeReviewCriticalCount.Should().Be(1);
         run.CodeReviewWarningCount.Should().Be(2);
         run.CodeReviewSuggestionCount.Should().Be(1);
@@ -1154,7 +1136,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         _mockAgentProvider.Verify(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Fix only") && r.Prompt.Contains("[CRITICAL]") && r.UseResume), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
     }
 
@@ -1182,7 +1164,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         _mockAgentProvider.Verify(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Fix only")), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
     }
 
@@ -1196,7 +1178,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 CodeReview = new CodeReviewConfiguration { MaxIterations = 1 }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CodeReviewIterationsCompleted.Should().Be(0);
     }
 
@@ -1215,7 +1197,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "Correctness", Prompt = "Check correctness." }, new ReviewAgent { Name = "DotNetSpecialist", Prompt = "Check .NET." } } }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "Correctness", "DotNetSpecialist" });
     }
 
@@ -1244,7 +1226,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CodeReviewCriticalCount.Should().Be(1);
         run.CodeReviewWarningCount.Should().Be(1);
         run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "Agent1" });
@@ -1266,7 +1248,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 new() { DisplayName = "Test", Agents = new[] { new ReviewAgent { Name = "A1", Prompt = "A1 prompt" }, new ReviewAgent { Name = "A2", Prompt = "A2 prompt" } } }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CodeReviewIterationsCompleted.Should().Be(2);
         _mockAgentProvider.Verify(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("A1 prompt")), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
         _mockAgentProvider.Verify(p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("A2 prompt")), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
@@ -1322,14 +1304,14 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 CodeReview = new CodeReviewConfiguration { MaxIterations = 1 }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CodeReviewIterationsCompleted.Should().Be(0);
     }
 
     [Fact]
     public async Task StartPipeline_CallsInitializeAsync()
     {
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         _mockIssueProvider.Verify(p => p.InitializeAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -1340,7 +1322,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
     }
@@ -1351,7 +1333,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Authentication failed: installation token was rejected"));
 
-        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var act = () => _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         var ex = await act.Should().ThrowAsync<InvalidOperationException>();
         ex.Which.Message.Should().Contain("Issue provider initialization failed");
@@ -1361,7 +1343,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task StartPipeline_SwapsToInProgressAtCloningRepository()
     {
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Should add agent:in-progress during the clone step
         _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:in-progress", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
@@ -1373,7 +1355,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task StartPipeline_AddsAgentDoneLabelOnCompletion()
     {
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         // On successful completion, agent:done label should be applied
@@ -1391,7 +1373,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         try
         {
-            await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+            await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         }
         catch { }
 
@@ -1406,7 +1388,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns(tcs.Task);
 
-        var pipelineTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var pipelineTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Wait for pipeline to reach a running state
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -1433,7 +1415,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockIssueProvider.Setup(p => p.AddLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("API rate limit"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Pipeline should complete despite label failures
         run.CurrentStep.Should().Be(PipelineStep.Completed);
@@ -1447,7 +1429,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         try
         {
-            await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+            await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         }
         catch { }
 
@@ -1506,7 +1488,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     /// Holds all mocks and the service instance for brain-related tests (REQ-3, REQ-4, REQ-8, REQ-9).
     /// </summary>
     private record BrainTestContext(
-        PipelineOrchestrationService Service,
+        TestPipelineRunner Service,
         Mock<IIssueProvider> MockIssueProvider,
         Mock<IRepositoryProvider> MockRepoProvider,
         Mock<IRepositoryProvider> MockBrainProvider,
@@ -1649,7 +1631,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                     Directory.Delete(path, true);
             });
 
-        var service = new PipelineOrchestrationService(
+        var service = new TestPipelineRunner(
             mockConfigStore.Object,
             mockFactory.Object,
             new IssueDescriptionParser(),
@@ -1668,7 +1650,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         SetupAnalysisAgentWithAssessment("ready", "Issue is well-scoped");
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
@@ -1681,7 +1663,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         SetupAnalysisAgentWithAssessment("not_ready", "Issue is too vague",
             blockingIssues: new[] { "No acceptance criteria" });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("needs refinement");
@@ -1696,7 +1678,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         SetupAnalysisAgentWithAssessment("wont_do", "Bug already fixed in PR #134");
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.FailureReason.Should().Contain("won't do");
@@ -1723,7 +1705,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("analysis-assessment.json");
@@ -1744,7 +1726,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("malformed JSON");
@@ -1756,7 +1738,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         SetupAnalysisAgentWithAssessment("ready", "Looks good",
             blockingIssues: new[] { "Missing API endpoint" });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("needs refinement");
@@ -1769,7 +1751,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         SetupAnalysisAgentWithAssessment("wont_do", "Not needed",
             blockingIssues: new[] { "Contradictory requirements" });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("needs refinement");
@@ -1784,7 +1766,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         SetupAnalysisAgentWithAssessment("not_ready", "Scope too broad for a single agent run",
             blockingIssues: new[] { "Issue affects 50+ files across 5 projects — split by project: UI components, Infrastructure, Tests" });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("needs refinement");
@@ -1797,7 +1779,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         SetupAnalysisAgentWithAssessment("maybe", "Not sure about this");
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.AnalysisRecommendation.Should().Be(AnalysisGateResult.NotReady);
@@ -1808,7 +1790,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         SetupAnalysisAgentWithAssessment("wont_do", "Already implemented");
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         var history = _service.GetRunHistory();
         history.Should().HaveCount(1);
@@ -1829,7 +1811,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         SetupAnalysisAgentWithAssessment("ready", "Now it's good");
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Should have run fresh analysis (not skipped)
         run.AnalysisSkipped.Should().BeFalse();
@@ -1851,7 +1833,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         SetupAnalysisAgentWithAssessment("ready", "Re-evaluated");
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.AnalysisSkipped.Should().BeFalse();
         _mockAgentProvider.Verify(p => p.ExecuteAsync(
@@ -1869,7 +1851,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 new() { Id = "1", Body = "## 🤖 Agent Analysis\n\nExisting analysis.", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-1) }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.AnalysisSkipped.Should().BeTrue();
         run.AnalysisContent.Should().Contain("Existing analysis.");
@@ -1886,7 +1868,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             .Callback<string, string, CancellationToken>((_, body, _) => commentOrder.Add(body.Contains("Agent Analysis") ? "analysis" : "gate"))
             .Returns(Task.CompletedTask);
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         commentOrder.Should().ContainInOrder("analysis", "gate");
     }
@@ -1901,7 +1883,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             .Callback<string, string, CancellationToken>((_, body, _) => commentOrder.Add(body.Contains("Agent Analysis") ? "analysis" : "gate"))
             .Returns(Task.CompletedTask);
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         commentOrder.Should().ContainInOrder("analysis", "gate");
     }
@@ -1914,7 +1896,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var outputLines = new List<string>();
         _service.OnOutputLine += line => outputLines.Add(line);
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
 
@@ -1935,7 +1917,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var outputLines = new List<string>();
         _service.OnOutputLine += line => outputLines.Add(line);
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         outputLines.Should().Contain(l => l.Contains("#42") && l.Contains("Test Issue"));
     }
@@ -1946,7 +1928,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var outputLines = new List<string>();
         _service.OnOutputLine += line => outputLines.Add(line);
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         var qgLine = outputLines.FirstOrDefault(l => l.StartsWith("🏗️ Quality gates:"));
         qgLine.Should().NotBeNull();
@@ -1963,7 +1945,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var outputLines = new List<string>();
         _service.OnOutputLine += line => outputLines.Add(line);
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         outputLines.Should().Contain(l => l.StartsWith("❌ Pipeline failed:"));
     }
@@ -2010,7 +1992,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var outputLines = new List<string>();
         _service.OnOutputLine += line => outputLines.Add(line);
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         outputLines.Should().Contain(l => l.StartsWith("🔄 Quality gates failed, retrying (attempt 1/"));
         // Should have two QG summary lines (initial fail + retry pass)
@@ -2033,7 +2015,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var outputLines = new List<string>();
         _service.OnOutputLine += line => outputLines.Add(line);
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         outputLines.Should().Contain(l => l.StartsWith("🔍 Starting code review iteration"));
         outputLines.Should().Contain(l => l.StartsWith("📝 Code review:") && l.Contains("critical"));
@@ -2060,7 +2042,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
@@ -2083,7 +2065,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
@@ -2107,7 +2089,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
     }
@@ -2121,7 +2103,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("Analysis failed after 2 attempt(s)");
@@ -2157,7 +2139,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         attempt.Should().Be(2);
@@ -2175,7 +2157,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestPipelineConfig.Default() with { MaxAnalysisRetries = 0 });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         // Analysis comment should NOT have been posted (no content)
@@ -2202,7 +2184,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.ChatHistory.Where(c => c.Role == ChatRole.System)
@@ -2226,7 +2208,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         attempt.Should().Be(2);
@@ -2244,7 +2226,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("Analysis failed after 1 attempt(s)");
@@ -2265,7 +2247,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("ref already exists"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Verify full transition sequence: Created → CloningRepository → CreatingBranch → Failed
         transitions.Should().ContainInOrder(
@@ -2303,7 +2285,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockRepoProvider.Setup(p => p.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Verify pipeline reaches CreatingPullRequest then transitions to Failed
         transitions.Should().ContainInOrder(
@@ -2334,7 +2316,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 transitions.Add(ctx.Service.ActiveRun.CurrentStep);
         };
 
-        var run = await ctx.Service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
+        var run = await ctx.Service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
 
         // Assert: transition sequence includes brain sync steps in correct order
         transitions.Should().ContainInOrder(
@@ -2376,7 +2358,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 transitions.Add(ctx.Service.ActiveRun.CurrentStep);
         };
 
-        var run = await ctx.Service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
+        var run = await ctx.Service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
 
         transitions.Should().ContainInOrder(
             PipelineStep.SyncingBrainRepoPreRun,
@@ -2414,7 +2396,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = Array.Empty<string>() });
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Verify transition sequence ends at Failed after GeneratingCode
         transitions.Should().ContainInOrder(
@@ -2459,7 +2441,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = ExitCodes.GeneralFailure, OutputLines = Array.Empty<string>() });
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Verify pipeline continued past GeneratingCode to RunningQualityGates and Completed
         transitions.Should().ContainInOrder(
@@ -2507,7 +2489,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 transitions.Add(ctx.Service.ActiveRun.CurrentStep);
         };
 
-        var run = await ctx.Service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
+        var run = await ctx.Service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
 
         transitions.Should().ContainInOrder(
             PipelineStep.ReflectingOnRun,
@@ -2533,7 +2515,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 transitions.Add(ctx.Service.ActiveRun.CurrentStep);
         };
 
-        var run = await ctx.Service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
+        var run = await ctx.Service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
 
         transitions.Should().ContainInOrder(
             PipelineStep.SyncingBrainRepoPostRun,
@@ -2545,22 +2527,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
     }
 
     // TODO: Add LoadAllTemplatesAsync default mock (returning empty list) to SetupDefaultMocks so other tests don't rely on null fallback via ?.
-    [Fact]
-    public async Task StartPipeline_WhenTemplateBrainReadOnly_SkipsBrainWriteBack()
-    {
-        var ctx = CreateBrainTestService();
-        ctx.MockConfigStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineJobTemplate>
-            {
-                new() { Id = "t-1", Name = "Test", IssueProviderId = "issue-1", RepoProviderId = "repo-1", BrainProviderId = "brain-1", BrainReadOnly = true }
-            });
-
-        var run = await ctx.Service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
-
-        run.CurrentStep.Should().Be(PipelineStep.Completed);
-        ctx.MockBrainUpdateService.Verify(b => b.CommitAndPushAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
     [Fact]
     public async Task StartPipeline_WhenQualityGateValidatorThrows_TransitionsToFailedWithReason()
     {
@@ -2576,7 +2542,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new IOException("Disk full"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Verify transition sequence: ... → RunningQualityGates → Failed
         transitions.Should().ContainInOrder(
@@ -2634,7 +2600,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             });
         _mockFactory.Setup(f => f.CreatePipelineProviderAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>())).ReturnsAsync(mockPipelineProvider.Object);
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Verify transition sequence: ... → RunningQualityGates → CreatingPullRequest → Failed
         transitions.Should().ContainInOrder(
@@ -2673,7 +2639,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             .Returns(validatorTcs.Task);
 
         // Start the pipeline (analysis writes files and succeeds, code gen succeeds, then blocks at quality gates)
-        var pipelineTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var pipelineTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Wait for pipeline to reach RunningQualityGates using event-based synchronization (not Task.Delay)
         await reachedQualityGates.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -2742,7 +2708,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             }
         };
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // 1. HighWaterMark values form a monotonically non-decreasing sequence
         for (var i = 1; i < highWaterMarks.Count; i++)
@@ -2798,7 +2764,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             });
 
         // Pass CancellationToken.None — orchestrator CTS is NOT cancelled (simulates agent-level timeout)
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Verify transition sequence ends at Failed after GeneratingCode
         transitions.Should().ContainInOrder(
@@ -2847,7 +2813,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { new FileChangeSummary("Modified", "src/file.cs", 10, 2) } as IReadOnlyList<FileChangeSummary>);
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Verify pipeline continued past GeneratingCode to RunningQualityGates and Completed
         transitions.Should().ContainInOrder(
@@ -2886,7 +2852,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Remote rejected push"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Verify transition sequence: ... → CreatingPullRequest → Failed
         transitions.Should().ContainInOrder(
@@ -2914,7 +2880,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 transitions.Add(_service.ActiveRun.CurrentStep);
         };
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         transitions.Should().ContainInOrder(
             PipelineStep.RunningQualityGates,
@@ -2936,7 +2902,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         capturedPrompts.Should().Contain(p => p.Contains("Pre-Pull Request Cleanup"));
         var cleanupPrompt = capturedPrompts.First(p => p.Contains("Pre-Pull Request Cleanup"));
@@ -2971,7 +2937,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 transitions.Add(_service.ActiveRun.CurrentStep);
         };
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.RetryCount.Should().Be(1);
@@ -3004,7 +2970,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), MaxRetries = 1 });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.IsDraftPr.Should().BeTrue();
@@ -3027,7 +2993,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Pipeline should complete despite cleanup agent failure
         run.CurrentStep.Should().Be(PipelineStep.Completed);
@@ -3040,7 +3006,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var outputLines = new List<string>();
         _service.OnOutputLine += line => outputLines.Add(line);
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         outputLines.Should().Contain(l => l.Contains("Preparing for pull request"));
         outputLines.Should().Contain(l => l.Contains("Running final quality gates after cleanup"));
@@ -3091,7 +3057,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var outputLines = new List<string>();
         _service.OnOutputLine += line => outputLines.Add(line);
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Pipeline should complete successfully — not fail with draft PR
         run.CurrentStep.Should().Be(PipelineStep.Completed);
@@ -3160,7 +3126,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         SetupReworkMocks();
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.LinkedPullRequest.Should().NotBeNull();
         run.LinkedPullRequest!.Number.Should().Be(42);
@@ -3172,7 +3138,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         SetupReworkMocks();
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         _mockRepoProvider.Verify(p => p.CheckoutRemoteBranchAsync(
             It.IsAny<string>(), It.Is<string>(b => b == "feature/auto-7-fix-bug-abc12345"), It.IsAny<CancellationToken>()), Times.Once);
@@ -3195,7 +3161,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             .Callback(() => callOrder.Add("Merge"))
             .ReturnsAsync(new MergeResult { Success = true, HasConflicts = false, ConflictFiles = Array.Empty<string>() });
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         callOrder.Should().ContainInOrder("Checkout", "Merge");
     }
@@ -3205,7 +3171,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         SetupReworkMocks();
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         _mockRepoProvider.Verify(p => p.PushBranchAsync(
             It.IsAny<string>(), It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
@@ -3218,7 +3184,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         SetupReworkMocks();
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         _mockRepoProvider.Verify(p => p.UpdatePullRequestAsync(
             42, It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -3248,7 +3214,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         var reworkPrompt = capturedPrompts.First(p => !p.Contains("Pre-Pull Request Cleanup"));
         reworkPrompt.Should().Contain("src/File1.cs");
@@ -3271,7 +3237,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         var reworkPrompt = capturedPrompts.First(p => !p.Contains("Pre-Pull Request Cleanup"));
         reworkPrompt.Should().Contain("Review Feedback");
@@ -3288,7 +3254,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Branch not found"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("checkout");
@@ -3302,7 +3268,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("API error"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.LinkedPullRequest.Should().BeNull();
@@ -3319,7 +3285,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("non-fast-forward"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().NotBeNullOrEmpty();
@@ -3334,7 +3300,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Base branch not found"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("rebase");
@@ -3350,7 +3316,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("PR not found"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Pipeline should complete successfully despite UpdatePullRequestAsync failure
         run.CurrentStep.Should().Be(PipelineStep.Completed);
@@ -3380,7 +3346,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockRepoProvider.Setup(p => p.ClosePullRequestAsync(42, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Draft PR should be closed, not reused
         _mockRepoProvider.Verify(p => p.ClosePullRequestAsync(42, It.IsAny<CancellationToken>()), Times.Once);
@@ -3418,7 +3384,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Code generation agent should NOT be called — only the cleanup agent, PR description, and feedback collection
         var nonFeedbackPrompts = capturedPrompts
@@ -3440,7 +3406,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 transitions.Add(_service.ActiveRun.CurrentStep);
         };
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // TransitionTo was called multiple times during pipeline execution
         transitions.Should().NotBeEmpty();
@@ -3453,7 +3419,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var outputLines = new List<string>();
         _service.OnOutputLine += line => outputLines.Add(line);
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // EmitOutputLine is called during pipeline execution
         outputLines.Should().NotBeEmpty();
@@ -3465,7 +3431,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var changeCount = 0;
         _service.OnChange += () => changeCount++;
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // NotifyChange fires on every TransitionTo call
         changeCount.Should().BeGreaterThan(0);
@@ -3474,7 +3440,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task OrchestratorCallbacks_AddRunToHistory_RoutesToLifecycleService()
     {
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // AddRunToHistory is called when pipeline completes
         _service.GetRunHistory().Should().HaveCount(1);

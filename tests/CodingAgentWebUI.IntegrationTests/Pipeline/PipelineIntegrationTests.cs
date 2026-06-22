@@ -9,6 +9,7 @@ using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.TestUtilities;
 using CodingAgentWebUI.IntegrationTests.Helpers;
 
 namespace CodingAgentWebUI.IntegrationTests.Pipeline;
@@ -187,7 +188,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
     {
         await using var service = await CreateServiceWithPersistedConfigAsync();
 
-        var run = await service.StartPipelineAsync(
+        var run = await service.RunAsync(
             "issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
@@ -197,7 +198,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
         await Task.Delay(500);
 
         // Simulate restart: create a brand new service pointing at the same runs directory
-        await using var service2 = new PipelineOrchestrationService(
+        await using var service2 = new TestPipelineRunner(
             ConfigStore,
             MockFactory.Object,
             new IssueDescriptionParser(),
@@ -216,7 +217,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
         restored.CompletedAt.Should().NotBeNull();
         restored.PullRequestUrl.Should().Be("https://github.com/test/pr/1");
         restored.ModelName.Should().Be("test-model");
-        restored.InitiatedBy.Should().Be("manual");
+        restored.InitiatedBy.Should().Be("test");
     }
 
     [Fact]
@@ -241,7 +242,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
                 steps.Add(service.ActiveRun.CurrentStep);
         };
 
-        var run = await service.StartPipelineAsync(
+        var run = await service.RunAsync(
             "issue-1", "repo-1", "99", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
@@ -315,7 +316,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
 
         await using var service = await CreateServiceWithPersistedConfigAsync(config);
 
-        var run = await service.StartPipelineAsync(
+        var run = await service.RunAsync(
             "issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // SeverityParser should have extracted counts from real findings content
@@ -365,7 +366,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
                 CompletedAt = DateTime.UtcNow.AddDays(-1)
             }, jsonOptions));
 
-        // Create service — its constructor loads run history, and StartPipelineAsync
+        // Create service — its constructor loads run history, and RunAsync
         // calls CleanupExpiredWorkspaces at the start
         var config = new PipelineConfiguration
         {
@@ -375,7 +376,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
         await using var service = await CreateServiceWithPersistedConfigAsync(config);
 
         // Starting a pipeline triggers cleanup
-        await service.StartPipelineAsync(
+        await service.RunAsync(
             "issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Expired workspace (30 days old, retention = 7) should be deleted

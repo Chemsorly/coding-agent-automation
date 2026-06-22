@@ -6,13 +6,14 @@ using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.IntegrationTests.Helpers;
+using CodingAgentWebUI.TestUtilities;
 using TestPipelineConfig = CodingAgentWebUI.IntegrationTests.Helpers.TestPipelineConfig;
 
 namespace CodingAgentWebUI.IntegrationTests.Pipeline;
 
 /// <summary>
 /// Unit tests for AgentCoding page logic.
-/// Tests view switching, concurrent start rejection, and button disabled states
+/// Tests view switching and button disabled states
 /// via the same operations the AgentCoding page performs against PipelineOrchestrationService and mocked providers.
 /// </summary>
 public class AgentCodingPageTests
@@ -24,7 +25,7 @@ public class AgentCodingPageTests
     private readonly Mock<IAgentProvider> _mockAgentProvider;
     private readonly Mock<IQualityGateValidator> _mockValidator;
     private readonly Mock<Serilog.ILogger> _mockLogger;
-    private readonly PipelineOrchestrationService _service;
+    private readonly TestPipelineRunner _service;
 
     public AgentCodingPageTests()
     {
@@ -38,7 +39,7 @@ public class AgentCodingPageTests
 
         SetupDefaultMocks();
 
-        _service = new PipelineOrchestrationService(
+        _service = new TestPipelineRunner(
             _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
@@ -161,7 +162,7 @@ public class AgentCodingPageTests
                 Tests = new GateResult { GateName = "Tests", Passed = true }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.PullRequestUrl.Should().NotBeNullOrEmpty();
@@ -176,7 +177,7 @@ public class AgentCodingPageTests
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns(agentTcs.Task);
 
-        var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var startTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Cancel while agent is running
         await _service.CancelPipelineAsync();
@@ -199,7 +200,7 @@ public class AgentCodingPageTests
                 Tests = new GateResult { GateName = "Tests", Passed = true }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.PullRequestUrl.Should().NotBeNullOrEmpty();
@@ -218,7 +219,7 @@ public class AgentCodingPageTests
                 Tests = new GateResult { GateName = "Tests", Passed = false, Details = "2 tests failed" }
             });
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Auto-retry exhausted all retries (default MaxRetries=3), created draft PR, marked Failed
         run.CurrentStep.Should().Be(PipelineStep.Failed);
@@ -226,65 +227,6 @@ public class AgentCodingPageTests
         run.LatestQualityReport!.AllPassed.Should().BeFalse();
         run.RetryCount.Should().Be(3);
         run.RetryErrors.Should().HaveCount(4); // initial + 3 retries
-    }
-
-    // --- Concurrent start rejection ---
-
-    [Fact]
-    public async Task StartPipeline_WhileAlreadyRunning_RejectsWithMessage()
-    {
-        // Use a blocking agent to keep the pipeline running
-        var agentTcs = new TaskCompletionSource<AgentResult>();
-        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .Returns(agentTcs.Task);
-
-        var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        _service.IsRunning.Should().BeTrue();
-
-        // The service throws if called while already running
-        var act = () => _service.StartPipelineAsync("issue-1", "repo-1", "99", "agent-1", CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*already in progress*");
-
-        // Cleanup
-        agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new QualityGateReport
-            {
-                Compilation = new GateResult { GateName = "Compilation", Passed = true },
-                Tests = new GateResult { GateName = "Tests", Passed = true }
-            });
-        await startTask;
-    }
-
-    [Fact]
-    public async Task StartPipeline_PageGuard_ChecksIsRunningBeforeCalling()
-    {
-        // Use a blocking agent to keep the pipeline running
-        var agentTcs = new TaskCompletionSource<AgentResult>();
-        _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .Returns(agentTcs.Task);
-
-        var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-
-        // Replicate the page's guard logic
-        string? errorMessage = null;
-        if (_service.IsRunning)
-        {
-            errorMessage = "A pipeline run is already in progress.";
-        }
-
-        errorMessage.Should().Be("A pipeline run is already in progress.");
-
-        // Cleanup
-        agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new QualityGateReport
-            {
-                Compilation = new GateResult { GateName = "Compilation", Passed = true },
-                Tests = new GateResult { GateName = "Tests", Passed = true }
-            });
-        await startTask;
     }
 
     // --- Pipeline transitions through GeneratingCode ---
@@ -317,7 +259,7 @@ public class AgentCodingPageTests
                 return agentTcs.Task;
             });
 
-        var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var startTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         // Wait for the pipeline to reach GeneratingCode (blocked by agentTcs)
         for (var i = 0; i < 50 && _service.ActiveRun?.CurrentStep != PipelineStep.GeneratingCode; i++)
             await Task.Delay(100);
@@ -336,7 +278,7 @@ public class AgentCodingPageTests
         _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns(gateTcs.Task);
 
-        var startTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var startTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         // Wait for the pipeline to reach RunningQualityGates (blocked by gateTcs)
         for (var i = 0; i < 50 && _service.ActiveRun?.CurrentStep != PipelineStep.RunningQualityGates; i++)
             await Task.Delay(100);
@@ -483,7 +425,7 @@ public class AgentCodingPageTests
         int changeCount = 0;
         _service.OnChange += () => changeCount++;
 
-        await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         changeCount.Should().BeGreaterThan(0, "OnChange should fire during pipeline step transitions");
     }

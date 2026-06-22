@@ -88,8 +88,19 @@ public class JsonConfigurationStore : IConfigurationStore
         };
 
         var json = JsonSerializer.Serialize(defaultProject, JsonOptions);
-        File.WriteAllText(defaultProjectPath, json);
-        _logger.Information("Created Default project at {Path}", defaultProjectPath);
+
+        try
+        {
+            // Use exclusive FileStream to prevent concurrent writes from parallel test hosts
+            using var fs = new FileStream(defaultProjectPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            using var writer = new StreamWriter(fs);
+            writer.Write(json);
+            _logger.Information("Created Default project at {Path}", defaultProjectPath);
+        }
+        catch (IOException)
+        {
+            // Another process/thread created the file first — that's fine
+        }
     }
 
     public async Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct)

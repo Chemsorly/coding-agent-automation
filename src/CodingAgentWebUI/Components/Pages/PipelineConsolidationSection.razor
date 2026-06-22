@@ -6,12 +6,21 @@
     <p class="section-description">Controls for the consolidation loops: refactoring detection, brain consolidation, and harness suggestions.</p>
     <div class="provider-form">
         <div class="form-group">
-            <label>Max Refactoring Proposals</label>
+            <div class="label-with-hint">
+                <label>Max Refactoring Proposals</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum refactoring proposals the agent can produce and the executor will create issues for per consolidation run. Default: 3">?</span>
+            </div>
             <input type="number" @bind="_maxRefactoringProposals" min="1" max="10" />
         </div>
+        <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
+            <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")">▶</span>
+            <span>Advanced settings</span>
+        </div>
+        @if (_showAdvanced)
+        {
         <div class="config-sub-fields" style="margin-top: 1rem;">
-            <h3 style="margin-bottom: 0.5rem;">Adversarial Review</h3>
-            <div class="form-hint" style="margin-bottom: 0.75rem;">
+            <h3>Adversarial Review</h3>
+            <div class="form-hint">
                 ℹ️ When enabled, a second agent reviews consolidation output before it is persisted. Only findings marked [CRITICAL] or [WARNING] trigger refinement.
             </div>
             <div class="form-group form-checkbox">
@@ -33,6 +42,21 @@
                 </label>
             </div>
         </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Hotspot Analysis Lookback (days)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Time window for git hotspot analysis. Only commits within this window are counted for refactoring detection. Default: 90 days">?</span>
+            </div>
+            <input type="number" @bind="_hotspotAnalysisLookbackDays" min="7" max="365" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Refactoring Outcome Lookback (days)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Time window for querying past refactoring proposal outcomes for feedback context. Default: 90 days">?</span>
+            </div>
+            <input type="number" @bind="_refactoringOutcomeLookbackDays" min="7" max="365" />
+        </div>
+        }
         <div class="pipeline-form-actions">
             <button class="btn-save" @onclick="SaveAsync">Save Consolidation Settings</button>
         </div>
@@ -44,14 +68,19 @@
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private int _maxRefactoringProposals = 3;
+    private int _hotspotAnalysisLookbackDays = 90;
+    private int _refactoringOutcomeLookbackDays = 90;
     private bool _refactoringReviewEnabled = true;
     private bool _brainConsolidationReviewEnabled = true;
     private bool _harnessSuggestionsReviewEnabled = true;
+    private bool _showAdvanced;
 
     protected override async Task OnInitializedAsync()
     {
         var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         _maxRefactoringProposals = config.MaxRefactoringProposals;
+        _hotspotAnalysisLookbackDays = (int)config.HotspotAnalysisLookback.TotalDays;
+        _refactoringOutcomeLookbackDays = (int)config.RefactoringOutcomeLookback.TotalDays;
         _refactoringReviewEnabled = config.RefactoringReviewEnabled;
         _brainConsolidationReviewEnabled = config.BrainConsolidationReviewEnabled;
         _harnessSuggestionsReviewEnabled = config.HarnessSuggestionsReviewEnabled;
@@ -65,6 +94,8 @@
                 current => current with
                 {
                     MaxRefactoringProposals = _maxRefactoringProposals,
+                    HotspotAnalysisLookback = TimeSpan.FromDays(_hotspotAnalysisLookbackDays),
+                    RefactoringOutcomeLookback = TimeSpan.FromDays(_refactoringOutcomeLookbackDays),
                     RefactoringReviewEnabled = _refactoringReviewEnabled,
                     BrainConsolidationReviewEnabled = _brainConsolidationReviewEnabled,
                     HarnessSuggestionsReviewEnabled = _harnessSuggestionsReviewEnabled

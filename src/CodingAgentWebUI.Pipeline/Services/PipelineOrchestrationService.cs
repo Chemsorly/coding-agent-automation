@@ -7,11 +7,11 @@ using Serilog.Context;
 namespace CodingAgentWebUI.Pipeline.Services;
 
 /// <summary>
-/// Singleton service that coordinates the entire automated development pipeline.
+/// Singleton service that coordinates the automated development pipeline.
 /// Manages provider resolution, execution orchestration, label swaps, and PR creation.
 /// Delegates run state, lifecycle transitions, events, and cancellation to <see cref="PipelineRunLifecycleService"/>.
-/// Supports both local execution (single <see cref="ActiveRun"/>) and multi-agent
-/// dispatch (concurrent runs tracked via <see cref="IOrchestratorRunService"/>).
+/// Pipeline execution is handled by remote agents via <see cref="CreateDispatchedRunAsync"/> and
+/// <c>LocalPipelineExecutor</c>. Multi-agent dispatch uses concurrent runs tracked via <see cref="IOrchestratorRunService"/>.
 /// </summary>
 // Provider lifecycle management (resolution, disposal, active provider tracking) is delegated
 // to PipelineProviderManager, extracted per spec 017 / MAINT-09.
@@ -39,7 +39,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     private readonly IAgentCancellationSender? _agentCancellation;
     private readonly Serilog.ILogger _logger;
 
-    private readonly SemaphoreSlim _startLock = new(1, 1);
     protected readonly PipelineProviderManager _providerManager;
     protected PipelineConfiguration? _activeConfig;
 
@@ -77,27 +76,27 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         remove => _lifecycle.OnChatCompleted -= value;
     }
 
-    /// <summary>The currently active local pipeline run, or null if idle. Delegates to lifecycle service.</summary>
+    /// <summary>The currently active pipeline run (used by test infrastructure), or null if idle. Delegates to lifecycle service.</summary>
     public PipelineRun? ActiveRun
     {
         get => _lifecycle.ActiveRun;
         protected set => _lifecycle.ActiveRun = value;
     }
 
-    /// <summary>Whether a local pipeline run is currently in progress. Delegates to lifecycle service.</summary>
+    /// <summary>Whether a pipeline run is currently in progress (test infrastructure only in production). Delegates to lifecycle service.</summary>
     public bool IsRunning => _lifecycle.IsRunning;
 
-    /// <summary>Whether any pipeline run is active (local or agent). Delegates to lifecycle service.</summary>
+    /// <summary>Whether any pipeline run is active (in-process or agent-dispatched). Delegates to lifecycle service.</summary>
     public bool HasAnyActiveRuns => _lifecycle.HasAnyActiveRuns;
 
     /// <summary>
-    /// Returns all active runs — both the local run (if any) and all agent-dispatched runs.
+    /// Returns all active runs — both the in-process run (if any) and all agent-dispatched runs.
     /// Delegates to lifecycle service.
     /// </summary>
     public IReadOnlyList<PipelineRun> GetAllActiveRuns() => _lifecycle.GetAllActiveRuns();
 
     /// <summary>
-    /// Checks whether the given issue is being processed by any active run (local or agent).
+    /// Checks whether the given issue is being processed by any active run (in-process or agent-dispatched).
     /// Delegates to lifecycle service.
     /// </summary>
     public bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId) => _lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId);
@@ -151,109 +150,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         // Use provided lifecycle service or create one internally for backward compatibility
         _lifecycle = lifecycle ?? new PipelineRunLifecycleService(
             _historyService, runService, logger);
-    }
-
-    /// <summary>
-    /// Starts a new pipeline run for the given issue and repository providers.
-    /// Rejects if a pipeline is already running.
-    /// </summary>
-    public async Task<PipelineRun> StartPipelineAsync(
-        string issueProviderId, string repoProviderId, string issueIdentifier,
-        string agentProviderId, CancellationToken ct, string? brainProviderId = null, string? pipelineProviderId = null,
-        string initiatedBy = "manual")
-    {
-        ArgumentNullException.ThrowIfNull(issueProviderId);
-        ArgumentNullException.ThrowIfNull(repoProviderId);
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
-        ArgumentNullException.ThrowIfNull(agentProviderId);
-
-        await _startLock.WaitAsync(ct);
-        try
-        {
-            if (IsRunning)
-                throw new InvalidOperationException("A pipeline run is already in progress.");
-
-            _lifecycle.CreateLinkedCancellationToken(ct);
-        }
-        finally
-        {
-            _startLock.Release();
-        }
-
-        var linkedCt = _lifecycle.CancellationTokenSource!.Token;
-
-        try
-        {
-            _activeConfig = await _configStore.LoadPipelineConfigAsync(linkedCt);
-            _historyService.CleanupExpiredWorkspaces(_activeConfig, ActiveRun?.RunId);
-
-            var issueProviderConfig = await _providerManager.ResolveProviderConfigAsync(issueProviderId, ProviderKind.Issue, linkedCt);
-            var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, linkedCt);
-            var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId, ProviderKind.Agent, linkedCt);
-
-            // Override BrainReadOnly from the matching PipelineJobTemplate (same as AgentJobDispatcher does)
-            // TODO: Remove null-conditional (?.) once SetupDefaultMocks in tests mocks LoadAllTemplatesAsync with an empty list (interface contract is non-nullable)
-            var templates = await _configStore.LoadAllTemplatesAsync(linkedCt);
-            var matchingTemplate = templates?.FirstOrDefault(t =>
-                t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
-            if (matchingTemplate is { BrainReadOnly: true })
-                _activeConfig = _activeConfig with { BrainReadOnly = true };
-
-            // Override blacklist settings from repo provider config (per-repo takes precedence)
-            _activeConfig = PipelineConfiguration.ApplyBlacklistOverride(_activeConfig, repoProviderConfig);
-
-            await _providerManager.CreateCoreProvidersAsync(issueProviderConfig, repoProviderConfig, agentProviderConfig, linkedCt);
-            var issueProvider = _providerManager.ActiveIssueProvider!;
-            if (!string.IsNullOrEmpty(brainProviderId))
-                await _providerManager.CreateBrainProviderAsync(brainProviderId, linkedCt);
-            var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
-            var run = new PipelineRun
-            {
-                RunId = Guid.NewGuid().ToString(),
-                IssueIdentifier = issueIdentifier,
-                IssueTitle = string.Empty,
-                IssueProviderConfigId = issueProviderId,
-                RepoProviderConfigId = repoProviderId,
-                StartedAt = DateTime.UtcNow,
-                StartedAtOffset = DateTimeOffset.UtcNow,
-                LastStepChangeAt = DateTimeOffset.UtcNow,
-                CurrentStep = PipelineStep.Created,
-                RepositoryName = _providerManager.ActiveRepoProvider!.RepositoryFullName,
-                ModelName = configuredModel,
-                BrainProviderConfigId = _providerManager.ActiveBrainProvider != null ? brainProviderId : null,
-                InitiatedBy = initiatedBy,
-                AgentProviderConfigId = agentProviderId
-            };
-            _lifecycle.ActiveRun = run;
-            _logger.Information("Pipeline {RunId} using model {Model}", run.RunId, configuredModel);
-            var pipelineConfigId = await _providerManager.CreatePipelineProviderAsync(pipelineProviderId, linkedCt);
-            if (pipelineConfigId is not null)
-            {
-                run.PipelineProviderConfigId = pipelineConfigId;
-                _logger.Information("Pipeline {RunId} external CI provider configured", run.RunId);
-            }
-            await _providerManager.ValidateProvidersAsync(repoProviderConfig, agentProviderConfig, linkedCt);
-            _logger.Information("Pipeline {RunId} created for issue {IssueIdentifier}", run.RunId, issueIdentifier);
-            _lifecycle.NotifyChange();
-            try
-            {
-                var labelsOk = await issueProvider.InitializeAsync(linkedCt);
-                if (!labelsOk)
-                    _logger.Warning("Pipeline {RunId} issue provider label creation partially failed, continuing", run.RunId);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            { throw new InvalidOperationException($"Issue provider initialization failed: {ex.Message}", ex); }
-            await PersistLastUsedProviderIdsAsync(issueProviderId, repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, linkedCt);
-            await ExecutePipelineStepsAsync(run, issueProvider, linkedCt);
-            return run;
-        }
-        catch (Exception ex) when (ex is not InvalidOperationException || ActiveRun != null)
-        {
-            if (ActiveRun != null && ActiveRun.CurrentStep != PipelineStep.Failed
-                && ActiveRun.CurrentStep != PipelineStep.Cancelled)
-                await HandlePipelineErrorAsync(ActiveRun, ex);
-            throw;
-        }
     }
 
     /// <summary>
@@ -709,13 +605,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     }
     public async ValueTask DisposeAsync()
     {
-        _startLock.Dispose();
         await _providerManager.DisposeAsync();
         GC.SuppressFinalize(this);
     }
     public void Dispose()
     {
-        _startLock.Dispose();
         // Do not call DisposePreviousProvidersAsync synchronously — .GetAwaiter().GetResult()
         // deadlocks in Blazor Server's SynchronizationContext (review finding #13).
         // DisposeAsync() is the correct disposal path; sync Dispose handles only sync resources.
